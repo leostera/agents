@@ -75,7 +75,9 @@ impl BorgCliApp {
         info!(target: "borg_cli", url, "borg init completed, onboarding server starting");
         println!("borg initialized. onboarding: {}", url);
 
-        OnboardServer::new(onboard_port).run().await
+        OnboardServer::new(onboard_port, self.borg_dir.config_db().to_path_buf())
+            .run()
+            .await
     }
 
     async fn start(&self, bind: String, poll_ms: u64) -> Result<()> {

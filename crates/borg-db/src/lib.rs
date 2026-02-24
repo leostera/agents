@@ -64,6 +64,13 @@ impl BorgDb {
                     state_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS providers (
+                    provider TEXT PRIMARY KEY,
+                    api_key TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 "#,
             )
             .await
@@ -294,6 +301,24 @@ impl BorgDb {
             )
             .await
             .context("failed to write task event")?;
+        Ok(())
+    }
+
+    pub async fn upsert_provider_api_key(&self, provider: &str, api_key: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO providers(provider, api_key, created_at, updated_at)
+                VALUES(?1, ?2, ?3, ?4)
+                ON CONFLICT(provider) DO UPDATE SET
+                  api_key = excluded.api_key,
+                  updated_at = excluded.updated_at
+                "#,
+                (provider.to_string(), api_key.to_string(), now.clone(), now),
+            )
+            .await
+            .context("failed to upsert provider api key")?;
         Ok(())
     }
 }
