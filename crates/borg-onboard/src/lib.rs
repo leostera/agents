@@ -1,7 +1,10 @@
 use std::net::SocketAddr;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use axum::{Router, response::Html, routing::get};
+
+const LOOPBACK_ADDR: [u8; 4] = [127, 0, 0, 1];
+const HEALTH_STATUS_OK: &str = "ok";
 use tokio::net::TcpListener;
 use tracing::info;
 
@@ -13,23 +16,19 @@ pub struct OnboardServer {
 impl OnboardServer {
     pub fn new(port: u16) -> Self {
         Self {
-            addr: SocketAddr::from(([127, 0, 0, 1], port)),
+            addr: SocketAddr::from((LOOPBACK_ADDR, port)),
         }
     }
 
     pub async fn run(self) -> Result<()> {
         let app = Router::new()
-            .route("/health", get(|| async { "ok" }))
+            .route("/health", get(|| async { HEALTH_STATUS_OK }))
             .route("/onboard", get(onboard_page));
 
-        let listener = TcpListener::bind(self.addr)
-            .await
-            .with_context(|| format!("failed to bind onboarding server to {}", self.addr))?;
+        let listener = TcpListener::bind(self.addr).await?;
 
         info!(target: "borg_onboard", address = %self.addr, "onboarding web server listening");
-        axum::serve(listener, app)
-            .await
-            .context("onboarding server failure")?;
+        axum::serve(listener, app).await?;
 
         Ok(())
     }

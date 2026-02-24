@@ -5,7 +5,12 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+
+const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
+const DEFAULT_ONBOARD_PORT: u16 = 3777;
+const DEFAULT_SCHEDULER_POLL_MS: u64 = 500;
+const HEALTH_STATUS_OK: &str = "ok";
 use axum::{
     Json, Router,
     extract::{Path as AxumPath, Query, State},
@@ -36,13 +41,13 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     Init {
-        #[arg(long, default_value_t = 3777)]
+        #[arg(long, default_value_t = DEFAULT_ONBOARD_PORT)]
         onboard_port: u16,
     },
     Start {
-        #[arg(long, default_value = "127.0.0.1:8080")]
+        #[arg(long, default_value = DEFAULT_HTTP_BIND)]
         bind: String,
-        #[arg(long, default_value_t = 500)]
+        #[arg(long, default_value_t = DEFAULT_SCHEDULER_POLL_MS)]
         poll_ms: u64,
     },
 }
@@ -73,10 +78,8 @@ impl BorgPaths {
     }
 
     fn ensure_layout(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.home)
-            .with_context(|| format!("failed creating borg home at {}", self.home.display()))?;
-        std::fs::create_dir_all(self.home.join("logs"))
-            .with_context(|| format!("failed creating logs dir in {}", self.home.display()))?;
+        std::fs::create_dir_all(&self.home)?;
+        std::fs::create_dir_all(self.home.join("logs"))?;
         Ok(())
     }
 }
@@ -149,7 +152,7 @@ impl BorgCliApp {
             .route("/memory/entities/:id", get(get_memory_entity))
             .with_state(app_state);
 
-        let addr: SocketAddr = bind.parse().context("invalid bind address")?;
+        let addr: SocketAddr = bind.parse()?;
         let listener = TcpListener::bind(addr).await?;
         info!(target: "borg_cli", address = %addr, "http server listening");
 
@@ -162,8 +165,7 @@ impl BorgCliApp {
 
         axum::serve(listener, router)
             .with_graceful_shutdown(shutdown)
-            .await
-            .context("http server failure")?;
+            .await?;
 
         scheduler.abort();
         Ok(())
@@ -181,18 +183,8 @@ impl BorgCliApp {
 
     async fn open_config_db(&self) -> Result<BorgDb> {
         let config_path = self.paths.config_db.to_string_lossy().to_string();
-        let db_handle = Builder::new_local(&config_path)
-            .build()
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to open config db {}",
-                    self.paths.config_db.display()
-                )
-            })?;
-        let conn = db_handle
-            .connect()
-            .context("failed to connect to config db")?;
+        let db_handle = Builder::new_local(&config_path).build().await?;
+        let conn = db_handle.connect()?;
         Ok(BorgDb::new(conn))
     }
 
@@ -266,7 +258,7 @@ async fn main() -> Result<()> {
 
 async fn health() -> impl IntoResponse {
     debug!(target: "borg_cli", "health endpoint called");
-    Json(json!({ "ok": true }))
+    Json(json!({ "status": HEALTH_STATUS_OK }))
 }
 
 async fn ui_dashboard(State(state): State<AppState>) -> impl IntoResponse {
