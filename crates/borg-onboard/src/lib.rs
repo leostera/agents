@@ -4,8 +4,8 @@ use anyhow::Result;
 use axum::{
     Json, Router,
     extract::State,
-    http::{HeaderValue, StatusCode, header},
-    response::{Html, IntoResponse, Response},
+    http::{StatusCode, header},
+    response::{Html, IntoResponse},
     routing::{get, post},
 };
 use borg_db::BorgDb;
@@ -51,7 +51,10 @@ impl OnboardServer {
 
         let state = OnboardState { db };
         let app = Router::new()
-            .route("/health", get(|| async { Json(json!({ "status": HEALTH_STATUS_OK })) }))
+            .route(
+                "/health",
+                get(|| async { Json(json!({ "status": HEALTH_STATUS_OK })) }),
+            )
             .route("/onboard", get(onboard_page))
             .route("/assets/app.js", get(onboard_app_js))
             .route("/api/providers/openai", post(save_openai_key))
@@ -70,12 +73,13 @@ async fn onboard_page() -> Html<&'static str> {
 }
 
 async fn onboard_app_js() -> impl IntoResponse {
-    let mut response = Response::new(ONBOARD_APP_JS.into());
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/javascript; charset=utf-8"),
-    );
-    response
+    (
+        [(
+            header::CONTENT_TYPE,
+            "application/javascript; charset=utf-8",
+        )],
+        ONBOARD_APP_JS,
+    )
 }
 
 async fn save_openai_key(
