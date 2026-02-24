@@ -1,0 +1,13 @@
+[package]
+name = "borg-ltm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+borg-core = { path = "../borg-core" }
+chrono.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+indradb = { package = "indradb-lib", version = "5.0.0", features = ["rocksdb-datastore"] }

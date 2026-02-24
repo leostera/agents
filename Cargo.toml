@@ -1,0 +1,18 @@
+[workspace]
+members = ["crates/borg-cli", "crates/borg-core", "crates/borg-db", "crates/borg-exec", "crates/borg-ltm", "crates/borg-onboard", "crates/borg-rt", "crates/borg-ui"]
+resolver = "2"
+
+[workspace.dependencies]
+anyhow = "1"
+axum = { version = "0.7", features = ["json"] }
+chrono = { version = "0.4", features = ["serde", "clock"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tracing = "0.1"
+turso = "0.4.4"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+deno_core = "0.311"
+rusqlite = "0.31"
