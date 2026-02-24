@@ -1,0 +1,42 @@
+:root {
+  color-scheme: dark;
+  --bg: #020617;
+  --ink: #f8fafc;
+  --muted: #94a3b8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body.onboard-shell {
+  min-height: 100vh;
+  background: radial-gradient(circle at 0% 0%, #0f172a 0, #020617 58%);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
+    sans-serif;
+}
+
+.onboard-layout {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 44px 24px;
+}
+
+.onboard-heading {
+  margin: 0;
+  font-size: 36px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.onboard-tagline {
+  margin: 10px 0 24px;
+  color: var(--muted);
+}

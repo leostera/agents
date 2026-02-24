@@ -1,0 +1,20 @@
+{
+  "name": "borg-web-monorepo",
+  "private": true,
+  "packageManager": "bun@1.2.20",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run vite",
+    "build:web": "bun run vite build",
+    "build:rust": "cargo build -p borg-cli",
+    "build": "bun run build:web && bun run build:rust"
+  },
+  "dependencies": {
+    "vite": "^7.3.1"
+  },
+  "devDependencies": {
+    "@frontman-ai/vite": "^0.2.6"
+  }
+}

@@ -1,0 +1,91 @@
+:root {
+  color-scheme: dark;
+  --borg-bg: #020617;
+  --borg-panel: #0f172a;
+  --borg-border: #1e293b;
+  --borg-text: #f8fafc;
+  --borg-muted: #94a3b8;
+  --borg-accent: #10b981;
+  --borg-user: #1d4ed8;
+}
+
+.borg-session {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.borg-message-row {
+  display: flex;
+}
+
+.borg-message-row--left {
+  justify-content: flex-start;
+}
+
+.borg-message-row--right {
+  justify-content: flex-end;
+}
+
+.borg-message {
+  width: min(680px, 100%);
+  border: 1px solid var(--borg-border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--borg-panel) 82%, transparent);
+}
+
+.borg-message--user {
+  background: color-mix(in srgb, var(--borg-user) 26%, var(--borg-panel));
+  border-color: color-mix(in srgb, var(--borg-user) 55%, var(--borg-border));
+}
+
+.borg-message__author {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--borg-muted);
+}
+
+.borg-message__text {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  line-height: 1.45;
+  color: var(--borg-text);
+}
+
+.borg-session__input {
+  display: grid;
+  gap: 10px;
+}
+
+.borg-session__input-body {
+  margin-left: 0;
+}
+
+.borg-choice {
+  display: grid;
+  gap: 6px;
+}
+
+.borg-choice__label {
+  font-size: 12px;
+  color: var(--borg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.borg-choice__select {
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--borg-border);
+  background: var(--borg-bg);
+  color: var(--borg-text);
+  padding: 0 10px;
+  outline: none;
+}
+
+.borg-choice__select:focus {
+  border-color: var(--borg-accent);
+}

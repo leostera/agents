@@ -353,9 +353,11 @@ dependencies = [
 name = "borg-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "serde",
  "serde_json",
+ "tokio",
  "uuid",
 ]
 
@@ -407,8 +409,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "borg-db",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
+ "turso",
 ]
 
 [[package]]

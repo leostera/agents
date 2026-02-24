@@ -1,0 +1,13 @@
+{
+  "name": "@borg/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@borg/dashboard": "workspace:*",
+    "@borg/i18n": "workspace:*",
+    "@borg/onboard": "workspace:*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}
