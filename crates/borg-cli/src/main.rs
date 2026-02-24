@@ -1,9 +1,4 @@
-use std::{
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    process::Command as ProcessCommand,
-    time::Duration,
-};
+use std::{net::SocketAddr, process::Command as ProcessCommand, time::Duration};
 
 use anyhow::Result;
 
@@ -18,6 +13,7 @@ use axum::{
     response::{Html, IntoResponse},
     routing::{get, post},
 };
+use borg_core::borgdir::BorgDir;
 use borg_db::BorgDb;
 use borg_exec::{ExecEngine, InboxMessage};
 use borg_ltm::MemoryStore;
@@ -59,39 +55,14 @@ struct AppState {
     memory: MemoryStore,
 }
 
-#[derive(Debug, Clone)]
-struct BorgPaths {
-    home: PathBuf,
-    config_db: PathBuf,
-    ltm_db: PathBuf,
-}
-
-impl BorgPaths {
-    fn discover() -> Self {
-        let home =
-            Path::new(&std::env::var("HOME").unwrap_or_else(|_| ".".to_string())).join(".borg");
-        Self {
-            config_db: home.join("config.db"),
-            ltm_db: home.join("ltm.db"),
-            home,
-        }
-    }
-
-    fn ensure_layout(&self) -> Result<()> {
-        std::fs::create_dir_all(&self.home)?;
-        std::fs::create_dir_all(self.home.join("logs"))?;
-        Ok(())
-    }
-}
-
 #[derive(Clone)]
 struct BorgCliApp {
-    paths: BorgPaths,
+    borg_dir: BorgDir,
 }
 
 impl BorgCliApp {
-    fn new(paths: BorgPaths) -> Self {
-        Self { paths }
+    fn new(borg_dir: BorgDir) -> Self {
+        Self { borg_dir }
     }
 
     async fn init(&self, onboard_port: u16) -> Result<()> {
@@ -108,11 +79,10 @@ impl BorgCliApp {
     }
 
     async fn start(&self, bind: String, poll_ms: u64) -> Result<()> {
-        info!(target: "borg_cli", config_db = %self.paths.config_db.display(), bind, poll_ms, "starting borg machine");
+        info!(target: "borg_cli", config_db = %self.borg_dir.config_db().display(), bind, poll_ms, "starting borg machine");
 
-        self.paths.ensure_layout()?;
         let db = self.open_config_db().await?;
-        let memory = MemoryStore::new(&self.paths.ltm_db)?;
+        let memory = MemoryStore::new(self.borg_dir.ltm_db())?;
         let exec = ExecEngine::new(
             db.clone(),
             memory.clone(),
@@ -172,9 +142,8 @@ impl BorgCliApp {
     }
 
     async fn initialize_storage(&self) -> Result<()> {
-        self.paths.ensure_layout()?;
         let db = self.open_config_db().await?;
-        let memory = MemoryStore::new(&self.paths.ltm_db)?;
+        let memory = MemoryStore::new(self.borg_dir.ltm_db())?;
 
         db.migrate().await?;
         memory.migrate().await?;
@@ -182,7 +151,7 @@ impl BorgCliApp {
     }
 
     async fn open_config_db(&self) -> Result<BorgDb> {
-        let config_path = self.paths.config_db.to_string_lossy().to_string();
+        let config_path = self.borg_dir.config_db().to_string_lossy().to_string();
         let db_handle = Builder::new_local(&config_path).build().await?;
         let conn = db_handle.connect()?;
         Ok(BorgDb::new(conn))
@@ -249,7 +218,9 @@ async fn main() -> Result<()> {
         }))
         .init();
 
-    let app = BorgCliApp::new(BorgPaths::discover());
+    let borg_dir = BorgDir::new();
+    borg_dir.ensure_initialized().await?;
+    let app = BorgCliApp::new(borg_dir);
     match Cli::parse().cmd {
         Command::Init { onboard_port } => app.init(onboard_port).await,
         Command::Start { bind, poll_ms } => app.start(bind, poll_ms).await,
