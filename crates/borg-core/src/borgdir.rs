@@ -44,9 +44,9 @@ impl BorgDir {
     pub async fn ensure_initialized(&self) -> Result<()> {
         create_dir_all(&self.root).await?;
         create_dir_all(&self.logs).await?;
+        create_dir_all(&self.ltm_db).await?;
 
         touch_file(&self.config_db).await?;
-        touch_file(&self.ltm_db).await?;
         Ok(())
     }
 
