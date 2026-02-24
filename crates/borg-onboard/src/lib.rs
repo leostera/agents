@@ -56,6 +56,7 @@ impl OnboardServer {
                 get(|| async { Json(json!({ "status": HEALTH_STATUS_OK })) }),
             )
             .route("/onboard", get(onboard_page))
+            .route("/assets/app.css", get(onboard_app_css))
             .route("/assets/app.js", get(onboard_app_js))
             .route("/api/providers/openai", post(save_openai_key))
             .with_state(state);
@@ -79,6 +80,13 @@ async fn onboard_app_js() -> impl IntoResponse {
             "application/javascript; charset=utf-8",
         )],
         ONBOARD_APP_JS,
+    )
+}
+
+async fn onboard_app_css() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        ONBOARD_APP_CSS,
     )
 }
 
@@ -118,13 +126,13 @@ const ONBOARD_HTML: &str = r#"<!doctype html>
     <meta charset=\"utf-8\" />
     <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
     <title>Borg Onboarding</title>
-    <script src=\"https://cdn.tailwindcss.com\"></script>
+    <link rel=\"stylesheet\" href=\"/assets/app.css\" />
   </head>
-  <body class=\"min-h-screen bg-slate-950 text-slate-100\">
-    <main class=\"mx-auto max-w-3xl px-6 py-12\">
-      <h1 class=\"text-3xl font-semibold tracking-tight\">Borg Onboarding</h1>
-      <p class=\"mt-2 text-slate-300\">Configure your first provider to start Borg.</p>
-      <div id=\"app\" class=\"mt-8\"></div>
+  <body class=\"onboard-body\">
+    <main class=\"onboard-main\">
+      <h1 class=\"onboard-title\">Borg Onboarding</h1>
+      <p class=\"onboard-subtitle\">Configure your first provider to start Borg.</p>
+      <div id=\"app\" class=\"onboard-app\"></div>
     </main>
     <script type=\"module\" src=\"/assets/app.js\"></script>
   </body>
@@ -148,12 +156,12 @@ function render() {
 
   if (state.step === 1) {
     app.innerHTML = `
-      <section class=\"rounded-xl border border-slate-800 bg-slate-900/70 p-6\">
-        <p class=\"text-xs uppercase tracking-wide text-slate-400\">Step 1 of 2</p>
-        <h2 class=\"mt-2 text-xl font-medium\">Choose LLM Provider</h2>
-        <button id=\"choose-openai\" class=\"mt-6 w-full rounded-lg border border-emerald-400/50 bg-emerald-500/10 px-4 py-3 text-left\">
-          <span class=\"block text-sm font-medium\">OpenAI (API key)</span>
-          <span class=\"block text-xs text-slate-300 mt-1\">Currently the only provider supported in onboarding.</span>
+      <section class=\"card\">
+        <p class=\"step\">Step 1 of 2</p>
+        <h2 class=\"card-title\">Choose LLM Provider</h2>
+        <button id=\"choose-openai\" class=\"btn-provider\">
+          <span class=\"btn-provider-title\">OpenAI (API key)</span>
+          <span class=\"btn-provider-note\">Currently the only provider supported in onboarding.</span>
         </button>
       </section>
     `;
@@ -166,17 +174,17 @@ function render() {
   }
 
   app.innerHTML = `
-    <section class=\"rounded-xl border border-slate-800 bg-slate-900/70 p-6\">
-      <p class=\"text-xs uppercase tracking-wide text-slate-400\">Step 2 of 2</p>
-      <h2 class=\"mt-2 text-xl font-medium\">Enter OpenAI API Key</h2>
-      <p class=\"mt-2 text-sm text-slate-300\">This will be stored in <code>~/.borg/config.db</code> under <code>providers</code>.</p>
-      <label class=\"mt-6 block text-sm\">API Key</label>
-      <input id=\"api-key\" type=\"password\" placeholder=\"sk-...\" class=\"mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 outline-none focus:border-emerald-400\" value=\"${state.apiKey}\" />
-      ${state.error ? `<p class=\"mt-3 text-sm text-red-400\">${state.error}</p>` : ''}
-      ${state.saved ? `<p class=\"mt-3 text-sm text-emerald-400\">Saved. You can now run <code>borg start</code>.</p>` : ''}
-      <div class=\"mt-6 flex gap-3\">
-        <button id=\"back\" class=\"rounded-lg border border-slate-700 px-4 py-2 text-sm\">Back</button>
-        <button id=\"save\" class=\"rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-black disabled:opacity-50\" ${state.loading ? 'disabled' : ''}>
+    <section class=\"card\">
+      <p class=\"step\">Step 2 of 2</p>
+      <h2 class=\"card-title\">Enter OpenAI API Key</h2>
+      <p class=\"card-note\">This will be stored in <code>~/.borg/config.db</code> under <code>providers</code>.</p>
+      <label class=\"field-label\">API Key</label>
+      <input id=\"api-key\" type=\"password\" placeholder=\"sk-...\" class=\"field-input\" value=\"${state.apiKey}\" />
+      ${state.error ? `<p class=\"notice-error\">${state.error}</p>` : ''}
+      ${state.saved ? `<p class=\"notice-success\">Saved. You can now run <code>borg start</code>.</p>` : ''}
+      <div class=\"actions\">
+        <button id=\"back\" class=\"btn-secondary\">Back</button>
+        <button id=\"save\" class=\"btn-primary\" ${state.loading ? 'disabled' : ''}>
           ${state.loading ? 'Saving...' : 'Save'}
         </button>
       </div>
@@ -231,4 +239,83 @@ function render() {
 }
 
 render();
+"#;
+
+const ONBOARD_APP_CSS: &str = r#"
+:root {
+  color-scheme: dark;
+  --bg: #020617;
+  --panel: #0f172a;
+  --panel-border: #1e293b;
+  --text: #f1f5f9;
+  --muted: #cbd5e1;
+  --muted-2: #94a3b8;
+  --accent: #10b981;
+  --danger: #f87171;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body.onboard-body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+.onboard-main { max-width: 768px; margin: 0 auto; padding: 48px 24px; }
+.onboard-title { margin: 0; font-size: 32px; font-weight: 650; letter-spacing: -0.02em; }
+.onboard-subtitle { margin: 10px 0 0; color: var(--muted); }
+.onboard-app { margin-top: 28px; }
+.card {
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.75);
+  padding: 24px;
+}
+.step { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-2); margin: 0; }
+.card-title { margin: 10px 0 0; font-size: 24px; font-weight: 550; }
+.card-note { margin: 10px 0 0; color: var(--muted); font-size: 14px; }
+.btn-provider {
+  margin-top: 18px;
+  width: 100%;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid rgba(16,185,129,.45);
+  background: rgba(16,185,129,.1);
+  color: var(--text);
+  padding: 12px 14px;
+}
+.btn-provider-title { display: block; font-size: 14px; font-weight: 600; }
+.btn-provider-note { display: block; margin-top: 5px; font-size: 12px; color: var(--muted); }
+.field-label { margin-top: 20px; display: block; font-size: 14px; }
+.field-input {
+  margin-top: 8px;
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #334155;
+  background: #020617;
+  color: var(--text);
+  padding: 10px 12px;
+}
+.actions { margin-top: 20px; display: flex; gap: 10px; }
+.btn-secondary, .btn-primary {
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-size: 14px;
+}
+.btn-secondary {
+  border: 1px solid #334155;
+  background: transparent;
+  color: var(--text);
+}
+.btn-primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #052e16;
+  font-weight: 650;
+}
+.btn-primary:disabled { opacity: .5; }
+.notice-error { margin: 12px 0 0; color: var(--danger); font-size: 14px; }
+.notice-success { margin: 12px 0 0; color: var(--accent); font-size: 14px; }
+code { color: #86efac; background: rgba(16,185,129,.08); padding: 2px 6px; border-radius: 6px; }
 "#;

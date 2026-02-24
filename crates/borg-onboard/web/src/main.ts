@@ -40,12 +40,12 @@ function render() {
 
   if (state.step === 1) {
     app.innerHTML = `
-      <section class="rounded-xl border border-slate-800 bg-slate-900/70 p-6">
-        <p class="text-xs uppercase tracking-wide text-slate-400">Step 1 of 2</p>
-        <h2 class="mt-2 text-xl font-medium">Choose LLM Provider</h2>
-        <button id="choose-openai" class="mt-6 w-full rounded-lg border border-emerald-400/50 bg-emerald-500/10 px-4 py-3 text-left">
-          <span class="block text-sm font-medium">OpenAI (API key)</span>
-          <span class="block text-xs text-slate-300 mt-1">Currently the only provider supported in onboarding.</span>
+      <section class="card">
+        <p class="step">Step 1 of 2</p>
+        <h2 class="card-title">Choose LLM Provider</h2>
+        <button id="choose-openai" class="btn-provider">
+          <span class="btn-provider-title">OpenAI (API key)</span>
+          <span class="btn-provider-note">Currently the only provider supported in onboarding.</span>
         </button>
       </section>
     `
@@ -58,17 +58,17 @@ function render() {
   }
 
   app.innerHTML = `
-    <section class="rounded-xl border border-slate-800 bg-slate-900/70 p-6">
-      <p class="text-xs uppercase tracking-wide text-slate-400">Step 2 of 2</p>
-      <h2 class="mt-2 text-xl font-medium">Enter OpenAI API Key</h2>
-      <p class="mt-2 text-sm text-slate-300">This will be stored in <code>~/.borg/config.db</code> under <code>providers</code>.</p>
-      <label class="mt-6 block text-sm">API Key</label>
-      <input id="api-key" type="password" placeholder="sk-..." class="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 outline-none focus:border-emerald-400" value="${state.apiKey}" />
-      ${state.error ? `<p class="mt-3 text-sm text-red-400">${state.error}</p>` : ''}
-      ${state.saved ? `<p class="mt-3 text-sm text-emerald-400">Saved. You can now run <code>borg start</code>.</p>` : ''}
-      <div class="mt-6 flex gap-3">
-        <button id="back" class="rounded-lg border border-slate-700 px-4 py-2 text-sm">Back</button>
-        <button id="save" class="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-black disabled:opacity-50" ${state.loading ? 'disabled' : ''}>
+    <section class="card">
+      <p class="step">Step 2 of 2</p>
+      <h2 class="card-title">Enter OpenAI API Key</h2>
+      <p class="card-note">This will be stored in <code>~/.borg/config.db</code> under <code>providers</code>.</p>
+      <label class="field-label">API Key</label>
+      <input id="api-key" type="password" placeholder="sk-..." class="field-input" value="${state.apiKey}" />
+      ${state.error ? `<p class="notice-error">${state.error}</p>` : ''}
+      ${state.saved ? `<p class="notice-success">Saved. You can now run <code>borg start</code>.</p>` : ''}
+      <div class="actions">
+        <button id="back" class="btn-secondary">Back</button>
+        <button id="save" class="btn-primary" ${state.loading ? 'disabled' : ''}>
           ${state.loading ? 'Saving...' : 'Save'}
         </button>
       </div>
