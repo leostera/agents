@@ -21,39 +21,75 @@ Runtime process (`borg start`) includes:
 ## 3. High-Level Architecture
 ```mermaid
 flowchart LR
-  E[External Event / User Input] --> P[Ports / HTTP Ingress]
-  P --> X[Executor + Scheduler]
-  X --> A[Agent Runtime]
-  A --> T[Tool Runner]
-  A --> M[Memory Service]
-  A --> X
-  X --> D[(config.db)]
-  M --> L[(ltm.db)]
-  C[Control Plane API/UI] --> P
-  C --> X
-  C --> M
+  subgraph Clients
+    U[Users]
+    W[Web UI / Dashboard]
+    S[External Systems]
+  end
+
+  subgraph APIPlane[Control/API Plane]
+    BAPI[borg-api (planned)]
+    ONB[Onboarding Web]
+  end
+
+  subgraph Runtime[borg-cli Runtime]
+    PORTS[Ports (agent entrypoints)]
+    EXEC[Executor + Scheduler]
+    AGENT[Agent Runtime]
+    TOOLS[Tool Runner]
+    RT[Runtime Sandbox]
+    LTM[Memory Service]
+  end
+
+  CFG[(config.db)]
+  MEM[(ltm.db)]
+
+  U --> W
+  W --> BAPI
+  U --> ONB
+  S --> PORTS
+  BAPI --> EXEC
+  BAPI --> LTM
+  BAPI --> CFG
+  ONB --> CFG
+  PORTS --> EXEC
+  EXEC --> AGENT
+  AGENT --> TOOLS
+  TOOLS --> RT
+  AGENT --> LTM
+  AGENT --> EXEC
+  EXEC --> CFG
+  LTM --> MEM
 ```
+
+Future split:
+- `borg-api` (planned crate) will expose the full system/control-plane API used by web UI/dashboard.
+- ports remain agent-facing ingress/egress entrypoints for agent conversations and event ingestion.
 
 ## 4. Core Runtime Loop
 ```mermaid
 sequenceDiagram
-  participant U as User/Event
-  participant H as HTTP/Port
-  participant E as Executor
-  participant G as Agent
-  participant R as Tool Runner
+  participant P as Port
+  participant X as Executor
+  participant A as Agent
+  participant T as Tool Runner
+  participant SB as Sandbox
   participant M as Memory
+  participant DB as config.db
 
-  U->>H: inbound event
-  H->>E: enqueue task
-  E->>E: claim runnable task
-  E->>G: run session turn
-  G->>M: search/read context
-  G->>R: tool call(s)
-  R-->>G: tool result(s)
-  G->>M: write/update facts/entities
-  G-->>E: completion / error / follow-up
-  E->>E: persist task/event transitions
+  P->>X: enqueue task(event payload)
+  X->>DB: persist task + task_created event
+  X->>X: claim runnable task
+  X->>A: start session turn(task + context)
+  A->>M: retrieve context(search/get)
+  A->>T: tool_call(name, args JSON)
+  T->>SB: execute/search capability
+  SB-->>T: raw execution result
+  T-->>A: tool_result(JSON or error)
+  A->>M: project facts/entities/relations
+  A-->>X: completed / idle / failed + follow-ups
+  X->>DB: update task status + append task events
+  X-->>P: optional egress message/event
 ```
 
 ## 5. Task Lifecycle
@@ -93,6 +129,27 @@ Onboarding endpoints:
 - `GET /onboard`
 - `POST /api/providers/openai`
 
+Architecture direction:
+- these routes will move behind/through `borg-api` as the dedicated API surface for control-plane + system introspection.
+- ports are not the control-plane API; ports are exclusively entrypoints to talk to agents.
+
+```mermaid
+flowchart LR
+  UI[Web UI / Dashboard] --> API[borg-api (planned)]
+  OP[Operators/Automation] --> API
+  API --> CP[Control Plane Endpoints]
+  API --> MS[Memory Query Endpoints]
+  API --> TS[Task/Event Endpoints]
+
+  EV[External Event Sources] --> PORT[Ports]
+  PORT --> AG[Agent Entry Pipeline]
+
+  note1[Ports are agent ingress/egress only]
+  note2[borg-api is system/control-plane surface]
+  PORT -.-> note1
+  API -.-> note2
+```
+
 ## 8. Onboarding Architecture
 Chat-first onboarding uses a message-driven UI model:
 - Borg prompts in feed
@@ -101,11 +158,14 @@ Chat-first onboarding uses a message-driven UI model:
 
 ```mermaid
 flowchart TD
-  A[Borg onboarding prompt] --> B[User composer action]
-  B --> C[User message persisted]
-  C --> D[POST /api/providers/openai]
-  D --> E[(config.db providers)]
-  E --> F[Borg success prompt]
+  USER[User] --> SPA[Onboarding SPA]
+  SPA --> CHAT[Chat Composer + Feed]
+  CHAT --> API[Onboarding Backend]
+  API --> PROVIDER[POST /api/providers/openai]
+  PROVIDER --> CFG[(config.db providers)]
+  CFG --> API
+  API --> CHAT
+  CHAT --> USER
 ```
 
 ## 9. Observability
