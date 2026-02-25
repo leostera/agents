@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use borg_agent::{AgentSession, AgentSessionArgs, AgentTools, Message};
+use borg_agent::{Agent, AgentTools, Message, Session, SessionResult};
 use borg_core::{Capability, Task, TaskKind};
 use borg_db::{BorgDb, NewTask};
 use borg_llm::providers::openai::OpenAiProvider;
@@ -165,17 +165,46 @@ impl ExecEngine {
             }),
         };
         let provider = OpenAiProvider::new(api_key);
-        let mut session = AgentSession::new(AgentSessionArgs::new(task.task_id.clone()));
-        session.add_message(Message::System {
-            content: "You are Borg's agent runtime. Use tools as needed, then respond clearly."
-                .to_string(),
-        });
+        let agent = Agent::new("borg-default").with_system_prompt(
+            "You are Borg's agent runtime. Use tools as needed, then respond clearly.",
+        );
+        let mut session = Session::new(task.task_id.clone(), agent);
         session.add_message(Message::User {
             content: msg.text.clone(),
         });
 
-        let output = session.run_with_provider(&provider, &tools).await?;
-        debug!(target: "borg_exec", task_id = task.task_id, tool_calls = output.tool_calls.len(), "llm session completed");
+        let output = match session.run(&provider, &tools).await {
+            SessionResult::Completed(Ok(output)) => output,
+            SessionResult::Completed(Err(err)) => {
+                return Err(anyhow::anyhow!("agent session completed with error: {}", err));
+            }
+            SessionResult::SessionError(err) => {
+                return Err(anyhow::anyhow!("agent session error: {}", err));
+            }
+            SessionResult::Awaiting(task_ids) => {
+                self.db
+                    .log_event(
+                        &task.task_id,
+                        "agent_awaiting",
+                        json!({ "task_ids": task_ids }),
+                    )
+                    .await?;
+                self.db
+                    .complete_task(&task.task_id, json!({ "message": "Agent awaiting dependencies" }))
+                    .await?;
+                return Ok(());
+            }
+            SessionResult::Idle => {
+                self.db
+                    .log_event(&task.task_id, "agent_idle", json!({}))
+                    .await?;
+                self.db
+                    .complete_task(&task.task_id, json!({ "message": "Agent idle" }))
+                    .await?;
+                return Ok(());
+            }
+        };
+        debug!(target: "borg_exec", task_id = task.task_id, tool_calls = output.tool_calls.len(), "agent session completed");
         trace!(target: "borg_exec", task_id = task.task_id, messages = ?session.read_messages(0, usize::MAX), "persistable session messages");
         self.db
             .log_event(
