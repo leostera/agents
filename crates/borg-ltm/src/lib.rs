@@ -1,52 +1,45 @@
-use std::{
-    collections::HashMap,
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use std::path::Path;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
 use borg_core::Entity;
-use chrono::{DateTime, Utc};
-use indradb::{
-    AllVertexQuery, Database, Edge, Identifier, QueryExt, RocksdbDatastore, SpecificVertexQuery,
-    Vertex, util,
-};
 use serde_json::Value;
-use tracing::{debug, info};
-use uuid::Uuid;
+use tracing::info;
 
-const ENTITY_ID_NAMESPACE: &str = "borg";
+mod entity_graph;
+mod fact_store;
+
+use entity_graph::IndraEntityGraph;
+use fact_store::TursoFactStore;
 
 #[derive(Clone)]
 pub struct MemoryStore {
-    db: Arc<Mutex<Database<RocksdbDatastore>>>,
+    fact_store: TursoFactStore,
+    entity_graph: IndraEntityGraph,
 }
 
 impl MemoryStore {
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        std::fs::create_dir_all(path)
-            .with_context(|| format!("failed creating ltm path {}", path.display()))?;
-        let db = RocksdbDatastore::new_db(path)
-            .with_context(|| format!("failed to open indradb rocksdb at {}", path.display()))?;
+        let root = path.as_ref().to_path_buf();
+        std::fs::create_dir_all(&root)?;
 
-        info!(target: "borg_ltm", path = %path.display(), "initialized indradb-backed memory store");
+        let fact_store = TursoFactStore::new(&root)?;
+        let entity_graph = IndraEntityGraph::new(&root)?;
+
+        info!(
+            target: "borg_ltm",
+            root = %root.display(),
+            "initialized memory store with fact_store=turso and entity_graph=indradb"
+        );
+
         Ok(Self {
-            db: Arc::new(Mutex::new(db)),
+            fact_store,
+            entity_graph,
         })
     }
 
     pub async fn migrate(&self) -> Result<()> {
-        info!(target: "borg_ltm", "running memory migrations (indradb indexes)");
-        let db = self.db.lock().map_err(|_| anyhow!("ltm lock poisoned"))?;
-
-        db.index_property(id("entity_id")?)?;
-        db.index_property(id("natural_key")?)?;
-        db.index_property(id("entity_type")?)?;
-        db.index_property(id("label")?)?;
-        db.index_property(id("search_text")?)?;
-
-        info!(target: "borg_ltm", "memory migrations completed");
+        self.fact_store.migrate().await?;
+        self.entity_graph.migrate().await?;
         Ok(())
     }
 
@@ -57,45 +50,9 @@ impl MemoryStore {
         props: &Value,
         natural_key: Option<&str>,
     ) -> Result<String> {
-        let now = Utc::now().to_rfc3339();
-        let db = self.db.lock().map_err(|_| anyhow!("ltm lock poisoned"))?;
-
-        let existing = if let Some(nk) = natural_key {
-            self.find_vertex_by_property(&db, "natural_key", &Value::String(nk.to_string()))?
-        } else {
-            None
-        };
-
-        let vertex_id = existing.unwrap_or_else(Uuid::new_v4);
-        let vertex = Vertex::with_id(vertex_id, id(&sanitize_identifier(entity_type))?);
-        let _ = db.create_vertex(&vertex)?;
-
-        let props_json = props.to_string();
-        let search_text = format!("{} {} {}", label, entity_type, props_json);
-
-        let entity_id = match self.get_string_prop(&db, vertex_id, "entity_id")? {
-            Some(existing_id) if is_valid_entity_id(&existing_id) => existing_id,
-            _ => new_entity_id(entity_type),
-        };
-
-        set_vertex_prop_string(&db, vertex_id, "entity_id", &entity_id)?;
-        set_vertex_prop_string(&db, vertex_id, "entity_type", entity_type)?;
-        set_vertex_prop_string(&db, vertex_id, "label", label)?;
-        set_vertex_prop_string(&db, vertex_id, "props_json", &props_json)?;
-        set_vertex_prop_string(&db, vertex_id, "updated_at", &now)?;
-        set_vertex_prop_string(&db, vertex_id, "search_text", &search_text)?;
-
-        let created = self
-            .get_string_prop(&db, vertex_id, "created_at")?
-            .unwrap_or_else(|| now.clone());
-        set_vertex_prop_string(&db, vertex_id, "created_at", &created)?;
-
-        if let Some(nk) = natural_key {
-            set_vertex_prop_string(&db, vertex_id, "natural_key", nk)?;
-        }
-
-        debug!(target: "borg_ltm", entity_id, label, entity_type, "entity upsert committed");
-        Ok(entity_id)
+        self.entity_graph
+            .upsert_entity(entity_type, label, props, natural_key)
+            .await
     }
 
     pub async fn link(
@@ -105,38 +62,13 @@ impl MemoryStore {
         to_entity_id: &str,
         props: &Value,
     ) -> Result<String> {
-        let db = self.db.lock().map_err(|_| anyhow!("ltm lock poisoned"))?;
-        let from = self
-            .find_vertex_by_property(&db, "entity_id", &Value::String(from_entity_id.to_string()))?
-            .ok_or_else(|| anyhow!("invalid from entity id"))?;
-        let to = self
-            .find_vertex_by_property(&db, "entity_id", &Value::String(to_entity_id.to_string()))?
-            .ok_or_else(|| anyhow!("invalid to entity id"))?;
-
-        let rel = sanitize_identifier(rel_type);
-        let edge = Edge::new(from, id(&rel)?, to);
-        let created = db.create_edge(&edge)?;
-
-        let rel_id = format!("{}:{}:{}", from, rel, to);
-        let now = Utc::now().to_rfc3339();
-        if created {
-            set_edge_prop_string(&db, &edge, "created_at", &now)?;
-            set_edge_prop_string(&db, &edge, "props_json", &props.to_string())?;
-        }
-
-        info!(target: "borg_ltm", rel_id, rel_type, from = from_entity_id, to = to_entity_id, "relation linked");
-        Ok(rel_id)
+        self.entity_graph
+            .link(from_entity_id, rel_type, to_entity_id, props)
+            .await
     }
 
     pub async fn get_entity(&self, entity_id: &str) -> Result<Option<Entity>> {
-        let db = self.db.lock().map_err(|_| anyhow!("ltm lock poisoned"))?;
-        let Some(vertex_id) =
-            self.find_vertex_by_property(&db, "entity_id", &Value::String(entity_id.to_string()))?
-        else {
-            return Ok(None);
-        };
-
-        self.fetch_entity_by_vertex_id(&db, vertex_id)
+        self.entity_graph.get_entity(entity_id).await
     }
 
     pub async fn search(
@@ -145,247 +77,6 @@ impl MemoryStore {
         entity_type: Option<&str>,
         limit: usize,
     ) -> Result<Vec<Entity>> {
-        let query = text.trim().to_lowercase();
-        let limit = limit.max(1);
-        debug!(target: "borg_ltm", query, ?entity_type, limit, "running memory search");
-
-        if query.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let db = self.db.lock().map_err(|_| anyhow!("ltm lock poisoned"))?;
-        let vertices = util::extract_vertices(db.get(AllVertexQuery)?).unwrap_or_default();
-
-        let mut out = Vec::new();
-        for vertex in vertices {
-            let Some(entity) = self.fetch_entity_by_vertex_id(&db, vertex.id)? else {
-                continue;
-            };
-
-            if let Some(expected_type) = entity_type {
-                if entity.entity_type != expected_type {
-                    continue;
-                }
-            }
-
-            let haystack = format!(
-                "{} {}",
-                entity.label.to_lowercase(),
-                entity.props.to_string().to_lowercase()
-            );
-            if haystack.contains(&query) {
-                out.push(entity);
-                if out.len() >= limit {
-                    break;
-                }
-            }
-        }
-
-        Ok(out)
-    }
-
-    fn fetch_entity_by_vertex_id(
-        &self,
-        db: &Database<RocksdbDatastore>,
-        vertex_id: Uuid,
-    ) -> Result<Option<Entity>> {
-        let vertex = util::extract_vertices(db.get(SpecificVertexQuery::single(vertex_id))?)
-            .and_then(|mut v| v.pop());
-
-        let Some(vertex) = vertex else {
-            return Ok(None);
-        };
-
-        let props = self.vertex_props_map(db, vertex.id)?;
-        let Some(entity_id) = props
-            .get("entity_id")
-            .and_then(|v| v.as_str())
-            .map(ToOwned::to_owned)
-        else {
-            return Ok(None);
-        };
-
-        let entity_type = props
-            .get("entity_type")
-            .and_then(|v| v.as_str())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| vertex.t.to_string());
-        let label = props
-            .get("label")
-            .and_then(|v| v.as_str())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| entity_type.clone());
-        let props_json = props
-            .get("props_json")
-            .and_then(|v| v.as_str())
-            .unwrap_or("{}");
-        let created_at = props
-            .get("created_at")
-            .and_then(|v| v.as_str())
-            .map(parse_ts)
-            .transpose()?
-            .unwrap_or_else(Utc::now);
-        let updated_at = props
-            .get("updated_at")
-            .and_then(|v| v.as_str())
-            .map(parse_ts)
-            .transpose()?
-            .unwrap_or_else(Utc::now);
-
-        Ok(Some(Entity {
-            entity_id,
-            entity_type,
-            label,
-            props: serde_json::from_str(props_json).unwrap_or(Value::Null),
-            created_at,
-            updated_at,
-        }))
-    }
-
-    fn get_string_prop(
-        &self,
-        db: &Database<RocksdbDatastore>,
-        vertex_id: Uuid,
-        key: &str,
-    ) -> Result<Option<String>> {
-        let props = self.vertex_props_map(db, vertex_id)?;
-        Ok(props
-            .get(key)
-            .and_then(|v| v.as_str())
-            .map(ToOwned::to_owned))
-    }
-
-    fn vertex_props_map(
-        &self,
-        db: &Database<RocksdbDatastore>,
-        vertex_id: Uuid,
-    ) -> Result<HashMap<String, Value>> {
-        let mut map = HashMap::new();
-        let q = SpecificVertexQuery::single(vertex_id).properties()?;
-        let out = db.get(q)?;
-        let props = util::extract_vertex_properties(out).unwrap_or_default();
-
-        for vertex_props in props {
-            for prop in vertex_props.props {
-                map.insert(prop.name.to_string(), (*prop.value).clone());
-            }
-        }
-        Ok(map)
-    }
-
-    fn find_vertex_by_property(
-        &self,
-        db: &Database<RocksdbDatastore>,
-        prop_name: &str,
-        expected_value: &Value,
-    ) -> Result<Option<Uuid>> {
-        let vertices = util::extract_vertices(db.get(AllVertexQuery)?).unwrap_or_default();
-        for v in vertices {
-            let props = self.vertex_props_map(db, v.id)?;
-            if props.get(prop_name) == Some(expected_value) {
-                return Ok(Some(v.id));
-            }
-        }
-        Ok(None)
-    }
-}
-
-fn id(value: &str) -> Result<Identifier> {
-    Identifier::new(value).map_err(|_| anyhow!("invalid indradb identifier: {}", value))
-}
-
-fn sanitize_identifier(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for ch in input.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
-            out.push(ch);
-        } else {
-            out.push('_');
-        }
-    }
-    let trimmed = out.trim_matches('_');
-    if trimmed.is_empty() {
-        "unknown".to_string()
-    } else {
-        trimmed.chars().take(255).collect()
-    }
-}
-
-fn new_entity_id(entity_type: &str) -> String {
-    let kind = sanitize_identifier(entity_type).to_lowercase();
-    format!("{}:{}:{}", ENTITY_ID_NAMESPACE, kind, Uuid::now_v7())
-}
-
-fn is_valid_entity_id(entity_id: &str) -> bool {
-    let mut parts = entity_id.split(':');
-    let Some(namespace) = parts.next() else {
-        return false;
-    };
-    let Some(kind) = parts.next() else {
-        return false;
-    };
-    let Some(id) = parts.next() else {
-        return false;
-    };
-    if parts.next().is_some() {
-        return false;
-    }
-    if namespace.is_empty() || kind.is_empty() {
-        return false;
-    }
-    let Ok(uuid) = Uuid::parse_str(id) else {
-        return false;
-    };
-    ((uuid.as_u128() >> 76) & 0xF) == 0x7
-}
-
-fn parse_ts(ts: &str) -> Result<DateTime<Utc>> {
-    Ok(DateTime::parse_from_rfc3339(ts)
-        .map_err(|_| anyhow!("invalid RFC3339 timestamp"))?
-        .with_timezone(&Utc))
-}
-
-fn set_vertex_prop_string(
-    db: &Database<RocksdbDatastore>,
-    vertex_id: Uuid,
-    key: &str,
-    value: &str,
-) -> Result<()> {
-    let json: indradb::Json = Value::String(value.to_string()).into();
-    db.set_properties(SpecificVertexQuery::single(vertex_id), id(key)?, &json)?;
-    Ok(())
-}
-
-fn set_edge_prop_string(
-    db: &Database<RocksdbDatastore>,
-    edge: &Edge,
-    key: &str,
-    value: &str,
-) -> Result<()> {
-    let json: indradb::Json = Value::String(value.to_string()).into();
-    db.set_properties(
-        indradb::SpecificEdgeQuery::single(edge.clone()),
-        id(key)?,
-        &json,
-    )?;
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{is_valid_entity_id, new_entity_id};
-    use uuid::Uuid;
-
-    #[test]
-    fn new_entity_id_uses_borg_uri_shape() {
-        let entity_id = new_entity_id("Movie");
-        assert!(entity_id.starts_with("borg:movie:"));
-        assert!(is_valid_entity_id(&entity_id));
-    }
-
-    #[test]
-    fn valid_entity_id_requires_uuid_v7() {
-        let legacy = format!("borg:movie:{}", Uuid::new_v4());
-        assert!(!is_valid_entity_id(&legacy));
+        self.entity_graph.search(text, entity_type, limit).await
     }
 }

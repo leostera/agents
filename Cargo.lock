@@ -591,6 +591,7 @@ dependencies = [
  "indradb-lib",
  "serde_json",
  "tracing",
+ "turso",
  "uuid",
 ]
 
