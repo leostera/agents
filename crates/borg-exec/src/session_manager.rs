@@ -2,6 +2,7 @@ use anyhow::Result;
 use borg_agent::{Agent, Message, Session, SessionEventPayload, ToolSpec};
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
+use borg_rt::default_tool_specs;
 
 use crate::types::UserMessage;
 
@@ -31,7 +32,9 @@ impl SessionManager {
                 .with_system_prompt(spec.system_prompt)
                 .with_tools(tools);
         } else {
-            agent = agent.with_model(self.model.clone());
+            agent = agent
+                .with_model(self.model.clone())
+                .with_tools(default_tool_specs());
         }
 
         Session::new(session_id, agent, self.db.clone()).await

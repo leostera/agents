@@ -124,10 +124,22 @@ fn to_openai_messages(messages: &[ProviderMessage]) -> Vec<Value> {
                 "role": "user",
                 "content": user_blocks_to_openai_content(content)
             }),
-            ProviderMessage::Assistant { content } => json!({
-                "role": "assistant",
-                "content": blocks_to_openai_content(content)
-            }),
+            ProviderMessage::Assistant { content } => {
+                let text_content = blocks_to_openai_content(content);
+                let tool_calls = blocks_to_openai_tool_calls(content);
+                if tool_calls.is_empty() {
+                    json!({
+                        "role": "assistant",
+                        "content": text_content
+                    })
+                } else {
+                    json!({
+                        "role": "assistant",
+                        "content": text_content,
+                        "tool_calls": tool_calls
+                    })
+                }
+            }
             ProviderMessage::ToolResult {
                 tool_call_id,
                 name,
@@ -138,6 +150,27 @@ fn to_openai_messages(messages: &[ProviderMessage]) -> Vec<Value> {
                 "name": name,
                 "content": blocks_to_openai_content(content)
             }),
+        })
+        .collect()
+}
+
+fn blocks_to_openai_tool_calls(blocks: &[ProviderBlock]) -> Vec<Value> {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ProviderBlock::ToolCall {
+                id,
+                name,
+                arguments_json,
+            } => Some(json!({
+                "id": id,
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": arguments_json.to_string()
+                }
+            })),
+            _ => None,
         })
         .collect()
 }
@@ -230,4 +263,41 @@ fn parse_openai_assistant_message(payload: &Value) -> Result<LlmAssistantMessage
         "parsed assistant message from provider response"
     );
     Ok(message)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::to_openai_messages;
+    use crate::{ProviderBlock, ProviderMessage};
+
+    #[test]
+    fn assistant_tool_call_serializes_to_tool_calls_field() {
+        let messages = vec![
+            ProviderMessage::Assistant {
+                content: vec![ProviderBlock::ToolCall {
+                    id: "call_123".to_string(),
+                    name: "search".to_string(),
+                    arguments_json: json!({"query":"users"}),
+                }],
+            },
+            ProviderMessage::ToolResult {
+                tool_call_id: "call_123".to_string(),
+                name: "search".to_string(),
+                content: vec![ProviderBlock::Text("ok".to_string())],
+            },
+        ];
+
+        let encoded = to_openai_messages(&messages);
+        assert_eq!(
+            encoded[0].get("role").and_then(|v| v.as_str()),
+            Some("assistant")
+        );
+        assert!(encoded[0].get("tool_calls").is_some());
+        assert_eq!(
+            encoded[1].get("role").and_then(|v| v.as_str()),
+            Some("tool")
+        );
+    }
 }

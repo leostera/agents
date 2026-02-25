@@ -72,6 +72,29 @@ fn execute_rejects_non_code_mode_shape() {
 #[test]
 fn search_returns_sdk_capabilities_from_types() {
     let rt = CodeModeRuntime::default();
-    let results = rt.search("fetch");
-    assert!(results.iter().any(|cap| cap.name == "Borg.fetch"));
+    let fetch_results = rt.search("fetch");
+    let fetch = fetch_results
+        .iter()
+        .find(|cap| cap.name == "Borg.fetch")
+        .expect("expected Borg.fetch capability");
+    assert_eq!(fetch.symbol, "fetch");
+    assert!(fetch.signature.contains("(url: string"));
+    assert!(fetch.signature.contains("BorgFetchResponse"));
+    assert!(fetch.type_definition.contains("type Fn ="));
+    assert!(
+        fetch
+            .type_definition
+            .contains("interface BorgFetchResponse")
+    );
+
+    let ls_results = rt.search("ls");
+    let ls = ls_results
+        .iter()
+        .find(|cap| cap.name == "Borg.OS.ls")
+        .expect("expected Borg.OS.ls capability");
+    assert_eq!(ls.symbol, "OS.ls");
+    assert!(ls.signature.contains("(path?: PathLike"));
+    assert!(ls.signature.contains("BorgLsResult"));
+    assert!(ls.type_definition.contains("interface BorgLsOptions"));
+    assert!(ls.type_definition.contains("interface BorgLsResult"));
 }

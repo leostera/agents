@@ -1,13 +1,22 @@
 use std::path::PathBuf;
 use std::sync::Once;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
+use borg_agent::{Agent, AgentTools, Message, Session, SessionResult, ToolResultData};
 use borg_core::{Event, TaskKind, TaskStatus, Uri, uri};
 use borg_db::{BorgDb, NewTask};
-use borg_rt::CodeModeRuntime;
+use borg_llm::{
+    LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
+};
+use borg_rt::{CodeModeRuntime, default_tool_specs};
 use serde_json::json;
+use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
+use crate::tool_runner::build_exec_toolchain;
 use crate::{BorgExecutor, UserMessage};
 
 const OPENAI_PROVIDER: &str = "openai";
@@ -324,4 +333,208 @@ async fn recover_running_task_is_requeued_and_processed() {
 
     handle.abort();
     let _ = handle.await;
+}
+
+#[derive(Clone)]
+struct ScriptedProvider {
+    requests: Arc<StdMutex<Vec<LlmRequest>>>,
+    responses_rx:
+        Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<Result<LlmAssistantMessage, String>>>>,
+}
+
+impl ScriptedProvider {
+    fn new(responses: Vec<Result<LlmAssistantMessage, String>>) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        for response in responses {
+            tx.send(response).expect("seed provider response queue");
+        }
+        Self {
+            requests: Arc::new(StdMutex::new(Vec::new())),
+            responses_rx: Arc::new(tokio::sync::Mutex::new(rx)),
+        }
+    }
+
+    fn requests(&self) -> Vec<LlmRequest> {
+        self.requests.lock().expect("requests lock").clone()
+    }
+}
+
+#[async_trait]
+impl Provider for ScriptedProvider {
+    async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        self.requests
+            .lock()
+            .expect("requests lock")
+            .push(req.clone());
+        self.responses_rx
+            .lock()
+            .await
+            .recv()
+            .await
+            .ok_or_else(|| anyhow!("scripted provider exhausted"))?
+            .map_err(|err| anyhow!(err))
+    }
+}
+
+fn assistant_text(text: &str) -> LlmAssistantMessage {
+    LlmAssistantMessage {
+        content: vec![ProviderBlock::Text(text.to_string())],
+        stop_reason: StopReason::EndOfTurn,
+        error_message: None,
+    }
+}
+
+fn assistant_tool_call(
+    tool_call_id: &str,
+    name: &str,
+    args: serde_json::Value,
+) -> LlmAssistantMessage {
+    LlmAssistantMessage {
+        content: vec![ProviderBlock::ToolCall {
+            id: tool_call_id.to_string(),
+            name: name.to_string(),
+            arguments_json: args,
+        }],
+        stop_reason: StopReason::ToolCall,
+        error_message: None,
+    }
+}
+
+#[tokio::test]
+async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
+    init_test_tracing();
+    let db = open_test_db().await;
+    let agent = Agent::new(uri!("borg", "agent", "exec-e2e"))
+        .with_system_prompt("Use tools when needed and provide a final concise answer.")
+        .with_tools(default_tool_specs());
+    let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+        .await
+        .unwrap();
+    session
+        .add_message(Message::User {
+            content: "List APIs, then run code to inspect working directory entries.".to_string(),
+        })
+        .await
+        .unwrap();
+
+    let provider = ScriptedProvider::new(vec![
+        Ok(assistant_tool_call(
+            "call_search_1",
+            "search",
+            json!({ "query": "ls fetch" }),
+        )),
+        Ok(assistant_tool_call(
+            "call_exec_1",
+            "execute",
+            json!({
+                "code": "async () => { const listing = Borg.OS.ls('.'); return { has_entries: listing.entries.length > 0, first_entry: listing.entries[0] ?? null }; }"
+            }),
+        )),
+        Ok(assistant_text(
+            "Completed runtime plan. BORG_EXEC_TOOLCHAIN_RT_OK",
+        )),
+    ]);
+
+    let toolchain = build_exec_toolchain(CodeModeRuntime::default()).unwrap();
+    let tools = AgentTools {
+        tool_runner: &toolchain,
+    };
+
+    let result = agent.run(&mut session, &provider, &tools).await;
+    let output = match result {
+        SessionResult::Completed(Ok(output)) => output,
+        other => panic!("unexpected session result: {:?}", other),
+    };
+    assert!(output.reply.contains("BORG_EXEC_TOOLCHAIN_RT_OK"));
+
+    let messages = session.read_messages(0, 256).await.unwrap();
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, Message::ToolCall { name, .. } if name == "search"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, Message::ToolCall { name, .. } if name == "execute"))
+    );
+    assert!(messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::ToolResult {
+                content: ToolResultData::Text(text),
+                ..
+            } if text.contains("declare global") && text.contains("interface BorgSdk")
+        )
+    }));
+    assert!(messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::ToolResult {
+                content: ToolResultData::Execution { result, .. },
+                ..
+            } if result.get("has_entries").is_some()
+        )
+    }));
+
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 3);
+    assert!(requests[1].messages.iter().any(|message| {
+        matches!(
+            message,
+            ProviderMessage::ToolResult { name, .. } if name == "search"
+        )
+    }));
+    assert!(requests[2].messages.iter().any(|message| {
+        matches!(
+            message,
+            ProviderMessage::ToolResult { name, .. } if name == "execute"
+        )
+    }));
+}
+
+#[tokio::test]
+async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_recovers() {
+    init_test_tracing();
+    let db = open_test_db().await;
+    let agent = Agent::new(uri!("borg", "agent", "exec-e2e-invalid"))
+        .with_system_prompt("Call execute and then summarize the outcome.")
+        .with_tools(default_tool_specs());
+    let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+        .await
+        .unwrap();
+    session
+        .add_message(Message::User {
+            content: "Run execute with code.".to_string(),
+        })
+        .await
+        .unwrap();
+
+    let provider = ScriptedProvider::new(vec![
+        Ok(assistant_tool_call(
+            "call_exec_bad",
+            "execute",
+            json!({ "code": "Borg.OS.ls('.')" }),
+        )),
+        Ok(assistant_text("Saw tool failure and handled it.")),
+    ]);
+
+    let toolchain = build_exec_toolchain(CodeModeRuntime::default()).unwrap();
+    let tools = AgentTools {
+        tool_runner: &toolchain,
+    };
+
+    let result = agent.run(&mut session, &provider, &tools).await;
+    assert!(matches!(result, SessionResult::Completed(Ok(_))));
+
+    let messages = session.read_messages(0, 256).await.unwrap();
+    assert!(messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::ToolResult {
+                content: ToolResultData::Error { message },
+                ..
+            } if message.contains("async () =>")
+        )
+    }));
 }

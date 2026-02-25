@@ -8,7 +8,7 @@ use tracing::info;
 
 use crate::{
     AgentTools, Session, SessionOutput, SessionResult, ToolCallRecord, ToolResultData, ToolSpec,
-    call_tool, default_tool_specs, to_provider_messages, to_provider_tool_specs,
+    call_tool, to_provider_messages, to_provider_tool_specs,
 };
 
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -33,7 +33,7 @@ impl Agent {
             model: DEFAULT_MODEL.to_string(),
             system_prompt: String::new(),
             max_turns: DEFAULT_MAX_TURNS,
-            tools: default_tool_specs(),
+            tools: Vec::new(),
         }
     }
 
@@ -116,21 +116,37 @@ impl Agent {
 
                 for message in pending.drain(..) {
                     if let Err(err) = session.add_message(message).await {
-                        return finish_session(session, SessionResult::SessionError(err.to_string()))
-                            .await;
+                        return finish_session(
+                            session,
+                            SessionResult::SessionError(err.to_string()),
+                        )
+                        .await;
                     }
                 }
 
                 let context = match session.build_context().await {
                     Ok(context) => context,
                     Err(err) => {
-                        return finish_session(session, SessionResult::SessionError(err.to_string()))
-                            .await;
+                        return finish_session(
+                            session,
+                            SessionResult::SessionError(err.to_string()),
+                        )
+                        .await;
+                    }
+                };
+                let provider_messages = match to_provider_messages(&context.messages) {
+                    Ok(messages) => messages,
+                    Err(err) => {
+                        return finish_session(
+                            session,
+                            SessionResult::SessionError(err.to_string()),
+                        )
+                        .await;
                     }
                 };
                 let req = LlmRequest {
                     model: self.model.clone(),
-                    messages: to_provider_messages(&context.messages),
+                    messages: provider_messages,
                     tools: to_provider_tool_specs(&context.tools),
                     temperature: None,
                     max_tokens: None,
@@ -139,8 +155,11 @@ impl Agent {
                 let assistant_message = match provider.chat(&req).await {
                     Ok(message) => message,
                     Err(err) => {
-                        return finish_session(session, SessionResult::SessionError(err.to_string()))
-                            .await;
+                        return finish_session(
+                            session,
+                            SessionResult::SessionError(err.to_string()),
+                        )
+                        .await;
                     }
                 };
                 info!(target: "borg_agent", session_id = %session.session_id, "turn_end");
@@ -192,8 +211,11 @@ impl Agent {
                         })
                         .await
                     {
-                        return finish_session(session, SessionResult::SessionError(err.to_string()))
-                            .await;
+                        return finish_session(
+                            session,
+                            SessionResult::SessionError(err.to_string()),
+                        )
+                        .await;
                     }
                     has_tool_calls = false;
                     pending = session.pop_steering_messages();
@@ -210,8 +232,11 @@ impl Agent {
                         })
                         .await
                     {
-                        return finish_session(session, SessionResult::SessionError(err.to_string()))
-                            .await;
+                        return finish_session(
+                            session,
+                            SessionResult::SessionError(err.to_string()),
+                        )
+                        .await;
                     }
 
                     info!(target: "borg_agent", session_id = %session.session_id, tool_name, "tool_execution_start");
@@ -232,8 +257,11 @@ impl Agent {
                         })
                         .await
                     {
-                        return finish_session(session, SessionResult::SessionError(err.to_string()))
-                            .await;
+                        return finish_session(
+                            session,
+                            SessionResult::SessionError(err.to_string()),
+                        )
+                        .await;
                     }
 
                     records.push(ToolCallRecord {

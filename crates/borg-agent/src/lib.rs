@@ -14,7 +14,7 @@ pub use message::{
 pub use session::Session;
 pub use tools::{
     AgentTools, CapabilitySummary, Tool, ToolRequest, ToolResponse, ToolResultData, ToolRunner,
-    ToolSpec, Toolchain, ToolchainBuilder, call_tool, default_tool_specs, to_provider_tool_specs,
+    ToolSpec, Toolchain, ToolchainBuilder, call_tool, to_provider_tool_specs,
 };
 
 #[cfg(test)]

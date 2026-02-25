@@ -51,6 +51,11 @@ enum Command {
         #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
         poll_ms: u64,
     },
+    Session {
+        session_id: String,
+        #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
+        poll_ms: u64,
+    },
     Config {
         #[command(subcommand)]
         cmd: ConfigCommand,
@@ -305,6 +310,36 @@ impl BorgCliApp {
         }
     }
 
+    async fn session(&self, session_id: String, poll_ms: u64) -> Result<()> {
+        let session_id = Uri::parse(&session_id).map_err(|_| {
+            anyhow::anyhow!(
+                "invalid session id `{}` (expected URI like borg:session:<id>)",
+                session_id
+            )
+        })?;
+        let db = self.open_config_db().await?;
+
+        let mut next_index: usize = 0;
+        loop {
+            tokio::select! {
+                ctrl = tokio::signal::ctrl_c() => {
+                    ctrl?;
+                    info!(target: "borg_cli", session_id = %session_id, "session stream interrupted by ctrl-c");
+                    return Ok(());
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_millis(poll_ms)) => {
+                    let messages = db
+                        .list_session_messages(&session_id, next_index, 512)
+                        .await?;
+                    for message in messages {
+                        println!("{}", serde_json::to_string(&message)?);
+                        next_index += 1;
+                    }
+                }
+            }
+        }
+    }
+
     fn open_browser(&self, url: &str) {
         let mut commands: Vec<ProcessCommand> = Vec::new();
 
@@ -391,6 +426,10 @@ async fn main() -> Result<()> {
             api,
             poll_ms,
         } => app.events(api, task_id, poll_ms, false).await,
+        Command::Session {
+            session_id,
+            poll_ms,
+        } => app.session(session_id, poll_ms).await,
         Command::Config { cmd } => match cmd {
             ConfigCommand::Set { key, value } => app.config_set(key, value).await,
         },

@@ -6,8 +6,10 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_llm::ToolDescriptor;
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolRequest {
@@ -32,8 +34,34 @@ pub struct CapabilitySummary {
 pub enum ToolResultData {
     Text(String),
     Capabilities(Vec<CapabilitySummary>),
-    Execution { result: Value, duration_ms: u128 },
-    Error { message: String },
+    Execution {
+        result: Value,
+        #[serde(
+            alias = "duration_ms",
+            deserialize_with = "deserialize_duration_compat"
+        )]
+        duration: Duration,
+    },
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum DurationCompat {
+    Structured { secs: u64, nanos: u32 },
+    Millis(u64),
+}
+
+fn deserialize_duration_compat<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match DurationCompat::deserialize(deserializer)? {
+        DurationCompat::Structured { secs, nanos } => Ok(Duration::new(secs, nanos)),
+        DurationCompat::Millis(ms) => Ok(Duration::from_millis(ms)),
+    }
 }
 
 #[async_trait]
@@ -60,41 +88,6 @@ impl From<&ToolSpec> for ToolDescriptor {
             input_schema: value.parameters.clone(),
         }
     }
-}
-
-pub fn default_tool_specs() -> Vec<ToolSpec> {
-    vec![
-        ToolSpec {
-            name: "search".to_string(),
-            description: "Search the SDK API catalog defined in borg.d.ts. Input must be {\"query\": string}. Returns a list of APIs with exact names and signatures.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Free-text query used to fuzzy-match API names/signatures from borg.d.ts."
-                    }
-                },
-                "required": ["query"],
-                "additionalProperties": false
-            }),
-        },
-        ToolSpec {
-            name: "execute".to_string(),
-            description: "Execute JavaScript in Code Mode runtime. Input must be {\"code\": string} where code is exactly an async zero-arg arrow function, for example: async () => { const x = await Borg.fetch(...); return x; }. Returns JSON from the function return value.".to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "code": {
-                        "type": "string",
-                        "description": "JavaScript function source in the shape async () => { ... return <json-serializable>; }"
-                    }
-                },
-                "required": ["code"],
-                "additionalProperties": false
-            }),
-        },
-    ]
 }
 
 pub fn to_provider_tool_specs(tool_specs: &[ToolSpec]) -> Vec<ToolDescriptor> {

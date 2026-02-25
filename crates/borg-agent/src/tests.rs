@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use super::{
     Agent, AgentTools, Message, Session, SessionResult, Tool, ToolRequest, ToolResponse,
-    ToolResultData, ToolRunner, ToolSpec, Toolchain, call_tool,
+    ToolResultData, ToolRunner, ToolSpec, Toolchain, call_tool, to_provider_messages,
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -513,4 +513,56 @@ async fn toolchain_validates_output_shape_when_configured() {
     .await
     .unwrap_err();
     assert!(err.to_string().contains("missing required property `Text`"));
+}
+
+#[test]
+fn llm_adapter_rejects_orphan_tool_results() {
+    let messages = vec![
+        Message::System {
+            content: "system".to_string(),
+        },
+        Message::ToolResult {
+            tool_call_id: "call_orphan".to_string(),
+            name: "execute".to_string(),
+            content: ToolResultData::Text("orphan".to_string()),
+        },
+        Message::ToolCall {
+            tool_call_id: "call_ok".to_string(),
+            name: "search".to_string(),
+            arguments: json!({"query":"x"}),
+        },
+        Message::ToolResult {
+            tool_call_id: "call_ok".to_string(),
+            name: "search".to_string(),
+            content: ToolResultData::Text("ok".to_string()),
+        },
+    ];
+
+    let err = to_provider_messages(&messages).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid tool message ordering")
+            || err.to_string().contains("orphan tool result detected")
+    );
+}
+
+#[test]
+fn llm_adapter_rejects_non_adjacent_tool_result() {
+    let messages = vec![
+        Message::ToolCall {
+            tool_call_id: "call_1".to_string(),
+            name: "search".to_string(),
+            arguments: json!({"query":"x"}),
+        },
+        Message::Assistant {
+            content: "interleaving assistant text".to_string(),
+        },
+        Message::ToolResult {
+            tool_call_id: "call_1".to_string(),
+            name: "search".to_string(),
+            content: ToolResultData::Text("ok".to_string()),
+        },
+    ];
+
+    let err = to_provider_messages(&messages).unwrap_err();
+    assert!(err.to_string().contains("invalid tool message ordering"));
 }

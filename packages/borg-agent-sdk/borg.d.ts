@@ -3,10 +3,40 @@ declare global {
 
   const ffi: FfiCall;
 
+  type PathLike = string;
+
+  type BorgDirEntryKind = "file" | "directory" | "symlink" | "other";
+
+  interface BorgDirEntry {
+    path: string;
+    name: string;
+    kind: BorgDirEntryKind;
+  }
+
+  interface BorgLsOptions {
+    absolute?: boolean;
+    recursive?: boolean;
+    maxDepth?: number;
+    includeHidden?: boolean;
+    withFileTypes?: boolean;
+  }
+
+  interface BorgLsResult {
+    cwd: string;
+    basePath: string;
+    entries: string[];
+    detailedEntries: BorgDirEntry[];
+  }
+
   interface BorgOS {
-    ls(...args: string[]): {
-      entries: string[];
-    };
+    ls(path?: PathLike, options?: BorgLsOptions): BorgLsResult;
+  }
+
+  interface BorgFetchInit {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string | Record<string, unknown> | unknown[] | null;
+    timeoutMs?: number;
   }
 
   interface BorgFetchResponse {
@@ -21,7 +51,7 @@ declare global {
 
   interface BorgSdk {
     OS: BorgOS;
-    fetch: (url: string, init?: Record<string, unknown>) => BorgFetchResponse;
+    fetch: (url: string, init?: BorgFetchInit) => BorgFetchResponse;
   }
 
   const Borg: BorgSdk;

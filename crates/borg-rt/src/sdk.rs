@@ -9,7 +9,9 @@ const ROOT_SDK_INTERFACE: &str = "BorgSdk";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiCapability {
     pub name: String,
+    pub symbol: String,
     pub signature: String,
+    pub type_definition: String,
     pub description: String,
 }
 
@@ -20,6 +22,10 @@ struct InterfaceMember {
 }
 
 static CAPABILITIES: OnceLock<Vec<ApiCapability>> = OnceLock::new();
+
+pub fn sdk_types() -> &'static str {
+    SDK_TYPES
+}
 
 pub fn search_capabilities(query: &str) -> Vec<ApiCapability> {
     let catalog = CAPABILITIES.get_or_init(parse_capabilities);
@@ -54,6 +60,7 @@ fn parse_capabilities() -> Vec<ApiCapability> {
         );
         return vec![];
     }
+    let declarations = parse_declarations(SDK_TYPES);
 
     let mut collected = Vec::new();
     let mut visited = HashSet::new();
@@ -61,6 +68,7 @@ fn parse_capabilities() -> Vec<ApiCapability> {
         "Borg",
         ROOT_SDK_INTERFACE,
         &interfaces,
+        &declarations,
         &mut visited,
         &mut collected,
     );
@@ -77,6 +85,7 @@ fn collect_capabilities(
     prefix: &str,
     interface_name: &str,
     interfaces: &HashMap<String, Vec<InterfaceMember>>,
+    declarations: &HashMap<String, String>,
     visited: &mut HashSet<String>,
     out: &mut Vec<ApiCapability>,
 ) {
@@ -92,10 +101,19 @@ fn collect_capabilities(
     for member in members {
         let member_name = member.name.trim_end_matches('?');
         if is_function_signature(&member.signature) {
+            let symbol = format!("{}.{}", prefix, member_name)
+                .trim_start_matches("Borg.")
+                .to_string();
+            let type_definition = build_type_definition(&member.signature, declarations);
             out.push(ApiCapability {
                 name: format!("{}.{}", prefix, member_name),
+                symbol,
                 signature: member.signature.clone(),
-                description: format!("SDK API exposed by {}.{}", interface_name, member_name),
+                type_definition,
+                description: format!(
+                    "SDK function {}.{} in borg.d.ts",
+                    interface_name, member_name
+                ),
             });
             continue;
         }
@@ -105,11 +123,54 @@ fn collect_capabilities(
                 &format!("{}.{}", prefix, member_name),
                 &nested_interface,
                 interfaces,
+                declarations,
                 visited,
                 out,
             );
         }
     }
+}
+
+fn parse_declarations(source: &str) -> HashMap<String, String> {
+    let mut declarations = HashMap::new();
+
+    for (name, members) in parse_interfaces(source) {
+        let mut body = String::new();
+        for member in members {
+            body.push_str("  ");
+            body.push_str(member.name.as_str());
+            body.push_str(": ");
+            body.push_str(member.signature.as_str());
+            if !member.signature.trim_end().ends_with(';') {
+                body.push(';');
+            }
+            body.push('\n');
+        }
+        declarations.insert(name.clone(), format!("interface {} {{\n{}}}", name, body));
+    }
+
+    let mut offset = 0;
+    while let Some(relative_pos) = source[offset..].find("type ") {
+        let start = offset + relative_pos;
+        let rest = &source[start + "type ".len()..];
+        let Some(eq_pos) = rest.find('=') else {
+            break;
+        };
+        let name = rest[..eq_pos].trim();
+        if name.is_empty() {
+            break;
+        }
+
+        let after_eq = &rest[eq_pos + 1..];
+        let Some(end_rel) = find_statement_end(after_eq) else {
+            break;
+        };
+        let rhs = after_eq[..end_rel].trim();
+        declarations.insert(name.to_string(), format!("type {} = {};", name, rhs));
+        offset = start + "type ".len() + eq_pos + 1 + end_rel + 1;
+    }
+
+    declarations
 }
 
 fn parse_interfaces(source: &str) -> HashMap<String, Vec<InterfaceMember>> {
@@ -180,15 +241,26 @@ fn parse_member_statement(statement: &str) -> Option<InterfaceMember> {
         return None;
     }
 
-    if let Some(colon_pos) = normalized.find(':') {
-        let name = normalized[..colon_pos].trim().to_string();
-        let signature = normalized[colon_pos + 1..].trim().replace('\n', " ");
-        return Some(InterfaceMember { name, signature });
+    let paren_pos = normalized.find('(');
+    let colon_pos = normalized.find(':');
+
+    // Method declarations, e.g. `ls(path?: string): Result`.
+    if let Some(paren_pos) = paren_pos {
+        let is_method = match colon_pos {
+            Some(colon_pos) => paren_pos < colon_pos,
+            None => true,
+        };
+        if is_method {
+            let name = normalized[..paren_pos].trim().to_string();
+            let signature = normalized[paren_pos..].trim().replace('\n', " ");
+            return Some(InterfaceMember { name, signature });
+        }
     }
 
-    if let Some(paren_pos) = normalized.find('(') {
-        let name = normalized[..paren_pos].trim().to_string();
-        let signature = normalized[paren_pos..].trim().replace('\n', " ");
+    // Property declarations, e.g. `fetch: (url: string) => Result`.
+    if let Some(colon_pos) = colon_pos {
+        let name = normalized[..colon_pos].trim().to_string();
+        let signature = normalized[colon_pos + 1..].trim().replace('\n', " ");
         return Some(InterfaceMember { name, signature });
     }
 
@@ -231,4 +303,109 @@ fn extract_interface_name(signature: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+fn build_type_definition(signature: &str, declarations: &HashMap<String, String>) -> String {
+    let mut required = HashSet::new();
+    collect_required_declarations(signature, declarations, &mut required);
+    let mut names = required.into_iter().collect::<Vec<_>>();
+    names.sort();
+
+    let mut parts = vec![format!("type Fn = {};", signature.trim())];
+    for name in names {
+        if let Some(decl) = declarations.get(&name) {
+            parts.push(decl.clone());
+        }
+    }
+    parts.join("\n\n")
+}
+
+fn collect_required_declarations(
+    text: &str,
+    declarations: &HashMap<String, String>,
+    required: &mut HashSet<String>,
+) {
+    for ident in extract_type_identifiers(text) {
+        if !declarations.contains_key(&ident) {
+            continue;
+        }
+        if required.insert(ident.clone())
+            && let Some(decl) = declarations.get(&ident)
+        {
+            collect_required_declarations(decl, declarations, required);
+        }
+    }
+}
+
+fn extract_type_identifiers(text: &str) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let mut token = String::new();
+
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            token.push(ch);
+            continue;
+        }
+        push_identifier(&mut out, &token);
+        token.clear();
+    }
+    push_identifier(&mut out, &token);
+    out
+}
+
+fn push_identifier(set: &mut HashSet<String>, token: &str) {
+    if token.is_empty() {
+        return;
+    }
+    if token.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        return;
+    }
+    if is_ignored_identifier(token) {
+        return;
+    }
+    set.insert(token.to_string());
+}
+
+fn is_ignored_identifier(token: &str) -> bool {
+    matches!(
+        token,
+        "type"
+            | "interface"
+            | "extends"
+            | "string"
+            | "number"
+            | "boolean"
+            | "unknown"
+            | "null"
+            | "undefined"
+            | "Record"
+            | "Array"
+            | "ReadonlyArray"
+            | "Promise"
+            | "const"
+            | "let"
+            | "var"
+            | "return"
+            | "true"
+            | "false"
+    )
+}
+
+fn find_statement_end(source: &str) -> Option<usize> {
+    let mut brace_depth = 0_usize;
+    let mut paren_depth = 0_usize;
+    let mut bracket_depth = 0_usize;
+    for (idx, ch) in source.char_indices() {
+        match ch {
+            '{' => brace_depth += 1,
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            ';' if brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 => return Some(idx),
+            _ => {}
+        }
+    }
+    None
 }
