@@ -21,18 +21,18 @@ Runtime process (`borg start`) includes:
 ## 3. High-Level Architecture
 ```mermaid
 flowchart LR
-  subgraph Clients
+  subgraph Clients["Clients"]
     U[Users]
     W[Web UI / Dashboard]
     S[External Systems]
   end
 
-  subgraph APIPlane[Control/API Plane]
-    BAPI[borg-api (planned)]
+  subgraph APIPlane["Control API Plane"]
+    BAPI[borg_api planned]
     ONB[Onboarding Web]
   end
 
-  subgraph Runtime[borg-cli Runtime]
+  subgraph Runtime["borg-cli Runtime"]
     PORTS[Ports (agent entrypoints)]
     EXEC[Executor + Scheduler]
     AGENT[Agent Runtime]
@@ -135,17 +135,17 @@ Architecture direction:
 
 ```mermaid
 flowchart LR
-  UI[Web UI / Dashboard] --> API[borg-api (planned)]
-  OP[Operators/Automation] --> API
+  UI[Web UI Dashboard] --> API[borg_api planned]
+  OP[Operators Automation] --> API
   API --> CP[Control Plane Endpoints]
   API --> MS[Memory Query Endpoints]
-  API --> TS[Task/Event Endpoints]
+  API --> TS[Task Event Endpoints]
 
   EV[External Event Sources] --> PORT[Ports]
   PORT --> AG[Agent Entry Pipeline]
 
-  note1[Ports are agent ingress/egress only]
-  note2[borg-api is system/control-plane surface]
+  note1[Ports are agent ingress egress only]
+  note2[borg_api is system control plane surface]
   PORT -.-> note1
   API -.-> note2
 ```
