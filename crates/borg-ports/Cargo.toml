@@ -5,12 +5,8 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
-axum.workspace = true
-borg-db = { path = "../borg-db" }
+async-trait.workspace = true
 borg-exec = { path = "../borg-exec" }
-borg-ltm = { path = "../borg-ltm" }
-borg-ui = { path = "../borg-ui" }
-serde.workspace = true
+axum.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-tokio.workspace = true
-tracing.workspace = true

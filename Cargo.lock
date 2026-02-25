@@ -645,15 +645,11 @@ name = "borg-ports"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum 0.7.9",
- "borg-db",
  "borg-exec",
- "borg-ltm",
- "borg-ui",
  "serde",
  "serde_json",
- "tokio",
- "tracing",
 ]
 
 [[package]]

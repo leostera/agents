@@ -11,7 +11,7 @@ use axum::{
 use borg_db::BorgDb;
 use borg_exec::{ExecEngine, InboxMessage};
 use borg_ltm::MemoryStore;
-use borg_ports::{BORG_SESSION_ID_HEADER, HttpPort};
+use borg_ports::{BORG_SESSION_ID_HEADER, HttpPort, Port, PortMessage, init_http_port};
 use borg_ui::render_dashboard;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -38,7 +38,7 @@ impl BorgApiServer {
             bind,
             state: AppState {
                 db,
-                http_port: HttpPort::new(exec),
+                http_port: init_http_port(exec).expect("failed to initialize http port"),
                 memory,
             },
         }
@@ -122,15 +122,30 @@ async fn ports_http(
     Json(payload): Json<InboxMessage>,
 ) -> impl IntoResponse {
     info!(target: "borg_api", user_key = payload.user_key, text = payload.text, "received HTTP port event");
-    match state.http_port.inbox(&headers, payload).await {
-        Ok((port_response, session_header)) => {
-            let mut response = (StatusCode::OK, Json(json!(port_response))).into_response();
-            if let Some(value) = session_header {
-                response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
+    let inbound = PortMessage::from_http(&headers, payload);
+    let mut messages = state.http_port.handle_messages(vec![inbound]).await;
+    match messages.pop() {
+        Some(message) if message.error.is_none() => {
+            let mut response = (
+                StatusCode::OK,
+                Json(json!({
+                    "task_id": message.task_id,
+                    "session_id": message.session_id
+                })),
+            )
+            .into_response();
+            if let Some(session_id) = message.session_id {
+                if let Ok(value) = session_id.parse() {
+                    response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
+                }
             }
             response
         }
-        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        Some(message) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            message.error.unwrap_or_else(|| "port adapter failed".to_string()),
+        ),
+        None => api_error(StatusCode::INTERNAL_SERVER_ERROR, "empty port response".to_string()),
     }
 }
 
