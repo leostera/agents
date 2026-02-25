@@ -20,10 +20,7 @@ pub(crate) fn row_to_task(row: &Row) -> Result<Task> {
 
     Ok(Task {
         task_id: Uri::parse(&task_id_raw)?,
-        parent_task_id: parent_task_id_raw
-            .as_deref()
-            .map(Uri::parse)
-            .transpose()?,
+        parent_task_id: parent_task_id_raw.as_deref().map(Uri::parse).transpose()?,
         status,
         kind,
         payload: serde_json::from_str(&row.get::<String>(4)?).unwrap_or(Value::Null),

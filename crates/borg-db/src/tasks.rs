@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use serde_json::Value;
 use tracing::{debug, info};
-use uuid::Uuid;
 
 use borg_core::{Event, Task, TaskEvent, Uri, uri};
 
@@ -11,7 +10,7 @@ use crate::{BorgDb, NewTask};
 
 impl BorgDb {
     pub async fn enqueue_task(&self, task: NewTask) -> Result<Uri> {
-        let task_id = uri!("borg", "task", &Uuid::now_v7().to_string());
+        let task_id = uri!("borg", "task");
         let payload_json = task.payload.to_string();
         let parent_task_id = task.parent_task_id;
         let kind = task.kind.as_str().to_string();
@@ -296,7 +295,7 @@ impl BorgDb {
     }
 
     pub async fn log_event(&self, event: Event) -> Result<()> {
-        let event_id = uri!("borg", "event", &Uuid::now_v7().to_string());
+        let event_id = uri!("borg", "event");
         let task_id = event.task_id().to_string();
         let event_type = event.event_type().to_string();
         let payload = serde_json::to_string(&event)?;

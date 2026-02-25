@@ -1,7 +1,7 @@
 pub mod http;
-pub mod telegram;
 mod message;
 mod port;
+pub mod telegram;
 
 pub use http::{BORG_SESSION_ID_HEADER, HttpPort, init_http_port};
 pub use message::PortMessage;

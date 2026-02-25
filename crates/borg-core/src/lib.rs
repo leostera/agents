@@ -14,7 +14,7 @@ pub use uri::Uri;
 #[macro_export]
 macro_rules! uri {
     ($ns:expr, $kind:expr) => {
-        $crate::Uri::from_parts($ns, $kind, None).unwrap()
+        $crate::Uri::from_parts($ns, $kind, Some(&::uuid::Uuid::now_v7().to_string())).unwrap()
     };
     ($ns:expr, $kind:expr, $id:expr) => {
         $crate::Uri::from_parts($ns, $kind, Some($id)).unwrap()

@@ -430,13 +430,9 @@ After receiving the tool result, return a concise assistant answer.",
             ),
             single_tool_specs(),
         );
-        let mut session = Session::new(
-            uri!("borg", "session"),
-            agent.clone(),
-            db,
-        )
-        .await
-        .unwrap();
+        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+            .await
+            .unwrap();
         session
             .add_message(Message::User {
                 content: "Find a battery recommendation and explain briefly.".to_string(),
@@ -532,13 +528,9 @@ Then provide one final answer that references the three result labels.",
             ),
             multi_chain_tool_specs(),
         );
-        let mut session = Session::new(
-            uri!("borg", "session"),
-            agent.clone(),
-            db,
-        )
-        .await
-        .unwrap();
+        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+            .await
+            .unwrap();
         session
             .add_message(Message::User {
                 content: "Customer c-22 cannot start the app. Diagnose and suggest steps."
@@ -647,13 +639,9 @@ After the second result, answer briefly with the fetched record."
                 .to_string(),
             dependent_chain_tool_specs(),
         );
-        let mut session = Session::new(
-            uri!("borg", "session"),
-            agent.clone(),
-            db,
-        )
-        .await
-        .unwrap();
+        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+            .await
+            .unwrap();
         session
             .add_message(Message::User {
                 content: "Fetch the secure record for alpha account.".to_string(),
@@ -767,13 +755,9 @@ Return a final answer after stage_three."
                 .to_string(),
             staged_tool_specs(),
         );
-        let mut session = Session::new(
-            uri!("borg", "session"),
-            agent.clone(),
-            db,
-        )
-        .await
-        .unwrap();
+        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+            .await
+            .unwrap();
         session
             .add_message(Message::User {
                 content: "Run the full staged repair flow.".to_string(),
@@ -871,13 +855,9 @@ then continue and summarize that error briefly in your final response."
                 .to_string(),
             single_tool_specs(),
         );
-        let mut session = Session::new(
-            uri!("borg", "session"),
-            agent.clone(),
-            db,
-        )
-        .await
-        .unwrap();
+        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+            .await
+            .unwrap();
         session
             .add_message(Message::User {
                 content: "Try to find catalog data.".to_string(),
@@ -945,13 +925,9 @@ Do not skip tool calls on any turn."
                 .to_string(),
             single_tool_specs(),
         );
-        let mut session = Session::new(
-            uri!("borg", "session"),
-            agent.clone(),
-            db,
-        )
-        .await
-        .unwrap();
+        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+            .await
+            .unwrap();
 
         session
             .add_message(Message::User {

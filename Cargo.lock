@@ -684,6 +684,7 @@ dependencies = [
  "serde",
  "serde_json",
  "teloxide",
+ "tokio",
 ]
 
 [[package]]
@@ -691,6 +692,7 @@ name = "borg-rt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "borg-agent",
  "borg-core",
  "deno_core",
  "reqwest",

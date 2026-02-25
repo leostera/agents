@@ -10,6 +10,7 @@ serde_json.workspace = true
 tracing.workspace = true
 borg-db = { path = "../borg-db" }
 borg-llm = { path = "../borg-llm" }
+borg-core = { path = "../borg-core" }
 async-trait.workspace = true
 tokio.workspace = true
 

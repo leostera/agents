@@ -77,25 +77,21 @@ impl Session {
     }
 
     pub async fn has_unprocessed_messages(&self) -> Result<bool> {
-        let count = self
-            .db
-            .count_session_messages(&self.session_id)
-            .await?;
+        let count = self.db.count_session_messages(&self.session_id).await?;
         Ok(count > self.last_processed_len)
     }
 
     pub async fn has_unprocessed_user_messages(&self) -> Result<bool> {
-        let messages = self.read_messages(self.last_processed_len, usize::MAX).await?;
+        let messages = self
+            .read_messages(self.last_processed_len, usize::MAX)
+            .await?;
         Ok(messages
             .into_iter()
             .any(|m| matches!(m, Message::User { .. })))
     }
 
     pub async fn mark_processed(&mut self) -> Result<()> {
-        self.last_processed_len = self
-            .db
-            .count_session_messages(&self.session_id)
-            .await?;
+        self.last_processed_len = self.db.count_session_messages(&self.session_id).await?;
         Ok(())
     }
 
