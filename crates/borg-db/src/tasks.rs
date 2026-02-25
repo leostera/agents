@@ -4,19 +4,19 @@ use serde_json::Value;
 use tracing::{debug, info};
 use uuid::Uuid;
 
-use borg_core::{Task, TaskEvent};
+use borg_core::{Event, Task, TaskEvent, Uri, uri};
 
 use crate::utils::{parse_ts, row_to_task};
 use crate::{BorgDb, NewTask};
 
 impl BorgDb {
-    pub async fn enqueue_task(&self, task: NewTask) -> Result<String> {
-        let task_id = Uuid::new_v4().to_string();
+    pub async fn enqueue_task(&self, task: NewTask) -> Result<Uri> {
+        let task_id = uri!("borg", "task", &Uuid::now_v7().to_string());
         let payload_json = task.payload.to_string();
         let parent_task_id = task.parent_task_id;
         let kind = task.kind.as_str().to_string();
         let now = Utc::now().to_rfc3339();
-        info!(target: "borg_db", task_id, kind, "enqueueing task");
+        info!(target: "borg_db", task_id = %task_id, kind, "enqueueing task");
 
         self.conn
             .execute(
@@ -25,8 +25,8 @@ impl BorgDb {
                 VALUES(?1, ?2, 'queued', ?3, ?4, ?5, ?6, NULL, 0, NULL)
                 "#,
                 (
-                    task_id.clone(),
-                    parent_task_id,
+                    task_id.to_string(),
+                    parent_task_id.map(|id| id.to_string()),
                     kind.clone(),
                     payload_json,
                     now.clone(),
@@ -36,11 +36,10 @@ impl BorgDb {
             .await
             .context("failed to enqueue task")?;
 
-        self.log_event(
-            &task_id,
-            "task_created",
-            serde_json::json!({ "kind": kind }),
-        )
+        self.log_event(Event::TaskCreated {
+            task_id: task_id.clone(),
+            kind: task.kind,
+        })
         .await?;
 
         Ok(task_id)
@@ -74,7 +73,7 @@ impl BorgDb {
         Ok(out)
     }
 
-    pub async fn get_task(&self, task_id: &str) -> Result<Option<Task>> {
+    pub async fn get_task(&self, task_id: &Uri) -> Result<Option<Task>> {
         let mut rows = self
             .conn
             .query(
@@ -88,7 +87,7 @@ impl BorgDb {
         maybe_row.map(|row| row_to_task(&row)).transpose()
     }
 
-    pub async fn get_task_events(&self, task_id: &str) -> Result<Vec<TaskEvent>> {
+    pub async fn get_task_events(&self, task_id: &Uri) -> Result<Vec<TaskEvent>> {
         let mut rows = self
             .conn
             .query(
@@ -101,19 +100,22 @@ impl BorgDb {
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.context("failed reading task event row")? {
             let ts: String = row.get(2)?;
+            let event_id: String = row.get(0)?;
+            let task_id: String = row.get(1)?;
+            let event_type: String = row.get(3)?;
             out.push(TaskEvent {
-                event_id: row.get(0)?,
-                task_id: row.get(1)?,
+                event_id: Uri::parse(&event_id)?,
+                task_id: Uri::parse(&task_id)?,
                 ts: parse_ts(&ts)?,
-                event_type: row.get(3)?,
+                event_type: Uri::parse(&event_type)?,
                 payload: serde_json::from_str(&row.get::<String>(4)?).unwrap_or(Value::Null),
             });
         }
         Ok(out)
     }
 
-    pub async fn claim_next_runnable_task(&self, worker_id: &str) -> Result<Option<Task>> {
-        let worker_id = worker_id.to_owned();
+    pub async fn claim_next_runnable_task(&self, worker_id: &Uri) -> Result<Option<Task>> {
+        let worker_id = worker_id.to_string();
         let now = Utc::now().to_rfc3339();
         debug!(target: "borg_db", worker_id, "claiming next runnable task");
 
@@ -161,7 +163,7 @@ impl BorgDb {
             return Ok(None);
         }
 
-        self.get_task(&task_id).await
+        self.get_task(&Uri::parse(&task_id)?).await
     }
 
     pub async fn requeue_running_tasks(&self) -> Result<u64> {
@@ -178,7 +180,7 @@ impl BorgDb {
         Ok(updated)
     }
 
-    pub async fn list_recoverable_task_ids(&self) -> Result<Vec<String>> {
+    pub async fn list_recoverable_task_ids(&self) -> Result<Vec<Uri>> {
         let mut rows = self
             .conn
             .query(
@@ -188,20 +190,21 @@ impl BorgDb {
             .await
             .context("failed to list recoverable task ids")?;
 
-        let mut out = Vec::new();
+        let mut out: Vec<Uri> = Vec::new();
         while let Some(row) = rows
             .next()
             .await
             .context("failed reading recoverable task row")?
         {
-            out.push(row.get(0)?);
+            let task_id: String = row.get(0)?;
+            out.push(Uri::parse(&task_id)?);
         }
         Ok(out)
     }
 
-    pub async fn claim_task_by_id(&self, worker_id: &str, task_id: &str) -> Result<Option<Task>> {
-        let worker_id = worker_id.to_owned();
-        let task_id = task_id.to_owned();
+    pub async fn claim_task_by_id(&self, worker_id: &Uri, task_id: &Uri) -> Result<Option<Task>> {
+        let worker_id = worker_id.to_string();
+        let task_id = task_id.to_string();
         let now = Utc::now().to_rfc3339();
         debug!(target: "borg_db", worker_id, task_id, "claiming task by id");
 
@@ -247,13 +250,12 @@ impl BorgDb {
             return Ok(None);
         }
 
-        self.get_task(&task_id).await
+        self.get_task(&Uri::parse(&task_id)?).await
     }
 
-    pub async fn complete_task(&self, task_id: &str, result: Value) -> Result<()> {
-        let payload_json = result.to_string();
+    pub async fn complete_task(&self, task_id: &Uri, message: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        info!(target: "borg_db", task_id, "marking task succeeded");
+        info!(target: "borg_db", task_id = %task_id, "marking task succeeded");
 
         self.conn
             .execute(
@@ -263,44 +265,41 @@ impl BorgDb {
             .await
             .context("failed updating task to succeeded")?;
 
-        self.conn
-            .execute(
-                "INSERT INTO task_events(event_id, task_id, ts, type, payload_json) VALUES(?1, ?2, ?3, 'task_succeeded', ?4)",
-                (Uuid::now_v7().to_string(), task_id.to_string(), now, payload_json),
-            )
-            .await
-            .context("failed inserting success task event")?;
+        self.log_event(Event::TaskSucceeded {
+            task_id: task_id.clone(),
+            message: message.to_string(),
+        })
+        .await?;
 
         Ok(())
     }
 
-    pub async fn fail_task(&self, task_id: &str, error_message: String) -> Result<()> {
+    pub async fn fail_task(&self, task_id: &Uri, error_message: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        let err_json = serde_json::json!({ "error": error_message.clone() }).to_string();
-        info!(target: "borg_db", task_id, error = error_message, "marking task failed");
+        info!(target: "borg_db", task_id = %task_id, error = error_message, "marking task failed");
 
         self.conn
             .execute(
                 "UPDATE tasks SET status = 'failed', updated_at = ?1, last_error = ?2 WHERE task_id = ?3",
-                (now.clone(), error_message, task_id.to_string()),
+                (now.clone(), error_message.to_string(), task_id.to_string()),
             )
             .await
             .context("failed updating task to failed")?;
 
-        self.conn
-            .execute(
-                "INSERT INTO task_events(event_id, task_id, ts, type, payload_json) VALUES(?1, ?2, ?3, 'task_failed', ?4)",
-                (Uuid::now_v7().to_string(), task_id.to_string(), now, err_json),
-            )
-            .await
-            .context("failed inserting failed task event")?;
+        self.log_event(Event::TaskFailed {
+            task_id: task_id.clone(),
+            error: error_message.to_string(),
+        })
+        .await?;
 
         Ok(())
     }
 
-    pub async fn log_event(&self, task_id: &str, event_type: &str, payload: Value) -> Result<()> {
-        let event_id = Uuid::now_v7().to_string();
-        let payload = payload.to_string();
+    pub async fn log_event(&self, event: Event) -> Result<()> {
+        let event_id = uri!("borg", "event", &Uuid::now_v7().to_string());
+        let task_id = event.task_id().to_string();
+        let event_type = event.event_type().to_string();
+        let payload = serde_json::to_string(&event)?;
         let now = Utc::now().to_rfc3339();
 
         debug!(target: "borg_db", task_id, event_type, "writing task event");
@@ -308,10 +307,10 @@ impl BorgDb {
             .execute(
                 "INSERT INTO task_events(event_id, task_id, ts, type, payload_json) VALUES (?1, ?2, ?3, ?4, ?5)",
                 (
-                    event_id,
-                    task_id.to_string(),
+                    event_id.to_string(),
+                    task_id,
                     now,
-                    event_type.to_string(),
+                    event_type,
                     payload,
                 ),
             )
@@ -320,7 +319,7 @@ impl BorgDb {
         Ok(())
     }
 
-    pub async fn add_dependency(&self, task_id: &str, depends_on_task_id: &str) -> Result<()> {
+    pub async fn add_dependency(&self, task_id: &Uri, depends_on_task_id: &Uri) -> Result<()> {
         self.conn
             .execute(
                 "INSERT OR IGNORE INTO deps(task_id, depends_on_task_id) VALUES(?1, ?2)",

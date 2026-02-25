@@ -1,10 +1,9 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{AgentTools, Message, SessionResult};
-use borg_core::{Task, TaskKind, TaskStatus};
+use borg_core::{Event, Task, TaskKind, TaskStatus, Uri};
 use borg_db::{BorgDb, NewTask};
 use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
 use borg_rt::RuntimeEngine;
-use serde_json::json;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
@@ -21,7 +20,7 @@ const DEFAULT_AGENT_MODEL: &str = "gpt-4o-mini";
 pub struct BorgExecutor {
     db: BorgDb,
     runtime: RuntimeEngine,
-    worker_id: String,
+    worker_id: Uri,
     task_queue: TaskQueue,
     session_manager: SessionManager,
     openai_base_url: Option<String>,
@@ -31,7 +30,7 @@ pub struct BorgExecutor {
 pub type ExecEngine = BorgExecutor;
 
 impl BorgExecutor {
-    pub fn new(db: BorgDb, runtime: RuntimeEngine, worker_id: String) -> Self {
+    pub fn new(db: BorgDb, runtime: RuntimeEngine, worker_id: Uri) -> Self {
         let task_queue = TaskQueue::new();
         let agent_model = DEFAULT_AGENT_MODEL.to_string();
         let session_manager = SessionManager::new(db.clone(), agent_model.clone());
@@ -62,7 +61,6 @@ impl BorgExecutor {
             openai_api_key: self.db.get_provider_api_key(OPENAI_PROVIDER).await?,
             openai_base_url: self.openai_base_url.clone(),
             preferred_provider: None,
-            kalosm_model: None,
         };
         ConfiguredProvider::from_settings(settings)
     }
@@ -71,7 +69,7 @@ impl BorgExecutor {
         &self,
         mut msg: InboxMessage,
         requested_session_id: Option<String>,
-    ) -> Result<(String, String)> {
+    ) -> Result<(Uri, String)> {
         let session_id =
             requested_session_id.unwrap_or_else(|| format!("borg:session:{}", Uuid::now_v7()));
         msg.session_id = Some(session_id.clone());
@@ -88,15 +86,15 @@ impl BorgExecutor {
         Ok((task_id, session_id))
     }
 
-    pub async fn queue_task_id(&self, task_id: impl Into<String>) -> Result<()> {
-        self.task_queue.queue(task_id.into()).await
+    pub async fn queue_task_id(&self, task_id: Uri) -> Result<()> {
+        self.task_queue.queue(task_id).await
     }
 
     pub async fn run(self) -> Result<()> {
         self.recover_tasks_on_startup().await?;
         info!(
             target: "borg_exec",
-            worker_id = self.worker_id,
+            worker_id = %self.worker_id,
             "executor loop started"
         );
 
@@ -105,7 +103,7 @@ impl BorgExecutor {
             if let Err(err) = self.process_task_id(&task_id).await {
                 error!(
                     target: "borg_exec",
-                    task_id,
+                    task_id = %task_id,
                     error = %err,
                     "executor task processing failed"
                 );
@@ -135,24 +133,24 @@ impl BorgExecutor {
         Ok(())
     }
 
-    async fn process_task_id(&self, task_id: &str) -> Result<()> {
+    async fn process_task_id(&self, task_id: &Uri) -> Result<()> {
         let Some(task) = self.db.claim_task_by_id(&self.worker_id, task_id).await? else {
             if let Some(task) = self.db.get_task(task_id).await? {
                 if task.status == TaskStatus::Queued {
                     debug!(
                         target: "borg_exec",
-                        task_id,
+                        task_id = %task_id,
                         delay_ms = QUEUED_RETRY_DELAY_MILLIS,
                         "task still queued but not claimable yet, requeueing"
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(QUEUED_RETRY_DELAY_MILLIS))
                         .await;
-                    self.task_queue.queue(task_id.to_string()).await?;
+                    self.task_queue.queue(task_id.clone()).await?;
                 }
             }
             debug!(
                 target: "borg_exec",
-                task_id,
+                task_id = %task_id,
                 "task was not claimable when popped from queue"
             );
             return Ok(());
@@ -160,34 +158,35 @@ impl BorgExecutor {
 
         info!(
             target: "borg_exec",
-            task_id = task.task_id,
+            task_id = %task.task_id,
             kind = task.kind.as_str(),
             "claimed task for execution"
         );
         self.db
-            .log_event(
-                &task.task_id,
-                "task_claimed",
-                json!({ "worker_id": self.worker_id }),
-            )
+            .log_event(Event::TaskClaimed {
+                task_id: task.task_id.clone(),
+                worker_id: self.worker_id.clone(),
+            })
             .await?;
 
         match self.process_task(task.clone()).await {
             Ok(()) => {
                 info!(
                     target: "borg_exec",
-                    task_id = task.task_id,
+                    task_id = %task.task_id,
                     "task execution completed successfully"
                 );
             }
             Err(err) => {
                 error!(
                     target: "borg_exec",
-                    task_id = task.task_id,
+                    task_id = %task.task_id,
                     error = %err,
                     "task execution failed"
                 );
-                self.db.fail_task(&task.task_id, err.to_string()).await?;
+                self.db
+                    .fail_task(&task.task_id, &err.to_string())
+                    .await?;
             }
         }
 
@@ -200,11 +199,11 @@ impl BorgExecutor {
             _ => {
                 warn!(
                     target: "borg_exec",
-                    task_id = task.task_id,
+                    task_id = %task.task_id,
                     "unsupported task kind in MVP, auto-completing"
                 );
                 self.db
-                    .complete_task(&task.task_id, json!({"status": "ignored"}))
+                    .complete_task(&task.task_id, "Ignored")
                     .await
             }
         }
@@ -215,7 +214,7 @@ impl BorgExecutor {
 
         info!(
             target: "borg_exec",
-            task_id = task.task_id,
+            task_id = %task.task_id,
             user_key = msg.user_key,
             text = msg.text,
             "processing user message task"
@@ -249,10 +248,12 @@ impl BorgExecutor {
             }
             SessionResult::Idle => {
                 self.db
-                    .log_event(&task.task_id, "agent_idle", json!({}))
+                    .log_event(Event::AgentIdle {
+                        task_id: task.task_id.clone(),
+                    })
                     .await?;
                 self.db
-                    .complete_task(&task.task_id, json!({ "message": "Agent idle" }))
+                    .complete_task(&task.task_id, "Agent idle")
                     .await?;
                 return Ok(());
             }
@@ -260,32 +261,46 @@ impl BorgExecutor {
 
         debug!(
             target: "borg_exec",
-            task_id = task.task_id,
+            task_id = %task.task_id,
             tool_calls = output.tool_calls.len(),
             "agent session completed"
         );
         let persisted_messages = session.read_messages(0, usize::MAX).await?;
         trace!(
             target: "borg_exec",
-            task_id = task.task_id,
+            task_id = %task.task_id,
             messages = ?persisted_messages,
             "persistable session messages"
         );
-        self.db
-            .log_event(
-                &task.task_id,
-                "agent_tool_calls",
-                json!({ "calls": output.tool_calls }),
-            )
-            .await?;
+        for call in &output.tool_calls {
+            self.db
+                .log_event(Event::AgentToolCall {
+                    task_id: task.task_id.clone(),
+                    name: call.tool_name.clone(),
+                    arguments: call.arguments.clone(),
+                    output: serde_json::to_value(&call.output)?,
+                })
+                .await?;
+        }
 
         let reply = output.reply;
-        info!(target: "borg_exec", task_id = task.task_id, "agent reply generated");
+        info!(
+            target: "borg_exec",
+            task_id = %task.task_id,
+            reply = reply.as_str(),
+            "agent reply generated"
+        );
         self.db
-            .log_event(&task.task_id, "output", json!({ "message": reply }))
+            .log_event(Event::AgentOutput {
+                task_id: task.task_id.clone(),
+                message: reply.clone(),
+            })
             .await?;
         self.db
-            .complete_task(&task.task_id, json!({ "message": reply }))
+            .complete_task(
+                &task.task_id,
+                &reply,
+            )
             .await?;
 
         Ok(())

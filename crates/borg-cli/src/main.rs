@@ -2,17 +2,22 @@ use std::process::Command as ProcessCommand;
 
 use anyhow::Result;
 use borg_api::BorgApiServer;
-use borg_core::borgdir::BorgDir;
+use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
 use borg_exec::ExecEngine;
 use borg_ltm::MemoryStore;
 use borg_onboard::OnboardServer;
 use borg_rt::RuntimeEngine;
 use clap::{Parser, Subcommand};
+use reqwest::Client;
+use serde::Deserialize;
+use serde_json::Value;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_ONBOARD_PORT: u16 = 3777;
+const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
 
 #[derive(Parser, Debug)]
 #[command(name = "borg", about = "Borg prototype runtime")]
@@ -31,6 +36,44 @@ enum Command {
         #[arg(long, default_value = DEFAULT_HTTP_BIND)]
         bind: String,
     },
+    Task {
+        #[command(subcommand)]
+        cmd: TaskCommand,
+        #[arg(long, default_value = DEFAULT_HTTP_BIND)]
+        api: String,
+        #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
+        poll_ms: u64,
+    },
+    Events {
+        task_id: String,
+        #[arg(long, default_value = DEFAULT_HTTP_BIND)]
+        api: String,
+        #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
+        poll_ms: u64,
+    },
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TaskCommand {
+    Get {
+        id: String,
+    },
+    New {
+        text: String,
+        #[arg(long)]
+        user_key: Option<String>,
+        #[arg(long)]
+        session_id: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ConfigCommand {
+    Set { key: String, value: String },
 }
 
 #[derive(Clone)]
@@ -66,7 +109,7 @@ impl BorgCliApp {
         let exec = ExecEngine::new(
             db.clone(),
             RuntimeEngine::default(),
-            format!("worker-{}", std::process::id()),
+            Uri::parse(&format!("borg:worker:{}", Uuid::now_v7()))?,
         );
 
         db.migrate().await?;
@@ -98,6 +141,122 @@ impl BorgCliApp {
     async fn open_config_db(&self) -> Result<BorgDb> {
         let config_path = self.borg_dir.config_db().to_string_lossy().to_string();
         BorgDb::open_local(&config_path).await
+    }
+
+    async fn config_set(&self, key: String, value: String) -> Result<()> {
+        let db = self.open_config_db().await?;
+        db.migrate().await?;
+
+        match key.as_str() {
+            "providers.openai" => {
+                db.upsert_provider_api_key("openai", value.trim()).await?;
+                info!(target: "borg_cli", key, "config value updated");
+                println!("ok");
+                Ok(())
+            }
+            other => anyhow::bail!("unsupported config key `{}`", other),
+        }
+    }
+
+    async fn task_get(&self, api: String, id: String) -> Result<()> {
+        let client = Client::new();
+        let url = format!("http://{}/tasks/{}", api, id);
+        let response = client.get(&url).send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+
+        if !status.is_success() {
+            anyhow::bail!("request failed with {}: {}", status, body);
+        }
+
+        println!("{}", body);
+        Ok(())
+    }
+
+    async fn task_new_and_stream(
+        &self,
+        api: String,
+        text: String,
+        user_key: Option<String>,
+        session_id: Option<String>,
+        poll_ms: u64,
+    ) -> Result<()> {
+        let resolved_user_key = user_key
+            .filter(|key| !key.trim().is_empty())
+            .or_else(|| std::env::var("USERNAME").ok())
+            .or_else(|| std::env::var("USER").ok())
+            .filter(|key| !key.trim().is_empty())
+            .unwrap_or_else(|| "cli".to_string());
+
+        let client = Client::new();
+        let url = format!("http://{}/ports/http", api);
+        let body = serde_json::json!({
+            "user_key": resolved_user_key,
+            "text": text,
+            "session_id": session_id,
+            "metadata": {}
+        });
+
+        let response = client.post(&url).json(&body).send().await?;
+        let status = response.status();
+        let response_body = response.text().await?;
+        if !status.is_success() {
+            anyhow::bail!("failed to create task with {}: {}", status, response_body);
+        }
+
+        let created: CreateTaskResponse = serde_json::from_str(&response_body)?;
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "task_id": created.task_id,
+                "session_id": created.session_id,
+            }))?
+        );
+
+        self.events(api, created.task_id, poll_ms, true).await
+    }
+
+    async fn events(
+        &self,
+        api: String,
+        task_id: String,
+        poll_ms: u64,
+        stop_on_terminal: bool,
+    ) -> Result<()> {
+        let client = Client::new();
+        let mut seen = std::collections::HashSet::<String>::new();
+        let url = format!("http://{}/tasks/{}/events", api, task_id);
+
+        loop {
+            tokio::select! {
+                ctrl = tokio::signal::ctrl_c() => {
+                    ctrl?;
+                    info!(target: "borg_cli", "events stream interrupted by ctrl-c");
+                    return Ok(());
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_millis(poll_ms)) => {
+                    let response = client.get(&url).send().await?;
+                    let status = response.status();
+                    let body = response.text().await?;
+                    if !status.is_success() {
+                        anyhow::bail!("events request failed with {}: {}", status, body);
+                    }
+
+                    let parsed: TaskEventsResponse = serde_json::from_str(&body)?;
+                    for event in parsed.events {
+                        if seen.insert(event.event_id.clone()) {
+                            println!("{}", serde_json::to_string(&event)?);
+                            if stop_on_terminal
+                                && (event.event_type == "borg:task:succeeded"
+                                    || event.event_type == "borg:task:failed")
+                            {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn open_browser(&self, url: &str) {
@@ -133,6 +292,27 @@ impl BorgCliApp {
     }
 }
 
+#[derive(Debug, Deserialize, serde::Serialize)]
+struct TaskEventJson {
+    event_id: String,
+    task_id: String,
+    ts: String,
+    #[serde(rename = "event_type")]
+    event_type: String,
+    payload: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskEventsResponse {
+    events: Vec<TaskEventJson>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateTaskResponse {
+    task_id: String,
+    session_id: Option<String>,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -148,5 +328,24 @@ async fn main() -> Result<()> {
     match Cli::parse().cmd {
         Command::Init { onboard_port } => app.init(onboard_port).await,
         Command::Start { bind } => app.start(bind).await,
+        Command::Task { cmd, api, poll_ms } => match cmd {
+            TaskCommand::Get { id } => app.task_get(api, id).await,
+            TaskCommand::New {
+                text,
+                user_key,
+                session_id,
+            } => {
+                app.task_new_and_stream(api, text, user_key, session_id, poll_ms)
+                    .await
+            }
+        },
+        Command::Events {
+            task_id,
+            api,
+            poll_ms,
+        } => app.events(api, task_id, poll_ms, false).await,
+        Command::Config { cmd } => match cmd {
+            ConfigCommand::Set { key, value } => app.config_set(key, value).await,
+        },
     }
 }

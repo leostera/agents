@@ -7,6 +7,7 @@ edition = "2024"
 anyhow.workspace = true
 axum.workspace = true
 borg-db = { path = "../borg-db" }
+borg-core = { path = "../borg-core" }
 borg-exec = { path = "../borg-exec" }
 borg-ltm = { path = "../borg-ltm" }
 borg-ports = { path = "../borg-ports" }

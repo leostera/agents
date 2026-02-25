@@ -107,9 +107,9 @@ async fn run_processes_enqueued_task_and_marks_failed_when_provider_unreachable(
     assert!(done);
 
     let events = db.get_task_events(&task_id).await.unwrap();
-    assert!(events.iter().any(|e| e.event_type == "task_created"));
-    assert!(events.iter().any(|e| e.event_type == "task_claimed"));
-    assert!(events.iter().any(|e| e.event_type == "task_failed"));
+    assert!(events.iter().any(|e| e.event_type == "borg:task:created"));
+    assert!(events.iter().any(|e| e.event_type == "borg:task:claimed"));
+    assert!(events.iter().any(|e| e.event_type == "borg:task:failed"));
 
     handle.abort();
     let _ = handle.await;
@@ -242,7 +242,7 @@ async fn duplicate_queue_entries_only_one_claim_event_for_single_task() {
     let events = db.get_task_events(&task_id).await.unwrap();
     let claimed_events = events
         .iter()
-        .filter(|e| e.event_type == "task_claimed")
+        .filter(|e| e.event_type == "borg:task:claimed")
         .count();
     assert_eq!(claimed_events, 1);
 
@@ -405,9 +405,9 @@ async fn failed_task_event_order_is_stable() {
     let events = db.get_task_events(&task_id).await.unwrap();
     let names: Vec<String> = events.into_iter().map(|e| e.event_type).collect();
     assert!(names.len() >= 3);
-    assert_eq!(names[0], "task_created");
-    assert_eq!(names[1], "task_claimed");
-    assert_eq!(names[names.len() - 1], "task_failed");
+    assert_eq!(names[0], "borg:task:created");
+    assert_eq!(names[1], "borg:task:claimed");
+    assert_eq!(names[names.len() - 1], "borg:task:failed");
 
     handle.abort();
     let _ = handle.await;
@@ -449,8 +449,8 @@ async fn real_llm_path_marks_task_succeeded() {
     assert!(done);
 
     let events = db.get_task_events(&task_id).await.unwrap();
-    assert!(events.iter().any(|e| e.event_type == "output"));
-    assert!(events.iter().any(|e| e.event_type == "task_succeeded"));
+    assert!(events.iter().any(|e| e.event_type == "borg:agent:output"));
+    assert!(events.iter().any(|e| e.event_type == "borg:task:succeeded"));
 
     handle.abort();
     let _ = handle.await;

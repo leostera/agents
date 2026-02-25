@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use borg_core::Entity;
+use borg_core::{Entity, Uri};
 use chrono::{DateTime, Utc};
 use indradb::{
     AllVertexQuery, Database, Edge, Identifier, QueryExt, RocksdbDatastore, SpecificEdgeQuery,
@@ -181,7 +181,7 @@ impl IndraEntityGraph {
             };
 
             if let Some(expected_type) = entity_type {
-                if entity.entity_type != expected_type {
+                if entity.entity_type.as_str() != expected_type {
                     continue;
                 }
             }
@@ -204,7 +204,7 @@ impl IndraEntityGraph {
 
     pub(crate) async fn apply_fact(&self, fact: &FactRecord) -> Result<()> {
         let (namespace, kind, _) = split_entity_uri(fact.entity.as_str())?;
-        let entity_type = kind.clone();
+        let entity_type = format!("{}:kind:{}", namespace, kind);
         let natural_key = fact.entity.to_string();
         let field_key = field_uri_to_prop_key(fact.field.as_str());
         let field_value = fact_value_to_json(&fact.value);
@@ -271,7 +271,12 @@ impl IndraEntityGraph {
             .get("entity_type")
             .and_then(|v| v.as_str())
             .map(ToOwned::to_owned)
-            .unwrap_or_else(|| vertex.t.to_string());
+            .unwrap_or_else(|| {
+                format!(
+                    "borg:kind:{}",
+                    sanitize_identifier(&format!("{:?}", vertex.t)).to_lowercase()
+                )
+            });
         let label = props
             .get("label")
             .and_then(|v| v.as_str())
@@ -295,8 +300,8 @@ impl IndraEntityGraph {
             .unwrap_or_else(Utc::now);
 
         Ok(Some(Entity {
-            entity_id,
-            entity_type,
+            entity_id: Uri::parse(&entity_id)?,
+            entity_type: Uri::parse(&entity_type)?,
             label,
             props: serde_json::from_str(props_json).unwrap_or(Value::Null),
             created_at,

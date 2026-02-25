@@ -9,6 +9,7 @@ use axum::{
     routing::{get, post},
 };
 use borg_db::BorgDb;
+use borg_core::{Event, Uri, uri};
 use borg_exec::{ExecEngine, InboxMessage};
 use borg_ltm::MemoryStore;
 use borg_ports::{BORG_SESSION_ID_HEADER, HttpPort, Port, PortMessage, init_http_port};
@@ -52,6 +53,7 @@ impl BorgApiServer {
             .route("/tasks", get(list_tasks))
             .route("/tasks/:id", get(get_task))
             .route("/tasks/:id/events", get(get_task_events))
+            .route("/tasks/:id/output", get(get_task_output))
             .route("/memory/search", get(memory_search))
             .route("/memory/entities/:id", get(get_memory_entity))
             .with_state(self.state);
@@ -171,6 +173,9 @@ async fn get_task(
     AxumPath(task_id): AxumPath<String>,
 ) -> impl IntoResponse {
     debug!(target: "borg_api", task_id, "get task endpoint");
+    let Ok(task_id) = Uri::parse(&task_id) else {
+        return api_error(StatusCode::BAD_REQUEST, "invalid task id".to_string());
+    };
     match state.db.get_task(&task_id).await {
         Ok(Some(task)) => (StatusCode::OK, Json(json!({ "task": task }))).into_response(),
         Ok(None) => api_error(StatusCode::NOT_FOUND, "task not found".to_string()),
@@ -183,10 +188,49 @@ async fn get_task_events(
     AxumPath(task_id): AxumPath<String>,
 ) -> impl IntoResponse {
     debug!(target: "borg_api", task_id, "get task events endpoint");
+    let Ok(task_id) = Uri::parse(&task_id) else {
+        return api_error(StatusCode::BAD_REQUEST, "invalid task id".to_string());
+    };
     match state.db.get_task_events(&task_id).await {
         Ok(events) => (StatusCode::OK, Json(json!({ "events": events }))).into_response(),
         Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
+}
+
+async fn get_task_output(
+    State(state): State<AppState>,
+    AxumPath(task_id): AxumPath<String>,
+) -> impl IntoResponse {
+    debug!(target: "borg_api", task_id, "get task output endpoint");
+    let Ok(task_id) = Uri::parse(&task_id) else {
+        return api_error(StatusCode::BAD_REQUEST, "invalid task id".to_string());
+    };
+
+    let events = match state.db.get_task_events(&task_id).await {
+        Ok(events) => events,
+        Err(err) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    };
+
+    let agent_output_type = uri!("borg", "agent", "output");
+    let task_succeeded_type = uri!("borg", "task", "succeeded");
+    for event in events.iter().rev() {
+        if event.event_type != agent_output_type && event.event_type != task_succeeded_type {
+            continue;
+        }
+        if let Ok(parsed) = serde_json::from_value::<Event>(event.payload.clone()) {
+            match parsed {
+                Event::AgentOutput { message, .. } => {
+                    return (StatusCode::OK, Json(json!({ "message": message }))).into_response();
+                }
+                Event::TaskSucceeded { message, .. } => {
+                    return (StatusCode::OK, Json(json!({ "message": message }))).into_response();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    api_error(StatusCode::NOT_FOUND, "task output not available yet".to_string())
 }
 
 async fn memory_search(

@@ -73,11 +73,11 @@ impl TantivySearchIndex {
             .props
             .get("kind")
             .and_then(|v| v.as_str())
-            .unwrap_or(&entity.entity_type);
+            .unwrap_or(entity.entity_type.as_str());
         let text = format!("{} {}", entity.label, entity.props);
 
         let mut doc = TantivyDocument::default();
-        doc.add_text(self.fields.entity_id, &entity.entity_id);
+        doc.add_text(self.fields.entity_id, entity.entity_id.as_str());
         doc.add_text(self.fields.namespace, namespace);
         doc.add_text(self.fields.kind, kind);
         doc.add_text(self.fields.label, &entity.label);
@@ -89,7 +89,7 @@ impl TantivySearchIndex {
             .map_err(|_| anyhow::anyhow!("search index writer poisoned"))?;
         writer.delete_term(tantivy::Term::from_field_text(
             self.fields.entity_id,
-            &entity.entity_id,
+            entity.entity_id.as_str(),
         ));
         writer.add_document(doc)?;
         writer.commit()?;

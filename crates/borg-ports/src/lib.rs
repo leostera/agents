@@ -78,7 +78,7 @@ impl Port for HttpPort {
                 .await
             {
                 Ok((task_id, session_id)) => PortMessage {
-                    task_id: Some(task_id),
+                    task_id: Some(task_id.to_string()),
                     session_id: Some(session_id),
                     error: None,
                     ..message

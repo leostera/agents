@@ -29,3 +29,4 @@ uuid = { version = "1", features = ["v4", "v7", "serde"] }
 deno_core = "0.311"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 async-trait = "0.1"
+url = "2"

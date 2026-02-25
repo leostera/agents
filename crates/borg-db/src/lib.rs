@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use turso::Connection;
 
-use borg_core::TaskKind;
+use borg_core::{TaskKind, Uri};
 
 #[derive(Clone)]
 pub struct BorgDb {
@@ -20,5 +20,5 @@ pub struct BorgDb {
 pub struct NewTask {
     pub kind: TaskKind,
     pub payload: Value,
-    pub parent_task_id: Option<String>,
+    pub parent_task_id: Option<Uri>,
 }

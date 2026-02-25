@@ -1,17 +1,23 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_agent::{CapabilitySummary, ToolRequest, ToolResponse, ToolResultData, ToolRunner};
-use borg_core::Capability;
 use borg_rt::RuntimeEngine;
 use serde_json::Value;
 
+#[derive(Clone)]
+pub(crate) struct LocalCapability {
+    name: String,
+    signature: String,
+    description: String,
+}
+
 pub struct ExecToolRunner {
     runtime: RuntimeEngine,
-    capabilities: Vec<Capability>,
+    capabilities: Vec<LocalCapability>,
 }
 
 impl ExecToolRunner {
-    pub fn new(runtime: RuntimeEngine, capabilities: Vec<Capability>) -> Self {
+    pub fn new(runtime: RuntimeEngine, capabilities: Vec<LocalCapability>) -> Self {
         Self {
             runtime,
             capabilities,
@@ -44,7 +50,7 @@ impl ToolRunner for ExecToolRunner {
                     .and_then(Value::as_str)
                     .ok_or_else(|| anyhow!("search tool requires query"))?;
                 let q = query.to_lowercase();
-                let matches: Vec<Capability> = self
+                let matches: Vec<LocalCapability> = self
                     .capabilities
                     .iter()
                     .filter(|cap| {
@@ -79,32 +85,32 @@ impl ToolRunner for ExecToolRunner {
     }
 }
 
-pub fn search_capabilities(query: &str) -> Vec<Capability> {
+pub(crate) fn search_capabilities(query: &str) -> Vec<LocalCapability> {
     let q = query.to_lowercase();
     let catalog = vec![
-        Capability {
+        LocalCapability {
             name: "torrents.search".to_string(),
             signature: "(query: string) => Promise<TorrentResult[]>".to_string(),
             description: "Searches torrent providers by title keywords".to_string(),
         },
-        Capability {
+        LocalCapability {
             name: "torrents.download".to_string(),
             signature: "(magnet: string, dest: string) => Promise<DownloadReceipt>".to_string(),
             description: "Downloads a magnet link into a destination path".to_string(),
         },
-        Capability {
+        LocalCapability {
             name: "memory.upsert".to_string(),
             signature: "(entity: Entity) => Promise<string>".to_string(),
             description: "Upserts an entity into long-term memory".to_string(),
         },
-        Capability {
+        LocalCapability {
             name: "memory.link".to_string(),
             signature: "(from: string, rel: string, to: string) => Promise<string>".to_string(),
             description: "Creates a relation between entities".to_string(),
         },
     ];
 
-    let filtered: Vec<Capability> = catalog
+    let filtered: Vec<LocalCapability> = catalog
         .clone()
         .into_iter()
         .filter(|c| c.name.contains(&q) || c.description.to_lowercase().contains(&q))
