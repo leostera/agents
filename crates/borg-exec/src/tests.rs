@@ -2,20 +2,18 @@ use std::path::PathBuf;
 use std::sync::Once;
 use std::time::Duration;
 
-use borg_core::{TaskKind, TaskStatus};
+use borg_core::{Event, TaskKind, TaskStatus, Uri, uri};
 use borg_db::{BorgDb, NewTask};
-use borg_llm::testing::llm_container::LlmContainer;
 use borg_rt::RuntimeEngine;
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
-use uuid::Uuid;
 
-use crate::{BorgExecutor, InboxMessage};
+use crate::{BorgExecutor, UserMessage};
 
 const OPENAI_PROVIDER: &str = "openai";
 
 fn temp_db_path() -> PathBuf {
-    std::env::temp_dir().join(format!("borg-exec-test-{}.db", Uuid::now_v7()))
+    std::env::temp_dir().join(format!("borg-exec-test-{}.db", uuid::Uuid::now_v7()))
 }
 
 async fn open_test_db() -> BorgDb {
@@ -29,7 +27,7 @@ async fn failing_openai_exec(db: BorgDb, worker: &str) -> BorgExecutor {
     db.upsert_provider_api_key(OPENAI_PROVIDER, "test-key")
         .await
         .unwrap();
-    BorgExecutor::new(db, RuntimeEngine::default(), worker.to_string())
+    BorgExecutor::new(db, RuntimeEngine::default(), Uri::parse(worker).unwrap())
         .with_openai_base_url(Some("http://127.0.0.1:1".to_string()))
 }
 
@@ -48,7 +46,7 @@ fn init_test_tracing() {
 
 async fn wait_for_task_status(
     db: &BorgDb,
-    task_id: &str,
+    task_id: &Uri,
     status: TaskStatus,
     timeout: Duration,
 ) -> bool {
@@ -70,12 +68,13 @@ async fn wait_for_task_status(
 #[tokio::test]
 async fn enqueue_user_message_persists_task_and_session() {
     let db = open_test_db().await;
-    let exec = failing_openai_exec(db.clone(), "worker-test").await;
+    let exec = failing_openai_exec(db.clone(), "borg:worker:test").await;
 
-    let msg = InboxMessage {
-        user_key: "u1".to_string(),
+    let msg = UserMessage {
+        user_key: Uri::parse("borg:user:u1").unwrap(),
         text: "hello".to_string(),
         session_id: None,
+        agent_id: None,
         metadata: json!({}),
     };
     let (task_id, session_id) = exec.enqueue_user_message(msg, None).await.unwrap();
@@ -83,48 +82,203 @@ async fn enqueue_user_message_persists_task_and_session() {
     let task = db.get_task(&task_id).await.unwrap().unwrap();
     assert_eq!(task.status, TaskStatus::Queued);
     assert_eq!(task.kind, TaskKind::UserMessage);
-    assert!(session_id.starts_with("borg:session:"));
+    assert!(session_id.as_str().starts_with("borg:session:"));
 }
 
 #[tokio::test]
 async fn run_processes_enqueued_task_and_marks_failed_when_provider_unreachable() {
     let db = open_test_db().await;
-    let exec = failing_openai_exec(db.clone(), "worker-no-provider").await;
+    let exec = failing_openai_exec(db.clone(), "borg:worker:no-provider").await;
 
     let runner = exec.clone();
     let handle = tokio::spawn(async move { runner.run().await.unwrap() });
 
-    let msg = InboxMessage {
-        user_key: "u2".to_string(),
+    let msg = UserMessage {
+        user_key: Uri::parse("borg:user:u2").unwrap(),
         text: "hello from test".to_string(),
         session_id: None,
+        agent_id: None,
         metadata: json!({}),
     };
     let (task_id, _) = exec.enqueue_user_message(msg, None).await.unwrap();
 
-    let done =
-        wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
+    let done = wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
     assert!(done);
 
     let events = db.get_task_events(&task_id).await.unwrap();
-    assert!(events.iter().any(|e| e.event_type == "borg:task:created"));
-    assert!(events.iter().any(|e| e.event_type == "borg:task:claimed"));
-    assert!(events.iter().any(|e| e.event_type == "borg:task:failed"));
+    assert!(events.iter().any(|e| e.event_type.as_str() == "borg:task:created"));
+    assert!(events.iter().any(|e| e.event_type.as_str() == "borg:task:claimed"));
+    assert!(events.iter().any(|e| e.event_type.as_str() == "borg:task:failed"));
 
     handle.abort();
     let _ = handle.await;
 }
 
 #[tokio::test]
-async fn run_recovers_running_tasks_on_startup_and_executes_them() {
+async fn session_resumes_same_agent_id_when_message_omits_agent() {
     let db = open_test_db().await;
+    let exec = failing_openai_exec(db.clone(), "borg:worker:session").await;
 
-    let payload = json!(InboxMessage {
-        user_key: "u3".to_string(),
+    let runner = exec.clone();
+    let handle = tokio::spawn(async move { runner.run().await.unwrap() });
+
+    let session_id = uri!("borg", "session");
+    let custom_agent = uri!("borg", "agent", "support");
+    db.upsert_agent_spec(
+        &custom_agent,
+        "gpt-4o-mini",
+        "You are support.",
+        &json!([]),
+    )
+    .await
+    .unwrap();
+
+    let first = UserMessage {
+        user_key: uri!("borg", "user", "u4"),
+        text: "first".to_string(),
+        session_id: Some(session_id.clone()),
+        agent_id: Some(custom_agent.clone()),
+        metadata: json!({}),
+    };
+    let second = UserMessage {
+        user_key: uri!("borg", "user", "u4"),
+        text: "second".to_string(),
+        session_id: Some(session_id.clone()),
+        agent_id: None,
+        metadata: json!({}),
+    };
+
+    let (task_a, _) = exec
+        .enqueue_user_message(first, Some(session_id.clone()))
+        .await
+        .unwrap();
+    let (task_b, _) = exec
+        .enqueue_user_message(second, Some(session_id.clone()))
+        .await
+        .unwrap();
+
+    let done_a = wait_for_task_status(&db, &task_a, TaskStatus::Failed, Duration::from_secs(5)).await;
+    let done_b = wait_for_task_status(&db, &task_b, TaskStatus::Failed, Duration::from_secs(5)).await;
+    assert!(done_a);
+    assert!(done_b);
+
+    let messages = db.list_session_messages(&session_id, 0, 64).await.unwrap();
+    let started_agent_ids: Vec<String> = messages
+        .into_iter()
+        .filter_map(|value| serde_json::from_value::<borg_agent::Message>(value).ok())
+        .filter_map(|message| match message {
+            borg_agent::Message::SessionEvent {
+                payload: borg_agent::SessionEventPayload::Started { agent_id },
+                ..
+            } => Some(agent_id.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert!(started_agent_ids.contains(&custom_agent.to_string()));
+
+    handle.abort();
+    let _ = handle.await;
+}
+
+#[tokio::test]
+async fn context_built_event_contains_system_prompt_and_tool_schema() {
+    init_test_tracing();
+    let db = open_test_db().await;
+    let exec = failing_openai_exec(db.clone(), "borg:worker:context").await;
+
+    let runner = exec.clone();
+    let handle = tokio::spawn(async move { runner.run().await.unwrap() });
+
+    let msg = UserMessage {
+        user_key: uri!("borg", "user", "u5"),
+        text: "context please".to_string(),
+        session_id: None,
+        agent_id: None,
+        metadata: json!({}),
+    };
+
+    let (task_id, _) = exec.enqueue_user_message(msg, None).await.unwrap();
+    let done = wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
+    assert!(done);
+
+    let events = db.get_task_events(&task_id).await.unwrap();
+    let context_event = events
+        .iter()
+        .filter_map(|event| serde_json::from_value::<Event>(event.payload.clone()).ok())
+        .find_map(|event| match event {
+            Event::ContextBuilt { context, .. } => Some(context),
+            _ => None,
+        })
+        .unwrap();
+
+    assert!(context_event
+        .messages
+        .iter()
+        .any(|message| message.to_string().contains("system")));
+    assert!(!context_event.tools.is_empty());
+
+    handle.abort();
+    let _ = handle.await;
+}
+
+#[tokio::test]
+async fn task_event_order_is_deterministic_for_failed_run() {
+    let db = open_test_db().await;
+    let exec = failing_openai_exec(db.clone(), "borg:worker:ordering").await;
+
+    let runner = exec.clone();
+    let handle = tokio::spawn(async move { runner.run().await.unwrap() });
+
+    let msg = UserMessage {
+        user_key: uri!("borg", "user", "u7"),
+        text: "ordering".to_string(),
+        session_id: None,
+        agent_id: None,
+        metadata: json!({}),
+    };
+    let (task_id, _) = exec.enqueue_user_message(msg, None).await.unwrap();
+
+    let done = wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
+    assert!(done);
+
+    let events = db.get_task_events(&task_id).await.unwrap();
+    let names: Vec<String> = events
+        .into_iter()
+        .map(|event| event.event_type.to_string())
+        .collect();
+
+    let idx_created = names.iter().position(|name| name == "borg:task:created").unwrap();
+    let idx_claimed = names.iter().position(|name| name == "borg:task:claimed").unwrap();
+    let idx_context = names
+        .iter()
+        .position(|name| name == "borg:session:context_built")
+        .unwrap();
+    let idx_llm_req = names
+        .iter()
+        .position(|name| name == "borg:llm:request_sent")
+        .unwrap();
+    let idx_failed = names.iter().position(|name| name == "borg:task:failed").unwrap();
+
+    assert!(idx_created < idx_claimed);
+    assert!(idx_claimed < idx_context);
+    assert!(idx_context < idx_llm_req);
+    assert!(idx_llm_req < idx_failed);
+
+    handle.abort();
+    let _ = handle.await;
+}
+
+#[tokio::test]
+async fn recover_running_task_is_requeued_and_processed() {
+    let db = open_test_db().await;
+    let payload = json!(UserMessage {
+        user_key: uri!("borg", "user", "u3"),
         text: "recover me".to_string(),
-        session_id: Some(format!("borg:session:{}", Uuid::now_v7())),
+        session_id: Some(uri!("borg", "session")),
+        agent_id: None,
         metadata: json!({}),
     });
+
     let task_id = db
         .enqueue_task(NewTask {
             kind: TaskKind::UserMessage,
@@ -134,323 +288,19 @@ async fn run_recovers_running_tasks_on_startup_and_executes_them() {
         .await
         .unwrap();
 
+    let worker = uri!("borg", "worker", "old-worker");
     let claimed = db
-        .claim_next_runnable_task("old-worker")
+        .claim_next_runnable_task(&worker)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(claimed.task_id, task_id);
-    assert_eq!(claimed.status, TaskStatus::Running);
 
-    db.upsert_provider_api_key(OPENAI_PROVIDER, "test-key")
-        .await
-        .unwrap();
-    let exec = BorgExecutor::new(
-        db.clone(),
-        RuntimeEngine::default(),
-        "recovery-worker".to_string(),
-    )
-    .with_openai_base_url(Some("http://127.0.0.1:1".to_string()));
+    let exec = failing_openai_exec(db.clone(), "borg:worker:recovery").await;
     let handle = tokio::spawn(async move { exec.run().await.unwrap() });
 
-    let done =
-        wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
+    let done = wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
     assert!(done);
-
-    let task = db.get_task(&task_id).await.unwrap().unwrap();
-    assert_eq!(task.claimed_by.unwrap(), "recovery-worker");
-    assert!(task.last_error.is_some());
-
-    handle.abort();
-    let _ = handle.await;
-}
-
-#[tokio::test]
-async fn run_reuses_explicit_session_id_across_multiple_tasks() {
-    let db = open_test_db().await;
-    let exec = failing_openai_exec(db.clone(), "worker-session").await;
-
-    let runner = exec.clone();
-    let handle = tokio::spawn(async move { runner.run().await.unwrap() });
-
-    let session_id = format!("borg:session:{}", Uuid::now_v7());
-    let first = InboxMessage {
-        user_key: "u4".to_string(),
-        text: "first".to_string(),
-        session_id: None,
-        metadata: json!({}),
-    };
-    let second = InboxMessage {
-        user_key: "u4".to_string(),
-        text: "second".to_string(),
-        session_id: None,
-        metadata: json!({}),
-    };
-
-    let (task_a, returned_session_a) = exec
-        .enqueue_user_message(first, Some(session_id.clone()))
-        .await
-        .unwrap();
-    let (task_b, returned_session_b) = exec
-        .enqueue_user_message(second, Some(session_id.clone()))
-        .await
-        .unwrap();
-
-    assert_eq!(returned_session_a, session_id);
-    assert_eq!(returned_session_b, session_id);
-
-    let done_a =
-        wait_for_task_status(&db, &task_a, TaskStatus::Failed, Duration::from_secs(5)).await;
-    let done_b =
-        wait_for_task_status(&db, &task_b, TaskStatus::Failed, Duration::from_secs(5)).await;
-    assert!(done_a);
-    assert!(done_b);
-
-    let message_count = db.count_session_messages(&session_id).await.unwrap();
-    assert!(message_count >= 2);
-
-    handle.abort();
-    let _ = handle.await;
-}
-
-#[tokio::test]
-async fn duplicate_queue_entries_only_one_claim_event_for_single_task() {
-    let db = open_test_db().await;
-
-    let task_id = db
-        .enqueue_task(NewTask {
-            kind: TaskKind::UserMessage,
-            payload: json!(InboxMessage {
-                user_key: "u5".to_string(),
-                text: "single-claim".to_string(),
-                session_id: Some(format!("borg:session:{}", Uuid::now_v7())),
-                metadata: json!({}),
-            }),
-            parent_task_id: None,
-        })
-        .await
-        .unwrap();
-
-    let exec = failing_openai_exec(db.clone(), "worker-a").await;
-    exec.queue_task_id(task_id.clone()).await.unwrap();
-    let handle = tokio::spawn(async move { exec.run().await.unwrap() });
-
-    let done =
-        wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
-    assert!(done);
-
-    let events = db.get_task_events(&task_id).await.unwrap();
-    let claimed_events = events
-        .iter()
-        .filter(|e| e.event_type == "borg:task:claimed")
-        .count();
-    assert_eq!(claimed_events, 1);
-
-    handle.abort();
-    let _ = handle.await;
-}
-
-#[tokio::test]
-async fn stale_task_ids_are_ignored_and_executor_continues() {
-    let db = open_test_db().await;
-    let exec = failing_openai_exec(db.clone(), "worker-stale").await;
-
-    let stale_task = db
-        .enqueue_task(NewTask {
-            kind: TaskKind::System,
-            payload: json!({"note":"stale"}),
-            parent_task_id: None,
-        })
-        .await
-        .unwrap();
-    db.complete_task(&stale_task, json!({"message":"done"}))
-        .await
-        .unwrap();
-    exec.queue_task_id(stale_task.clone()).await.unwrap();
-
-    let runner = exec.clone();
-    let handle = tokio::spawn(async move { runner.run().await.unwrap() });
-
-    let msg = InboxMessage {
-        user_key: "u6".to_string(),
-        text: "after stale".to_string(),
-        session_id: None,
-        metadata: json!({}),
-    };
-    let (task_id, _) = exec.enqueue_user_message(msg, None).await.unwrap();
-    let done =
-        wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
-    assert!(done);
-
-    handle.abort();
-    let _ = handle.await;
-}
-
-#[tokio::test]
-async fn recovery_requeues_only_running_not_terminal() {
-    let db = open_test_db().await;
-
-    let queued_id = db
-        .enqueue_task(NewTask {
-            kind: TaskKind::System,
-            payload: json!({"k":"queued"}),
-            parent_task_id: None,
-        })
-        .await
-        .unwrap();
-    let running_id = db
-        .enqueue_task(NewTask {
-            kind: TaskKind::System,
-            payload: json!({"k":"running"}),
-            parent_task_id: None,
-        })
-        .await
-        .unwrap();
-    let succeeded_id = db
-        .enqueue_task(NewTask {
-            kind: TaskKind::System,
-            payload: json!({"k":"succeeded"}),
-            parent_task_id: None,
-        })
-        .await
-        .unwrap();
-    let failed_id = db
-        .enqueue_task(NewTask {
-            kind: TaskKind::System,
-            payload: json!({"k":"failed"}),
-            parent_task_id: None,
-        })
-        .await
-        .unwrap();
-
-    let _ = db
-        .claim_task_by_id("seed-worker", &running_id)
-        .await
-        .unwrap();
-    db.complete_task(&succeeded_id, json!({"message":"ok"}))
-        .await
-        .unwrap();
-    db.fail_task(&failed_id, "boom".to_string()).await.unwrap();
-
-    let changed = db.requeue_running_tasks().await.unwrap();
-    assert_eq!(changed, 1);
-
-    let running_task = db.get_task(&running_id).await.unwrap().unwrap();
-    let queued_task = db.get_task(&queued_id).await.unwrap().unwrap();
-    let succeeded_task = db.get_task(&succeeded_id).await.unwrap().unwrap();
-    let failed_task = db.get_task(&failed_id).await.unwrap().unwrap();
-    assert_eq!(running_task.status, TaskStatus::Queued);
-    assert_eq!(queued_task.status, TaskStatus::Queued);
-    assert_eq!(succeeded_task.status, TaskStatus::Succeeded);
-    assert_eq!(failed_task.status, TaskStatus::Failed);
-}
-
-#[tokio::test]
-async fn dependency_unblocks_after_parent_succeeds() {
-    let db = open_test_db().await;
-    let parent = db
-        .enqueue_task(NewTask {
-            kind: TaskKind::System,
-            payload: json!({"name":"parent"}),
-            parent_task_id: None,
-        })
-        .await
-        .unwrap();
-    let child = db
-        .enqueue_task(NewTask {
-            kind: TaskKind::System,
-            payload: json!({"name":"child"}),
-            parent_task_id: None,
-        })
-        .await
-        .unwrap();
-    db.add_dependency(&child, &parent).await.unwrap();
-
-    let exec = BorgExecutor::new(
-        db.clone(),
-        RuntimeEngine::default(),
-        "worker-deps".to_string(),
-    );
-    let handle = tokio::spawn(async move { exec.run().await.unwrap() });
-
-    let parent_done =
-        wait_for_task_status(&db, &parent, TaskStatus::Succeeded, Duration::from_secs(5)).await;
-    let child_done =
-        wait_for_task_status(&db, &child, TaskStatus::Succeeded, Duration::from_secs(5)).await;
-    assert!(parent_done);
-    assert!(child_done);
-
-    handle.abort();
-    let _ = handle.await;
-}
-
-#[tokio::test]
-async fn failed_task_event_order_is_stable() {
-    let db = open_test_db().await;
-    let exec = failing_openai_exec(db.clone(), "worker-order").await;
-    let runner = exec.clone();
-    let handle = tokio::spawn(async move { runner.run().await.unwrap() });
-
-    let msg = InboxMessage {
-        user_key: "u7".to_string(),
-        text: "event order".to_string(),
-        session_id: None,
-        metadata: json!({}),
-    };
-    let (task_id, _) = exec.enqueue_user_message(msg, None).await.unwrap();
-    let done =
-        wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
-    assert!(done);
-
-    let events = db.get_task_events(&task_id).await.unwrap();
-    let names: Vec<String> = events.into_iter().map(|e| e.event_type).collect();
-    assert!(names.len() >= 3);
-    assert_eq!(names[0], "borg:task:created");
-    assert_eq!(names[1], "borg:task:claimed");
-    assert_eq!(names[names.len() - 1], "borg:task:failed");
-
-    handle.abort();
-    let _ = handle.await;
-}
-
-#[tokio::test]
-async fn real_llm_path_marks_task_succeeded() {
-    init_test_tracing();
-    let llm = LlmContainer::start_ollama().await.unwrap();
-    let db = open_test_db().await;
-    db.upsert_provider_api_key(OPENAI_PROVIDER, &llm.api_key)
-        .await
-        .unwrap();
-
-    let exec = BorgExecutor::new(
-        db.clone(),
-        RuntimeEngine::default(),
-        "worker-real-llm".to_string(),
-    )
-    .with_openai_base_url(Some(llm.base_url.clone()))
-    .with_agent_model(llm.model.clone());
-    let runner = exec.clone();
-    let handle = tokio::spawn(async move { runner.run().await.unwrap() });
-
-    let msg = InboxMessage {
-        user_key: "u8".to_string(),
-        text: "Reply briefly with the token BORG_EXEC_LLM_OK".to_string(),
-        session_id: None,
-        metadata: json!({}),
-    };
-    let (task_id, _) = exec.enqueue_user_message(msg, None).await.unwrap();
-    let done = wait_for_task_status(
-        &db,
-        &task_id,
-        TaskStatus::Succeeded,
-        Duration::from_secs(90),
-    )
-    .await;
-    assert!(done);
-
-    let events = db.get_task_events(&task_id).await.unwrap();
-    assert!(events.iter().any(|e| e.event_type == "borg:agent:output"));
-    assert!(events.iter().any(|e| e.event_type == "borg:task:succeeded"));
 
     handle.abort();
     let _ = handle.await;

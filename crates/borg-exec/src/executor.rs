@@ -1,16 +1,17 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{AgentTools, ContextWindow, Message, SessionResult, ToolSpec};
-use borg_core::{Event, SessionContextSnapshot, SessionToolSchema, Task, TaskKind, TaskStatus, Uri};
+use borg_core::{
+    Event, SessionContextSnapshot, SessionToolSchema, Task, TaskKind, TaskStatus, Uri, uri,
+};
 use borg_db::{BorgDb, NewTask};
 use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
 use borg_rt::RuntimeEngine;
 use tracing::{debug, error, info, trace, warn};
-use uuid::Uuid;
 
 use crate::session_manager::SessionManager;
 use crate::task_queue::TaskQueue;
 use crate::tool_runner::{ExecToolRunner, search_capabilities};
-use crate::types::InboxMessage;
+use crate::types::UserMessage;
 
 const OPENAI_PROVIDER: &str = "openai";
 const QUEUED_RETRY_DELAY_MILLIS: u64 = 100;
@@ -67,11 +68,10 @@ impl BorgExecutor {
 
     pub async fn enqueue_user_message(
         &self,
-        mut msg: InboxMessage,
-        requested_session_id: Option<String>,
-    ) -> Result<(Uri, String)> {
-        let session_id =
-            requested_session_id.unwrap_or_else(|| format!("borg:session:{}", Uuid::now_v7()));
+        mut msg: UserMessage,
+        requested_session_id: Option<Uri>,
+    ) -> Result<(Uri, Uri)> {
+        let session_id = requested_session_id.unwrap_or_else(|| uri!("borg", "session"));
         msg.session_id = Some(session_id.clone());
         let payload = serde_json::to_value(msg)?;
         let task_id = self
@@ -184,9 +184,7 @@ impl BorgExecutor {
                     error = %err,
                     "task execution failed"
                 );
-                self.db
-                    .fail_task(&task.task_id, &err.to_string())
-                    .await?;
+                self.db.fail_task(&task.task_id, &err.to_string()).await?;
             }
         }
 
@@ -202,21 +200,19 @@ impl BorgExecutor {
                     task_id = %task.task_id,
                     "unsupported task kind in MVP, auto-completing"
                 );
-                self.db
-                    .complete_task(&task.task_id, "Ignored")
-                    .await
+                self.db.complete_task(&task.task_id, "Ignored").await
             }
         }
     }
 
     async fn process_user_message(&self, task: Task) -> Result<()> {
-        let msg: InboxMessage = serde_json::from_value(task.payload.clone())?;
+        let msg: UserMessage = serde_json::from_value(task.payload.clone())?;
         let task_id = task.task_id.clone();
 
         info!(
             target: "borg_exec",
             task_id = %task_id,
-            user_key = msg.user_key,
+            user_key = %msg.user_key,
             text = msg.text,
             "processing user message task"
         );
@@ -226,8 +222,8 @@ impl BorgExecutor {
             tool_runner: &tool_runner,
         };
         let mut session = self.session_manager.session_for_task(&msg).await?;
-        let session_id = Uri::parse(&session.session_id)?;
-        let agent_id = Uri::parse(&session.agent.agent_id)?;
+        let session_id = session.session_id.clone();
+        let agent_id = session.agent.agent_id.clone();
         let before_messages = session.read_messages(0, usize::MAX).await?;
         if before_messages.len() <= 1 {
             self.db
@@ -280,8 +276,15 @@ impl BorgExecutor {
                     })
                     .await?;
                 self.db
-                    .complete_task(&task_id, "Agent idle")
+                    .log_event(Event::LlmResponseReceived {
+                        task_id: task_id.clone(),
+                        session_id: session_id.clone(),
+                        stop_reason: "idle".to_string(),
+                        content_blocks: 0,
+                        tool_call_count: 0,
+                    })
                     .await?;
+                self.db.complete_task(&task_id, "Agent idle").await?;
                 return Ok(());
             }
         };
@@ -293,8 +296,13 @@ impl BorgExecutor {
             "agent session completed"
         );
         let persisted_messages = session.read_messages(0, usize::MAX).await?;
-        self.log_session_messages(&task_id, &session_id, before_messages.len(), &persisted_messages)
-            .await?;
+        self.log_session_messages(
+            &task_id,
+            &session_id,
+            before_messages.len(),
+            &persisted_messages,
+        )
+        .await?;
         trace!(
             target: "borg_exec",
             task_id = %task_id,
@@ -323,6 +331,15 @@ impl BorgExecutor {
             .log_event(Event::AgentOutput {
                 task_id: task_id.clone(),
                 message: reply.clone(),
+            })
+            .await?;
+        self.db
+            .log_event(Event::LlmResponseReceived {
+                task_id: task_id.clone(),
+                session_id: session_id.clone(),
+                stop_reason: "completed".to_string(),
+                content_blocks: 1,
+                tool_call_count: output.tool_calls.len(),
             })
             .await?;
         self.db.complete_task(&task_id, &reply).await?;
@@ -376,6 +393,15 @@ impl BorgExecutor {
                     messages,
                     tools,
                 },
+            })
+            .await?;
+        self.db
+            .log_event(Event::LlmRequestSent {
+                task_id: task_id.clone(),
+                session_id: session_id.clone(),
+                model: model.to_string(),
+                message_count: context.messages.len(),
+                tool_count: context.tools.len(),
             })
             .await
     }

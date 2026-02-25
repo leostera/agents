@@ -8,14 +8,14 @@ use axum::{
     response::{Html, IntoResponse},
     routing::{get, post},
 };
-use borg_db::BorgDb;
 use borg_core::{Event, Uri, uri};
-use borg_exec::{ExecEngine, InboxMessage};
+use borg_db::BorgDb;
+use borg_exec::{ExecEngine, UserMessage};
 use borg_ltm::MemoryStore;
 use borg_ports::{BORG_SESSION_ID_HEADER, HttpPort, Port, PortMessage, init_http_port};
 use borg_ui::render_dashboard;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tracing::{debug, info};
 
@@ -96,6 +96,30 @@ struct ApiError {
     error: String,
 }
 
+#[derive(Serialize)]
+struct ApiValidationError {
+    error: String,
+    details: Vec<ApiFieldError>,
+}
+
+#[derive(Serialize)]
+struct ApiFieldError {
+    field: String,
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct HttpPortRequest {
+    user_key: String,
+    text: String,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    metadata: Option<Value>,
+}
+
 async fn health() -> impl IntoResponse {
     debug!(target: "borg_api", "health endpoint called");
     Json(json!({ "status": HEALTH_STATUS_OK }))
@@ -121,9 +145,13 @@ async fn ui_dashboard(State(state): State<AppState>) -> impl IntoResponse {
 async fn ports_http(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(payload): Json<InboxMessage>,
+    Json(payload): Json<HttpPortRequest>,
 ) -> impl IntoResponse {
-    info!(target: "borg_api", user_key = payload.user_key, text = payload.text, "received HTTP port event");
+    let payload = match validate_port_request(payload) {
+        Ok(value) => value,
+        Err(err) => return err,
+    };
+    info!(target: "borg_api", user_key = %payload.user_key, text = payload.text, "received HTTP port event");
     let inbound = PortMessage::from_http(&headers, payload);
     let mut messages = state.http_port.handle_messages(vec![inbound]).await;
     match messages.pop() {
@@ -137,7 +165,7 @@ async fn ports_http(
             )
                 .into_response();
             if let Some(session_id) = message.session_id {
-                if let Ok(value) = session_id.parse() {
+                if let Ok(value) = session_id.to_string().parse() {
                     response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
                 }
             }
@@ -154,6 +182,67 @@ async fn ports_http(
             "empty port response".to_string(),
         ),
     }
+}
+
+fn validate_port_request(payload: HttpPortRequest) -> Result<UserMessage, axum::response::Response> {
+    let mut details = Vec::new();
+    let user_key = match Uri::parse(&payload.user_key) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            details.push(ApiFieldError {
+                field: "user_key".to_string(),
+                message: "must be a valid URI".to_string(),
+            });
+            None
+        }
+    };
+
+    let session_id = match payload.session_id {
+        Some(raw) => match Uri::parse(&raw) {
+            Ok(value) => Some(value),
+            Err(_) => {
+                details.push(ApiFieldError {
+                    field: "session_id".to_string(),
+                    message: "must be a valid URI".to_string(),
+                });
+                None
+            }
+        },
+        None => None,
+    };
+
+    let agent_id = match payload.agent_id {
+        Some(raw) => match Uri::parse(&raw) {
+            Ok(value) => Some(value),
+            Err(_) => {
+                details.push(ApiFieldError {
+                    field: "agent_id".to_string(),
+                    message: "must be a valid URI".to_string(),
+                });
+                None
+            }
+        },
+        None => None,
+    };
+
+    if !details.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiValidationError {
+                error: "invalid request".to_string(),
+                details,
+            }),
+        )
+            .into_response());
+    }
+
+    Ok(UserMessage {
+        user_key: user_key.expect("validated user_key"),
+        text: payload.text,
+        session_id,
+        agent_id,
+        metadata: payload.metadata.unwrap_or(Value::Object(Default::default())),
+    })
 }
 
 async fn list_tasks(
@@ -230,7 +319,10 @@ async fn get_task_output(
         }
     }
 
-    api_error(StatusCode::NOT_FOUND, "task output not available yet".to_string())
+    api_error(
+        StatusCode::NOT_FOUND,
+        "task output not available yet".to_string(),
+    )
 }
 
 async fn memory_search(
@@ -264,4 +356,37 @@ async fn get_memory_entity(
 
 fn api_error(status: StatusCode, error: String) -> axum::response::Response {
     (status, Json(ApiError { error })).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HttpPortRequest, validate_port_request};
+    use serde_json::json;
+
+    #[test]
+    fn validate_port_request_rejects_invalid_uri_fields() {
+        let request = HttpPortRequest {
+            user_key: "not a uri".to_string(),
+            text: "hello".to_string(),
+            session_id: Some("bad session".to_string()),
+            agent_id: Some("bad agent".to_string()),
+            metadata: Some(json!({})),
+        };
+        assert!(validate_port_request(request).is_err());
+    }
+
+    #[test]
+    fn validate_port_request_accepts_valid_uri_fields() {
+        let request = HttpPortRequest {
+            user_key: "borg:user:test".to_string(),
+            text: "hello".to_string(),
+            session_id: Some("borg:session:123".to_string()),
+            agent_id: Some("borg:agent:default".to_string()),
+            metadata: Some(json!({"a":"b"})),
+        };
+        let parsed = validate_port_request(request).unwrap();
+        assert_eq!(parsed.user_key.as_str(), "borg:user:test");
+        assert_eq!(parsed.session_id.unwrap().as_str(), "borg:session:123");
+        assert_eq!(parsed.agent_id.unwrap().as_str(), "borg:agent:default");
+    }
 }

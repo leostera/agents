@@ -19,8 +19,14 @@ pub struct SessionContextSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
-    TaskCreated { task_id: Uri, kind: TaskKind },
-    TaskClaimed { task_id: Uri, worker_id: Uri },
+    TaskCreated {
+        task_id: Uri,
+        kind: TaskKind,
+    },
+    TaskClaimed {
+        task_id: Uri,
+        worker_id: Uri,
+    },
     SessionStarted {
         task_id: Uri,
         session_id: Uri,
@@ -37,16 +43,41 @@ pub enum Event {
         session_id: Uri,
         context: SessionContextSnapshot,
     },
-    AgentIdle { task_id: Uri },
+    LlmRequestSent {
+        task_id: Uri,
+        session_id: Uri,
+        model: String,
+        message_count: usize,
+        tool_count: usize,
+    },
+    LlmResponseReceived {
+        task_id: Uri,
+        session_id: Uri,
+        stop_reason: String,
+        content_blocks: usize,
+        tool_call_count: usize,
+    },
+    AgentIdle {
+        task_id: Uri,
+    },
     AgentToolCall {
         task_id: Uri,
         name: String,
         arguments: Value,
         output: Value,
     },
-    AgentOutput { task_id: Uri, message: String },
-    TaskSucceeded { task_id: Uri, message: String },
-    TaskFailed { task_id: Uri, error: String },
+    AgentOutput {
+        task_id: Uri,
+        message: String,
+    },
+    TaskSucceeded {
+        task_id: Uri,
+        message: String,
+    },
+    TaskFailed {
+        task_id: Uri,
+        error: String,
+    },
 }
 
 impl Event {
@@ -57,6 +88,8 @@ impl Event {
             Self::SessionStarted { task_id, .. } => task_id,
             Self::SessionMessage { task_id, .. } => task_id,
             Self::ContextBuilt { task_id, .. } => task_id,
+            Self::LlmRequestSent { task_id, .. } => task_id,
+            Self::LlmResponseReceived { task_id, .. } => task_id,
             Self::AgentIdle { task_id } => task_id,
             Self::AgentToolCall { task_id, .. } => task_id,
             Self::AgentOutput { task_id, .. } => task_id,
@@ -72,6 +105,8 @@ impl Event {
             Self::SessionStarted { .. } => uri!("borg", "session", "started"),
             Self::SessionMessage { .. } => uri!("borg", "session", "message"),
             Self::ContextBuilt { .. } => uri!("borg", "session", "context_built"),
+            Self::LlmRequestSent { .. } => uri!("borg", "llm", "request_sent"),
+            Self::LlmResponseReceived { .. } => uri!("borg", "llm", "response_received"),
             Self::AgentIdle { .. } => uri!("borg", "agent", "idle"),
             Self::AgentToolCall { .. } => uri!("borg", "agent", "tool_call"),
             Self::AgentOutput { .. } => uri!("borg", "agent", "output"),

@@ -1,12 +1,13 @@
 use anyhow::{Result, anyhow};
 use chrono::Utc;
 use serde_json::Value;
-use uuid::Uuid;
+
+use borg_core::{Uri, uri};
 
 use crate::BorgDb;
 
 impl BorgDb {
-    pub async fn append_session_message(&self, session_id: &str, payload: &Value) -> Result<i64> {
+    pub async fn append_session_message(&self, session_id: &Uri, payload: &Value) -> Result<i64> {
         let mut rows = self
             .conn
             .query(
@@ -26,7 +27,7 @@ impl BorgDb {
             .execute(
                 "INSERT INTO session_messages(message_id, session_id, message_index, payload_json, created_at) VALUES(?1, ?2, ?3, ?4, ?5)",
                 (
-                    Uuid::now_v7().to_string(),
+                    uri!("borg", "session_message").to_string(),
                     session_id.to_string(),
                     next_index,
                     payload.to_string(),
@@ -40,7 +41,7 @@ impl BorgDb {
 
     pub async fn list_session_messages(
         &self,
-        session_id: &str,
+        session_id: &Uri,
         from: usize,
         limit: usize,
     ) -> Result<Vec<Value>> {
@@ -62,7 +63,7 @@ impl BorgDb {
         Ok(out)
     }
 
-    pub async fn count_session_messages(&self, session_id: &str) -> Result<usize> {
+    pub async fn count_session_messages(&self, session_id: &Uri) -> Result<usize> {
         let mut rows = self
             .conn
             .query(

@@ -182,18 +182,46 @@ impl BorgCliApp {
         poll_ms: u64,
     ) -> Result<()> {
         let resolved_user_key = user_key
+            .as_ref()
             .filter(|key| !key.trim().is_empty())
+            .cloned()
             .or_else(|| std::env::var("USERNAME").ok())
             .or_else(|| std::env::var("USER").ok())
             .filter(|key| !key.trim().is_empty())
             .unwrap_or_else(|| "cli".to_string());
+        let user_key_uri = if resolved_user_key.contains(':') {
+            Uri::parse(&resolved_user_key)?
+        } else {
+            let slug: String = resolved_user_key
+                .chars()
+                .map(|ch| {
+                    if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                        ch
+                    } else {
+                        '-'
+                    }
+                })
+                .collect();
+            Uri::parse(&format!("borg:user:{}", slug))?
+        };
+        if let Some(explicit) = &user_key {
+            Uri::parse(explicit).map_err(|_| {
+                anyhow::anyhow!("invalid --user-key URI `{}` (expected URI like borg:user:alice)", explicit)
+            })?;
+        }
+        let parsed_session_id = match session_id {
+            Some(raw) => Some(Uri::parse(&raw).map_err(|_| {
+                anyhow::anyhow!("invalid --session-id URI `{}` (expected URI like borg:session:<id>)", raw)
+            })?),
+            None => None,
+        };
 
         let client = Client::new();
         let url = format!("http://{}/ports/http", api);
         let body = serde_json::json!({
-            "user_key": resolved_user_key,
+            "user_key": user_key_uri,
             "text": text,
-            "session_id": session_id,
+            "session_id": parsed_session_id,
             "metadata": {}
         });
 
@@ -213,7 +241,7 @@ impl BorgCliApp {
             }))?
         );
 
-        self.events(api, created.task_id, poll_ms, true).await
+        self.events(api, created.task_id.to_string(), poll_ms, true).await
     }
 
     async fn events(
@@ -224,7 +252,7 @@ impl BorgCliApp {
         stop_on_terminal: bool,
     ) -> Result<()> {
         let client = Client::new();
-        let mut seen = std::collections::HashSet::<String>::new();
+        let mut seen = std::collections::HashSet::<Uri>::new();
         let url = format!("http://{}/tasks/{}/events", api, task_id);
 
         loop {
@@ -247,8 +275,8 @@ impl BorgCliApp {
                         if seen.insert(event.event_id.clone()) {
                             println!("{}", serde_json::to_string(&event)?);
                             if stop_on_terminal
-                                && (event.event_type == "borg:task:succeeded"
-                                    || event.event_type == "borg:task:failed")
+                                && (event.event_type.as_str() == "borg:task:succeeded"
+                                    || event.event_type.as_str() == "borg:task:failed")
                             {
                                 return Ok(());
                             }
@@ -294,11 +322,11 @@ impl BorgCliApp {
 
 #[derive(Debug, Deserialize, serde::Serialize)]
 struct TaskEventJson {
-    event_id: String,
-    task_id: String,
+    event_id: Uri,
+    task_id: Uri,
     ts: String,
     #[serde(rename = "event_type")]
-    event_type: String,
+    event_type: Uri,
     payload: Value,
 }
 
@@ -309,8 +337,8 @@ struct TaskEventsResponse {
 
 #[derive(Debug, Deserialize)]
 struct CreateTaskResponse {
-    task_id: String,
-    session_id: Option<String>,
+    task_id: Uri,
+    session_id: Option<Uri>,
 }
 
 #[tokio::main]

@@ -6,6 +6,7 @@ use super::{
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use borg_core::uri;
 use borg_db::BorgDb;
 use borg_llm::{LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, StopReason};
 use serde_json::{Value, json};
@@ -159,8 +160,8 @@ async fn make_test_db() -> Result<BorgDb> {
 async fn make_session() -> Result<(Agent, Session)> {
     init_test_tracing();
     let db = make_test_db().await?;
-    let agent = Agent::new("test-agent").with_system_prompt("system prompt");
-    let session = Session::new("test-session", agent.clone(), db).await?;
+    let agent = Agent::new(uri!("borg", "agent", "test-agent")).with_system_prompt("system prompt");
+    let session = Session::new(uri!("borg", "session", "test-session"), agent.clone(), db).await?;
     debug!(target: "borg_agent_test", "created test agent session");
     Ok((agent, session))
 }

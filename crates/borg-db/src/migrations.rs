@@ -61,6 +61,15 @@ impl BorgDb {
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS agent_specs (
+                    agent_id TEXT PRIMARY KEY,
+                    model TEXT NOT NULL,
+                    system_prompt TEXT NOT NULL,
+                    tools_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 INSERT OR IGNORE INTO providers(provider, api_key, created_at, updated_at)
                 VALUES('kalosm', '', datetime('now'), datetime('now'));
                 "#,

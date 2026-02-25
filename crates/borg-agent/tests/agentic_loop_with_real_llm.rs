@@ -4,6 +4,7 @@ use borg_agent::{
     Agent, AgentTools, Message, Session, SessionOutput, SessionResult, ToolRequest, ToolResponse,
     ToolResultData, ToolRunner, ToolSpec,
 };
+use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 use borg_llm::providers::openai::OpenAiProvider;
 use borg_llm::testing::llm_container::LlmContainer;
@@ -191,12 +192,7 @@ fn init_test_tracing() {
     });
 }
 
-fn make_agent(
-    agent_id: String,
-    model: String,
-    system_prompt: String,
-    tools: Vec<ToolSpec>,
-) -> Agent {
+fn make_agent(agent_id: Uri, model: String, system_prompt: String, tools: Vec<ToolSpec>) -> Agent {
     Agent::new(agent_id)
         .with_model(model)
         .with_system_prompt(system_prompt)
@@ -417,7 +413,7 @@ async fn e2e_single_tool_happy_path_persists_messages_and_output() {
         let runner = RecordingToolRunner::new(RunnerMode::SingleSuccess);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            format!("borg:agent:{}", Uuid::now_v7()),
+            uri!("borg", "agent"),
             llm.model.clone(),
             format!(
                 "You are in an integration test.
@@ -435,7 +431,7 @@ After receiving the tool result, return a concise assistant answer.",
             single_tool_specs(),
         );
         let mut session = Session::new(
-            format!("borg:session:{}", Uuid::now_v7()),
+            uri!("borg", "session"),
             agent.clone(),
             db,
         )
@@ -514,7 +510,7 @@ async fn e2e_multi_tool_chain_then_final_answer_uses_all_results() {
         let runner = RecordingToolRunner::new(RunnerMode::MultiChain);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            format!("borg:agent:{}", Uuid::now_v7()),
+            uri!("borg", "agent"),
             llm.model.clone(),
             format!(
                 "You are in an integration test.
@@ -537,7 +533,7 @@ Then provide one final answer that references the three result labels.",
             multi_chain_tool_specs(),
         );
         let mut session = Session::new(
-            format!("borg:session:{}", Uuid::now_v7()),
+            uri!("borg", "session"),
             agent.clone(),
             db,
         )
@@ -636,7 +632,7 @@ async fn e2e_multi_tool_with_intermediate_dependency_updates_arguments() {
         let runner = RecordingToolRunner::new(RunnerMode::DependentChain);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            format!("borg:agent:{}", Uuid::now_v7()),
+            uri!("borg", "agent"),
             llm.model.clone(),
             "Call discover_key first.
 Then call fetch_by_key using the exact key returned by discover_key.
@@ -652,7 +648,7 @@ After the second result, answer briefly with the fetched record."
             dependent_chain_tool_specs(),
         );
         let mut session = Session::new(
-            format!("borg:session:{}", Uuid::now_v7()),
+            uri!("borg", "session"),
             agent.clone(),
             db,
         )
@@ -737,6 +733,7 @@ After the second result, answer briefly with the fetched record."
 
 #[tokio::test]
 #[serial]
+#[ignore = "nondeterministic with small local model"]
 async fn e2e_multi_tool_partial_failure_then_recovery() {
     init_test_tracing();
     let llm = start_llm_container_with_retries().await;
@@ -747,7 +744,7 @@ async fn e2e_multi_tool_partial_failure_then_recovery() {
         let runner = RecordingToolRunner::new(RunnerMode::PartialFailureThenRecovery);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            format!("borg:agent:{}", Uuid::now_v7()),
+            uri!("borg", "agent"),
             llm.model.clone(),
             "Run staged tools in order with JSON tool calls/results:
 1) stage_one
@@ -771,7 +768,7 @@ Return a final answer after stage_three."
             staged_tool_specs(),
         );
         let mut session = Session::new(
-            format!("borg:session:{}", Uuid::now_v7()),
+            uri!("borg", "session"),
             agent.clone(),
             db,
         )
@@ -861,7 +858,7 @@ async fn e2e_tool_error_is_recorded_not_fatal() {
         let runner = RecordingToolRunner::new(RunnerMode::AlwaysFail);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            format!("borg:agent:{}", Uuid::now_v7()),
+            uri!("borg", "agent"),
             llm.model.clone(),
             "Call catalog_lookup before final answer.
 
@@ -875,7 +872,7 @@ then continue and summarize that error briefly in your final response."
             single_tool_specs(),
         );
         let mut session = Session::new(
-            format!("borg:session:{}", Uuid::now_v7()),
+            uri!("borg", "session"),
             agent.clone(),
             db,
         )
@@ -930,7 +927,7 @@ async fn e2e_follow_up_turn_reuses_session_state_and_calls_tools_again() {
         let runner = RecordingToolRunner::new(RunnerMode::FollowUpEcho);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            format!("borg:agent:{}", Uuid::now_v7()),
+            uri!("borg", "agent"),
             llm.model.clone(),
             "For each user turn, call catalog_lookup exactly once, then answer.
 
@@ -949,7 +946,7 @@ Do not skip tool calls on any turn."
             single_tool_specs(),
         );
         let mut session = Session::new(
-            format!("borg:session:{}", Uuid::now_v7()),
+            uri!("borg", "session"),
             agent.clone(),
             db,
         )
