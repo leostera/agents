@@ -15,6 +15,8 @@ use serde_json::Value;
 use tracing::{debug, info};
 use uuid::Uuid;
 
+const ENTITY_ID_NAMESPACE: &str = "borg";
+
 #[derive(Clone)]
 pub struct MemoryStore {
     db: Arc<Mutex<Database<RocksdbDatastore>>>,
@@ -71,7 +73,12 @@ impl MemoryStore {
         let props_json = props.to_string();
         let search_text = format!("{} {} {}", label, entity_type, props_json);
 
-        set_vertex_prop_string(&db, vertex_id, "entity_id", &vertex_id.to_string())?;
+        let entity_id = match self.get_string_prop(&db, vertex_id, "entity_id")? {
+            Some(existing_id) if is_valid_entity_id(&existing_id) => existing_id,
+            _ => new_entity_id(entity_type),
+        };
+
+        set_vertex_prop_string(&db, vertex_id, "entity_id", &entity_id)?;
         set_vertex_prop_string(&db, vertex_id, "entity_type", entity_type)?;
         set_vertex_prop_string(&db, vertex_id, "label", label)?;
         set_vertex_prop_string(&db, vertex_id, "props_json", &props_json)?;
@@ -87,7 +94,6 @@ impl MemoryStore {
             set_vertex_prop_string(&db, vertex_id, "natural_key", nk)?;
         }
 
-        let entity_id = vertex_id.to_string();
         debug!(target: "borg_ltm", entity_id, label, entity_type, "entity upsert committed");
         Ok(entity_id)
     }
@@ -99,10 +105,14 @@ impl MemoryStore {
         to_entity_id: &str,
         props: &Value,
     ) -> Result<String> {
-        let from = Uuid::parse_str(from_entity_id).context("invalid from entity id")?;
-        let to = Uuid::parse_str(to_entity_id).context("invalid to entity id")?;
-
         let db = self.db.lock().map_err(|_| anyhow!("ltm lock poisoned"))?;
+        let from = self
+            .find_vertex_by_property(&db, "entity_id", &Value::String(from_entity_id.to_string()))?
+            .ok_or_else(|| anyhow!("invalid from entity id"))?;
+        let to = self
+            .find_vertex_by_property(&db, "entity_id", &Value::String(to_entity_id.to_string()))?
+            .ok_or_else(|| anyhow!("invalid to entity id"))?;
+
         let rel = sanitize_identifier(rel_type);
         let edge = Edge::new(from, id(&rel)?, to);
         let created = db.create_edge(&edge)?;
@@ -119,12 +129,13 @@ impl MemoryStore {
     }
 
     pub async fn get_entity(&self, entity_id: &str) -> Result<Option<Entity>> {
-        let vertex_id = match Uuid::parse_str(entity_id) {
-            Ok(id) => id,
-            Err(_) => return Ok(None),
+        let db = self.db.lock().map_err(|_| anyhow!("ltm lock poisoned"))?;
+        let Some(vertex_id) =
+            self.find_vertex_by_property(&db, "entity_id", &Value::String(entity_id.to_string()))?
+        else {
+            return Ok(None);
         };
 
-        let db = self.db.lock().map_err(|_| anyhow!("ltm lock poisoned"))?;
         self.fetch_entity_by_vertex_id(&db, vertex_id)
     }
 
@@ -300,6 +311,34 @@ fn sanitize_identifier(input: &str) -> String {
     }
 }
 
+fn new_entity_id(entity_type: &str) -> String {
+    let kind = sanitize_identifier(entity_type).to_lowercase();
+    format!("{}:{}:{}", ENTITY_ID_NAMESPACE, kind, Uuid::now_v7())
+}
+
+fn is_valid_entity_id(entity_id: &str) -> bool {
+    let mut parts = entity_id.split(':');
+    let Some(namespace) = parts.next() else {
+        return false;
+    };
+    let Some(kind) = parts.next() else {
+        return false;
+    };
+    let Some(id) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+    if namespace.is_empty() || kind.is_empty() {
+        return false;
+    }
+    let Ok(uuid) = Uuid::parse_str(id) else {
+        return false;
+    };
+    ((uuid.as_u128() >> 76) & 0xF) == 0x7
+}
+
 fn parse_ts(ts: &str) -> Result<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(ts)
         .map_err(|_| anyhow!("invalid RFC3339 timestamp"))?
@@ -330,4 +369,23 @@ fn set_edge_prop_string(
         &json,
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_valid_entity_id, new_entity_id};
+    use uuid::Uuid;
+
+    #[test]
+    fn new_entity_id_uses_borg_uri_shape() {
+        let entity_id = new_entity_id("Movie");
+        assert!(entity_id.starts_with("borg:movie:"));
+        assert!(is_valid_entity_id(&entity_id));
+    }
+
+    #[test]
+    fn valid_entity_id_requires_uuid_v7() {
+        let legacy = format!("borg:movie:{}", Uuid::new_v4());
+        assert!(!is_valid_entity_id(&legacy));
+    }
 }

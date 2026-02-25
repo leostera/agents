@@ -8,6 +8,10 @@ use serde_json::{Value, json};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+const REMEMBER_I_LIKE_PREFIX: &str = "remember i like ";
+const DOWNLOAD_PREFIX: &str = "download ";
+const DEFAULT_MOVIES_DESTINATION: &str = "/tmp/movies";
+
 #[derive(Clone)]
 pub struct ExecEngine {
     db: BorgDb,
@@ -128,9 +132,7 @@ impl ExecEngine {
 
         info!(target: "borg_exec", task_id = task.task_id, user_key = msg.user_key, text = msg.text, "processing user message task");
 
-        let lowered = msg.text.to_lowercase();
-        if lowered.starts_with("remember i like ") {
-            let pref = msg.text[14..].trim().to_string();
+        if let Some(pref) = parse_command_arg(&msg.text, REMEMBER_I_LIKE_PREFIX) {
             info!(target: "borg_exec", task_id = task.task_id, preference = pref, "detected preference write intent");
             let props = json!({
                 "user_key": msg.user_key,
@@ -152,12 +154,11 @@ impl ExecEngine {
                 .await?;
             self.db
                 .complete_task(&task.task_id, json!({ "message": output }))
-                .await?;
+            .await?;
             return Ok(());
         }
 
-        if lowered.starts_with("download ") {
-            let title = msg.text[9..].trim().to_string();
+        if let Some(title) = parse_command_arg(&msg.text, DOWNLOAD_PREFIX) {
             info!(target: "borg_exec", task_id = task.task_id, movie = title, "detected download intent");
 
             let existing_movies = self.memory.search(&title, Some("Movie"), 10).await?;
@@ -212,7 +213,7 @@ impl ExecEngine {
                         None
                     }
                 })
-                .unwrap_or_else(|| "/tmp/movies".to_string());
+                .unwrap_or_else(|| DEFAULT_MOVIES_DESTINATION.to_string());
             info!(target: "borg_exec", task_id = task.task_id, destination = dest, "resolved download destination");
 
             let simulated_search = self.runtime.execute(&format!(
@@ -290,6 +291,15 @@ impl ExecEngine {
     }
 }
 
+fn parse_command_arg(input: &str, prefix: &str) -> Option<String> {
+    let head = input.get(..prefix.len())?;
+    if !head.eq_ignore_ascii_case(prefix) {
+        return None;
+    }
+
+    Some(input.get(prefix.len()..)?.trim().to_string())
+}
+
 fn slugify(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut prev_underscore = false;
@@ -305,4 +315,26 @@ fn slugify(input: &str) -> String {
     }
 
     out.trim_matches('_').to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DOWNLOAD_PREFIX, REMEMBER_I_LIKE_PREFIX, parse_command_arg, slugify};
+
+    #[test]
+    fn parse_command_arg_handles_prefix_case_insensitively() {
+        let parsed = parse_command_arg("ReMeMbEr I LiKe /media/movies", REMEMBER_I_LIKE_PREFIX);
+        assert_eq!(parsed.as_deref(), Some("/media/movies"));
+    }
+
+    #[test]
+    fn parse_command_arg_returns_none_without_prefix() {
+        let parsed = parse_command_arg("hello world", DOWNLOAD_PREFIX);
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn slugify_normalizes_titles() {
+        assert_eq!(slugify("The Matrix: Reloaded"), "the_matrix_reloaded");
+    }
 }

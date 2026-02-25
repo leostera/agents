@@ -13,6 +13,6 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "tim
 tracing = "0.1"
 turso = "0.4.4"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
 deno_core = "0.311"
 rusqlite = "0.31"

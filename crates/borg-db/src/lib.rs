@@ -250,7 +250,7 @@ impl BorgDb {
         self.conn
             .execute(
                 "INSERT INTO task_events(event_id, task_id, ts, type, payload_json) VALUES(?1, ?2, ?3, 'task_succeeded', ?4)",
-                (Uuid::new_v4().to_string(), task_id.to_string(), now, payload_json),
+                (Uuid::now_v7().to_string(), task_id.to_string(), now, payload_json),
             )
             .await
             .context("failed inserting success task event")?;
@@ -274,7 +274,7 @@ impl BorgDb {
         self.conn
             .execute(
                 "INSERT INTO task_events(event_id, task_id, ts, type, payload_json) VALUES(?1, ?2, ?3, 'task_failed', ?4)",
-                (Uuid::new_v4().to_string(), task_id.to_string(), now, err_json),
+                (Uuid::now_v7().to_string(), task_id.to_string(), now, err_json),
             )
             .await
             .context("failed inserting failed task event")?;
@@ -283,7 +283,7 @@ impl BorgDb {
     }
 
     pub async fn log_event(&self, task_id: &str, event_type: &str, payload: Value) -> Result<()> {
-        let event_id = Uuid::new_v4().to_string();
+        let event_id = Uuid::now_v7().to_string();
         let payload = payload.to_string();
         let now = Utc::now().to_rfc3339();
 
