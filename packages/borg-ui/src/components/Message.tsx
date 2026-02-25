@@ -52,8 +52,8 @@ export function Message(props: MessageProps) {
       <div className={`borg-message ${isRight ? 'borg-message--user' : 'borg-message--agent'}`}>
         <p className='borg-message__author'>{roleLabel}</p>
         <p className='borg-message__text'>{visibleText}</p>
-        {props.timestamp ? <p className='borg-message__timestamp'>{props.timestamp}</p> : null}
         {props.children}
+        {props.timestamp ? <p className='borg-message__timestamp'>{props.timestamp}</p> : null}
       </div>
     </article>
   )

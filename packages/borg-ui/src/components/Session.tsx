@@ -1,5 +1,6 @@
 import React from 'react'
 import { useMemo } from 'react'
+import { Icon } from '@iconify/react'
 
 import type { SessionMessage } from '../lib/messages'
 import { ChoiceInput } from './ChoiceInput'
@@ -48,6 +49,7 @@ export function Session(props: SessionProps) {
                       <button
                         key={option.value}
                         type='button'
+                        disabled={props.choices[message.id] === option.value}
                         className={
                           props.choices[message.id] === option.value
                             ? 'borg-inline-choice borg-inline-choice--active'
@@ -93,12 +95,14 @@ export function Session(props: SessionProps) {
         if (message.inputType === 'text') {
           return (
             <article key={message.id} className='borg-session__input'>
-              <Message
-                author={message.author}
-                authorLabel={getAuthorLabel(message.author)}
-                text={message.prompt}
-                timestamp={message.timestamp}
-              />
+              {message.prompt.trim().length > 0 ? (
+                <Message
+                  author={message.author}
+                  authorLabel={getAuthorLabel(message.author)}
+                  text={message.prompt}
+                  timestamp={message.timestamp}
+                />
+              ) : null}
               <div className='borg-session__input-body'>
                 <TextInput
                   name={message.payload.name}
@@ -119,20 +123,5 @@ export function Session(props: SessionProps) {
 }
 
 function OpenAiLogo() {
-  return (
-    <svg
-      className='borg-inline-choice__icon'
-      viewBox='0 0 24 24'
-      width='16'
-      height='16'
-      fill='none'
-      xmlns='http://www.w3.org/2000/svg'
-      aria-hidden='true'
-    >
-      <path
-        d='M12 3.5a2.8 2.8 0 0 1 2.8 2.8v.3l.3.1a2.8 2.8 0 0 1 1.7 4.1l-.1.2.2.2a2.8 2.8 0 0 1-.2 4.2l-.2.1.1.2a2.8 2.8 0 0 1-2.5 4.1h-.3l-.1.3a2.8 2.8 0 0 1-5.1 0l-.1-.3h-.3a2.8 2.8 0 0 1-2.5-4.1l.1-.2-.2-.1A2.8 2.8 0 0 1 5.1 11l.2-.2-.1-.2a2.8 2.8 0 0 1 1.7-4.1l.3-.1v-.3A2.8 2.8 0 0 1 10 3.5h2Zm-1.2 2.1a1.1 1.1 0 0 0-1.1 1.1v1.1L8.5 9a1.1 1.1 0 0 0-.3 1.3l.5 1-1 .5a1.1 1.1 0 0 0-.1 2l1 .5-.5 1a1.1 1.1 0 0 0 .3 1.3l1.2 1.1v1.1a1.1 1.1 0 0 0 2 0v-1.1l1.2-1.1a1.1 1.1 0 0 0 .3-1.3l-.5-1 1-.5a1.1 1.1 0 0 0-.1-2l-1-.5.5-1a1.1 1.1 0 0 0-.3-1.3l-1.2-1.1V6.7a1.1 1.1 0 0 0-1.1-1.1h-.6Z'
-        fill='currentColor'
-      />
-    </svg>
-  )
+  return <Icon icon='streamline-logos:openai-logo-solid' className='borg-inline-choice__icon' width={16} height={16} />
 }

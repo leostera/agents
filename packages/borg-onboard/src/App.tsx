@@ -91,7 +91,7 @@ export function OnboardApp() {
         type: 'input',
         inputType: 'text',
         author: 'agent',
-        prompt: i18n.t('onboard.field.api_key'),
+        prompt: '',
         timestamp: formatTimestamp(new Date(startedAt.getTime() + 60_000)),
         payload: {
           name: i18n.t('onboard.field.api_key'),

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@iconify/react": "^5.2.1",
     "@borg/dashboard": "workspace:*",
     "@borg/i18n": "workspace:*",
     "@borg/onboard": "workspace:*",

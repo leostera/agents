@@ -87,6 +87,11 @@
   cursor: pointer;
 }
 
+.borg-inline-choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.9;
+}
+
 .borg-inline-choice--active {
   border-color: color-mix(in srgb, var(--borg-accent) 60%, #475569);
   background: color-mix(in srgb, var(--borg-accent) 25%, var(--borg-panel));
