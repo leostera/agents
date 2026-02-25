@@ -9,6 +9,8 @@ use crate::{Port, PortConfig, PortMessage};
 
 const TELEGRAM_USER_KEY_PREFIX: &str = "telegram";
 const TELEGRAM_MESSAGE_LIMIT: usize = 4000;
+const TELEGRAM_START_GREETING: &str =
+    "Hi! I am Borg. Send me a message and I will reply in this chat.";
 
 #[derive(Clone)]
 pub struct TelegramPort {
@@ -101,6 +103,12 @@ impl TelegramPort {
         teloxide::repl(bot, move |bot: Bot, message: Message| {
             let exec = exec.clone();
             async move {
+                if is_start_command(&message) {
+                    bot.send_message(message.chat.id, TELEGRAM_START_GREETING)
+                        .await?;
+                    return Ok(());
+                }
+
                 let Some(inbound) = PortMessage::from_telegram(&message) else {
                     return Ok(());
                 };
@@ -151,6 +159,14 @@ fn truncate_telegram_message(message: String) -> String {
     }
     out.push_str("...");
     out
+}
+
+fn is_start_command(message: &Message) -> bool {
+    let Some(text) = message.text() else {
+        return false;
+    };
+    let command = text.split_whitespace().next().unwrap_or_default();
+    command == "/start" || command.starts_with("/start@")
 }
 
 pub fn init_telegram_port(exec: ExecEngine, bot_token: impl Into<String>) -> Result<TelegramPort> {
