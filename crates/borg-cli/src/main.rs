@@ -154,6 +154,13 @@ impl BorgCliApp {
                 println!("ok");
                 Ok(())
             }
+            "ports.telegram" => {
+                db.upsert_port_setting("telegram", "bot_token", value.trim())
+                    .await?;
+                info!(target: "borg_cli", key, "config value updated");
+                println!("ok");
+                Ok(())
+            }
             other => anyhow::bail!("unsupported config key `{}`", other),
         }
     }
@@ -244,11 +251,15 @@ impl BorgCliApp {
             serde_json::to_string(&serde_json::json!({
                 "task_id": created.task_id,
                 "session_id": created.session_id,
+                "reply": created.reply,
             }))?
         );
 
-        self.events(api, created.task_id.to_string(), poll_ms, true)
-            .await
+        if let Some(task_id) = created.task_id {
+            self.events(api, task_id.to_string(), poll_ms, true).await
+        } else {
+            Ok(())
+        }
     }
 
     async fn events(
@@ -344,8 +355,9 @@ struct TaskEventsResponse {
 
 #[derive(Debug, Deserialize)]
 struct CreateTaskResponse {
-    task_id: Uri,
+    task_id: Option<Uri>,
     session_id: Option<Uri>,
+    reply: Option<String>,
 }
 
 #[tokio::main]

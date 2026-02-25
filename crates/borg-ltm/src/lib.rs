@@ -23,7 +23,7 @@ const DEFAULT_SEARCH_LIMIT: usize = 25;
 #[macro_export]
 macro_rules! uri {
     ($ns:expr, $kind:expr) => {
-        $crate::Uri::from_parts($ns, $kind, None)
+        $crate::Uri::from_parts($ns, $kind, Some(&::uuid::Uuid::now_v7().to_string()))
     };
     ($ns:expr, $kind:expr, $id:expr) => {
         $crate::Uri::from_parts($ns, $kind, Some($id))
@@ -649,7 +649,7 @@ mod tests {
             after_restart
                 .entities
                 .iter()
-                .any(|candidate| candidate.entity_id == entity.as_str())
+                .any(|candidate| candidate.entity_id.as_str() == entity.as_str())
         );
 
         drop(ltm_b);

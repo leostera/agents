@@ -8,6 +8,7 @@ use teloxide::prelude::*;
 use crate::{Port, PortConfig, PortMessage};
 
 const TELEGRAM_USER_KEY_PREFIX: &str = "telegram";
+const TELEGRAM_MESSAGE_LIMIT: usize = 4000;
 
 #[derive(Clone)]
 pub struct TelegramPort {
@@ -19,25 +20,29 @@ impl PortMessage {
     pub fn from_telegram(message: &Message) -> Option<Self> {
         let text = message.text()?.to_string();
         let chat_id = message.chat.id.0;
-        let user_id = message.from.as_ref().map(|user| user.id.0).unwrap_or(chat_id as u64);
-        let session_id = Uri::from_parts("borg", "session", Some(&format!("telegram_{chat_id}"))).ok();
+        let user_id = message
+            .from
+            .as_ref()
+            .map(|user| user.id.0)
+            .unwrap_or(chat_id as u64);
+        let session_id =
+            Uri::from_parts("borg", "session", Some(&format!("telegram_{chat_id}"))).ok();
 
         Some(Self {
-            user_key: Uri::from_parts(
-                TELEGRAM_USER_KEY_PREFIX,
-                "user",
-                Some(&user_id.to_string()),
-            )
-            .ok()?,
+            port: "telegram".to_string(),
+            user_key: Uri::from_parts(TELEGRAM_USER_KEY_PREFIX, "user", Some(&user_id.to_string()))
+                .ok()?,
             text,
             metadata: json!({
                 "port": "telegram",
                 "chat_id": chat_id,
-                "message_id": message.id.0
+                "message_id": message.id.0,
+                "thread_id": message.thread_id.map(|thread_id| thread_id.0.0)
             }),
             session_id,
             agent_id: None,
             task_id: None,
+            reply: None,
             error: None,
         })
     }
@@ -66,20 +71,18 @@ impl Port for TelegramPort {
                 metadata: message.metadata.clone(),
             };
 
-            let outbound = match self
-                .exec
-                .enqueue_user_message(inbox, message.session_id.clone())
-                .await
-            {
-                Ok((task_id, session_id)) => PortMessage {
-                    task_id: Some(task_id.to_string()),
-                    session_id: Some(session_id),
+            let outbound = match self.exec.process_port_message(&message.port, inbox).await {
+                Ok(output) => PortMessage {
+                    task_id: None,
+                    session_id: Some(output.session_id),
+                    reply: output.reply,
                     error: None,
                     ..message
                 },
                 Err(err) => PortMessage {
                     task_id: None,
                     session_id: message.session_id,
+                    reply: None,
                     error: Some(err.to_string()),
                     ..message
                 },
@@ -109,14 +112,20 @@ impl TelegramPort {
 
                 let mut outbound = port.handle_messages(vec![inbound]).await;
                 if let Some(response) = outbound.pop() {
-                    let reply = match response.error {
-                        Some(error) => format!("Failed to queue message: {error}"),
-                        None => match response.task_id {
-                            Some(task_id) => format!("Queued task {task_id}"),
-                            None => "Queued message".to_string(),
-                        },
-                    };
-                    bot.send_message(message.chat.id, reply).await?;
+                    if let Some(error) = response.error {
+                        bot.send_message(
+                            message.chat.id,
+                            format!("Failed to process message: {error}"),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+
+                    let reply = response
+                        .reply
+                        .unwrap_or_else(|| "Message processed, no reply generated.".to_string());
+                    bot.send_message(message.chat.id, truncate_telegram_message(reply))
+                        .await?;
                 }
 
                 Ok(())
@@ -126,6 +135,22 @@ impl TelegramPort {
 
         Ok(())
     }
+}
+
+fn truncate_telegram_message(message: String) -> String {
+    if message.chars().count() <= TELEGRAM_MESSAGE_LIMIT {
+        return message;
+    }
+
+    let mut out = String::new();
+    for ch in message
+        .chars()
+        .take(TELEGRAM_MESSAGE_LIMIT.saturating_sub(3))
+    {
+        out.push(ch);
+    }
+    out.push_str("...");
+    out
 }
 
 pub fn init_telegram_port(exec: ExecEngine, bot_token: impl Into<String>) -> Result<TelegramPort> {

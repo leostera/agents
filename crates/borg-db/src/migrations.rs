@@ -61,6 +61,25 @@ impl BorgDb {
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS port_settings (
+                    port TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (port, key)
+                );
+
+                CREATE TABLE IF NOT EXISTS port_bindings (
+                    port TEXT NOT NULL,
+                    conversation_key TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    agent_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (port, conversation_key)
+                );
+
                 CREATE TABLE IF NOT EXISTS agent_specs (
                     agent_id TEXT PRIMARY KEY,
                     model TEXT NOT NULL,

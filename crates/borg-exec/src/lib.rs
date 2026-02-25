@@ -5,7 +5,7 @@ mod tool_runner;
 mod types;
 
 pub use executor::{BorgExecutor, ExecEngine};
-pub use types::InboxMessage;
+pub use types::{SessionTurnOutput, UserMessage};
 
 #[cfg(test)]
 mod tests;

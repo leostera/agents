@@ -12,12 +12,15 @@ use borg_core::{Event, Uri, uri};
 use borg_db::BorgDb;
 use borg_exec::{ExecEngine, UserMessage};
 use borg_ltm::MemoryStore;
-use borg_ports::{BORG_SESSION_ID_HEADER, HttpPort, Port, PortMessage, init_http_port};
+use borg_ports::{
+    BORG_SESSION_ID_HEADER, HttpPort, Port, PortMessage, init_http_port, init_telegram_port,
+};
 use borg_ui::render_dashboard;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
-use tracing::{debug, info};
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info};
 
 const HEALTH_STATUS_OK: &str = "ok";
 
@@ -31,6 +34,7 @@ struct AppState {
 pub struct BorgApiServer {
     bind: String,
     state: AppState,
+    exec: ExecEngine,
 }
 
 impl BorgApiServer {
@@ -39,13 +43,15 @@ impl BorgApiServer {
             bind,
             state: AppState {
                 db,
-                http_port: init_http_port(exec).expect("failed to initialize http port"),
+                http_port: init_http_port(exec.clone()).expect("failed to initialize http port"),
                 memory,
             },
+            exec,
         }
     }
 
     pub async fn run(self) -> Result<()> {
+        let telegram_task = start_telegram_port(self.state.db.clone(), self.exec.clone()).await?;
         let router = Router::new()
             .route("/", get(ui_dashboard))
             .route("/health", get(health))
@@ -73,8 +79,36 @@ impl BorgApiServer {
             .with_graceful_shutdown(shutdown)
             .await?;
 
+        if let Some(task) = telegram_task {
+            task.abort();
+        }
+
         Ok(())
     }
+}
+
+async fn start_telegram_port(db: BorgDb, exec: ExecEngine) -> Result<Option<JoinHandle<()>>> {
+    let token = db.get_port_setting("telegram", "bot_token").await?;
+    let Some(token) = token else {
+        info!(target: "borg_api", "telegram port disabled (no token configured)");
+        return Ok(None);
+    };
+
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        info!(target: "borg_api", "telegram port disabled (empty token)");
+        return Ok(None);
+    }
+
+    let telegram_port = init_telegram_port(exec, token)?;
+    let task = tokio::spawn(async move {
+        if let Err(err) = telegram_port.run().await {
+            error!(target: "borg_api", error = %err, "telegram port terminated");
+        }
+    });
+
+    info!(target: "borg_api", "telegram port enabled");
+    Ok(Some(task))
 }
 
 #[derive(Deserialize)]
@@ -160,7 +194,8 @@ async fn ports_http(
                 StatusCode::OK,
                 Json(json!({
                     "task_id": message.task_id,
-                    "session_id": message.session_id
+                    "session_id": message.session_id,
+                    "reply": message.reply
                 })),
             )
                 .into_response();
@@ -184,7 +219,9 @@ async fn ports_http(
     }
 }
 
-fn validate_port_request(payload: HttpPortRequest) -> Result<UserMessage, axum::response::Response> {
+fn validate_port_request(
+    payload: HttpPortRequest,
+) -> Result<UserMessage, axum::response::Response> {
     let mut details = Vec::new();
     let user_key = match Uri::parse(&payload.user_key) {
         Ok(value) => Some(value),
@@ -241,7 +278,9 @@ fn validate_port_request(payload: HttpPortRequest) -> Result<UserMessage, axum::
         text: payload.text,
         session_id,
         agent_id,
-        metadata: payload.metadata.unwrap_or(Value::Object(Default::default())),
+        metadata: payload
+            .metadata
+            .unwrap_or(Value::Object(Default::default())),
     })
 }
 

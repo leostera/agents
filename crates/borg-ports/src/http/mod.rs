@@ -13,15 +13,18 @@ impl PortMessage {
         let requested_session_id = headers
             .get(BORG_SESSION_ID_HEADER)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| Uri::parse(value).ok());
+            .and_then(|value| Uri::parse(value).ok())
+            .or(payload.session_id);
 
         Self {
+            port: "http".to_string(),
             user_key: payload.user_key,
             text: payload.text,
             metadata: payload.metadata,
             session_id: requested_session_id,
             agent_id: payload.agent_id,
             task_id: None,
+            reply: None,
             error: None,
         }
     }
@@ -52,20 +55,18 @@ impl Port for HttpPort {
                 metadata: message.metadata.clone(),
             };
 
-            let outbound = match self
-                .exec
-                .enqueue_user_message(inbox, message.session_id.clone())
-                .await
-            {
-                Ok((task_id, session_id)) => PortMessage {
-                    task_id: Some(task_id.to_string()),
-                    session_id: Some(session_id),
+            let outbound = match self.exec.process_port_message(&message.port, inbox).await {
+                Ok(output) => PortMessage {
+                    task_id: None,
+                    session_id: Some(output.session_id),
+                    reply: output.reply,
                     error: None,
                     ..message
                 },
                 Err(err) => PortMessage {
                     task_id: None,
                     session_id: message.session_id,
+                    reply: None,
                     error: Some(err.to_string()),
                     ..message
                 },

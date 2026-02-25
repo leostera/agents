@@ -1,0 +1,128 @@
+use anyhow::{Context, Result};
+use borg_core::{Uri, uri};
+use chrono::Utc;
+
+use crate::BorgDb;
+
+impl BorgDb {
+    pub async fn upsert_port_setting(&self, port: &str, key: &str, value: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO port_settings(port, key, value, created_at, updated_at)
+                VALUES(?1, ?2, ?3, ?4, ?5)
+                ON CONFLICT(port, key) DO UPDATE SET
+                  value = excluded.value,
+                  updated_at = excluded.updated_at
+                "#,
+                (
+                    port.to_string(),
+                    key.to_string(),
+                    value.to_string(),
+                    now.clone(),
+                    now,
+                ),
+            )
+            .await
+            .context("failed to upsert port setting")?;
+        Ok(())
+    }
+
+    pub async fn get_port_setting(&self, port: &str, key: &str) -> Result<Option<String>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT value FROM port_settings WHERE port = ?1 AND key = ?2 LIMIT 1",
+                (port.to_string(), key.to_string()),
+            )
+            .await?;
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+
+        Ok(Some(row.get(0)?))
+    }
+
+    pub async fn resolve_port_session(
+        &self,
+        port: &str,
+        conversation_key: &Uri,
+        requested_session_id: Option<&Uri>,
+        requested_agent_id: Option<&Uri>,
+    ) -> Result<(Uri, Option<Uri>)> {
+        if let Some(session_id) = requested_session_id {
+            self.upsert_port_binding(port, conversation_key, session_id, requested_agent_id)
+                .await?;
+            return Ok((session_id.clone(), requested_agent_id.cloned()));
+        }
+
+        if let Some(existing) = self.get_port_binding(port, conversation_key).await? {
+            return Ok(existing);
+        }
+
+        let session_id = uri!("borg", "session");
+        self.upsert_port_binding(port, conversation_key, &session_id, requested_agent_id)
+            .await?;
+        Ok((session_id, requested_agent_id.cloned()))
+    }
+
+    async fn get_port_binding(
+        &self,
+        port: &str,
+        conversation_key: &Uri,
+    ) -> Result<Option<(Uri, Option<Uri>)>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT session_id, agent_id FROM port_bindings WHERE port = ?1 AND conversation_key = ?2 LIMIT 1",
+                (port.to_string(), conversation_key.to_string()),
+            )
+            .await
+            .context("failed to query port binding")?;
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+
+        let session_id: String = row.get(0)?;
+        let agent_id: Option<String> = row.get(1)?;
+        Ok(Some((
+            Uri::parse(&session_id)?,
+            agent_id.map(|value| Uri::parse(&value)).transpose()?,
+        )))
+    }
+
+    async fn upsert_port_binding(
+        &self,
+        port: &str,
+        conversation_key: &Uri,
+        session_id: &Uri,
+        agent_id: Option<&Uri>,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO port_bindings(port, conversation_key, session_id, agent_id, created_at, updated_at)
+                VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+                ON CONFLICT(port, conversation_key) DO UPDATE SET
+                  session_id = excluded.session_id,
+                  agent_id = excluded.agent_id,
+                  updated_at = excluded.updated_at
+                "#,
+                (
+                    port.to_string(),
+                    conversation_key.to_string(),
+                    session_id.to_string(),
+                    agent_id.map(|value| value.to_string()),
+                    now.clone(),
+                    now,
+                ),
+            )
+            .await
+            .context("failed to upsert port binding")?;
+        Ok(())
+    }
+}
