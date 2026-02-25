@@ -59,7 +59,7 @@ export function OnboardApp() {
   const [animatedCompleted, setAnimatedCompleted] = useState<Record<string, boolean>>({})
   const [providerResponseReady, setProviderResponseReady] = useState<boolean>(false)
 
-  const selectedProvider = state.choices[PROVIDER_MESSAGE_ID]
+  const selectedProvider = state.choices[PROVIDER_MESSAGE_ID] ?? ''
   const selectedProviderLabel = useMemo(() => {
     if (selectedProvider === OPENAI_PROVIDER) {
       return i18n.t('onboard.provider.openai')
@@ -108,7 +108,7 @@ export function OnboardApp() {
             : undefined,
       },
     ],
-    [i18n, selectedProvider.length, selectedProviderLabel, startedAt, username],
+    [i18n, selectedProvider, selectedProviderLabel, startedAt, username],
   )
 
   const messages = useMemo<Array<SessionMessage>>(() => {
