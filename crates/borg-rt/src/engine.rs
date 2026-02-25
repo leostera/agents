@@ -10,6 +10,7 @@ use tracing::{debug, info, trace};
 
 use crate::ffi::install_ffi;
 use crate::ops::default_ffi_handlers;
+use crate::sdk::{ApiCapability, search_capabilities};
 use crate::types::{FfiHandler, FfiResult};
 
 const SDK_BUNDLE: &str = include_str!(concat!(env!("OUT_DIR"), "/borg_agent_sdk.bundle.js"));
@@ -51,7 +52,13 @@ impl CodeModeRuntime {
         self
     }
 
+    pub fn search(&self, query: &str) -> Vec<ApiCapability> {
+        search_capabilities(query)
+    }
+
     pub fn execute(&self, code: &str) -> Result<ExecutionResult> {
+        validate_code_mode_shape(code)?;
+
         info!(target: "borg_rt", "executing JS in deno_core runtime");
         debug!(target: "borg_rt", code, "js payload");
 
@@ -68,9 +75,25 @@ impl CodeModeRuntime {
             .execute_script("borg_agent_sdk.js", self.sdk_bundle.clone())
             .map_err(|err| anyhow!("failed to execute sdk bundle: {}", err))?;
 
-        let value = runtime
-            .execute_script("borg_exec.js", code.to_owned())
-            .map_err(|err| anyhow!("failed to execute script: {}", err))?;
+        let function = runtime
+            .execute_script("borg_exec_fn.js", format!("({})", code))
+            .map_err(|err| anyhow!("failed to compile code-mode function: {}", err))?;
+        let function = {
+            let scope = &mut runtime.handle_scope();
+            let local = v8::Local::new(scope, function);
+            if !local.is_function() {
+                return Err(anyhow!(
+                    "code-mode execute expects an async zero-arg function expression"
+                ));
+            }
+            let local_fn = v8::Local::<v8::Function>::try_from(local)
+                .map_err(|_| anyhow!("code-mode payload did not resolve to a function"))?;
+            v8::Global::new(scope, local_fn)
+        };
+
+        #[allow(deprecated)]
+        let value = deno_core::futures::executor::block_on(runtime.call_and_await(&function))
+            .map_err(|err| anyhow!("failed to execute code-mode function: {}", err))?;
 
         let result_json: Value = {
             let scope = &mut runtime.handle_scope();
@@ -89,4 +112,42 @@ impl CodeModeRuntime {
             duration_ms,
         })
     }
+}
+
+fn validate_code_mode_shape(code: &str) -> Result<()> {
+    let trimmed = code.trim().trim_end_matches(';').trim();
+    if !trimmed.starts_with("async") {
+        return Err(anyhow!(
+            "execute code must start with `async () => {{ ... }}`"
+        ));
+    }
+
+    let Some((lhs, rhs)) = trimmed.split_once("=>") else {
+        return Err(anyhow!(
+            "execute code must use an async arrow function (`async () => {{ ... }}`)"
+        ));
+    };
+
+    let lhs = lhs.trim();
+    if lhs != "async ()" {
+        return Err(anyhow!(
+            "execute code must have zero arguments (`async () => {{ ... }}`)"
+        ));
+    }
+
+    let rhs = rhs.trim();
+    if !rhs.starts_with('{') || !rhs.ends_with('}') {
+        return Err(anyhow!(
+            "execute code body must be a block (`async () => {{ ... }}`)"
+        ));
+    }
+
+    let body = rhs.trim_start_matches('{').trim_end_matches('}').trim();
+    if !body.contains("return") {
+        return Err(anyhow!(
+            "execute code body must include an explicit `return` statement"
+        ));
+    }
+
+    Ok(())
 }

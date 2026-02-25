@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use super::{
-    Agent, AgentTools, Message, Session, SessionResult, ToolRequest, ToolResponse, ToolResultData,
-    ToolRunner, call_tool,
+    Agent, AgentTools, Message, Session, SessionResult, Tool, ToolRequest, ToolResponse,
+    ToolResultData, ToolRunner, ToolSpec, Toolchain, call_tool,
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -430,4 +430,87 @@ async fn injected_tool_runner_helper_still_works() {
         .unwrap();
     assert!(matches!(out, ToolResultData::Text(text) if text == "ok"));
     info!(target: "borg_agent_test", test = "injected_tool_runner_helper_still_works", "test passed");
+}
+
+#[tokio::test]
+async fn toolchain_rejects_invalid_input_shape() {
+    let toolchain = Toolchain::builder()
+        .add_tool(Tool::new(
+            ToolSpec {
+                name: "search".to_string(),
+                description: "search".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": { "query": { "type": "string" } },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }),
+            },
+            None,
+            |_request| async move {
+                Ok(ToolResponse {
+                    content: ToolResultData::Text("ok".to_string()),
+                })
+            },
+        ))
+        .unwrap()
+        .build()
+        .unwrap();
+    let tools = AgentTools {
+        tool_runner: &toolchain,
+    };
+
+    let err = call_tool(&tools, "tc1", "search", &json!({}))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("missing required property `query`")
+    );
+}
+
+#[tokio::test]
+async fn toolchain_validates_output_shape_when_configured() {
+    let toolchain = Toolchain::builder()
+        .add_tool(Tool::new(
+            ToolSpec {
+                name: "execute".to_string(),
+                description: "execute".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": { "code": { "type": "string" } },
+                    "required": ["code"],
+                    "additionalProperties": false
+                }),
+            },
+            Some(json!({
+                "type": "object",
+                "properties": { "Text": { "type": "string" } },
+                "required": ["Text"],
+                "additionalProperties": false
+            })),
+            |_request| async move {
+                Ok(ToolResponse {
+                    content: ToolResultData::Error {
+                        message: "mismatch".to_string(),
+                    },
+                })
+            },
+        ))
+        .unwrap()
+        .build()
+        .unwrap();
+    let tools = AgentTools {
+        tool_runner: &toolchain,
+    };
+
+    let err = call_tool(
+        &tools,
+        "tc2",
+        "execute",
+        &json!({"code":"async () => { return 1; }"}),
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("missing required property `Text`"));
 }

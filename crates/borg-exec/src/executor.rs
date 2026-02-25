@@ -1,7 +1,8 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{AgentTools, ContextWindow, Message, SessionResult, ToolSpec};
 use borg_core::{
-    Event, SessionContextSnapshot, SessionToolSchema, Task, TaskKind, TaskStatus, Uri, uri,
+    Event, SessionContextSnapshot, SessionToolSchema, Task, TaskEvent, TaskKind, TaskStatus, Uri,
+    uri,
 };
 use borg_db::{BorgDb, NewTask};
 use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
@@ -10,7 +11,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::session_manager::SessionManager;
 use crate::task_queue::TaskQueue;
-use crate::tool_runner::{ExecToolRunner, search_capabilities};
+use crate::tool_runner::build_exec_toolchain;
 use crate::types::UserMessage;
 
 const OPENAI_PROVIDER: &str = "openai";
@@ -88,6 +89,10 @@ impl BorgExecutor {
 
     pub async fn queue_task_id(&self, task_id: Uri) -> Result<()> {
         self.task_queue.queue(task_id).await
+    }
+
+    pub async fn get_task_events(&self, task_id: &Uri) -> Result<Vec<TaskEvent>> {
+        self.db.get_task_events(task_id).await
     }
 
     pub async fn run(self) -> Result<()> {
@@ -217,9 +222,9 @@ impl BorgExecutor {
             "processing user message task"
         );
 
-        let tool_runner = ExecToolRunner::new(self.runtime.clone(), search_capabilities(""));
+        let toolchain = build_exec_toolchain(self.runtime.clone())?;
         let tools = AgentTools {
-            tool_runner: &tool_runner,
+            tool_runner: &toolchain,
         };
         let mut session = self.session_manager.session_for_task(&msg).await?;
         let session_id = session.session_id.clone();
