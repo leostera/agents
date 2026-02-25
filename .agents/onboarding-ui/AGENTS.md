@@ -1,0 +1,43 @@
+# Onboarding UI Agent Guide
+
+Scope: `packages/*` web workspaces, chat UX, composer behavior, and i18n.
+
+## Workspace Shape
+
+- Single root Vite app is `packages/borg-app`.
+- Feature packages:
+  - `@borg/onboard`
+  - `@borg/dashboard`
+  - `@borg/ui`
+  - `@borg/i18n`
+
+## UX Model (Important)
+
+- Onboarding is a chat, not a wizard form page.
+- Agent prompts appear on left (`Borg`).
+- User responses are represented as user-side messages.
+- Active controls are rendered in a bottom composer dock.
+
+## Composer/Message Rules
+
+- Provider selection should look like a user reply.
+- API key input + connect action should be user-side reply step.
+- Preserve sequential reveal:
+  - next prompt appears after previous animation/step completion.
+
+## Components
+
+- `@borg/ui` owns shared chat components (`Session`, `Message`, etc.).
+- Keep controls message-driven (`choices`, `input`, `actions`).
+- Use icon library components (no hand-drawn inline SVG for brand icons).
+
+## i18n
+
+- New user-facing strings go in `@borg/i18n`.
+- Avoid hardcoded text in components.
+
+## Validate
+
+1. `bun run build:web`
+2. `bun run dev` then open `/onboard`
+3. Verify user-side reply behavior for provider + API key
