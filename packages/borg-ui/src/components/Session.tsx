@@ -28,9 +28,94 @@ export function Session(props: SessionProps) {
     return props.userName
   }
 
+  const composerMessage = useMemo(() => {
+    for (let index = props.messages.length - 1; index >= 0; index -= 1) {
+      const message = props.messages[index]
+      if (
+        message.type === 'message' &&
+        message.author === 'user' &&
+        (message.choices || message.input || message.actions)
+      ) {
+        return message
+      }
+    }
+    return null
+  }, [props.messages])
+
+  const feedMessages = useMemo(
+    () =>
+      composerMessage
+        ? props.messages.filter((message) => message.id !== composerMessage.id)
+        : props.messages,
+    [composerMessage, props.messages],
+  )
+
+  const renderMessageControls = (message: Extract<SessionMessage, { type: 'message' }>) => (
+    <>
+      {message.choices && !animated.has(message.id) ? (
+        <>
+          <Spacer size={10} />
+          <div className='borg-inline-choices'>
+            {message.choices.options.map((option) => (
+              <button
+                key={option.value}
+                type='button'
+                disabled={props.choices[message.id] === option.value}
+                className={
+                  props.choices[message.id] === option.value
+                    ? 'borg-inline-choice borg-inline-choice--active'
+                    : 'borg-inline-choice'
+                }
+                onClick={() => props.onChoice(message.id, option.value)}
+              >
+                <span className='borg-inline-choice__content'>
+                  {option.icon === 'openai' ? <OpenAiLogo /> : null}
+                  <span>{option.label}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
+      {message.input && !animated.has(message.id) ? (
+        <>
+          <Spacer size={10} />
+          <div className='borg-session__input-body'>
+            <TextInput
+              name={message.input.name}
+              placeholder={message.input.placeholder}
+              value={props.choices[message.input.id] ?? null}
+              secret={message.input.secret}
+              onChange={(value) => props.onChoice(message.input!.id, value)}
+            />
+          </div>
+        </>
+      ) : null}
+      {message.actions && !animated.has(message.id) ? (
+        <>
+          <Spacer size={10} />
+          <div className='borg-message__actions'>
+            {message.actions.map((action) => (
+              <button
+                key={action.id}
+                type='button'
+                className='borg-button borg-button--primary'
+                disabled={action.disabled}
+                onClick={() => props.onAction?.(message.id, action.id)}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </>
+  )
+
   return (
     <section className='borg-session'>
-      {props.messages.map((message) => {
+      <div className='borg-session__feed'>
+        {feedMessages.map((message) => {
         if (message.type === 'message') {
           return (
             <Message
@@ -42,63 +127,7 @@ export function Session(props: SessionProps) {
               animate={animated.has(message.id)}
               onAnimationComplete={() => props.onMessageAnimationComplete?.(message.id)}
             >
-              {message.choices && !animated.has(message.id) ? (
-                <>
-                  <Spacer size={10} />
-                  <div className='borg-inline-choices'>
-                  {message.choices.options.map((option) => (
-                      <button
-                        key={option.value}
-                        type='button'
-                        disabled={props.choices[message.id] === option.value}
-                        className={
-                          props.choices[message.id] === option.value
-                            ? 'borg-inline-choice borg-inline-choice--active'
-                            : 'borg-inline-choice'
-                        }
-                        onClick={() => props.onChoice(message.id, option.value)}
-                      >
-                        <span className='borg-inline-choice__content'>
-                          {option.icon === 'openai' ? <OpenAiLogo /> : null}
-                          <span>{option.label}</span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : null}
-              {message.input && !animated.has(message.id) ? (
-                <>
-                  <Spacer size={10} />
-                  <div className='borg-session__input-body'>
-                    <TextInput
-                      name={message.input.name}
-                      placeholder={message.input.placeholder}
-                      value={props.choices[message.input.id] ?? null}
-                      secret={message.input.secret}
-                      onChange={(value) => props.onChoice(message.input!.id, value)}
-                    />
-                  </div>
-                </>
-              ) : null}
-              {message.actions && !animated.has(message.id) ? (
-                <>
-                  <Spacer size={10} />
-                  <div className='borg-message__actions'>
-                    {message.actions.map((action) => (
-                      <button
-                        key={action.id}
-                        type='button'
-                        className='borg-button borg-button--primary'
-                        disabled={action.disabled}
-                        onClick={() => props.onAction?.(message.id, action.id)}
-                      >
-                        {action.label}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : null}
+              {renderMessageControls(message)}
             </Message>
           )
         }
@@ -149,6 +178,15 @@ export function Session(props: SessionProps) {
 
         return null
       })}
+      </div>
+      {composerMessage ? (
+        <div className='borg-session__composer'>
+          {composerMessage.content.trim().length > 0 ? (
+            <p className='borg-session__composer-text'>{composerMessage.content}</p>
+          ) : null}
+          {renderMessageControls(composerMessage)}
+        </div>
+      ) : null}
     </section>
   )
 }

@@ -24,9 +24,9 @@ body.onboard-shell {
 }
 
 .onboard-layout {
-  max-width: 900px;
+  max-width: 1000px;
   margin: 0 auto;
-  padding: 44px 24px;
+  padding: 30px 20px;
 }
 
 .onboard-heading {
@@ -39,4 +39,8 @@ body.onboard-shell {
 .onboard-tagline {
   margin: 10px 0 24px;
   color: var(--muted);
+}
+
+.onboard-chat-shell {
+  width: 100%;
 }

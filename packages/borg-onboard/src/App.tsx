@@ -167,10 +167,7 @@ export function OnboardApp() {
   }, [animatedCompleted, selectedProvider])
 
   return (
-    <div>
-      <h1 className='onboard-heading' style={{ textAlign: 'center', marginBottom: 25 }}>
-        Welcome to Borg
-      </h1>
+    <div className='onboard-chat-shell'>
       <Session
         messages={messages}
         choices={state.choices}
