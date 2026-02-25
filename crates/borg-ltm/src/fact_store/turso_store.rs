@@ -423,7 +423,10 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(loaded.fact_id.to_string(), result.facts[0].fact_id.to_string());
+        assert_eq!(
+            loaded.fact_id.to_string(),
+            result.facts[0].fact_id.to_string()
+        );
     }
 
     #[tokio::test]
@@ -442,7 +445,10 @@ mod tests {
         ];
 
         for value in values {
-            let result = store.state_facts(vec![make_fact(value.clone())]).await.unwrap();
+            let result = store
+                .state_facts(vec![make_fact(value.clone())])
+                .await
+                .unwrap();
             let loaded = store
                 .load_fact(result.facts[0].fact_id.as_str())
                 .await

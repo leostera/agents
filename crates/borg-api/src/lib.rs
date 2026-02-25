@@ -133,7 +133,7 @@ async fn ports_http(
                     "session_id": message.session_id
                 })),
             )
-            .into_response();
+                .into_response();
             if let Some(session_id) = message.session_id {
                 if let Ok(value) = session_id.parse() {
                     response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
@@ -143,9 +143,14 @@ async fn ports_http(
         }
         Some(message) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            message.error.unwrap_or_else(|| "port adapter failed".to_string()),
+            message
+                .error
+                .unwrap_or_else(|| "port adapter failed".to_string()),
         ),
-        None => api_error(StatusCode::INTERNAL_SERVER_ERROR, "empty port response".to_string()),
+        None => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "empty port response".to_string(),
+        ),
     }
 }
 

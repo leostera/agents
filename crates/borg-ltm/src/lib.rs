@@ -420,7 +420,10 @@ mod tests {
         let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
         let task = tokio::spawn(async move { server.run().await.unwrap() });
         drop(ltm);
-        timeout(Duration::from_secs(2), task).await.unwrap().unwrap();
+        timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -480,21 +483,14 @@ mod tests {
                 "borg:fields:name",
                 FactValue::Text("Minions".to_string()),
             ),
-            make_fact(
-                entity.clone(),
-                "borg:fields:year",
-                FactValue::Integer(2015),
-            ),
+            make_fact(entity.clone(), "borg:fields:year", FactValue::Integer(2015)),
         ])
         .await
         .unwrap();
 
         let found = wait_until_entity(&ltm, entity.clone()).await.unwrap();
         assert_eq!(found.label, "Minions");
-        assert_eq!(
-            found.props.get("year").and_then(|v| v.as_i64()),
-            Some(2015)
-        );
+        assert_eq!(found.props.get("year").and_then(|v| v.as_i64()), Some(2015));
     }
 
     #[tokio::test]
@@ -618,7 +614,10 @@ mod tests {
         assert!(!before_restart.entities.is_empty());
 
         drop(ltm_a);
-        timeout(Duration::from_secs(2), task_a).await.unwrap().unwrap();
+        timeout(Duration::from_secs(2), task_a)
+            .await
+            .unwrap()
+            .unwrap();
 
         let (server_b, ltm_b) = BorgLtmServer::new(&root, &search).unwrap();
         let task_b = tokio::spawn(async move {
@@ -654,7 +653,10 @@ mod tests {
         );
 
         drop(ltm_b);
-        timeout(Duration::from_secs(2), task_b).await.unwrap().unwrap();
+        timeout(Duration::from_secs(2), task_b)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[test]

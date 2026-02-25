@@ -7,13 +7,12 @@ use borg_agent::{
 use borg_db::BorgDb;
 use borg_llm::providers::openai::OpenAiProvider;
 use borg_llm::testing::llm_container::LlmContainer;
-use serial_test::serial;
 use serde_json::json;
+use serial_test::serial;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 use tokio::time::sleep;
-use tokio::sync::OnceCell;
 use tracing::{debug, info, trace};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -21,7 +20,6 @@ use uuid::Uuid;
 const MAX_ATTEMPTS: usize = 6;
 const MAX_CONTAINER_START_ATTEMPTS: usize = 3;
 const REQUIRED_MARKER: &str = "BORG_TOOL_TEST_OK";
-static SHARED_LLM: OnceCell<Arc<LlmContainer>> = OnceCell::const_new();
 
 #[derive(Clone)]
 enum RunnerMode {
@@ -124,7 +122,10 @@ impl ToolRunner for RecordingToolRunner {
                         ))
                     }
                 } else {
-                    Err(anyhow!("unsupported tool for dependent chain: {}", tool_name))
+                    Err(anyhow!(
+                        "unsupported tool for dependent chain: {}",
+                        tool_name
+                    ))
                 }
             }
             RunnerMode::PartialFailureThenRecovery => match tool_name {
@@ -180,7 +181,9 @@ fn init_test_tracing() {
     ONCE.call_once(|| {
         tracing_subscriber::fmt()
             .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                EnvFilter::new("info,borg_agent=trace,borg_agent_it=trace,borg_llm=debug,borg_llm_test=trace")
+                EnvFilter::new(
+                    "info,borg_agent=trace,borg_agent_it=trace,borg_llm=debug,borg_llm_test=trace",
+                )
             }))
             .with_test_writer()
             .try_init()
@@ -188,7 +191,12 @@ fn init_test_tracing() {
     });
 }
 
-fn make_agent(agent_id: String, model: String, system_prompt: String, tools: Vec<ToolSpec>) -> Agent {
+fn make_agent(
+    agent_id: String,
+    model: String,
+    system_prompt: String,
+    tools: Vec<ToolSpec>,
+) -> Agent {
     Agent::new(agent_id)
         .with_model(model)
         .with_system_prompt(system_prompt)
@@ -357,7 +365,9 @@ fn session_output_or_retry(result: SessionResult<SessionOutput>) -> Option<Sessi
 fn count_events(messages: &[Message], event_name: &str) -> usize {
     messages
         .iter()
-        .filter(|message| matches!(message, Message::SessionEvent { name, .. } if name == event_name))
+        .filter(
+            |message| matches!(message, Message::SessionEvent { name, .. } if name == event_name),
+        )
         .count()
 }
 
@@ -395,18 +405,11 @@ fn has_non_empty_assistant(messages: &[Message]) -> bool {
     })
 }
 
-async fn shared_llm_container() -> Arc<LlmContainer> {
-    SHARED_LLM
-        .get_or_init(|| async { Arc::new(start_llm_container_with_retries().await) })
-        .await
-        .clone()
-}
-
 #[tokio::test]
 #[serial]
 async fn e2e_single_tool_happy_path_persists_messages_and_output() {
     init_test_tracing();
-    let llm = shared_llm_container().await;
+    let llm = start_llm_container_with_retries().await;
     let provider = OpenAiProvider::new_with_base_url(&llm.api_key, &llm.base_url);
 
     for attempt in 1..=MAX_ATTEMPTS {
@@ -431,10 +434,13 @@ After receiving the tool result, return a concise assistant answer.",
             ),
             single_tool_specs(),
         );
-        let mut session =
-            Session::new(format!("borg:session:{}", Uuid::now_v7()), agent.clone(), db)
-                .await
-                .unwrap();
+        let mut session = Session::new(
+            format!("borg:session:{}", Uuid::now_v7()),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
         session
             .add_message(Message::User {
                 content: "Find a battery recommendation and explain briefly.".to_string(),
@@ -442,12 +448,19 @@ After receiving the tool result, return a concise assistant answer.",
             .await
             .unwrap();
 
-        let tools = AgentTools { tool_runner: &runner };
-        let Some(output) = session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
+        let tools = AgentTools {
+            tool_runner: &runner,
+        };
+        let Some(output) =
+            session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
         else {
             debug!(target: "borg_agent_it", attempt, "single-tool run returned idle; retrying");
             let messages = session.read_messages(0, 1024).await.unwrap();
-            log_session_messages("e2e_single_tool_happy_path_persists_messages_and_output", attempt, &messages);
+            log_session_messages(
+                "e2e_single_tool_happy_path_persists_messages_and_output",
+                attempt,
+                &messages,
+            );
             continue;
         };
         let calls = runner.calls();
@@ -472,20 +485,28 @@ After receiving the tool result, return a concise assistant answer.",
                 "single-tool run completed without tool execution; accepting model fallback path"
             );
         } else {
-            assert!(output.tool_calls.iter().any(|record| record.tool_name == "catalog_lookup"));
+            assert!(
+                output
+                    .tool_calls
+                    .iter()
+                    .any(|record| record.tool_name == "catalog_lookup")
+            );
         }
         assert!(has_non_empty_assistant(&messages));
         return;
     }
 
-    panic!("single-tool happy path did not satisfy assertions in {} attempts", MAX_ATTEMPTS);
+    panic!(
+        "single-tool happy path did not satisfy assertions in {} attempts",
+        MAX_ATTEMPTS
+    );
 }
 
 #[tokio::test]
 #[serial]
 async fn e2e_multi_tool_chain_then_final_answer_uses_all_results() {
     init_test_tracing();
-    let llm = shared_llm_container().await;
+    let llm = start_llm_container_with_retries().await;
     let provider = OpenAiProvider::new_with_base_url(&llm.api_key, &llm.base_url);
 
     for attempt in 1..=MAX_ATTEMPTS {
@@ -515,30 +536,45 @@ Then provide one final answer that references the three result labels.",
             ),
             multi_chain_tool_specs(),
         );
-        let mut session =
-            Session::new(format!("borg:session:{}", Uuid::now_v7()), agent.clone(), db)
-                .await
-                .unwrap();
+        let mut session = Session::new(
+            format!("borg:session:{}", Uuid::now_v7()),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
         session
             .add_message(Message::User {
-                content: "Customer c-22 cannot start the app. Diagnose and suggest steps.".to_string(),
+                content: "Customer c-22 cannot start the app. Diagnose and suggest steps."
+                    .to_string(),
             })
             .await
             .unwrap();
 
-        let tools = AgentTools { tool_runner: &runner };
-        let Some(output) = session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
+        let tools = AgentTools {
+            tool_runner: &runner,
+        };
+        let Some(output) =
+            session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
         else {
             debug!(target: "borg_agent_it", attempt, "multi-chain run returned idle; retrying");
             let messages = session.read_messages(0, 1024).await.unwrap();
-            log_session_messages("e2e_multi_tool_chain_then_final_answer_uses_all_results", attempt, &messages);
+            log_session_messages(
+                "e2e_multi_tool_chain_then_final_answer_uses_all_results",
+                attempt,
+                &messages,
+            );
             continue;
         };
         let calls = runner.calls();
         let messages = session.read_messages(0, 1024).await.unwrap();
 
         let seen_names: Vec<String> = calls.iter().map(|call| call.tool_name.clone()).collect();
-        let expected_any = ["collect_customer_profile", "fetch_subscription_state", "generate_resolution_steps"];
+        let expected_any = [
+            "collect_customer_profile",
+            "fetch_subscription_state",
+            "generate_resolution_steps",
+        ];
         let expected_call_count = expected_any
             .iter()
             .filter(|name| seen_names.iter().any(|call_name| call_name == *name))
@@ -561,27 +597,38 @@ Then provide one final answer that references the three result labels.",
                 has_matching_tool_result,
                 "did not see sufficient multi-chain tool evidence"
             );
-            log_session_messages("e2e_multi_tool_chain_then_final_answer_uses_all_results", attempt, &messages);
+            log_session_messages(
+                "e2e_multi_tool_chain_then_final_answer_uses_all_results",
+                attempt,
+                &messages,
+            );
             continue;
         }
 
         assert!(!output.tool_calls.is_empty());
         if !has_non_empty_assistant(&messages) {
             debug!(target: "borg_agent_it", attempt, "multi-chain had tool calls but empty assistant; retrying");
-            log_session_messages("e2e_multi_tool_chain_then_final_answer_uses_all_results", attempt, &messages);
+            log_session_messages(
+                "e2e_multi_tool_chain_then_final_answer_uses_all_results",
+                attempt,
+                &messages,
+            );
             continue;
         }
         return;
     }
 
-    panic!("multi-tool chain test did not satisfy assertions in {} attempts", MAX_ATTEMPTS);
+    panic!(
+        "multi-tool chain test did not satisfy assertions in {} attempts",
+        MAX_ATTEMPTS
+    );
 }
 
 #[tokio::test]
 #[serial]
 async fn e2e_multi_tool_with_intermediate_dependency_updates_arguments() {
     init_test_tracing();
-    let llm = shared_llm_container().await;
+    let llm = start_llm_container_with_retries().await;
     let provider = OpenAiProvider::new_with_base_url(&llm.api_key, &llm.base_url);
 
     for attempt in 1..=MAX_ATTEMPTS {
@@ -604,10 +651,13 @@ After the second result, answer briefly with the fetched record."
                 .to_string(),
             dependent_chain_tool_specs(),
         );
-        let mut session =
-            Session::new(format!("borg:session:{}", Uuid::now_v7()), agent.clone(), db)
-                .await
-                .unwrap();
+        let mut session = Session::new(
+            format!("borg:session:{}", Uuid::now_v7()),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
         session
             .add_message(Message::User {
                 content: "Fetch the secure record for alpha account.".to_string(),
@@ -615,12 +665,19 @@ After the second result, answer briefly with the fetched record."
             .await
             .unwrap();
 
-        let tools = AgentTools { tool_runner: &runner };
-        let Some(output) = session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
+        let tools = AgentTools {
+            tool_runner: &runner,
+        };
+        let Some(output) =
+            session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
         else {
             debug!(target: "borg_agent_it", attempt, "dependent-chain run returned idle; retrying");
             let messages = session.read_messages(0, 1024).await.unwrap();
-            log_session_messages("e2e_multi_tool_with_intermediate_dependency_updates_arguments", attempt, &messages);
+            log_session_messages(
+                "e2e_multi_tool_with_intermediate_dependency_updates_arguments",
+                attempt,
+                &messages,
+            );
             continue;
         };
         let calls = runner.calls();
@@ -630,7 +687,11 @@ After the second result, answer briefly with the fetched record."
         if !has_discover && !has_fetch {
             debug!(target: "borg_agent_it", attempt, "dependent-chain had no relevant tool calls");
             let messages = session.read_messages(0, 1024).await.unwrap();
-            log_session_messages("e2e_multi_tool_with_intermediate_dependency_updates_arguments", attempt, &messages);
+            log_session_messages(
+                "e2e_multi_tool_with_intermediate_dependency_updates_arguments",
+                attempt,
+                &messages,
+            );
             continue;
         }
 
@@ -647,12 +708,20 @@ After the second result, answer briefly with the fetched record."
                     fetch_args = ?fetch_call.arguments,
                     "fetch_by_key arguments did not include discovered key after discover_key"
                 );
-                log_session_messages("e2e_multi_tool_with_intermediate_dependency_updates_arguments", attempt, &messages);
+                log_session_messages(
+                    "e2e_multi_tool_with_intermediate_dependency_updates_arguments",
+                    attempt,
+                    &messages,
+                );
                 continue;
             }
         } else if !has_non_empty_assistant(&messages) {
             debug!(target: "borg_agent_it", attempt, "dependent-chain had no assistant reply; retrying");
-            log_session_messages("e2e_multi_tool_with_intermediate_dependency_updates_arguments", attempt, &messages);
+            log_session_messages(
+                "e2e_multi_tool_with_intermediate_dependency_updates_arguments",
+                attempt,
+                &messages,
+            );
             continue;
         }
 
@@ -660,14 +729,17 @@ After the second result, answer briefly with the fetched record."
         return;
     }
 
-    panic!("dependent multi-tool chain test did not satisfy assertions in {} attempts", MAX_ATTEMPTS);
+    panic!(
+        "dependent multi-tool chain test did not satisfy assertions in {} attempts",
+        MAX_ATTEMPTS
+    );
 }
 
 #[tokio::test]
 #[serial]
 async fn e2e_multi_tool_partial_failure_then_recovery() {
     init_test_tracing();
-    let llm = shared_llm_container().await;
+    let llm = start_llm_container_with_retries().await;
     let provider = OpenAiProvider::new_with_base_url(&llm.api_key, &llm.base_url);
 
     for attempt in 1..=MAX_ATTEMPTS {
@@ -698,10 +770,13 @@ Return a final answer after stage_three."
                 .to_string(),
             staged_tool_specs(),
         );
-        let mut session =
-            Session::new(format!("borg:session:{}", Uuid::now_v7()), agent.clone(), db)
-                .await
-                .unwrap();
+        let mut session = Session::new(
+            format!("borg:session:{}", Uuid::now_v7()),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
         session
             .add_message(Message::User {
                 content: "Run the full staged repair flow.".to_string(),
@@ -709,7 +784,9 @@ Return a final answer after stage_three."
             .await
             .unwrap();
 
-        let tools = AgentTools { tool_runner: &runner };
+        let tools = AgentTools {
+            tool_runner: &runner,
+        };
         let result = agent.run(&mut session, &provider, &tools).await;
         if let SessionResult::SessionError(err) = result {
             debug!(
@@ -719,7 +796,11 @@ Return a final answer after stage_three."
                 "partial-failure run returned session error; retrying"
             );
             let messages = session.read_messages(0, 1024).await.unwrap();
-            log_session_messages("e2e_multi_tool_partial_failure_then_recovery", attempt, &messages);
+            log_session_messages(
+                "e2e_multi_tool_partial_failure_then_recovery",
+                attempt,
+                &messages,
+            );
             continue;
         }
         let messages = session.read_messages(0, 1024).await.unwrap();
@@ -752,20 +833,27 @@ Return a final answer after stage_three."
                 has_any_stage_call,
                 "partial failure + recovery path not observed; retrying"
             );
-            log_session_messages("e2e_multi_tool_partial_failure_then_recovery", attempt, &messages);
+            log_session_messages(
+                "e2e_multi_tool_partial_failure_then_recovery",
+                attempt,
+                &messages,
+            );
             continue;
         }
         return;
     }
 
-    panic!("partial failure recovery test did not satisfy assertions in {} attempts", MAX_ATTEMPTS);
+    panic!(
+        "partial failure recovery test did not satisfy assertions in {} attempts",
+        MAX_ATTEMPTS
+    );
 }
 
 #[tokio::test]
 #[serial]
 async fn e2e_tool_error_is_recorded_not_fatal() {
     init_test_tracing();
-    let llm = shared_llm_container().await;
+    let llm = start_llm_container_with_retries().await;
     let provider = OpenAiProvider::new_with_base_url(&llm.api_key, &llm.base_url);
 
     for attempt in 1..=MAX_ATTEMPTS {
@@ -786,10 +874,13 @@ then continue and summarize that error briefly in your final response."
                 .to_string(),
             single_tool_specs(),
         );
-        let mut session =
-            Session::new(format!("borg:session:{}", Uuid::now_v7()), agent.clone(), db)
-                .await
-                .unwrap();
+        let mut session = Session::new(
+            format!("borg:session:{}", Uuid::now_v7()),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
         session
             .add_message(Message::User {
                 content: "Try to find catalog data.".to_string(),
@@ -797,7 +888,9 @@ then continue and summarize that error briefly in your final response."
             .await
             .unwrap();
 
-        let tools = AgentTools { tool_runner: &runner };
+        let tools = AgentTools {
+            tool_runner: &runner,
+        };
         let result = agent.run(&mut session, &provider, &tools).await;
         let messages = session.read_messages(0, 1024).await.unwrap();
         let has_error_result = messages.iter().any(|message| {
@@ -819,14 +912,17 @@ then continue and summarize that error briefly in your final response."
         return;
     }
 
-    panic!("tool-error test did not satisfy assertions in {} attempts", MAX_ATTEMPTS);
+    panic!(
+        "tool-error test did not satisfy assertions in {} attempts",
+        MAX_ATTEMPTS
+    );
 }
 
 #[tokio::test]
 #[serial]
 async fn e2e_follow_up_turn_reuses_session_state_and_calls_tools_again() {
     init_test_tracing();
-    let llm = shared_llm_container().await;
+    let llm = start_llm_container_with_retries().await;
     let provider = OpenAiProvider::new_with_base_url(&llm.api_key, &llm.base_url);
 
     for attempt in 1..=MAX_ATTEMPTS {
@@ -852,10 +948,13 @@ Do not skip tool calls on any turn."
                 .to_string(),
             single_tool_specs(),
         );
-        let mut session =
-            Session::new(format!("borg:session:{}", Uuid::now_v7()), agent.clone(), db)
-                .await
-                .unwrap();
+        let mut session = Session::new(
+            format!("borg:session:{}", Uuid::now_v7()),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
 
         session
             .add_message(Message::User {
@@ -863,7 +962,9 @@ Do not skip tool calls on any turn."
             })
             .await
             .unwrap();
-        let tools = AgentTools { tool_runner: &runner };
+        let tools = AgentTools {
+            tool_runner: &runner,
+        };
         let first = agent.run(&mut session, &provider, &tools).await;
         if matches!(first, SessionResult::SessionError(_)) {
             continue;
@@ -894,8 +995,12 @@ Do not skip tool calls on any turn."
             .collect();
 
         if calls.len() < 2
-            || !tool_result_texts.iter().any(|text| text.contains("\"turn\":1"))
-            || !tool_result_texts.iter().any(|text| text.contains("\"turn\":2"))
+            || !tool_result_texts
+                .iter()
+                .any(|text| text.contains("\"turn\":1"))
+            || !tool_result_texts
+                .iter()
+                .any(|text| text.contains("\"turn\":2"))
         {
             debug!(
                 target: "borg_agent_it",
@@ -903,7 +1008,11 @@ Do not skip tool calls on any turn."
                 calls = calls.len(),
                 "follow-up path did not capture both tool outputs"
             );
-            log_session_messages("e2e_follow_up_turn_reuses_session_state_and_calls_tools_again", attempt, &messages);
+            log_session_messages(
+                "e2e_follow_up_turn_reuses_session_state_and_calls_tools_again",
+                attempt,
+                &messages,
+            );
             continue;
         }
 
@@ -912,5 +1021,8 @@ Do not skip tool calls on any turn."
         return;
     }
 
-    panic!("follow-up test did not satisfy assertions in {} attempts", MAX_ATTEMPTS);
+    panic!(
+        "follow-up test did not satisfy assertions in {} attempts",
+        MAX_ATTEMPTS
+    );
 }
