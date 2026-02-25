@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use testcontainers::core::{IntoContainerPort, WaitFor};
+use testcontainers::core::IntoContainerPort;
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tokio::time::sleep;
@@ -12,8 +12,8 @@ const VLLM_PORT: u16 = 8000;
 const DEFAULT_TEST_MODEL: &str = "Qwen/Qwen2.5-0.5B-Instruct";
 const DEFAULT_TEST_API_KEY: &str = "test-key";
 const MODELS_PATH: &str = "/v1/models";
-const MAX_READINESS_ATTEMPTS: usize = 240;
-const READINESS_BACKOFF_MILLIS: u64 = 500;
+const MAX_READINESS_ATTEMPTS: usize = 1800;
+const READINESS_BACKOFF_MILLIS: u64 = 1000;
 
 pub struct LlmContainer {
     _container: ContainerAsync<GenericImage>,
@@ -31,8 +31,9 @@ impl LlmContainer {
         let model = model.into();
         let container = GenericImage::new(VLLM_IMAGE_NAME, VLLM_IMAGE_TAG)
             .with_exposed_port(VLLM_PORT.tcp())
-            .with_wait_for(WaitFor::message_on_stdout("Uvicorn running on"))
-            .with_cmd(vec!["--model", model.as_str()])
+            .with_env_var("VLLM_TARGET_DEVICE", "cpu")
+            .with_env_var("CUDA_VISIBLE_DEVICES", "")
+            .with_cmd(vec!["--model", model.as_str(), "--device", "cpu"])
             .start()
             .await?;
 
