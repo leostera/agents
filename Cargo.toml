@@ -1,5 +1,15 @@
 [workspace]
-members = ["crates/borg-cli", "crates/borg-core", "crates/borg-db", "crates/borg-exec", "crates/borg-ltm", "crates/borg-onboard", "crates/borg-rt", "crates/borg-ui"]
+members = [
+  "crates/borg-cli",
+  "crates/borg-core",
+  "crates/borg-db",
+  "crates/borg-exec",
+  "crates/borg-llm",
+  "crates/borg-ltm",
+  "crates/borg-onboard",
+  "crates/borg-rt",
+  "crates/borg-ui"
+]
 resolver = "2"
 
 [workspace.dependencies]
@@ -16,3 +26,5 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 deno_core = "0.311"
 rusqlite = "0.31"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+async-trait = "0.1"

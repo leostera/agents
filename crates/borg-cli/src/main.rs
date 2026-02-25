@@ -87,8 +87,7 @@ impl BorgCliApp {
         let memory = MemoryStore::new(self.borg_dir.ltm_db())?;
         let exec = ExecEngine::new(
             db.clone(),
-            memory.clone(),
-            RuntimeEngine,
+            RuntimeEngine::default(),
             format!("worker-{}", std::process::id()),
         );
 

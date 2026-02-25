@@ -321,6 +321,22 @@ impl BorgDb {
             .context("failed to upsert provider api key")?;
         Ok(())
     }
+
+    pub async fn get_provider_api_key(&self, provider: &str) -> Result<Option<String>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT api_key FROM providers WHERE provider = ?1 LIMIT 1",
+                (provider.to_string(),),
+            )
+            .await?;
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+
+        Ok(Some(row.get(0)?))
+    }
 }
 
 fn row_to_task(row: &Row) -> Result<Task> {

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::{Result, anyhow};
 use borg_core::ExecutionResult;
 use deno_core::{JsRuntime, RuntimeOptions, serde_v8, v8};
 use serde_json::Value;
@@ -19,7 +19,7 @@ impl RuntimeEngine {
         let script = code.to_owned();
         let value = runtime
             .execute_script("borg_exec.ts", script)
-            .context("failed to execute script")?;
+            .map_err(|err| anyhow!("failed to execute script: {}", err))?;
 
         let result_json: Value = {
             let scope = &mut runtime.handle_scope();
