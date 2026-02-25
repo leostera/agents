@@ -54,7 +54,6 @@ export function OnboardApp() {
     error: '',
     saved: false,
   })
-  const [keyPromptVisible, setKeyPromptVisible] = useState<boolean>(false)
   const [animatedCompleted, setAnimatedCompleted] = useState<Record<string, boolean>>({})
 
   const baseMessages = useMemo<Array<SessionMessage>>(
@@ -78,34 +77,24 @@ export function OnboardApp() {
   const messages = useMemo<Array<SessionMessage>>(() => {
     if (selectedProvider !== OPENAI_PROVIDER || !animatedCompleted['m-welcome']) return baseMessages
 
-    const keyMessages: Array<SessionMessage> = [
+    return [
+      ...baseMessages,
       {
         id: 'm-key',
         type: 'message',
         author: 'agent',
         content: i18n.t('onboard.agent.openai_key_prompt'),
         timestamp: formatTimestamp(new Date(startedAt.getTime() + 60_000)),
-      },
-      {
-        id: OPENAI_API_KEY_MESSAGE_ID,
-        type: 'input',
-        inputType: 'text',
-        author: 'agent',
-        prompt: '',
-        timestamp: formatTimestamp(new Date(startedAt.getTime() + 60_000)),
-        payload: {
+        input: {
+          id: OPENAI_API_KEY_MESSAGE_ID,
+          inputType: 'text',
           name: i18n.t('onboard.field.api_key'),
           placeholder: 'sk-...',
           secret: true,
         },
       },
     ]
-    if (!keyPromptVisible) {
-      return [...baseMessages, keyMessages[0]]
-    }
-
-    return [...baseMessages, ...keyMessages]
-  }, [animatedCompleted, baseMessages, i18n, keyPromptVisible, selectedProvider])
+  }, [animatedCompleted, baseMessages, i18n, selectedProvider, startedAt])
 
   const animatedIds = useMemo(() => {
     const ids: Array<string> = []
@@ -137,19 +126,13 @@ export function OnboardApp() {
               [messageId]: value,
             },
           }))
-          if (messageId === PROVIDER_MESSAGE_ID) {
-            setKeyPromptVisible(false)
-          }
         }}
         onMessageAnimationComplete={(messageId) => {
           setAnimatedCompleted((prev) => ({ ...prev, [messageId]: true }))
-          if (messageId === 'm-key') {
-            setKeyPromptVisible(true)
-          }
         }}
       />
 
-      {selectedProvider === OPENAI_PROVIDER && keyPromptVisible ? (
+      {selectedProvider === OPENAI_PROVIDER && animatedCompleted['m-key'] ? (
         <section className='card' style={{ marginTop: 15 }}>
           {state.error.length > 0 ? <p className='notice-error'>{state.error}</p> : null}
           {state.saved ? <p className='notice-success'>{i18n.t('onboard.notice.saved')}</p> : null}

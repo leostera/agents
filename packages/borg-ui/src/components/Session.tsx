@@ -66,6 +66,20 @@ export function Session(props: SessionProps) {
                   </div>
                 </>
               ) : null}
+              {message.input && !animated.has(message.id) ? (
+                <>
+                  <Spacer size={10} />
+                  <div className='borg-session__input-body'>
+                    <TextInput
+                      name={message.input.name}
+                      placeholder={message.input.placeholder}
+                      value={props.choices[message.input.id] ?? null}
+                      secret={message.input.secret}
+                      onChange={(value) => props.onChoice(message.input!.id, value)}
+                    />
+                  </div>
+                </>
+              ) : null}
             </Message>
           )
         }

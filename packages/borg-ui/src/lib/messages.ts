@@ -13,6 +13,13 @@ export type SessionMessage =
         name: string
         options: Array<MessageChoiceOption>
       }
+      input?: {
+        id: string
+        inputType: 'text'
+        name: string
+        placeholder: string
+        secret?: boolean
+      }
     }
   | {
       id: string
