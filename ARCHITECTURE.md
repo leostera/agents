@@ -21,20 +21,20 @@ Runtime process (`borg start`) includes:
 ## 3. High-Level Architecture
 ```mermaid
 flowchart LR
-  subgraph Clients["Clients"]
+  subgraph Clients
     U[Users]
-    W[Web UI / Dashboard]
+    W[Web UI Dashboard]
     S[External Systems]
   end
 
-  subgraph APIPlane["Control API Plane"]
+  subgraph APIPlane
     BAPI[borg_api planned]
     ONB[Onboarding Web]
   end
 
-  subgraph Runtime["borg-cli Runtime"]
-    PORTS[Ports (agent entrypoints)]
-    EXEC[Executor + Scheduler]
+  subgraph Runtime
+    PORTS[Ports Agent Entry]
+    EXEC[Executor Scheduler]
     AGENT[Agent Runtime]
     TOOLS[Tool Runner]
     RT[Runtime Sandbox]
