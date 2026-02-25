@@ -583,6 +583,80 @@ mod tests {
         }));
     }
 
+    #[tokio::test]
+    async fn search_index_persists_across_server_restart() {
+        let (root, search) = temp_paths("borg-ltm-search-persist");
+
+        let (server_a, ltm_a) = BorgLtmServer::new(&root, &search).unwrap();
+        let task_a = tokio::spawn(async move {
+            server_a.run().await.unwrap();
+        });
+
+        let entity = uri!("plex", "movies").unwrap();
+        ltm_a
+            .state_facts(vec![make_fact(
+                entity.clone(),
+                "borg:fields:name",
+                FactValue::Text("Persistent Minions".to_string()),
+            )])
+            .await
+            .unwrap();
+
+        let _ = wait_until_entity(&ltm_a, entity.clone()).await;
+        let before_restart = ltm_a
+            .search(SearchQuery {
+                ns: Some("plex".to_string()),
+                kind: Some("movies".to_string()),
+                name: Some(NameFilter {
+                    like: "Persistent Minions".to_string(),
+                }),
+                query_text: None,
+                limit: Some(10),
+            })
+            .await
+            .unwrap();
+        assert!(!before_restart.entities.is_empty());
+
+        drop(ltm_a);
+        timeout(Duration::from_secs(2), task_a).await.unwrap().unwrap();
+
+        let (server_b, ltm_b) = BorgLtmServer::new(&root, &search).unwrap();
+        let task_b = tokio::spawn(async move {
+            server_b.run().await.unwrap();
+        });
+
+        let mut after_restart = SearchResults { entities: vec![] };
+        for _ in 0..30 {
+            after_restart = ltm_b
+                .search(SearchQuery {
+                    ns: Some("plex".to_string()),
+                    kind: Some("movies".to_string()),
+                    name: Some(NameFilter {
+                        like: "Persistent Minions".to_string(),
+                    }),
+                    query_text: None,
+                    limit: Some(10),
+                })
+                .await
+                .unwrap();
+            if !after_restart.entities.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        assert!(!after_restart.entities.is_empty());
+        assert!(
+            after_restart
+                .entities
+                .iter()
+                .any(|candidate| candidate.entity_id == entity.as_str())
+        );
+
+        drop(ltm_b);
+        timeout(Duration::from_secs(2), task_b).await.unwrap().unwrap();
+    }
+
     #[test]
     fn uri_macro_builds_valid_values() {
         let generated = uri!("plex", "movies").unwrap();
