@@ -350,38 +350,55 @@ async fn apply_projection(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use tokio::time::{Duration, timeout};
     use uuid::Uuid;
+
+    fn temp_paths(prefix: &str) -> (PathBuf, PathBuf) {
+        let root = PathBuf::from(format!("/tmp/{}-{}", prefix, Uuid::now_v7()));
+        let search = PathBuf::from(format!("/tmp/{}-search-{}", prefix, Uuid::now_v7()));
+        (root, search)
+    }
+
+    fn make_fact(entity: Uri, field: &str, value: FactValue) -> FactInput {
+        FactInput {
+            source: uri!("borg", "session").unwrap(),
+            entity,
+            field: Uri::parse(field).unwrap(),
+            value,
+        }
+    }
+
+    async fn wait_until_entity(ltm: &BorgLtm, entity: Uri) -> Option<Entity> {
+        for _ in 0..40 {
+            let found = ltm.get_entity(entity.clone()).await.unwrap();
+            if found.is_some() {
+                return found;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        None
+    }
 
     #[tokio::test]
     async fn state_facts_persists_and_can_query_entity() {
-        let root = PathBuf::from(format!("/tmp/borg-ltm-test-{}", Uuid::now_v7()));
-        let search = PathBuf::from(format!("/tmp/borg-ltm-search-test-{}", Uuid::now_v7()));
+        let (root, search) = temp_paths("borg-ltm-test");
         let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
         tokio::spawn(async move {
             server.run().await.unwrap();
         });
 
-        let source = Uri::parse(format!("borg:session:{}", Uuid::now_v7())).unwrap();
-        let entity = Uri::parse(format!("plex:movies:{}", Uuid::now_v7())).unwrap();
-        let field = Uri::parse("borg:fields:name").unwrap();
-        ltm.state_facts(vec![FactInput {
-            source,
-            entity: entity.clone(),
-            field,
-            value: FactValue::Text("Minions".to_string()),
-        }])
+        let entity = uri!("plex", "movies").unwrap();
+        ltm.state_facts(vec![make_fact(
+            entity.clone(),
+            "borg:fields:name",
+            FactValue::Text("Minions".to_string()),
+        )])
         .await
         .unwrap();
 
-        let mut found = None;
-        for _ in 0..30 {
-            found = ltm.get_entity(entity.clone()).await.unwrap();
-            if found.is_some() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
+        let found = wait_until_entity(&ltm, entity.clone()).await;
         assert!(found.is_some());
+
         let results = ltm
             .search(SearchQuery {
                 ns: Some("plex".to_string()),
@@ -397,11 +414,188 @@ mod tests {
         assert!(!results.entities.is_empty());
     }
 
+    #[tokio::test]
+    async fn server_exits_when_all_handles_are_dropped() {
+        let (root, search) = temp_paths("borg-ltm-server-exit");
+        let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
+        let task = tokio::spawn(async move { server.run().await.unwrap() });
+        drop(ltm);
+        timeout(Duration::from_secs(2), task).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_state_facts_are_processed() {
+        let (root, search) = temp_paths("borg-ltm-concurrent");
+        let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
+        tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
+
+        let mut jobs = Vec::new();
+        for i in 0..10 {
+            let ltm_clone = ltm.clone();
+            jobs.push(tokio::spawn(async move {
+                let entity = uri!("plex", "movies").unwrap();
+                ltm_clone
+                    .state_facts(vec![make_fact(
+                        entity,
+                        "borg:fields:name",
+                        FactValue::Text(format!("Movie {}", i)),
+                    )])
+                    .await
+                    .unwrap();
+            }));
+        }
+        for job in jobs {
+            job.await.unwrap();
+        }
+
+        let results = ltm
+            .search(SearchQuery {
+                ns: Some("plex".to_string()),
+                kind: Some("movies".to_string()),
+                name: Some(NameFilter {
+                    like: "Movie".to_string(),
+                }),
+                query_text: None,
+                limit: Some(20),
+            })
+            .await
+            .unwrap();
+        assert!(!results.entities.is_empty());
+    }
+
+    #[tokio::test]
+    async fn merges_multiple_facts_into_single_entity_projection() {
+        let (root, search) = temp_paths("borg-ltm-merge");
+        let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
+        tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
+
+        let entity = uri!("plex", "movies").unwrap();
+        ltm.state_facts(vec![
+            make_fact(
+                entity.clone(),
+                "borg:fields:name",
+                FactValue::Text("Minions".to_string()),
+            ),
+            make_fact(
+                entity.clone(),
+                "borg:fields:year",
+                FactValue::Integer(2015),
+            ),
+        ])
+        .await
+        .unwrap();
+
+        let found = wait_until_entity(&ltm, entity.clone()).await.unwrap();
+        assert_eq!(found.label, "Minions");
+        assert_eq!(
+            found.props.get("year").and_then(|v| v.as_i64()),
+            Some(2015)
+        );
+    }
+
+    #[tokio::test]
+    async fn replay_pending_projection_on_restart() {
+        let (root, search) = temp_paths("borg-ltm-replay");
+
+        let fact_store = super::fact_store::TursoFactStore::new(&root).unwrap();
+        fact_store.migrate().await.unwrap();
+        let entity = uri!("plex", "movies").unwrap();
+        let _ = fact_store
+            .state_facts(vec![make_fact(
+                entity.clone(),
+                "borg:fields:name",
+                FactValue::Text("Replayed".to_string()),
+            )])
+            .await
+            .unwrap();
+
+        let memory = MemoryStore::new(&root, &search).unwrap();
+        memory.migrate().await.unwrap();
+
+        let mut found = None;
+        for _ in 0..40 {
+            match memory.get_entity(entity.as_str()).await {
+                Ok(value) => {
+                    found = value;
+                    if found.is_some() {
+                        break;
+                    }
+                }
+                Err(_) => {
+                    // Projection can be mid-write; retry.
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(found.is_some());
+    }
+
+    #[tokio::test]
+    async fn search_filters_namespace_and_kind() {
+        let (root, search) = temp_paths("borg-ltm-filter");
+        let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
+        tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
+
+        let movie = uri!("plex", "movies").unwrap();
+        let album = uri!("plex", "albums").unwrap();
+        ltm.state_facts(vec![
+            make_fact(
+                movie.clone(),
+                "borg:fields:name",
+                FactValue::Text("Minions".to_string()),
+            ),
+            make_fact(
+                album.clone(),
+                "borg:fields:name",
+                FactValue::Text("Minions Soundtrack".to_string()),
+            ),
+        ])
+        .await
+        .unwrap();
+
+        let _ = wait_until_entity(&ltm, movie.clone()).await;
+        let results = ltm
+            .search(SearchQuery {
+                ns: Some("plex".to_string()),
+                kind: Some("movies".to_string()),
+                name: Some(NameFilter {
+                    like: "Minions".to_string(),
+                }),
+                query_text: None,
+                limit: Some(10),
+            })
+            .await
+            .unwrap();
+
+        assert!(results.entities.iter().all(|entity| {
+            entity
+                .props
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                == "movies"
+        }));
+    }
+
     #[test]
     fn uri_macro_builds_valid_values() {
         let generated = uri!("plex", "movies").unwrap();
         let explicit = uri!("plex", "movies", "abc123").unwrap();
         assert!(generated.as_str().starts_with("plex:movies:"));
         assert_eq!(explicit.as_str(), "plex:movies:abc123");
+    }
+
+    #[test]
+    fn uri_parse_validation_checks_shape() {
+        assert!(Uri::parse("plex:movies:abc").is_ok());
+        assert!(Uri::parse("plex:movies").is_err());
+        assert!(Uri::parse("plex::id").is_err());
+        assert!(Uri::parse("not a uri").is_err());
     }
 }

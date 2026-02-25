@@ -324,7 +324,15 @@ impl IndraEntityGraph {
     ) -> Result<HashMap<String, Value>> {
         let mut map = HashMap::new();
         let q = SpecificVertexQuery::single(vertex_id).properties()?;
-        let out = db.get(q)?;
+        let out = match db.get(q) {
+            Ok(out) => out,
+            Err(err) => {
+                if err.to_string().contains("entity not found") {
+                    return Ok(map);
+                }
+                return Err(err.into());
+            }
+        };
         let props = util::extract_vertex_properties(out).unwrap_or_default();
 
         for vertex_props in props {
@@ -341,7 +349,15 @@ impl IndraEntityGraph {
         prop_name: &str,
         expected_value: &Value,
     ) -> Result<Option<Uuid>> {
-        let vertices = util::extract_vertices(db.get(AllVertexQuery)?).unwrap_or_default();
+        let vertices = match db.get(AllVertexQuery) {
+            Ok(out) => util::extract_vertices(out).unwrap_or_default(),
+            Err(err) => {
+                if err.to_string().contains("entity not found") {
+                    return Ok(None);
+                }
+                return Err(err.into());
+            }
+        };
         for v in vertices {
             let props = self.vertex_props_map(db, v.id)?;
             if props.get(prop_name) == Some(expected_value) {
