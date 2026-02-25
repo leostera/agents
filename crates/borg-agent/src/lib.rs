@@ -593,15 +593,6 @@ async fn call_tool<'a>(
     Ok(response.content)
 }
 
-pub async fn call_tool_for_testing<'a>(
-    tools: &AgentTools<'a>,
-    tool_call_id: &str,
-    tool_name: &str,
-    arguments: &Value,
-) -> Result<ToolResultData> {
-    call_tool(tools, tool_call_id, tool_name, arguments).await
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -612,7 +603,7 @@ mod tests {
 
     use super::{
         Agent, AgentTools, Message, Session, SessionResult, ToolRequest, ToolResponse, ToolResultData, ToolRunner,
-        call_tool_for_testing,
+        call_tool,
     };
     use anyhow::{Result, anyhow};
     use async_trait::async_trait;
@@ -629,10 +620,10 @@ mod tests {
     #[async_trait]
     impl ToolRunner for ScriptedRunner {
         async fn run(&self, request: ToolRequest) -> Result<ToolResponse> {
-            self.calls.lock().expect("calls lock").push(request);
+            self.calls.lock().unwrap().push(request);
             self.outputs
                 .lock()
-                .expect("outputs lock")
+                .unwrap()
                 .pop_front()
                 .ok_or_else(|| anyhow!("missing scripted tool output"))?
                 .map_err(|e| anyhow!(e))
@@ -648,10 +639,10 @@ mod tests {
     #[async_trait]
     impl Provider for ScriptedProvider {
         async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
-            self.requests.lock().expect("requests lock").push(req.clone());
+            self.requests.lock().unwrap().push(req.clone());
             self.responses
                 .lock()
-                .expect("responses lock")
+                .unwrap()
                 .pop_front()
                 .ok_or_else(|| anyhow!("missing scripted llm response"))?
                 .map_err(|e| anyhow!(e))
@@ -697,13 +688,13 @@ mod tests {
 
     #[tokio::test]
     async fn a1_no_tool_completion() {
-        let (agent, mut session) = make_session().await.expect("session");
+        let (agent, mut session) = make_session().await.unwrap();
         session
             .add_message(Message::User {
                 content: "hello".to_string(),
             })
             .await
-            .expect("user add");
+            .unwrap();
 
         let provider = ScriptedProvider {
             requests: Arc::new(Mutex::new(Vec::new())),
@@ -725,13 +716,13 @@ mod tests {
 
     #[tokio::test]
     async fn a2_single_tool_then_answer() {
-        let (agent, mut session) = make_session().await.expect("session");
+        let (agent, mut session) = make_session().await.unwrap();
         session
             .add_message(Message::User {
                 content: "search and answer".to_string(),
             })
             .await
-            .expect("user add");
+            .unwrap();
 
         let provider = ScriptedProvider {
             requests: Arc::new(Mutex::new(Vec::new())),
@@ -751,18 +742,18 @@ mod tests {
 
         let result = agent.run(&mut session, &provider, &tools).await;
         assert!(matches!(result, SessionResult::Completed(Ok(_))));
-        assert_eq!(calls.lock().expect("calls").len(), 1);
+        assert_eq!(calls.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
     async fn a3_multiple_tools_keep_order() {
-        let (agent, mut session) = make_session().await.expect("session");
+        let (agent, mut session) = make_session().await.unwrap();
         session
             .add_message(Message::User {
                 content: "run two tools".to_string(),
             })
             .await
-            .expect("user add");
+            .unwrap();
 
         let provider = ScriptedProvider {
             requests: Arc::new(Mutex::new(Vec::new())),
@@ -789,7 +780,7 @@ mod tests {
         let tools = AgentTools { tool_runner: &runner };
 
         let _ = agent.run(&mut session, &provider, &tools).await;
-        let recorded = calls.lock().expect("calls");
+        let recorded = calls.lock().unwrap();
         assert_eq!(recorded.len(), 2);
         assert_eq!(recorded[0].tool_name, "search");
         assert_eq!(recorded[1].tool_name, "execute");
@@ -797,13 +788,13 @@ mod tests {
 
     #[tokio::test]
     async fn a5_follow_up_continues_run() {
-        let (agent, mut session) = make_session().await.expect("session");
+        let (agent, mut session) = make_session().await.unwrap();
         session
             .add_message(Message::User {
                 content: "first".to_string(),
             })
             .await
-            .expect("user add");
+            .unwrap();
         session.enqueue_follow_up_message(Message::User {
             content: "follow-up".to_string(),
         });
@@ -823,7 +814,7 @@ mod tests {
 
         let result = agent.run(&mut session, &provider, &tools).await;
         assert!(matches!(result, SessionResult::Completed(Ok(_))));
-        let msgs = session.read_messages(0, 256).await.expect("read");
+        let msgs = session.read_messages(0, 256).await.unwrap();
         assert!(msgs
             .iter()
             .any(|m| matches!(m, Message::User { content } if content == "follow-up")));
@@ -831,13 +822,13 @@ mod tests {
 
     #[tokio::test]
     async fn a6_tool_error_is_returned_as_tool_result() {
-        let (agent, mut session) = make_session().await.expect("session");
+        let (agent, mut session) = make_session().await.unwrap();
         session
             .add_message(Message::User {
                 content: "tool error path".to_string(),
             })
             .await
-            .expect("user add");
+            .unwrap();
 
         let provider = ScriptedProvider {
             requests: Arc::new(Mutex::new(Vec::new())),
@@ -856,7 +847,7 @@ mod tests {
 
         let result = agent.run(&mut session, &provider, &tools).await;
         assert!(matches!(result, SessionResult::Completed(Ok(_))));
-        let msgs = session.read_messages(0, 256).await.expect("read");
+        let msgs = session.read_messages(0, 256).await.unwrap();
         assert!(msgs.iter().any(|m| {
             matches!(m, Message::ToolResult { content: ToolResultData::Error { .. }, .. })
         }));
@@ -864,13 +855,13 @@ mod tests {
 
     #[tokio::test]
     async fn a7_provider_failure_surfaces_session_error() {
-        let (agent, mut session) = make_session().await.expect("session");
+        let (agent, mut session) = make_session().await.unwrap();
         session
             .add_message(Message::User {
                 content: "provider fail".to_string(),
             })
             .await
-            .expect("user add");
+            .unwrap();
 
         let provider = ScriptedProvider {
             requests: Arc::new(Mutex::new(Vec::new())),
@@ -890,7 +881,7 @@ mod tests {
 
     #[tokio::test]
     async fn a8_idle_run_when_no_new_messages() {
-        let (agent, mut session) = make_session().await.expect("session");
+        let (agent, mut session) = make_session().await.unwrap();
         let provider = ScriptedProvider {
             requests: Arc::new(Mutex::new(Vec::new())),
             responses: Arc::new(Mutex::new(VecDeque::new())),
@@ -907,13 +898,13 @@ mod tests {
 
     #[tokio::test]
     async fn a9_lifecycle_events_persisted_once() {
-        let (agent, mut session) = make_session().await.expect("session");
+        let (agent, mut session) = make_session().await.unwrap();
         session
             .add_message(Message::User {
                 content: "hello".to_string(),
             })
             .await
-            .expect("user add");
+            .unwrap();
         let provider = ScriptedProvider {
             requests: Arc::new(Mutex::new(Vec::new())),
             responses: Arc::new(Mutex::new(VecDeque::from([Ok(assistant_text("ok"))]))),
@@ -925,7 +916,7 @@ mod tests {
         let tools = AgentTools { tool_runner: &runner };
 
         let _ = agent.run(&mut session, &provider, &tools).await;
-        let messages = session.read_messages(0, 256).await.expect("read");
+        let messages = session.read_messages(0, 256).await.unwrap();
         let started = messages
             .iter()
             .filter(|m| {
@@ -942,8 +933,8 @@ mod tests {
         assert_eq!(finished, 1);
     }
 
-    #[test]
-    fn injected_tool_runner_helper_still_works() {
+    #[tokio::test]
+    async fn injected_tool_runner_helper_still_works() {
         struct InlineRunner;
         #[async_trait]
         impl ToolRunner for InlineRunner {
@@ -957,15 +948,14 @@ mod tests {
         let tools = AgentTools {
             tool_runner: &InlineRunner,
         };
-        let rt = tokio::runtime::Runtime::new().expect("runtime");
-        let out = rt
-            .block_on(call_tool_for_testing(
-                &tools,
-                "tc1",
-                "search",
-                &json!({"query": "x"}),
-            ))
-            .expect("tool output");
+        let out = call_tool(
+            &tools,
+            "tc1",
+            "search",
+            &json!({"query": "x"}),
+        )
+        .await
+            .unwrap();
         assert!(matches!(out, ToolResultData::Text(text) if text == "ok"));
     }
 }
