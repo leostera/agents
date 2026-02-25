@@ -124,6 +124,67 @@ Modules:
 - Memory Service (`borg-ltm`)
 - Control Plane APIs (`borg-db` + runtime state)
 
+### 4.1 Core Subsystems (Primary Emphasis)
+The v0 architecture is centered on these four subsystems:
+- **Ports**: ingestion/egress boundary with the outside world.
+- **Agent Runtime**: reasoning loop, planning, and tool orchestration.
+- **Executor**: scheduling, claiming, retries, and task lifecycle transitions.
+- **Memory**: durable entity/relation/event context for agent decisions.
+
+```mermaid
+flowchart LR
+  P[Ports] --> E[Executor]
+  E --> A[Agent Runtime]
+  A --> M[Memory]
+  M --> A
+  A --> E
+  E --> P
+```
+
+#### Ports (Ingress/Egress)
+Responsibilities:
+- normalize external events into task payloads
+- emit final or intermediate responses back to channel/user
+- keep channel-specific details out of runtime core
+
+Contract:
+- `ingest(event) -> TaskSpec[]`
+- `emit(output) -> Result`
+
+#### Executor (Work Graph Engine)
+Responsibilities:
+- persist and transition task states
+- determine runnable tasks and claim atomically
+- apply retries/backoff and emit task events
+
+Contract:
+- `enqueue(task_spec) -> task_id`
+- `claim_runnable(worker_id) -> task?`
+- `complete(task_id, result)`
+- `fail(task_id, error, retry_policy)`
+
+#### Agent Runtime
+Responsibilities:
+- load task + session context
+- plan/act with tool APIs (`search`, `execute`, `create_task`)
+- coordinate memory reads/writes through explicit calls
+
+Contract:
+- `run_task(task, context) -> AgentOutcome`
+- `AgentOutcome` may include: messages, memory ops, new tasks, terminal status
+
+#### Memory
+Responsibilities:
+- durable long-term context
+- search and retrieval for reasoning
+- entity/relation/event persistence
+
+Contract:
+- `search(query, filters) -> entities`
+- `upsert(entity) -> entity_id`
+- `link(from, relation, to) -> ok`
+- `get(entity_id) -> entity`
+
 ---
 
 ## 5. Crate Layout
