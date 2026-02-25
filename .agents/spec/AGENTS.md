@@ -1,6 +1,6 @@
 # Spec Agent Guide
 
-Scope: keeping `SPEC_V0.md` aligned with implementation and direction.
+Scope: keeping `ARCHITECTURE.md` aligned with implementation and direction.
 
 ## Priority Areas (Must Stay Current)
 
@@ -25,7 +25,7 @@ When updating spec, maintain Mermaid diagrams for:
 
 ## Update Triggers
 
-Update `SPEC_V0.md` when any of these change:
+Update `ARCHITECTURE.md` when any of these change:
 - API contracts/endpoints
 - crate/package ownership boundaries
 - onboarding flow semantics
