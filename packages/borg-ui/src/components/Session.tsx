@@ -72,13 +72,13 @@ export function Session(props: SessionProps) {
 
         if (message.inputType === 'choice') {
           return (
-            <article key={message.id} className='borg-session__input'>
-              <Message
-                author={message.author}
-                authorLabel={getAuthorLabel(message.author)}
-                text={message.prompt}
-                timestamp={message.timestamp}
-              />
+            <Message
+              key={message.id}
+              author={message.author}
+              authorLabel={getAuthorLabel(message.author)}
+              text={message.prompt}
+              timestamp={message.timestamp}
+            >
               <div className='borg-session__input-body'>
                 <ChoiceInput
                   name={message.payload.name}
@@ -88,21 +88,19 @@ export function Session(props: SessionProps) {
                   onChange={(value) => props.onChoice(message.id, value)}
                 />
               </div>
-            </article>
+            </Message>
           )
         }
 
         if (message.inputType === 'text') {
           return (
-            <article key={message.id} className='borg-session__input'>
-              {message.prompt.trim().length > 0 ? (
-                <Message
-                  author={message.author}
-                  authorLabel={getAuthorLabel(message.author)}
-                  text={message.prompt}
-                  timestamp={message.timestamp}
-                />
-              ) : null}
+            <Message
+              key={message.id}
+              author={message.author}
+              authorLabel={getAuthorLabel(message.author)}
+              text={message.prompt}
+              timestamp={message.timestamp}
+            >
               <div className='borg-session__input-body'>
                 <TextInput
                   name={message.payload.name}
@@ -112,7 +110,7 @@ export function Session(props: SessionProps) {
                   onChange={(value) => props.onChoice(message.id, value)}
                 />
               </div>
-            </article>
+            </Message>
           )
         }
 
