@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+use std::sync::Arc;
+
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_agent::{
     Agent, AgentTools, CapabilitySummary, Message, Session, SessionResult, ToolRequest,
@@ -10,18 +12,75 @@ use borg_llm::providers::openai::OpenAiProvider;
 use borg_rt::RuntimeEngine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tracing::{debug, trace};
-use tracing::{error, info, warn};
+use tokio::sync::Mutex;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
 const OPENAI_PROVIDER: &str = "openai";
 
 #[derive(Clone)]
-pub struct ExecEngine {
+pub struct TaskQueue {
+    sender: UnboundedSender<String>,
+    receiver: Arc<Mutex<UnboundedReceiver<String>>>,
+}
+
+impl TaskQueue {
+    pub fn new() -> Self {
+        let (sender, receiver) = unbounded_channel::<String>();
+        Self {
+            sender,
+            receiver: Arc::new(Mutex::new(receiver)),
+        }
+    }
+
+    pub async fn queue(&self, task_id: String) -> Result<()> {
+        self.sender
+            .send(task_id)
+            .map_err(|_| anyhow!("task queue is closed"))
+    }
+
+    pub async fn next(&self) -> Result<String> {
+        let mut receiver = self.receiver.lock().await;
+        receiver
+            .recv()
+            .await
+            .ok_or_else(|| anyhow!("task queue receiver is closed"))
+    }
+}
+
+#[derive(Clone)]
+pub struct SessionManager {
+    db: BorgDb,
+}
+
+impl SessionManager {
+    pub fn new(db: BorgDb) -> Self {
+        Self { db }
+    }
+
+    pub async fn session_for_task(&self, msg: &InboxMessage) -> Result<Session> {
+        let session_id = msg
+            .session_id
+            .clone()
+            .unwrap_or_else(|| format!("borg:session:{}", Uuid::now_v7()));
+        let agent = Agent::new("borg-default").with_system_prompt(
+            "You are Borg's agent runtime. Use tools as needed, then respond clearly.",
+        );
+        Session::new(session_id, agent, self.db.clone()).await
+    }
+}
+
+#[derive(Clone)]
+pub struct BorgExecutor {
     db: BorgDb,
     runtime: RuntimeEngine,
     worker_id: String,
+    task_queue: TaskQueue,
+    session_manager: SessionManager,
 }
+
+pub type ExecEngine = BorgExecutor;
 
 struct ExecToolRunner {
     runtime: RuntimeEngine,
@@ -37,7 +96,7 @@ impl ToolRunner for ExecToolRunner {
                     .arguments
                     .get("code")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!("execute tool requires code"))?;
+                    .ok_or_else(|| anyhow!("execute tool requires code"))?;
                 let result = self.runtime.execute(code)?;
                 Ok(ToolResponse {
                     content: ToolResultData::Execution {
@@ -51,7 +110,7 @@ impl ToolRunner for ExecToolRunner {
                     .arguments
                     .get("query")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!("search tool requires query"))?;
+                    .ok_or_else(|| anyhow!("search tool requires query"))?;
                 let q = query.to_lowercase();
                 let matches: Vec<Capability> = self
                     .capabilities
@@ -98,12 +157,16 @@ pub struct InboxMessage {
     pub metadata: Value,
 }
 
-impl ExecEngine {
+impl BorgExecutor {
     pub fn new(db: BorgDb, runtime: RuntimeEngine, worker_id: String) -> Self {
+        let task_queue = TaskQueue::new();
+        let session_manager = SessionManager::new(db.clone());
         Self {
             db,
             runtime,
             worker_id,
+            task_queue,
+            session_manager,
         }
     }
 
@@ -112,9 +175,10 @@ impl ExecEngine {
         mut msg: InboxMessage,
         requested_session_id: Option<String>,
     ) -> Result<(String, String)> {
-        let session_id = requested_session_id.unwrap_or_else(|| format!("borg:session:{}", Uuid::now_v7()));
+        let session_id =
+            requested_session_id.unwrap_or_else(|| format!("borg:session:{}", Uuid::now_v7()));
         msg.session_id = Some(session_id.clone());
-        let payload = serde_json::to_value(msg).context("failed to serialize inbox message")?;
+        let payload = serde_json::to_value(msg)?;
         let task_id = self
             .db
             .enqueue_task(NewTask {
@@ -123,16 +187,69 @@ impl ExecEngine {
                 parent_task_id: None,
             })
             .await?;
-
+        self.task_queue.queue(task_id.clone()).await?;
         Ok((task_id, session_id))
     }
 
-    pub async fn run_once(&self) -> Result<bool> {
-        let Some(task) = self.db.claim_next_runnable_task(&self.worker_id).await? else {
-            return Ok(false);
+    pub async fn run(self) -> Result<()> {
+        self.recover_tasks_on_startup().await?;
+        info!(
+            target: "borg_exec",
+            worker_id = self.worker_id,
+            "executor loop started"
+        );
+
+        loop {
+            let task_id = self.task_queue.next().await?;
+            if let Err(err) = self.process_task_id(&task_id).await {
+                error!(
+                    target: "borg_exec",
+                    task_id,
+                    error = %err,
+                    "executor task processing failed"
+                );
+            }
+        }
+    }
+
+    async fn recover_tasks_on_startup(&self) -> Result<()> {
+        let requeued = self.db.requeue_running_tasks().await?;
+        if requeued > 0 {
+            info!(
+                target: "borg_exec",
+                requeued,
+                "requeued running tasks at startup"
+            );
+        }
+
+        let recoverable = self.db.list_recoverable_task_ids().await?;
+        info!(
+            target: "borg_exec",
+            queued = recoverable.len(),
+            "queueing recoverable tasks at startup"
+        );
+        for task_id in recoverable {
+            self.task_queue.queue(task_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn process_task_id(&self, task_id: &str) -> Result<()> {
+        let Some(task) = self.db.claim_task_by_id(&self.worker_id, task_id).await? else {
+            debug!(
+                target: "borg_exec",
+                task_id,
+                "task was not claimable when popped from queue"
+            );
+            return Ok(());
         };
 
-        info!(target: "borg_exec", task_id = task.task_id, kind = task.kind.as_str(), "claimed task for execution");
+        info!(
+            target: "borg_exec",
+            task_id = task.task_id,
+            kind = task.kind.as_str(),
+            "claimed task for execution"
+        );
         self.db
             .log_event(
                 &task.task_id,
@@ -143,15 +260,24 @@ impl ExecEngine {
 
         match self.process_task(task.clone()).await {
             Ok(()) => {
-                info!(target: "borg_exec", task_id = task.task_id, "task execution completed successfully");
+                info!(
+                    target: "borg_exec",
+                    task_id = task.task_id,
+                    "task execution completed successfully"
+                );
             }
             Err(err) => {
-                error!(target: "borg_exec", task_id = task.task_id, error = %err, "task execution failed");
+                error!(
+                    target: "borg_exec",
+                    task_id = task.task_id,
+                    error = %err,
+                    "task execution failed"
+                );
                 self.db.fail_task(&task.task_id, err.to_string()).await?;
             }
         }
 
-        Ok(true)
+        Ok(())
     }
 
     fn search_capabilities(&self, query: &str) -> Vec<Capability> {
@@ -196,7 +322,11 @@ impl ExecEngine {
         match task.kind {
             TaskKind::UserMessage => self.process_user_message(task).await,
             _ => {
-                warn!(target: "borg_exec", task_id = task.task_id, "unsupported task kind in MVP, auto-completing");
+                warn!(
+                    target: "borg_exec",
+                    task_id = task.task_id,
+                    "unsupported task kind in MVP, auto-completing"
+                );
                 self.db
                     .complete_task(&task.task_id, json!({"status": "ignored"}))
                     .await
@@ -205,10 +335,16 @@ impl ExecEngine {
     }
 
     async fn process_user_message(&self, task: Task) -> Result<()> {
-        let msg: InboxMessage = serde_json::from_value(task.payload.clone())
-            .context("invalid payload for user_message task")?;
+        let msg: InboxMessage = serde_json::from_value(task.payload.clone())?;
 
-        info!(target: "borg_exec", task_id = task.task_id, user_key = msg.user_key, text = msg.text, "processing user message task");
+        info!(
+            target: "borg_exec",
+            task_id = task.task_id,
+            user_key = msg.user_key,
+            text = msg.text,
+            "processing user message task"
+        );
+
         let tool_runner = ExecToolRunner {
             runtime: self.runtime.clone(),
             capabilities: self.search_capabilities(""),
@@ -216,15 +352,7 @@ impl ExecEngine {
         let tools = AgentTools {
             tool_runner: &tool_runner,
         };
-        let agent = Agent::new("borg-default").with_system_prompt(
-            "You are Borg's agent runtime. Use tools as needed, then respond clearly.",
-        );
-        let agent_runner = agent.clone();
-        let session_id = msg
-            .session_id
-            .clone()
-            .unwrap_or_else(|| format!("borg:session:{}", Uuid::now_v7()));
-        let mut session = Session::new(session_id.clone(), agent, self.db.clone()).await?;
+        let mut session = self.session_manager.session_for_task(&msg).await?;
         session
             .add_message(Message::User {
                 content: msg.text.clone(),
@@ -235,19 +363,16 @@ impl ExecEngine {
             .db
             .get_provider_api_key(OPENAI_PROVIDER)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("OpenAI provider is not configured"))?;
+            .ok_or_else(|| anyhow!("OpenAI provider is not configured"))?;
         let provider = OpenAiProvider::new(api_key);
 
-        let output = match agent_runner.run(&mut session, &provider, &tools).await {
+        let output = match session.agent.clone().run(&mut session, &provider, &tools).await {
             SessionResult::Completed(Ok(output)) => output,
             SessionResult::Completed(Err(err)) => {
-                return Err(anyhow::anyhow!(
-                    "agent session completed with error: {}",
-                    err
-                ));
+                return Err(anyhow!("agent session completed with error: {}", err));
             }
             SessionResult::SessionError(err) => {
-                return Err(anyhow::anyhow!("agent session error: {}", err));
+                return Err(anyhow!("agent session error: {}", err));
             }
             SessionResult::Idle => {
                 self.db
@@ -259,9 +384,20 @@ impl ExecEngine {
                 return Ok(());
             }
         };
-        debug!(target: "borg_exec", task_id = task.task_id, tool_calls = output.tool_calls.len(), "agent session completed");
+
+        debug!(
+            target: "borg_exec",
+            task_id = task.task_id,
+            tool_calls = output.tool_calls.len(),
+            "agent session completed"
+        );
         let persisted_messages = session.read_messages(0, usize::MAX).await?;
-        trace!(target: "borg_exec", task_id = task.task_id, messages = ?persisted_messages, "persistable session messages");
+        trace!(
+            target: "borg_exec",
+            task_id = task.task_id,
+            messages = ?persisted_messages,
+            "persistable session messages"
+        );
         self.db
             .log_event(
                 &task.task_id,
@@ -270,13 +406,13 @@ impl ExecEngine {
             )
             .await?;
 
-        let output = output.reply;
+        let reply = output.reply;
         info!(target: "borg_exec", task_id = task.task_id, "agent reply generated");
         self.db
-            .log_event(&task.task_id, "output", json!({ "message": output }))
+            .log_event(&task.task_id, "output", json!({ "message": reply }))
             .await?;
         self.db
-            .complete_task(&task.task_id, json!({ "message": output }))
+            .complete_task(&task.task_id, json!({ "message": reply }))
             .await?;
 
         Ok(())

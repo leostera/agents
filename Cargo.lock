@@ -590,6 +590,7 @@ dependencies = [
  "borg-rt",
  "serde",
  "serde_json",
+ "tokio",
  "tracing",
  "uuid",
 ]

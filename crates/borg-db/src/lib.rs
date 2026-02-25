@@ -249,6 +249,88 @@ impl BorgDb {
         self.get_task(&task_id).await
     }
 
+    pub async fn requeue_running_tasks(&self) -> Result<u64> {
+        info!(target: "borg_db", "requeueing running tasks");
+        let now = Utc::now().to_rfc3339();
+        let updated = self
+            .conn
+            .execute(
+                "UPDATE tasks SET status = 'queued', claimed_by = NULL, updated_at = ?1 WHERE status = 'running'",
+                (now,),
+            )
+            .await
+            .context("failed to requeue running tasks")?;
+        Ok(updated)
+    }
+
+    pub async fn list_recoverable_task_ids(&self) -> Result<Vec<String>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT task_id FROM tasks WHERE status = 'queued' ORDER BY created_at ASC",
+                (),
+            )
+            .await
+            .context("failed to list recoverable task ids")?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.context("failed reading recoverable task row")? {
+            out.push(row.get(0)?);
+        }
+        Ok(out)
+    }
+
+    pub async fn claim_task_by_id(&self, worker_id: &str, task_id: &str) -> Result<Option<Task>> {
+        let worker_id = worker_id.to_owned();
+        let task_id = task_id.to_owned();
+        let now = Utc::now().to_rfc3339();
+        debug!(target: "borg_db", worker_id, task_id, "claiming task by id");
+
+        let mut rows = self
+            .conn
+            .query(
+                r#"
+                SELECT t.task_id
+                FROM tasks t
+                WHERE t.task_id = ?1
+                  AND t.status = 'queued'
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM deps d
+                    JOIN tasks dep ON dep.task_id = d.depends_on_task_id
+                    WHERE d.task_id = ?1
+                      AND dep.status != 'succeeded'
+                  )
+                "#,
+                (task_id.clone(),),
+            )
+            .await
+            .context("failed to query claimable task by id")?;
+
+        let Some(_row) = rows
+            .next()
+            .await
+            .context("failed reading claimable task row")?
+        else {
+            return Ok(None);
+        };
+
+        let updated = self
+            .conn
+            .execute(
+                "UPDATE tasks SET status = 'running', claimed_by = ?1, updated_at = ?2, attempts = attempts + 1 WHERE task_id = ?3 AND status = 'queued'",
+                (worker_id, now, task_id.clone()),
+            )
+            .await
+            .context("failed to claim task by id")?;
+
+        if updated == 0 {
+            return Ok(None);
+        }
+
+        self.get_task(&task_id).await
+    }
+
     pub async fn complete_task(&self, task_id: &str, result: Value) -> Result<()> {
         let payload_json = result.to_string();
         let now = Utc::now().to_rfc3339();

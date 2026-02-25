@@ -1,4 +1,4 @@
-use std::{process::Command as ProcessCommand, time::Duration};
+use std::process::Command as ProcessCommand;
 
 use anyhow::Result;
 use borg_api::BorgApiServer;
@@ -9,11 +9,10 @@ use borg_ltm::MemoryStore;
 use borg_onboard::OnboardServer;
 use borg_rt::RuntimeEngine;
 use clap::{Parser, Subcommand};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_ONBOARD_PORT: u16 = 3777;
-const DEFAULT_SCHEDULER_POLL_MS: u64 = 500;
 
 #[derive(Parser, Debug)]
 #[command(name = "borg", about = "Borg prototype runtime")]
@@ -31,8 +30,6 @@ enum Command {
     Start {
         #[arg(long, default_value = DEFAULT_HTTP_BIND)]
         bind: String,
-        #[arg(long, default_value_t = DEFAULT_SCHEDULER_POLL_MS)]
-        poll_ms: u64,
     },
 }
 
@@ -61,8 +58,8 @@ impl BorgCliApp {
             .await
     }
 
-    async fn start(&self, bind: String, poll_ms: u64) -> Result<()> {
-        info!(target: "borg_cli", config_db = %self.borg_dir.config_db().display(), bind, poll_ms, "starting borg machine");
+    async fn start(&self, bind: String) -> Result<()> {
+        info!(target: "borg_cli", config_db = %self.borg_dir.config_db().display(), bind, "starting borg machine");
 
         let db = self.open_config_db().await?;
         let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
@@ -77,14 +74,9 @@ impl BorgCliApp {
 
         let scheduler_exec = exec.clone();
         let scheduler = tokio::spawn(async move {
-            info!(target: "borg_cli", "scheduler loop started");
-            loop {
-                match scheduler_exec.run_once().await {
-                    Ok(true) => debug!(target: "borg_cli", "scheduler processed one task"),
-                    Ok(false) => debug!(target: "borg_cli", "scheduler tick had no work"),
-                    Err(err) => error!(target: "borg_cli", error = %err, "scheduler tick failed"),
-                }
-                tokio::time::sleep(Duration::from_millis(poll_ms)).await;
+            info!(target: "borg_cli", "executor loop started");
+            if let Err(err) = scheduler_exec.run().await {
+                error!(target: "borg_cli", error = %err, "executor loop terminated");
             }
         });
 
@@ -155,6 +147,6 @@ async fn main() -> Result<()> {
     let app = BorgCliApp::new(borg_dir);
     match Cli::parse().cmd {
         Command::Init { onboard_port } => app.init(onboard_port).await,
-        Command::Start { bind, poll_ms } => app.start(bind, poll_ms).await,
+        Command::Start { bind } => app.start(bind).await,
     }
 }
