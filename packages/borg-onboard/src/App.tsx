@@ -6,10 +6,11 @@ import { createI18n } from '@borg/i18n'
 import { Session, type SessionMessage } from '@borg/ui'
 
 const OPENAI_PROVIDER = 'openai'
-const OPENAI_PROVIDER_KEY = 'openai_api_key'
+const PROVIDER_MESSAGE_ID = 'm-provider'
+const OPENAI_API_KEY_MESSAGE_ID = 'i-openai-key'
+const PROVIDER_FLOW_SEQUENCE = ['m-welcome', 'm-provider'] as const
 
 type SessionState = {
-  messages: Array<SessionMessage>
   choices: Record<string, string>
   saving: boolean
   error: string
@@ -42,96 +43,124 @@ function saveProvider(apiKey: string, saveFailedMessage: string) {
 
 export function OnboardApp() {
   const i18n = useMemo(() => createI18n('en'), [])
-  const [state, setState] = useState<SessionState>(() => {
-    const username = getUsername()
-
-    return {
-      choices: {},
-      saving: false,
-      error: '',
-      saved: false,
-      messages: [
-        {
-          id: 'm-welcome',
-          type: 'message',
-          author: 'agent',
-          content: i18n.t('onboard.agent.welcome', { username }),
-        },
-        {
-          id: 'i-provider',
-          type: 'input',
-          inputType: 'choice',
-          author: 'agent',
-          prompt: i18n.t('onboard.agent.choose_provider'),
-          payload: {
-            name: i18n.t('onboard.choice.provider_name'),
-            placeholder: i18n.t('onboard.choice.provider_placeholder'),
-            options: [{ label: i18n.t('onboard.provider.openai'), value: OPENAI_PROVIDER }],
-          },
-        },
-      ],
-    }
+  const username = useMemo(getUsername, [])
+  const [state, setState] = useState<SessionState>({
+    choices: {},
+    saving: false,
+    error: '',
+    saved: false,
   })
+  const [providerFlowIndex, setProviderFlowIndex] = useState<number>(1)
+  const [keyPromptVisible, setKeyPromptVisible] = useState<boolean>(false)
+  const [animatedCompleted, setAnimatedCompleted] = useState<Record<string, boolean>>({})
 
-  const selectedProvider = state.choices['i-provider']
-  const apiKeyMessage: SessionMessage | null = useMemo(() => {
-    if (selectedProvider !== OPENAI_PROVIDER) return null
+  const baseMessages = useMemo<Array<SessionMessage>>(
+    () => [
+      {
+        id: 'm-welcome',
+        type: 'message',
+        author: 'agent',
+        content: i18n.t('onboard.agent.welcome', { username }),
+      },
+      {
+        id: 'm-provider',
+        type: 'message',
+        author: 'agent',
+        content: i18n.t('onboard.agent.choose_provider'),
+        choices: {
+          name: i18n.t('onboard.choice.provider_name'),
+          options: [{ label: i18n.t('onboard.provider.openai'), value: OPENAI_PROVIDER }],
+        },
+      },
+    ],
+    [i18n, username],
+  )
 
-    return {
-      id: 'm-key',
-      type: 'message',
-      author: 'agent',
-      content: i18n.t('onboard.agent.openai_key_prompt'),
+  const selectedProvider = state.choices[PROVIDER_MESSAGE_ID]
+  const messages = useMemo<Array<SessionMessage>>(() => {
+    const visibleIds = new Set(PROVIDER_FLOW_SEQUENCE.slice(0, providerFlowIndex))
+    const visible = baseMessages.filter((message) => visibleIds.has(message.id))
+    if (selectedProvider !== OPENAI_PROVIDER) return visible
+
+    const keyMessages: Array<SessionMessage> = [
+      {
+        id: 'm-key',
+        type: 'message',
+        author: 'agent',
+        content: i18n.t('onboard.agent.openai_key_prompt'),
+      },
+      {
+        id: OPENAI_API_KEY_MESSAGE_ID,
+        type: 'input',
+        inputType: 'text',
+        author: 'agent',
+        prompt: i18n.t('onboard.field.api_key'),
+        payload: {
+          name: i18n.t('onboard.field.api_key'),
+          placeholder: 'sk-...',
+          secret: true,
+        },
+      },
+    ]
+    if (!keyPromptVisible) {
+      return [...visible, keyMessages[0]]
     }
-  }, [i18n, selectedProvider])
 
-  const messages = useMemo(() => {
-    if (!apiKeyMessage) return state.messages
-    return [...state.messages, apiKeyMessage]
-  }, [apiKeyMessage, state.messages])
+    return [...visible, ...keyMessages]
+  }, [baseMessages, i18n, keyPromptVisible, providerFlowIndex, selectedProvider])
+
+  const animatedIds = useMemo(() => {
+    const ids: Array<string> = []
+    if (!animatedCompleted['m-welcome']) {
+      ids.push('m-welcome')
+    } else if (!animatedCompleted['m-provider']) {
+      ids.push('m-provider')
+    } else if (selectedProvider === OPENAI_PROVIDER && !animatedCompleted['m-key']) {
+      ids.push('m-key')
+    }
+    return ids
+  }, [animatedCompleted, selectedProvider])
 
   return (
     <div>
-      <h1 className='onboard-heading'>{i18n.t('onboard.title')}</h1>
-      <p className='onboard-tagline'>{i18n.t('onboard.tagline')}</p>
+      <h1 className='onboard-heading' style={{ textAlign: 'center', marginBottom: 24 }}>
+        Welcome to Borg
+      </h1>
       <Session
         messages={messages}
         choices={state.choices}
-        animatedIds={['m-welcome']}
+        animatedIds={animatedIds}
+        agentName='Borg'
         onChoice={(messageId, value) => {
           setState((prev) => ({
             ...prev,
+            error: '',
+            saved: false,
             choices: {
               ...prev.choices,
               [messageId]: value,
             },
           }))
+          if (messageId === PROVIDER_MESSAGE_ID) {
+            setKeyPromptVisible(false)
+          }
+        }}
+        onMessageAnimationComplete={(messageId) => {
+          setAnimatedCompleted((prev) => ({ ...prev, [messageId]: true }))
+          if (messageId === 'm-welcome') {
+            setProviderFlowIndex(2)
+          }
+          if (messageId === 'm-provider') {
+            setProviderFlowIndex(2)
+          }
+          if (messageId === 'm-key') {
+            setKeyPromptVisible(true)
+          }
         }}
       />
 
-      {selectedProvider === OPENAI_PROVIDER ? (
+      {selectedProvider === OPENAI_PROVIDER && keyPromptVisible ? (
         <section className='card' style={{ marginTop: 14 }}>
-          <p className='step'>{i18n.t('onboard.user_turn')}</p>
-          <label className='field-label' htmlFor='openai-api-key'>
-            {i18n.t('onboard.field.api_key')}
-          </label>
-          <input
-            id='openai-api-key'
-            className='field-input'
-            type='password'
-            placeholder='sk-...'
-            onChange={(event) => {
-              setState((prev) => ({
-                ...prev,
-                choices: {
-                  ...prev.choices,
-                  [OPENAI_PROVIDER_KEY]: event.currentTarget.value,
-                },
-              }))
-            }}
-            value={state.choices[OPENAI_PROVIDER_KEY] ?? ''}
-          />
-
           {state.error.length > 0 ? <p className='notice-error'>{state.error}</p> : null}
           {state.saved ? <p className='notice-success'>{i18n.t('onboard.notice.saved')}</p> : null}
 
@@ -140,7 +169,7 @@ export function OnboardApp() {
               className='btn-primary'
               disabled={state.saving}
               onClick={() => {
-                const apiKey = state.choices[OPENAI_PROVIDER_KEY] ?? ''
+                const apiKey = state.choices[OPENAI_API_KEY_MESSAGE_ID] ?? ''
                 setState((prev) => ({ ...prev, saving: true, error: '', saved: false }))
 
                 Effect.runPromise(saveProvider(apiKey.trim(), i18n.t('onboard.error.save_failed')))
@@ -148,7 +177,8 @@ export function OnboardApp() {
                     setState((prev) => ({ ...prev, saving: false, saved: true }))
                   })
                   .catch((error: unknown) => {
-                    const message = error instanceof Error ? error.message : i18n.t('onboard.error.save_failed')
+                    const message =
+                      error instanceof Error ? error.message : i18n.t('onboard.error.save_failed')
                     setState((prev) => ({ ...prev, saving: false, error: message }))
                   })
               }}

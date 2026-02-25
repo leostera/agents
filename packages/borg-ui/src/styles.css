@@ -64,6 +64,27 @@
   margin-left: 0;
 }
 
+.borg-inline-choices {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.borg-inline-choice {
+  border-radius: 10px;
+  border: 1px solid var(--borg-border);
+  background: color-mix(in srgb, var(--borg-panel) 84%, transparent);
+  color: var(--borg-text);
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.borg-inline-choice--active {
+  border-color: color-mix(in srgb, var(--borg-accent) 55%, var(--borg-border));
+  background: color-mix(in srgb, var(--borg-accent) 25%, var(--borg-panel));
+}
+
 .borg-choice {
   display: grid;
   gap: 6px;
@@ -87,5 +108,19 @@
 }
 
 .borg-choice__select:focus {
+  border-color: var(--borg-accent);
+}
+
+.borg-text-input {
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--borg-border);
+  background: var(--borg-bg);
+  color: var(--borg-text);
+  padding: 0 10px;
+  outline: none;
+}
+
+.borg-text-input:focus {
   border-color: var(--borg-accent);
 }

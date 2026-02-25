@@ -6,8 +6,10 @@ import type { MessageAuthor } from '../lib/messages'
 type MessageProps = {
   author: MessageAuthor
   text: string
+  authorLabel?: string
   animate?: boolean
   speedMs?: number
+  onAnimationComplete?: () => void
 }
 
 const DEFAULT_SPEED_MS = 12
@@ -29,15 +31,19 @@ export function Message(props: MessageProps) {
       setVisibleText(props.text.slice(0, index))
       if (index >= props.text.length) {
         window.clearInterval(timer)
+        props.onAnimationComplete?.()
       }
     }, props.speedMs ?? DEFAULT_SPEED_MS)
 
     return () => {
       window.clearInterval(timer)
     }
-  }, [props.animate, props.speedMs, props.text])
+  }, [props.animate, props.onAnimationComplete, props.speedMs, props.text])
 
-  const roleLabel = useMemo(() => props.author.toUpperCase(), [props.author])
+  const roleLabel = useMemo(
+    () => (props.authorLabel ? props.authorLabel : props.author.toUpperCase()),
+    [props.author, props.authorLabel],
+  )
 
   return (
     <article className={`borg-message-row ${isRight ? 'borg-message-row--right' : 'borg-message-row--left'}`}>
