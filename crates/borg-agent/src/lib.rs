@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_db::BorgDb;
 use borg_llm::{
-    LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason, ToolDescriptor,
+    LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason, ToolDescriptor, UserBlock,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -534,7 +534,7 @@ fn to_provider_messages(messages: &[Message]) -> Vec<ProviderMessage> {
         .filter_map(|message| match message {
             Message::System { content } => Some(ProviderMessage::System { text: content.clone() }),
             Message::User { content } => Some(ProviderMessage::User {
-                content: vec![ProviderBlock::Text(content.clone())],
+                content: vec![UserBlock::Text(content.clone())],
             }),
             Message::Assistant { content } => Some(ProviderMessage::Assistant {
                 content: vec![ProviderBlock::Text(content.clone())],

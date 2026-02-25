@@ -29,7 +29,13 @@ pub enum ProviderBlock {
         name: String,
         arguments_json: Value,
     },
-    Image {
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UserBlock {
+    Text(String),
+    /// Media can be an image, a photo, a video, a voice message, etc
+    Media {
         mime: String,
         data: Vec<u8>,
     },
@@ -37,9 +43,15 @@ pub enum ProviderBlock {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProviderMessage {
-    System { text: String },
-    User { content: Vec<ProviderBlock> },
-    Assistant { content: Vec<ProviderBlock> },
+    System {
+        text: String,
+    },
+    User {
+        content: Vec<UserBlock>,
+    },
+    Assistant {
+        content: Vec<ProviderBlock>,
+    },
     ToolResult {
         tool_call_id: String,
         name: String,

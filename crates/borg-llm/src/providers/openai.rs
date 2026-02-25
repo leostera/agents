@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use crate::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
     ToolDescriptor,
+    UserBlock,
 };
 
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
@@ -80,7 +81,7 @@ fn to_openai_messages(messages: &[ProviderMessage]) -> Vec<Value> {
             }),
             ProviderMessage::User { content } => json!({
                 "role": "user",
-                "content": blocks_to_openai_content(content)
+                "content": user_blocks_to_openai_content(content)
             }),
             ProviderMessage::Assistant { content } => json!({
                 "role": "assistant",
@@ -107,6 +108,17 @@ fn blocks_to_openai_content(blocks: &[ProviderBlock]) -> Value {
             ProviderBlock::Text(text) => Some(text.clone()),
             ProviderBlock::Thinking(text) => Some(text.clone()),
             _ => None,
+        })
+        .collect();
+    Value::String(texts.join("\n"))
+}
+
+fn user_blocks_to_openai_content(blocks: &[UserBlock]) -> Value {
+    let texts: Vec<String> = blocks
+        .iter()
+        .map(|block| match block {
+            UserBlock::Text(text) => text.clone(),
+            UserBlock::Media { mime, .. } => format!("[media:{}]", mime),
         })
         .collect();
     Value::String(texts.join("\n"))
