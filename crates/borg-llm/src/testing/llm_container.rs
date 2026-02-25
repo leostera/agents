@@ -1,14 +1,16 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::Result;
-use testcontainers::core::IntoContainerPort;
+use testcontainers::core::{IntoContainerPort, Mount};
 use testcontainers::runners::AsyncRunner;
-use testcontainers::{ContainerAsync, GenericImage};
+use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tokio::time::sleep;
 
 const OLLAMA_IMAGE_NAME: &str = "ollama/ollama";
 const OLLAMA_IMAGE_TAG: &str = "latest";
 const OLLAMA_PORT: u16 = 11434;
+const OLLAMA_MODELS_DIR_IN_CONTAINER: &str = "/root/.ollama";
+const OLLAMA_MODELS_DIR_RELATIVE: &str = ".docker/volumes/ollama";
 const DEFAULT_TEST_MODEL: &str = "qwen2.5:0.5b";
 const DEFAULT_TEST_API_KEY: &str = "test-key";
 const TAGS_PATH: &str = "/api/tags";
@@ -26,14 +28,21 @@ pub struct LlmContainer {
 }
 
 impl LlmContainer {
-    pub async fn start_vllm() -> Result<Self> {
+    pub async fn start_ollama() -> Result<Self> {
         Self::start_ollama_with_model(DEFAULT_TEST_MODEL).await
     }
 
     pub async fn start_ollama_with_model(model: impl Into<String>) -> Result<Self> {
         let model = model.into();
+        let host_models_dir = host_ollama_models_dir()?;
+        let mount = Mount::bind_mount(
+            host_models_dir.to_string_lossy().to_string(),
+            OLLAMA_MODELS_DIR_IN_CONTAINER,
+        );
+
         let container = GenericImage::new(OLLAMA_IMAGE_NAME, OLLAMA_IMAGE_TAG)
             .with_exposed_port(OLLAMA_PORT.tcp())
+            .with_mount(mount)
             .start()
             .await?;
 
@@ -49,6 +58,13 @@ impl LlmContainer {
             api_key: DEFAULT_TEST_API_KEY.to_string(),
         })
     }
+}
+
+fn host_ollama_models_dir() -> Result<PathBuf> {
+    let cwd = std::env::current_dir()?;
+    let path = cwd.join(OLLAMA_MODELS_DIR_RELATIVE);
+    std::fs::create_dir_all(&path)?;
+    Ok(path)
 }
 
 async fn wait_until_ready(base_url: &str) -> Result<()> {

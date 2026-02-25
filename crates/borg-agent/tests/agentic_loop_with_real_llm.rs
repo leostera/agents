@@ -23,7 +23,7 @@ impl ToolRunner for NoopToolRunner {
 
 #[tokio::test]
 async fn session_run_persists_events_with_real_llm() {
-    let llm = LlmContainer::start_vllm().await.unwrap();
+    let llm = LlmContainer::start_ollama().await.unwrap();
     let provider = OpenAiProvider::new_with_base_url(&llm.api_key, &llm.base_url);
     let db = make_test_db().await.unwrap();
     let agent_id = format!("borg:agent:{}", Uuid::now_v7());

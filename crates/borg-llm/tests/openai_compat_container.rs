@@ -4,7 +4,7 @@ use borg_llm::{LlmRequest, Provider, ProviderMessage, UserBlock};
 
 #[tokio::test]
 async fn openai_provider_chat_against_vllm_container() {
-    let llm = LlmContainer::start_vllm().await.unwrap();
+    let llm = LlmContainer::start_ollama().await.unwrap();
     let provider = OpenAiProvider::new_with_base_url(&llm.api_key, &llm.base_url);
     let request = LlmRequest {
         model: llm.model.clone(),
