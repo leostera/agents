@@ -25,7 +25,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::net::TcpListener;
 use tracing::{debug, error, info, warn};
-use turso::Builder;
 
 #[derive(Parser, Debug)]
 #[command(name = "borg", about = "Borg prototype runtime")]
@@ -153,9 +152,7 @@ impl BorgCliApp {
 
     async fn open_config_db(&self) -> Result<BorgDb> {
         let config_path = self.borg_dir.config_db().to_string_lossy().to_string();
-        let db_handle = Builder::new_local(&config_path).build().await?;
-        let conn = db_handle.connect()?;
-        Ok(BorgDb::new(conn))
+        BorgDb::open_local(&config_path).await
     }
 
     fn open_browser(&self, url: &str) {

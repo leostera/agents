@@ -26,7 +26,7 @@ pub struct ToolRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResponse {
-    pub content: Value,
+    pub content: ToolResultData,
 }
 
 #[async_trait]
@@ -39,6 +39,26 @@ pub struct ToolSpec {
     pub name: String,
     pub description: String,
     pub parameters: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilitySummary {
+    pub name: String,
+    pub signature: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ToolResultData {
+    Text(String),
+    Capabilities(Vec<CapabilitySummary>),
+    Execution {
+        result: String,
+        duration_ms: u128,
+    },
+    Error {
+        message: String,
+    },
 }
 
 impl From<&ToolSpec> for ToolDescriptor {
@@ -106,6 +126,16 @@ impl Agent {
             Ok(value) => value,
             Err(err) => return finish_session(session, SessionResult::SessionError(err.to_string())).await,
         };
+        let has_unprocessed_user_messages = match session.has_unprocessed_user_messages().await {
+            Ok(value) => value,
+            Err(err) => return finish_session(session, SessionResult::SessionError(err.to_string())).await,
+        };
+        if has_tool_calls && pending.is_empty() && !has_unprocessed_user_messages {
+            if let Err(err) = session.mark_processed().await {
+                return finish_session(session, SessionResult::SessionError(err.to_string())).await;
+            }
+            return finish_session(session, SessionResult::Idle).await;
+        }
         let mut last_reply = String::new();
         let mut records: Vec<ToolCallRecord> = Vec::new();
 
@@ -205,18 +235,20 @@ impl Agent {
                     info!(target: "borg_agent", session_id = session.session_id, tool_name, "tool_execution_start");
                     let output = match call_tool(tools, &tool_call_id, &tool_name, &arguments).await {
                         Ok(value) => value,
-                        Err(err) => return finish_session(session, SessionResult::SessionError(err.to_string())).await,
+                        Err(err) => ToolResultData::Error {
+                            message: err.to_string(),
+                        },
                     };
                     info!(target: "borg_agent", session_id = session.session_id, tool_name, "tool_execution_end");
 
-                    if let Err(err) = session
-                        .add_message(Message::ToolResult {
-                            tool_call_id,
-                            name: tool_name.clone(),
-                            content: output.clone(),
-                        })
-                        .await
-                    {
+                if let Err(err) = session
+                    .add_message(Message::ToolResult {
+                        tool_call_id,
+                        name: tool_name.clone(),
+                        content: output.clone(),
+                    })
+                    .await
+                {
                         return finish_session(session, SessionResult::SessionError(err.to_string())).await;
                     }
 
@@ -225,13 +257,6 @@ impl Agent {
                         arguments,
                         output: output.clone(),
                     });
-
-                    if let Some(task_ids) = awaiting_task_ids(&output) {
-                        if let Err(err) = session.mark_processed().await {
-                            return finish_session(session, SessionResult::SessionError(err.to_string())).await;
-                        }
-                        return finish_session(session, SessionResult::Awaiting(task_ids)).await;
-                    }
 
                     let steering = session.pop_steering_messages();
                     if !steering.is_empty() {
@@ -290,19 +315,37 @@ pub enum Message {
     ToolResult {
         tool_call_id: String,
         name: String,
-        content: Value,
+        content: ToolResultData,
     },
     SessionEvent {
         name: String,
-        payload: Value,
+        payload: SessionEventPayload,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SessionEventPayload {
+    Started,
+    Finished {
+        status: SessionEndStatus,
+        reply: Option<String>,
+        error: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SessionEndStatus {
+    Completed,
+    CompletedError,
+    SessionError,
+    Idle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallRecord {
     pub tool_name: String,
     pub arguments: Value,
-    pub output: Value,
+    pub output: ToolResultData,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,7 +358,6 @@ pub struct SessionOutput {
 pub enum SessionResult<T> {
     Completed(Result<T, String>),
     SessionError(String),
-    Awaiting(Vec<String>),
     Idle,
 }
 
@@ -378,6 +420,15 @@ impl Session {
         Ok(count > self.last_processed_len)
     }
 
+    pub async fn has_unprocessed_user_messages(&self) -> Result<bool> {
+        let messages = self
+            .read_messages(self.last_processed_len, usize::MAX)
+            .await?;
+        Ok(messages
+            .into_iter()
+            .any(|m| matches!(m, Message::User { .. })))
+    }
+
     pub async fn mark_processed(&mut self) -> Result<()> {
         self.last_processed_len = self.db.count_session_messages(&self.session_id).await?;
         Ok(())
@@ -386,22 +437,33 @@ impl Session {
     pub async fn agent_started(&mut self) -> Result<()> {
         self.add_message(Message::SessionEvent {
             name: AGENT_STARTED_EVENT.to_string(),
-            payload: json!({}),
+            payload: SessionEventPayload::Started,
         })
         .await
     }
 
     pub async fn agent_finished(&mut self, result: &SessionResult<SessionOutput>) -> Result<()> {
         let payload = match result {
-            SessionResult::Completed(Ok(output)) => {
-                json!({ "status": "completed", "reply": output.reply })
-            }
-            SessionResult::Completed(Err(err)) => {
-                json!({ "status": "completed_error", "error": err })
-            }
-            SessionResult::SessionError(err) => json!({ "status": "session_error", "error": err }),
-            SessionResult::Awaiting(task_ids) => json!({ "status": "awaiting", "task_ids": task_ids }),
-            SessionResult::Idle => json!({ "status": "idle" }),
+            SessionResult::Completed(Ok(output)) => SessionEventPayload::Finished {
+                status: SessionEndStatus::Completed,
+                reply: Some(output.reply.clone()),
+                error: None,
+            },
+            SessionResult::Completed(Err(err)) => SessionEventPayload::Finished {
+                status: SessionEndStatus::CompletedError,
+                reply: None,
+                error: Some(err.clone()),
+            },
+            SessionResult::SessionError(err) => SessionEventPayload::Finished {
+                status: SessionEndStatus::SessionError,
+                reply: None,
+                error: Some(err.clone()),
+            },
+            SessionResult::Idle => SessionEventPayload::Finished {
+                status: SessionEndStatus::Idle,
+                reply: None,
+                error: None,
+            },
         };
         self.add_message(Message::SessionEvent {
             name: AGENT_FINISHED_EVENT.to_string(),
@@ -495,24 +557,22 @@ fn to_provider_messages(messages: &[Message]) -> Vec<ProviderMessage> {
             } => Some(ProviderMessage::ToolResult {
                 tool_call_id: tool_call_id.clone(),
                 name: name.clone(),
-                content: vec![ProviderBlock::Text(content.to_string())],
+                content: vec![ProviderBlock::Text(tool_result_to_text(content))],
             }),
             Message::SessionEvent { .. } => None,
         })
         .collect()
 }
 
-fn awaiting_task_ids(output: &Value) -> Option<Vec<String>> {
-    let ids = output.get("awaiting_task_ids")?.as_array()?;
-    let parsed: Vec<String> = ids
-        .iter()
-        .filter_map(Value::as_str)
-        .map(ToOwned::to_owned)
-        .collect();
-    if parsed.is_empty() {
-        None
-    } else {
-        Some(parsed)
+fn tool_result_to_text(content: &ToolResultData) -> String {
+    match content {
+        ToolResultData::Text(text) => text.clone(),
+        ToolResultData::Capabilities(items) => format!("capabilities: {}", items.len()),
+        ToolResultData::Execution {
+            result,
+            duration_ms,
+        } => format!("execution result in {}ms: {}", duration_ms, result),
+        ToolResultData::Error { message } => format!("tool error: {}", message),
     }
 }
 
@@ -521,7 +581,7 @@ async fn call_tool<'a>(
     tool_call_id: &str,
     tool_name: &str,
     arguments: &Value,
-) -> Result<Value> {
+) -> Result<ToolResultData> {
     let response = tools
         .tool_runner
         .run(ToolRequest {
@@ -538,36 +598,364 @@ pub async fn call_tool_for_testing<'a>(
     tool_call_id: &str,
     tool_name: &str,
     arguments: &Value,
-) -> Result<Value> {
+) -> Result<ToolResultData> {
     call_tool(tools, tool_call_id, tool_name, arguments).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentTools, SessionResult, ToolRequest, ToolResponse, ToolRunner, call_tool_for_testing};
+    use std::{
+        collections::VecDeque,
+        path::PathBuf,
+        sync::{Arc, Mutex},
+    };
+
+    use super::{
+        Agent, AgentTools, Message, Session, SessionResult, ToolRequest, ToolResponse, ToolResultData, ToolRunner,
+        call_tool_for_testing,
+    };
     use anyhow::{Result, anyhow};
     use async_trait::async_trait;
-    use serde_json::json;
+    use borg_db::BorgDb;
+    use borg_llm::{LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, StopReason};
+    use serde_json::{Value, json};
+    use uuid::Uuid;
 
-    struct TestRunner;
+    struct ScriptedRunner {
+        calls: Arc<Mutex<Vec<ToolRequest>>>,
+        outputs: Arc<Mutex<VecDeque<Result<ToolResponse, String>>>>,
+    }
 
     #[async_trait]
-    impl ToolRunner for TestRunner {
+    impl ToolRunner for ScriptedRunner {
         async fn run(&self, request: ToolRequest) -> Result<ToolResponse> {
-            match request.tool_name.as_str() {
-                "search" => Ok(ToolResponse { content: json!([]) }),
-                "execute" => Err(anyhow!("execution failed")),
-                _ => Ok(ToolResponse {
-                    content: json!({"error":"unknown tool"}),
-                }),
-            }
+            self.calls.lock().expect("calls lock").push(request);
+            self.outputs
+                .lock()
+                .expect("outputs lock")
+                .pop_front()
+                .ok_or_else(|| anyhow!("missing scripted tool output"))?
+                .map_err(|e| anyhow!(e))
         }
     }
 
-    #[test]
-    fn injected_search_callback_can_return_empty_results() {
+    #[derive(Clone)]
+    struct ScriptedProvider {
+        requests: Arc<Mutex<Vec<LlmRequest>>>,
+        responses: Arc<Mutex<VecDeque<Result<LlmAssistantMessage, String>>>>,
+    }
+
+    #[async_trait]
+    impl Provider for ScriptedProvider {
+        async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+            self.requests.lock().expect("requests lock").push(req.clone());
+            self.responses
+                .lock()
+                .expect("responses lock")
+                .pop_front()
+                .ok_or_else(|| anyhow!("missing scripted llm response"))?
+                .map_err(|e| anyhow!(e))
+        }
+    }
+
+    fn assistant_text(text: &str) -> LlmAssistantMessage {
+        LlmAssistantMessage {
+            content: vec![ProviderBlock::Text(text.to_string())],
+            stop_reason: StopReason::EndOfTurn,
+            error_message: None,
+        }
+    }
+
+    fn assistant_tool_calls(calls: Vec<(&str, &str, Value)>) -> LlmAssistantMessage {
+        LlmAssistantMessage {
+            content: calls
+                .into_iter()
+                .map(|(id, name, args)| ProviderBlock::ToolCall {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    arguments_json: args,
+                })
+                .collect(),
+            stop_reason: StopReason::ToolCall,
+            error_message: None,
+        }
+    }
+
+    async fn make_test_db() -> Result<BorgDb> {
+        let path = PathBuf::from(format!("/tmp/borg-agent-test-{}.db", Uuid::now_v7()));
+        let borg_db = BorgDb::open_local(path.to_string_lossy().as_ref()).await?;
+        borg_db.migrate().await?;
+        Ok(borg_db)
+    }
+
+    async fn make_session() -> Result<(Agent, Session)> {
+        let db = make_test_db().await?;
+        let agent = Agent::new("test-agent").with_system_prompt("system prompt");
+        let session = Session::new("test-session", agent.clone(), db).await?;
+        Ok((agent, session))
+    }
+
+    #[tokio::test]
+    async fn a1_no_tool_completion() {
+        let (agent, mut session) = make_session().await.expect("session");
+        session
+            .add_message(Message::User {
+                content: "hello".to_string(),
+            })
+            .await
+            .expect("user add");
+
+        let provider = ScriptedProvider {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Arc::new(Mutex::new(VecDeque::from([Ok(assistant_text(
+                "hello back",
+            ))]))),
+        };
+        let runner = ScriptedRunner {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            outputs: Arc::new(Mutex::new(VecDeque::new())),
+        };
         let tools = AgentTools {
-            tool_runner: &TestRunner,
+            tool_runner: &runner,
+        };
+
+        let result = agent.run(&mut session, &provider, &tools).await;
+        assert!(matches!(result, SessionResult::Completed(Ok(_))));
+    }
+
+    #[tokio::test]
+    async fn a2_single_tool_then_answer() {
+        let (agent, mut session) = make_session().await.expect("session");
+        session
+            .add_message(Message::User {
+                content: "search and answer".to_string(),
+            })
+            .await
+            .expect("user add");
+
+        let provider = ScriptedProvider {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Arc::new(Mutex::new(VecDeque::from([
+                Ok(assistant_tool_calls(vec![("tc1", "search", json!({"query":"x"}))])),
+                Ok(assistant_text("done")),
+            ]))),
+        };
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let runner = ScriptedRunner {
+            calls: calls.clone(),
+            outputs: Arc::new(Mutex::new(VecDeque::from([Ok(ToolResponse {
+                content: ToolResultData::Text("hits: []".to_string()),
+            })]))),
+        };
+        let tools = AgentTools { tool_runner: &runner };
+
+        let result = agent.run(&mut session, &provider, &tools).await;
+        assert!(matches!(result, SessionResult::Completed(Ok(_))));
+        assert_eq!(calls.lock().expect("calls").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a3_multiple_tools_keep_order() {
+        let (agent, mut session) = make_session().await.expect("session");
+        session
+            .add_message(Message::User {
+                content: "run two tools".to_string(),
+            })
+            .await
+            .expect("user add");
+
+        let provider = ScriptedProvider {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Arc::new(Mutex::new(VecDeque::from([
+                Ok(assistant_tool_calls(vec![
+                    ("tc1", "search", json!({"query":"one"})),
+                    ("tc2", "execute", json!({"code":"1+1"})),
+                ])),
+                Ok(assistant_text("done")),
+            ]))),
+        };
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let runner = ScriptedRunner {
+            calls: calls.clone(),
+            outputs: Arc::new(Mutex::new(VecDeque::from([
+                Ok(ToolResponse {
+                    content: ToolResultData::Text("a=1".to_string()),
+                }),
+                Ok(ToolResponse {
+                    content: ToolResultData::Text("b=2".to_string()),
+                }),
+            ]))),
+        };
+        let tools = AgentTools { tool_runner: &runner };
+
+        let _ = agent.run(&mut session, &provider, &tools).await;
+        let recorded = calls.lock().expect("calls");
+        assert_eq!(recorded.len(), 2);
+        assert_eq!(recorded[0].tool_name, "search");
+        assert_eq!(recorded[1].tool_name, "execute");
+    }
+
+    #[tokio::test]
+    async fn a5_follow_up_continues_run() {
+        let (agent, mut session) = make_session().await.expect("session");
+        session
+            .add_message(Message::User {
+                content: "first".to_string(),
+            })
+            .await
+            .expect("user add");
+        session.enqueue_follow_up_message(Message::User {
+            content: "follow-up".to_string(),
+        });
+
+        let provider = ScriptedProvider {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Arc::new(Mutex::new(VecDeque::from([
+                Ok(assistant_text("turn-1")),
+                Ok(assistant_text("turn-2")),
+            ]))),
+        };
+        let runner = ScriptedRunner {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            outputs: Arc::new(Mutex::new(VecDeque::new())),
+        };
+        let tools = AgentTools { tool_runner: &runner };
+
+        let result = agent.run(&mut session, &provider, &tools).await;
+        assert!(matches!(result, SessionResult::Completed(Ok(_))));
+        let msgs = session.read_messages(0, 256).await.expect("read");
+        assert!(msgs
+            .iter()
+            .any(|m| matches!(m, Message::User { content } if content == "follow-up")));
+    }
+
+    #[tokio::test]
+    async fn a6_tool_error_is_returned_as_tool_result() {
+        let (agent, mut session) = make_session().await.expect("session");
+        session
+            .add_message(Message::User {
+                content: "tool error path".to_string(),
+            })
+            .await
+            .expect("user add");
+
+        let provider = ScriptedProvider {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Arc::new(Mutex::new(VecDeque::from([
+                Ok(assistant_tool_calls(vec![("tc1", "execute", json!({"code":"bad"}))])),
+                Ok(assistant_text("handled")),
+            ]))),
+        };
+        let runner = ScriptedRunner {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            outputs: Arc::new(Mutex::new(VecDeque::from([Err(
+                "execution failed".to_string(),
+            )]))),
+        };
+        let tools = AgentTools { tool_runner: &runner };
+
+        let result = agent.run(&mut session, &provider, &tools).await;
+        assert!(matches!(result, SessionResult::Completed(Ok(_))));
+        let msgs = session.read_messages(0, 256).await.expect("read");
+        assert!(msgs.iter().any(|m| {
+            matches!(m, Message::ToolResult { content: ToolResultData::Error { .. }, .. })
+        }));
+    }
+
+    #[tokio::test]
+    async fn a7_provider_failure_surfaces_session_error() {
+        let (agent, mut session) = make_session().await.expect("session");
+        session
+            .add_message(Message::User {
+                content: "provider fail".to_string(),
+            })
+            .await
+            .expect("user add");
+
+        let provider = ScriptedProvider {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Arc::new(Mutex::new(VecDeque::from([Err(
+                "provider down".to_string(),
+            )]))),
+        };
+        let runner = ScriptedRunner {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            outputs: Arc::new(Mutex::new(VecDeque::new())),
+        };
+        let tools = AgentTools { tool_runner: &runner };
+
+        let result = agent.run(&mut session, &provider, &tools).await;
+        assert!(matches!(result, SessionResult::SessionError(_)));
+    }
+
+    #[tokio::test]
+    async fn a8_idle_run_when_no_new_messages() {
+        let (agent, mut session) = make_session().await.expect("session");
+        let provider = ScriptedProvider {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Arc::new(Mutex::new(VecDeque::new())),
+        };
+        let runner = ScriptedRunner {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            outputs: Arc::new(Mutex::new(VecDeque::new())),
+        };
+        let tools = AgentTools { tool_runner: &runner };
+
+        let result = agent.run(&mut session, &provider, &tools).await;
+        assert!(matches!(result, SessionResult::Idle));
+    }
+
+    #[tokio::test]
+    async fn a9_lifecycle_events_persisted_once() {
+        let (agent, mut session) = make_session().await.expect("session");
+        session
+            .add_message(Message::User {
+                content: "hello".to_string(),
+            })
+            .await
+            .expect("user add");
+        let provider = ScriptedProvider {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            responses: Arc::new(Mutex::new(VecDeque::from([Ok(assistant_text("ok"))]))),
+        };
+        let runner = ScriptedRunner {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            outputs: Arc::new(Mutex::new(VecDeque::new())),
+        };
+        let tools = AgentTools { tool_runner: &runner };
+
+        let _ = agent.run(&mut session, &provider, &tools).await;
+        let messages = session.read_messages(0, 256).await.expect("read");
+        let started = messages
+            .iter()
+            .filter(|m| {
+                matches!(m, Message::SessionEvent { name, .. } if name == "agent_started")
+            })
+            .count();
+        let finished = messages
+            .iter()
+            .filter(|m| {
+                matches!(m, Message::SessionEvent { name, .. } if name == "agent_finished")
+            })
+            .count();
+        assert_eq!(started, 1);
+        assert_eq!(finished, 1);
+    }
+
+    #[test]
+    fn injected_tool_runner_helper_still_works() {
+        struct InlineRunner;
+        #[async_trait]
+        impl ToolRunner for InlineRunner {
+            async fn run(&self, _request: ToolRequest) -> Result<ToolResponse> {
+                Ok(ToolResponse {
+                    content: ToolResultData::Text("ok".to_string()),
+                })
+            }
+        }
+
+        let tools = AgentTools {
+            tool_runner: &InlineRunner,
         };
         let rt = tokio::runtime::Runtime::new().expect("runtime");
         let out = rt
@@ -577,30 +965,7 @@ mod tests {
                 "search",
                 &json!({"query": "x"}),
             ))
-            .expect("search result");
-        assert_eq!(out, json!([]));
-    }
-
-    #[test]
-    fn injected_execute_callback_propagates_errors() {
-        let tools = AgentTools {
-            tool_runner: &TestRunner,
-        };
-        let rt = tokio::runtime::Runtime::new().expect("runtime");
-        let err = rt
-            .block_on(call_tool_for_testing(
-                &tools,
-                "tc2",
-                "execute",
-                &json!({"code": "1+1"}),
-            ))
-            .expect_err("expected execution failure");
-        assert!(err.to_string().contains("execution failed"));
-    }
-
-    #[test]
-    fn session_result_idle_is_constructible() {
-        let result: SessionResult<()> = SessionResult::Idle;
-        assert!(matches!(result, SessionResult::Idle));
+            .expect("tool output");
+        assert!(matches!(out, ToolResultData::Text(text) if text == "ok"));
     }
 }

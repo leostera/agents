@@ -12,3 +12,6 @@ borg-db = { path = "../borg-db" }
 borg-llm = { path = "../borg-llm" }
 async-trait.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true

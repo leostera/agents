@@ -9,6 +9,5 @@ axum.workspace = true
 borg-db = { path = "../borg-db" }
 serde.workspace = true
 serde_json.workspace = true
-turso.workspace = true
 tokio.workspace = true
 tracing.workspace = true

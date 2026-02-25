@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use borg_agent::{Agent, AgentTools, Message, Session, SessionResult, ToolRequest, ToolResponse, ToolRunner};
+use borg_agent::{
+    Agent, AgentTools, CapabilitySummary, Message, Session, SessionResult, ToolRequest,
+    ToolResponse, ToolResultData, ToolRunner,
+};
 use borg_core::{Capability, Task, TaskKind};
 use borg_db::{BorgDb, NewTask};
 use borg_llm::providers::openai::OpenAiProvider;
@@ -36,10 +39,10 @@ impl ToolRunner for ExecToolRunner {
                     .ok_or_else(|| anyhow::anyhow!("execute tool requires code"))?;
                 let result = self.runtime.execute(code)?;
                 Ok(ToolResponse {
-                    content: json!({
-                        "result": result.result_json,
-                        "duration_ms": result.duration_ms
-                    }),
+                    content: ToolResultData::Execution {
+                        result: result.result_json.to_string(),
+                        duration_ms: result.duration_ms,
+                    },
                 })
             }
             "search" => {
@@ -58,14 +61,27 @@ impl ToolRunner for ExecToolRunner {
                     .cloned()
                     .collect();
                 let result = if matches.is_empty() {
-                    json!(self.capabilities)
+                    self.capabilities.clone()
                 } else {
-                    json!(matches)
+                    matches
                 };
-                Ok(ToolResponse { content: result })
+                Ok(ToolResponse {
+                    content: ToolResultData::Capabilities(
+                        result
+                            .into_iter()
+                            .map(|cap| CapabilitySummary {
+                                name: cap.name,
+                                signature: cap.signature,
+                                description: cap.description,
+                            })
+                            .collect(),
+                    ),
+                })
             }
             _ => Ok(ToolResponse {
-                content: json!({ "error": format!("unknown tool {}", request.tool_name) }),
+                content: ToolResultData::Error {
+                    message: format!("unknown tool {}", request.tool_name),
+                },
             }),
         }
     }
@@ -209,19 +225,6 @@ impl ExecEngine {
             }
             SessionResult::SessionError(err) => {
                 return Err(anyhow::anyhow!("agent session error: {}", err));
-            }
-            SessionResult::Awaiting(task_ids) => {
-                self.db
-                    .log_event(
-                        &task.task_id,
-                        "agent_awaiting",
-                        json!({ "task_ids": task_ids }),
-                    )
-                    .await?;
-                self.db
-                    .complete_task(&task.task_id, json!({ "message": "Agent awaiting dependencies" }))
-                    .await?;
-                return Ok(());
             }
             SessionResult::Idle => {
                 self.db

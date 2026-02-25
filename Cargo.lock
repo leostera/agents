@@ -339,6 +339,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -360,7 +361,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "turso",
 ]
 
 [[package]]
@@ -442,7 +442,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "turso",
 ]
 
 [[package]]

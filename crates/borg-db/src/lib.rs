@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, info};
-use turso::{Connection, Row};
+use turso::{Builder, Connection, Row};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -22,6 +22,12 @@ pub struct NewTask {
 impl BorgDb {
     pub fn new(conn: Connection) -> Self {
         Self { conn }
+    }
+
+    pub async fn open_local(path: &str) -> Result<Self> {
+        let db = Builder::new_local(path).build().await?;
+        let conn = db.connect()?;
+        Ok(Self::new(conn))
     }
 
     pub async fn migrate(&self) -> Result<()> {

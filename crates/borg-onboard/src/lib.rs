@@ -13,7 +13,6 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::net::TcpListener;
 use tracing::info;
-use turso::Builder;
 
 const LOOPBACK_ADDR: [u8; 4] = [127, 0, 0, 1];
 const HEALTH_STATUS_OK: &str = "ok";
@@ -104,8 +103,7 @@ impl OnboardServer {
     pub async fn run(self) -> Result<()> {
         let assets = OnboardAssets::load().await?;
         let config_path = self.config_db_path.to_string_lossy().to_string();
-        let db_handle = Builder::new_local(&config_path).build().await?;
-        let db = BorgDb::new(db_handle.connect()?);
+        let db = BorgDb::open_local(&config_path).await?;
         db.migrate().await?;
 
         let state = OnboardState {
