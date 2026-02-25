@@ -1,6 +1,11 @@
 export type MessageAuthor = 'system' | 'agent' | 'user'
 export type MessageChoiceIcon = 'openai'
 export type MessageChoiceOption = { label: string; value: string; icon?: MessageChoiceIcon }
+export type MessageAction = {
+  id: string
+  label: string
+  disabled?: boolean
+}
 
 export type SessionMessage =
   | {
@@ -20,6 +25,7 @@ export type SessionMessage =
         placeholder: string
         secret?: boolean
       }
+      actions?: Array<MessageAction>
     }
   | {
       id: string

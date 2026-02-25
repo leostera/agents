@@ -108,6 +108,29 @@
   color: #e5e7eb;
 }
 
+.borg-message__actions {
+  display: flex;
+  gap: 10px;
+}
+
+.borg-button {
+  border-radius: 10px;
+  border: 1px solid var(--borg-border);
+  padding: 10px 15px;
+  color: var(--borg-text);
+  cursor: pointer;
+}
+
+.borg-button--primary {
+  border-color: color-mix(in srgb, var(--borg-accent) 55%, var(--borg-border));
+  background: color-mix(in srgb, var(--borg-accent) 28%, var(--borg-panel));
+}
+
+.borg-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 .borg-choice {
   display: grid;
   gap: 6px;

@@ -13,6 +13,7 @@ type SessionProps = {
   choices: Record<string, string>
   animatedIds?: Array<string>
   onChoice: (messageId: string, value: string) => void
+  onAction?: (messageId: string, actionId: string) => void
   onMessageAnimationComplete?: (messageId: string) => void
   agentName?: string
   systemName?: string
@@ -77,6 +78,24 @@ export function Session(props: SessionProps) {
                       secret={message.input.secret}
                       onChange={(value) => props.onChoice(message.input!.id, value)}
                     />
+                  </div>
+                </>
+              ) : null}
+              {message.actions && !animated.has(message.id) ? (
+                <>
+                  <Spacer size={10} />
+                  <div className='borg-message__actions'>
+                    {message.actions.map((action) => (
+                      <button
+                        key={action.id}
+                        type='button'
+                        className='borg-button borg-button--primary'
+                        disabled={action.disabled}
+                        onClick={() => props.onAction?.(message.id, action.id)}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
                   </div>
                 </>
               ) : null}
