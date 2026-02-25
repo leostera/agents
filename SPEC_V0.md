@@ -1,456 +1,412 @@
-Below is a bare-bones but buildable SPEC for Borg: a single-binary, stateless agent orchestration runtime that executes dynamic work graphs, integrates ports (Telegram/email/etc), and persists memory (knowledge graph) while running agent sessions in a sandboxed JS runtime with search + execute (+ create_task) tools.
+# Borg Spec v0
 
-⸻
+## 1. Purpose
+Borg is a single Rust binary runtime that orchestrates agent work as dynamic task graphs.
 
-Borg — Prototype Spec (v0)
+Core outcomes:
+- ingest events from ports
+- convert events into tasks
+- execute tasks with agent + tool loops
+- persist long-term memory and execution history
+- expose a minimal control plane
 
-1) Goal
+Design constraints:
+- single binary (`borg-cli`)
+- stateless runtime processes, durable external state
+- container-friendly deployment
+- dynamic sub-task creation at runtime
 
-Build a single Rust binary that can be dropped onto a machine (or container / edge-ish environment) and run as an agent orchestration engine.
+---
 
-It:
-	•	receives human/system inputs via Ports
-	•	converts inputs into Tasks
-	•	executes tasks through a Work Graph Engine
-	•	runs Agents (LLM loop) in a sandbox with a tiny toolbelt (search, execute, create_task)
-	•	persists “what happened” into Memory (knowledge graph)
-	•	optionally exposes a Control Plane (dashboard / admin API)
+## 2. Product Shape (v0)
 
-Key constraints
-	•	Single binary
-	•	Stateless compute (no required local state); state lives in “Universe” backends (queue/memory/config)
-	•	Easy container deployment
-	•	Efficient at dynamic task/work graphs
+### 2.1 Commands
+- `borg init`
+  - initializes `~/.borg/*`
+  - initializes `~/.borg/config.db` and `~/.borg/ltm.db`
+  - starts onboarding web server
+  - opens `http://localhost:<port>/onboard`
+- `borg start`
+  - starts scheduler + runtime + HTTP server
+  - blocks and streams logs
 
-⸻
+CLI scope in v0:
+- only `init` and `start` are required
+- no `doctor` or `migrate` commands in v0 UX
 
-2) Core Concepts
+### 2.2 Runtime model
+- One process runs:
+  - port ingress/egress
+  - scheduler
+  - worker loop(s)
+  - agent execution
+  - memory writes
+  - admin/control endpoints
 
-2.1 Universe
+---
 
-A Universe is the external state the binary connects to:
-	•	task queue / graph storage (can be in-memory for MVP; durable later)
-	•	memory store (knowledge graph)
-	•	port configs and secrets
-	•	execution policies (limits, sandbox permissions)
+## 3. Core Concepts
 
-Borg instances can come and go; a Universe is what makes work resumable.
+### 3.1 Universe
+External state Borg depends on:
+- config/secrets/policies
+- task graph persistence
+- memory store
+- port configuration
 
-2.2 Work Graph
+Borg instances can be ephemeral; Universe data is durable.
 
-A dynamic graph:
-	•	Nodes = Tasks
-	•	Edges = dependencies/parent-child relationships
-	•	Tasks can spawn more tasks at runtime (subgraphs)
+### 3.2 Work Graph
+Dynamic DAG-like model:
+- nodes: tasks
+- edges: dependency/parent-child relationships
+- nodes can spawn child tasks at runtime
 
-2.3 Task
-
-An immutable-ish unit of work with lifecycle.
-
+### 3.3 Task
 Minimal fields:
-	•	task_id
-	•	universe_id
-	•	created_at
-	•	status: queued | running | blocked | succeeded | failed | canceled
-	•	kind: user_message | agent_action | tool_call | system
-	•	payload: JSON (message text, structured command, etc.)
-	•	parent_task_id?
-	•	depends_on: [task_id]
-	•	claimed_by? (worker id)
-	•	attempts, last_error?
-
-2.4 Agent Session
-
-A session is a logical thread of work (often rooted at a user message):
-	•	maps to a root task + its descendants
-	•	maintains conversational state (but stored externally; not in RAM only)
-
-2.5 Ports
-
-Pluggable input/output adapters:
-	•	Telegram bot, Email, CLI webhook, etc.
-Ports:
-	•	ingest external events → produce tasks
-	•	emit outputs back to humans (messages, prompts, confirmations)
-
-2.6 Memory (Knowledge Graph)
-
-A graph-ish store for:
-	•	entities (movie, torrent, folder, user preference)
-	•	relationships (downloaded_from, stored_at, requested_by)
-	•	events (task ran, tool executed)
-	•	searchable text + structured properties
-
-Must support:
-	•	upsert entity
-	•	add relation
-	•	search (fuzzy / hybrid)
-	•	fetch by id
-
-2.7 Agent Runtime
-
-Per task, an agent runs a loop:
-	•	reads task + relevant memory context
-	•	plans
-	•	uses tools:
-	•	search(query) → returns available capabilities (tool signatures / actions)
-	•	execute(code) → runs sandboxed JS/TS against provided host APIs
-	•	create_task(spec) → spawns tasks (graph expansion)
-
-Sandbox: V8 isolate (or equivalent) with constrained host functions.
-
-⸻
-
-3) High-Level Architecture
-
-Single binary with modules:
-	1.	Port Manager
-
-	•	loads configured ports
-	•	receives events
-	•	normalizes → Task::user_message
-	•	emits messages back out (status, prompts, results)
-
-	2.	Work Graph Engine
-
-	•	stores tasks + dependencies
-	•	scheduler: picks runnable tasks
-	•	worker pool: claims tasks, runs them, commits results
-	•	supports dynamic task creation
-
-	3.	Agent Executor
-
-	•	“runs the work” for tasks that require agent reasoning
-	•	manages agent sessions
-	•	calls Memory + tools
-
-	4.	Memory Service
-
-	•	API over the KG backend (embedded SQLite for MVP, pluggable later)
-	•	search index (basic FTS for MVP)
-
-	5.	Tool Registry
-
-	•	the “capabilities catalog” that search() queries
-	•	each tool has:
-	•	name
-	•	signature (TS type-ish)
-	•	description
-	•	permission requirements
-	•	implementation target (host function or JS library)
-
-	6.	Sandbox / JS Runtime
-
-	•	executes user/agent-generated JS
-	•	exposes host bindings (fetch, filesystem, torrent APIs, etc.) gated by policy
-
-	7.	Control Plane
-
-	•	minimal admin API + optional web UI
-	•	inspect tasks, runs, logs, memory entries
-	•	manage secrets/config, port settings, permissions
-
-⸻
-
-4) Data Flow Walkthrough (Movie Download)
-
-Scenario
-
-User via Telegram: “Download Minions”
-
-A) Port Subsystem (Telegram)
-	1.	Telegram webhook (or long poll) receives message event:
-	•	{chat_id, user_id, text="Download Minions", timestamp}
-	2.	Port normalizes into a Task:
-	•	kind=user_message
-	•	payload = { port:"telegram", chat_id, user_id, text }
-	•	parent_task_id = null
-	3.	Port submits task to Work Graph Engine: enqueue(task)
-
-Output: a queued root task.
-
-⸻
-
-B) Work Graph Engine (Scheduling)
-	4.	Scheduler scans for runnable tasks:
-	•	no dependencies → runnable
-	5.	Worker claims task:
-	•	sets status=running, claimed_by=worker-7
-	6.	Dispatches to Agent Executor because kind=user_message
-
-Output: task handed to agent runtime.
-
-⸻
-
-C) Agent Runtime (LLM loop)
-	7.	Agent Executor loads:
-	•	task payload (text, user_id)
-	•	session context (if any) by (user_id, port) mapping
-	8.	Agent does Memory prefetch:
-	•	calls Memory: search("Minions", filters={type:"movie"})
-	9.	Two branches:
-
-Branch 1: Found existing
-	•	Agent sees Movie{title:"Minions", downloaded:true, stored_at:"/plex/movies/minions.mkv"}
-	•	Agent emits response: “Already downloaded. Want me to open it / share link?”
-
-Branch 2: Not found (likely)
-10. Agent needs capabilities → calls search("torrent search Minions")
-
-⸻
-
-D) Tool: search(query) → Capability Discovery
-	11.	Tool Registry returns matching capabilities, e.g.
-
-	•	torrents.search(query: string) -> Promise<TorrentResult[]>
-	•	torrents.download(magnet: string, dest: string) -> Promise<DownloadReceipt>
-	•	prefs.get(key: string) -> Promise<string | null>
-	•	memory.upsert_entity(entity: Entity) -> Promise<EntityId>
-	•	memory.link(from: EntityId, rel: string, to: EntityId) -> Promise<void>
-
-Agent now knows “what can be done” and how to call it.
-
-⸻
-
-E) Agent asks follow-up or acts
-	12.	Agent checks preferences:
-
-	•	calls execute(...) to run prefs.get("torrents.dest") (or calls memory directly if exposed)
-
-	13.	If dest missing:
-
-	•	emits prompt via Port: “Where should I save movies? (e.g. /media/plex/movies)”
-	•	creates a blocked task waiting for user input OR marks session awaiting input.
-
-⸻
-
-F) Port receives user selection
-	14.	User replies: “Save to /media/plex/movies. Use the first result.”
-	15.	Port creates a new Task::user_message with:
-
-	•	parent_task_id = original_root_task_id (or session id link)
-	•	dependency: can be free, but it semantically resumes the session
-
-Scheduler picks it up; Agent resumes.
-
-⸻
-
-G) Tool: execute(code) → Side effects
-	16.	Agent runs JS to:
-
-	•	results = await torrents.search("Minions 1080p")
-	•	pick one
-	•	receipt = await torrents.download(results[0].magnet, "/media/plex/movies")
-
-Execution happens in the sandbox:
-	•	limited CPU/time
-	•	limited network targets (policy)
-	•	no arbitrary disk unless allowed
-
-⸻
-
-H) Memory writes
-	17.	On success, agent persists:
-
-	•	entity: Movie{title:"Minions", year:..., downloaded:true}
-	•	entity: Torrent{magnet, hash, source:"PirateBay", meta...}
-	•	relation: Movie downloaded_from Torrent
-	•	relation: Movie stored_at Location{/media/plex/movies/...}
-	•	event: DownloadReceipt{task_id, duration, bytes}
-
-⸻
-
-I) Completion + Output
-	18.	Agent emits final message via Port:
-
-	•	“Downloaded Minions to /media/plex/movies/minions.mkv”
-
-	19.	Work Graph Engine marks tasks succeeded, links results, stores logs.
-
-⸻
-
-5) MVP Scope (Prototype)
-
-Must-have (v0)
-	•	Single binary borg
-	•	In-memory task queue + SQLite-backed persistence (so you can restart and not lose everything)
-	•	One port: HTTP webhook port (easier than Telegram first)
-	•	optional: Telegram as second
-	•	One agent “runner”:
-	•	doesn’t need perfect LLM integration for v0; can stub with a simple planner or wire to one model
-	•	Tool registry + search(query) returning tool signatures
-	•	JS sandbox + execute(code) that can call a couple host functions
-	•	Memory store:
-	•	entities + relations in SQLite
-	•	full-text search for entity labels/notes
-	•	Minimal control plane:
-	•	GET /tasks, GET /tasks/:id
-	•	GET /memory/search?q=...
-	•	logs per task
-
-Explicit non-goals for v0
-	•	Distributed multi-node scheduling
-	•	Sophisticated DAG optimization
-	•	Rich UI dashboard
-	•	Multi-tenant auth
-	•	Perfect graph database (we’ll start with “graph-ish tables”)
-
-⸻
-
-6) Task Graph Engine Details
-
-6.1 Storage model (SQLite MVP)
-
-Tables:
-	•	tasks(task_id PK, parent_task_id, status, kind, payload_json, created_at, updated_at, claimed_by, attempts, last_error)
-	•	deps(task_id, depends_on_task_id)
-	•	task_events(event_id PK, task_id, ts, type, payload_json)
-	•	sessions(session_id PK, user_key, port, root_task_id, state_json, updated_at)
-
-6.2 Scheduler rules (simple)
-
-A task is runnable when:
-	•	status == queued
-	•	all dependencies are succeeded
+- `task_id`
+- `status`: `queued | running | blocked | succeeded | failed | canceled`
+- `kind`: `user_message | agent_action | tool_call | system`
+- `payload_json`
+- `parent_task_id?`
+- `depends_on[]`
+- `claimed_by?`
+- `attempts`
+- `last_error?`
+- timestamps
+
+### 3.4 Session
+Logical thread bound to a root task and user context (port + user key).
+
+### 3.5 Ports
+Adapters that:
+- ingest external events and create tasks
+- emit results/prompts to the source channel
+
+### 3.6 Memory
+Graph-like long-term memory:
+- entities
+- relations
+- event records
+- searchable text
+
+### 3.7 Agent Runtime
+Per runnable task:
+- load task/session context
+- retrieve relevant memory
+- plan and act through tools
+- optionally spawn tasks
+
+---
+
+## 4. High-Level Architecture
+
+```mermaid
+flowchart LR
+  U[User/System Event] --> P[Port Manager]
+  P --> W[Work Graph Engine]
+  W --> A[Agent Executor]
+  A --> T[Tool Registry]
+  A --> S[Sandbox Runtime]
+  A --> M[Memory Service]
+  A --> W
+  A --> P
+  C[Control Plane API/UI] --> W
+  C --> M
+```
+
+Modules:
+- Port Manager
+- Work Graph Engine (scheduler + workers)
+- Agent Executor
+- Tool Registry
+- Sandbox Runtime (JS/TS via `deno_core`)
+- Memory Service (`borg-ltm`)
+- Control Plane APIs (`borg-db` + runtime state)
+
+---
+
+## 5. Crate Layout
+
+```text
+crates/
+  borg-cli      # only binary entrypoint
+  borg-core     # shared types, BorgDir layout
+  borg-db       # control-plane/config/task db
+  borg-ltm      # long-term memory graph store
+  borg-exec     # execution engine/scheduler
+  borg-rt       # runtime sandbox adapter
+  borg-onboard  # onboarding web server library
+  borg-ui       # rust-served dashboard html (minimal)
+
+packages/
+  borg-app        # single Vite SPA shell (routes onboard + dashboard)
+  borg-onboard    # onboarding feature package
+  borg-dashboard  # dashboard feature package
+  borg-ui         # shared React UI components
+  borg-i18n       # localization messages
+```
+
+---
+
+## 6. Storage and Paths
+
+All runtime files are in `~/.borg/*` via `BorgDir`.
+
+Expected layout:
+- `~/.borg/config.db` (config/control plane data)
+- `~/.borg/ltm.db/` (LTM store data files)
+- `~/.borg/logs/`
+- `~/.borg/tmp/`
+
+`BorgDir` responsibilities:
+- resolve known paths
+- initialize folder structure
+- provide strongly-typed accessors
+
+---
+
+## 7. Data Flow Example (Movie Download)
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Port
+  participant Graph
+  participant Agent
+  participant Tools
+  participant Memory
+
+  User->>Port: "download Minions"
+  Port->>Graph: enqueue user_message task
+  Graph->>Agent: dispatch runnable task
+  Agent->>Memory: search("Minions")
+  alt already known
+    Agent->>Port: "Already downloaded at ..."
+  else unknown
+    Agent->>Tools: search("torrent capabilities")
+    Agent->>Tools: execute(download flow)
+    Agent->>Memory: upsert entities + relations
+    Agent->>Port: "Downloaded Minions ..."
+  end
+  Agent->>Graph: mark task succeeded
+```
+
+---
+
+## 8. Onboarding Flow (Current UX Intent)
+
+Chat-first onboarding:
+1. Borg agent prompt (left side).
+2. User responds through a bottom chat composer (right-side/user authored).
+3. Each user interaction becomes a user message bubble immediately.
+4. Borg follows with the next prompt.
+5. Repeat until provider is connected.
+
+```mermaid
+flowchart TD
+  A[Borg: Welcome + choose provider] --> B[User composer: provider choices]
+  B --> C[User bubble: selected provider]
+  C --> D[Borg: paste API key prompt]
+  D --> E[User composer: API key + Connect]
+  E --> F[POST /api/providers/openai]
+  F --> G[Persist provider key in config.db]
+  G --> H[Borg: setup success message]
+```
+
+### 8.1 Chat-as-Form Interaction Model
+The onboarding chat is modeled as a programmable form:
+- agent messages only prompt/explain
+- user messages carry controls (`choices`, `input`, `actions`)
+- selecting an option or pressing connect is treated as a user reply event
+
+```mermaid
+sequenceDiagram
+  participant B as Borg (agent)
+  participant U as User composer
+  participant S as Session state
+
+  B->>U: Prompt: choose provider
+  U->>S: select "OpenAI API Key"
+  S->>S: append user bubble with selected provider
+  B->>U: Prompt: paste API key
+  U->>S: type key + click Connect
+  S->>S: append/refresh user bubble with input state
+  S->>B: trigger backend connect request
+```
+
+### 8.2 UI Requirement (v0)
+- full AI-chat layout:
+  - scrollable conversation feed
+  - persistent bottom composer dock
+- composer supports:
+  - option chips
+  - text/password input
+  - primary action button
+- all control text comes from `@borg/i18n`
+
+---
+
+## 9. Tool Interface (v0)
+
+Agent-visible tool surface:
+- `search(query) -> Capability[]`
+- `execute(code) -> ExecutionResult`
+- `create_task(spec) -> TaskId`
+
+Capability shape:
+- `name`
+- `signature`
+- `description`
+- optional examples/permission metadata
+
+`execute` requirements:
+- bounded runtime
+- bounded memory
+- controlled host bindings only
+
+---
+
+## 10. Scheduler Rules (v0)
+
+Task runnable if:
+- status is `queued`
+- all dependencies are `succeeded`
 
 Claiming:
-	•	atomic update: queued → running with claimed_by
-	•	heartbeat optional (later)
+- atomic transition `queued -> running`
 
 Retries:
-	•	attempts < max_attempts
-	•	exponential backoff stored in payload or task_events
+- bounded attempts
+- exponential backoff policy
 
-⸻
+Task lifecycle:
 
-7) Agent Runtime Interface
+```mermaid
+stateDiagram-v2
+  [*] --> queued
+  queued --> running
+  running --> blocked
+  blocked --> queued
+  running --> succeeded
+  running --> failed
+  queued --> canceled
+  blocked --> canceled
+  failed --> queued: retry
+```
 
-7.1 Tool API contract (what the agent “sees”)
+---
 
-The agent only sees:
-	•	search(query: string) -> Capability[]
-	•	execute(code: string) -> ExecutionResult
-	•	create_task(task_spec: TaskSpec) -> TaskId
+## 11. Memory Model (v0)
 
-Where Capability includes:
-	•	name
-	•	signature (TS-like string)
-	•	description
-	•	examples (optional)
+Operations:
+- `search(text, type?, limit?)`
+- `get(entity_id)`
+- `upsert(type, label, props)`
+- `link(from, rel_type, to, props?)`
 
-7.2 execute(code) contract
-	•	runs in sandbox
-	•	returns:
-	•	stdout, stderr
-	•	result_json
-	•	tool_calls (if your sandbox calls host tools)
-	•	metrics (time, memory)
+Minimum data:
+- entities
+- relations
+- searchable labels/attributes
 
-Host bindings (MVP):
-	•	memory.search(q, filters)
-	•	memory.upsert(entity)
-	•	memory.link(a, rel, b)
-	•	ports.send(port, target, message)
-	•	(optional) http.fetch(...)
+Implementation note:
+- v0 uses the current `borg-ltm` backend selected in codebase.
 
-In v0, keep it tiny. You can fake “torrent download” with a placeholder tool that writes an entity.
+---
 
-⸻
+## 12. Control Plane (v0)
 
-8) Port System (MVP)
+Minimum endpoints:
+- `GET /health`
+- `GET /tasks?status=&limit=`
+- `GET /tasks/:id`
+- `GET /tasks/:id/events`
+- `GET /memory/search?q=`
+- `GET /memory/entities/:id`
 
-Port interface
-	•	ingest(event) -> TaskSpec[]
-	•	emit(output) -> void
+Auth:
+- none or single token in v0
 
-MVP ports:
-	1.	HTTP Port
+Onboarding backend endpoints:
+- `GET /onboard`
+- `POST /api/providers/openai`
 
-	•	POST /ports/http/inbox accepts {user_key, text, metadata}
-	•	returns immediate ack {task_id}
+Future (next increment):
+- device-code auth for "Sign in with ChatGPT/Codex"
+  - `POST /api/auth/chatgpt/device/start`
+  - `GET /api/auth/chatgpt/device/status?flow_id=...`
+  - follows OAuth 2.0 Device Authorization Grant pattern
 
-	2.	(Optional next) Telegram Port
+---
 
-	•	webhook receiver
-	•	sendMessage output
+## 13. MVP Scope
 
-⸻
+In scope:
+- single binary runtime
+- task persistence + scheduling
+- one stable ingress port (HTTP)
+- minimal agent loop with tool usage
+- onboarding flow with provider key persistence
+- minimal dashboard/control APIs
 
-9) Memory System (MVP Knowledge Graph)
+Out of scope:
+- multi-node distributed scheduling
+- advanced DAG optimization
+- full tenant/auth model
+- polished enterprise dashboard
 
-9.1 Data model
+---
 
-Tables:
-	•	entities(entity_id PK, type, label, props_json, created_at, updated_at)
-	•	relations(rel_id PK, from_entity_id, rel_type, to_entity_id, props_json, created_at)
-	•	entity_fts (SQLite FTS) over label + selected props
+## 14. Observability and Safety
 
-9.2 Operations
-	•	search(text, type?, limit?) -> [EntitySummary]
-	•	get(entity_id) -> Entity
-	•	upsert(type, natural_key?, label, props) -> entity_id
-	•	link(from, rel_type, to, props?)
-	•	timeline(entity_id) -> events (optional)
+Requirements:
+- `tracing` initialized before app logic
+- structured logs for scheduler, agent, ports, db, onboarding
+- sandbox execution limits
+- explicit permission boundaries for host capabilities
 
-⸻
+---
 
-10) Control Plane (MVP)
+## 15. Build and Run
 
-HTTP API (localhost / configurable bind):
-	•	GET /health
-	•	GET /tasks?status=&limit=
-	•	GET /tasks/:id
-	•	GET /tasks/:id/events
-	•	GET /memory/search?q=
-	•	GET /memory/entities/:id
-	•	POST /config/reload (optional)
+Web build (single SPA):
+- `bun run build:web`
 
-Auth: none in v0 or simple token.
+Web runtime note:
+- the Rust onboarding server must fail loudly if `packages/borg-app/dist` assets are missing or incomplete
+- no inline fallback assets for production onboarding
 
-⸻
+Rust build:
+- `cargo build -p borg-cli`
 
-11) Security & Safety (Minimum viable)
-	•	Sandbox time limit per execute (e.g. 2s CPU)
-	•	Memory limit per isolate
-	•	execute cannot access host FS/network unless explicitly granted
-	•	Tool registry marks capabilities with required permissions
-	•	Universe config defines allowed permissions for this deployment
+Local dev:
+- `bun run dev` for SPA
+- `cargo run -p borg-cli -- init`
+- `cargo run -p borg-cli -- start`
 
-⸻
+---
 
-12) CLI & Deployment
+## 16. Delivery Order
 
-CLI
-	•	borg run --universe <path-or-url> --port http:8080
-	•	borg migrate (sets up SQLite)
-	•	borg doctor (prints config + connectivity)
+```mermaid
+flowchart TD
+  A[Core paths + BorgDir] --> B[DB + migrations]
+  B --> C[Task engine + scheduler]
+  C --> D[HTTP ingress port]
+  D --> E[Agent runtime + tool search]
+  E --> F[Sandbox execute]
+  F --> G[LTM persistence]
+  G --> H[Onboarding chat flow]
+  H --> I[Control plane endpoints]
+```
 
-Container
-	•	single image with borg
-	•	mount volume for SQLite (Universe)
-	•	expose HTTP port(s)
+---
 
-⸻
+## 17. Acceptance Scenarios
 
-13) Acceptance Tests (Concrete)
-	1.	Send HTTP inbox message “remember I like /media/plex/movies”
-	•	agent writes preference entity
-	2.	Send “download Minions”
-	•	agent searches memory → none
-	•	agent calls search() → gets “torrents.search / torrents.download”
-	•	agent asks for confirmation or picks default
-	•	agent “downloads” (stub) and writes Movie + Torrent entities + relations
-	•	output message contains “Downloaded Minions …”
-	3.	Send “download Minions” again
-	•	agent finds in memory and responds “Already downloaded at …”
-
-⸻
-
-14) Build Order (Fastest path)
-	1.	SQLite Universe + Task tables + scheduler loop
-	2.	HTTP Port → creates user_message tasks
-	3.	Memory tables + FTS search
-	4.	Tool registry + search()
-	5.	JS sandbox + execute() with memory.* and ports.send
-	6.	Very dumb “agent” loop (even rule-based) → later swap to real LLM
-	7.	Minimal control plane endpoints
+1. User sets media preference.
+2. User requests movie download.
+3. Agent discovers tools and executes flow.
+4. Memory contains movie/torrent/entities/relations.
+5. Repeated request resolves from memory and returns prior result.
