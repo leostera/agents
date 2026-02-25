@@ -7,6 +7,8 @@ edition = "2024"
 anyhow.workspace = true
 async-trait.workspace = true
 borg-exec = { path = "../borg-exec" }
+borg-core = { path = "../borg-core" }
 axum.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+teloxide.workspace = true

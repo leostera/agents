@@ -7,6 +7,7 @@ use crate::PortMessage;
 #[derive(Clone)]
 pub enum PortConfig {
     Http { exec: ExecEngine },
+    Telegram { exec: ExecEngine, bot_token: String },
 }
 
 #[async_trait]

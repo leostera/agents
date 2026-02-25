@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use axum::http::HeaderMap;
 use borg_core::Uri;
@@ -37,6 +37,7 @@ impl Port for HttpPort {
     fn init(config: PortConfig) -> Result<Self> {
         match config {
             PortConfig::Http { exec } => Ok(Self { exec }),
+            _ => Err(anyhow!("invalid config for HttpPort")),
         }
     }
 
