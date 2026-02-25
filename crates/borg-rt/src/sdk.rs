@@ -207,6 +207,7 @@ fn parse_interfaces(source: &str) -> HashMap<String, Vec<InterfaceMember>> {
 }
 
 fn parse_interface_members(body: &str) -> Vec<InterfaceMember> {
+    let body = strip_ts_comments(body);
     let mut members = Vec::new();
     let mut statement = String::new();
     let mut paren_depth = 0_usize;
@@ -233,6 +234,45 @@ fn parse_interface_members(body: &str) -> Vec<InterfaceMember> {
     }
 
     members
+}
+
+fn strip_ts_comments(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+
+    while let Some(ch) = chars.next() {
+        if in_line_comment {
+            if ch == '\n' {
+                in_line_comment = false;
+                out.push('\n');
+            }
+            continue;
+        }
+        if in_block_comment {
+            if ch == '*' && chars.peek() == Some(&'/') {
+                let _ = chars.next();
+                in_block_comment = false;
+            }
+            continue;
+        }
+
+        if ch == '/' && chars.peek() == Some(&'/') {
+            let _ = chars.next();
+            in_line_comment = true;
+            continue;
+        }
+        if ch == '/' && chars.peek() == Some(&'*') {
+            let _ = chars.next();
+            in_block_comment = true;
+            continue;
+        }
+
+        out.push(ch);
+    }
+
+    out
 }
 
 fn parse_member_statement(statement: &str) -> Option<InterfaceMember> {
