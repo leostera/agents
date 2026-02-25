@@ -6,9 +6,8 @@ import { createI18n } from '@borg/i18n'
 import { Session, type SessionMessage } from '@borg/ui'
 
 const OPENAI_PROVIDER = 'openai'
-const PROVIDER_MESSAGE_ID = 'm-provider'
+const PROVIDER_MESSAGE_ID = 'm-welcome'
 const OPENAI_API_KEY_MESSAGE_ID = 'i-openai-key'
-const PROVIDER_FLOW_SEQUENCE = ['m-welcome', 'm-provider'] as const
 
 type SessionState = {
   choices: Record<string, string>
@@ -50,7 +49,6 @@ export function OnboardApp() {
     error: '',
     saved: false,
   })
-  const [providerFlowIndex, setProviderFlowIndex] = useState<number>(1)
   const [keyPromptVisible, setKeyPromptVisible] = useState<boolean>(false)
   const [animatedCompleted, setAnimatedCompleted] = useState<Record<string, boolean>>({})
 
@@ -60,13 +58,7 @@ export function OnboardApp() {
         id: 'm-welcome',
         type: 'message',
         author: 'agent',
-        content: i18n.t('onboard.agent.welcome', { username }),
-      },
-      {
-        id: 'm-provider',
-        type: 'message',
-        author: 'agent',
-        content: i18n.t('onboard.agent.choose_provider'),
+        content: `${i18n.t('onboard.agent.welcome', { username })}\n\n${i18n.t('onboard.agent.choose_provider')}`,
         choices: {
           name: i18n.t('onboard.choice.provider_name'),
           options: [{ label: i18n.t('onboard.provider.openai'), value: OPENAI_PROVIDER }],
@@ -78,9 +70,7 @@ export function OnboardApp() {
 
   const selectedProvider = state.choices[PROVIDER_MESSAGE_ID]
   const messages = useMemo<Array<SessionMessage>>(() => {
-    const visibleIds = new Set(PROVIDER_FLOW_SEQUENCE.slice(0, providerFlowIndex))
-    const visible = baseMessages.filter((message) => visibleIds.has(message.id))
-    if (selectedProvider !== OPENAI_PROVIDER) return visible
+    if (selectedProvider !== OPENAI_PROVIDER || !animatedCompleted['m-welcome']) return baseMessages
 
     const keyMessages: Array<SessionMessage> = [
       {
@@ -103,18 +93,16 @@ export function OnboardApp() {
       },
     ]
     if (!keyPromptVisible) {
-      return [...visible, keyMessages[0]]
+      return [...baseMessages, keyMessages[0]]
     }
 
-    return [...visible, ...keyMessages]
-  }, [baseMessages, i18n, keyPromptVisible, providerFlowIndex, selectedProvider])
+    return [...baseMessages, ...keyMessages]
+  }, [animatedCompleted, baseMessages, i18n, keyPromptVisible, selectedProvider])
 
   const animatedIds = useMemo(() => {
     const ids: Array<string> = []
     if (!animatedCompleted['m-welcome']) {
       ids.push('m-welcome')
-    } else if (!animatedCompleted['m-provider']) {
-      ids.push('m-provider')
     } else if (selectedProvider === OPENAI_PROVIDER && !animatedCompleted['m-key']) {
       ids.push('m-key')
     }
@@ -147,12 +135,6 @@ export function OnboardApp() {
         }}
         onMessageAnimationComplete={(messageId) => {
           setAnimatedCompleted((prev) => ({ ...prev, [messageId]: true }))
-          if (messageId === 'm-welcome') {
-            setProviderFlowIndex(2)
-          }
-          if (messageId === 'm-provider') {
-            setProviderFlowIndex(2)
-          }
           if (messageId === 'm-key') {
             setKeyPromptVisible(true)
           }
