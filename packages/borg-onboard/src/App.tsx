@@ -1,5 +1,5 @@
 import React from 'react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Effect, pipe } from 'effect'
 
 import { createI18n } from '@borg/i18n'
@@ -9,6 +9,7 @@ const OPENAI_PROVIDER = 'openai'
 const PROVIDER_MESSAGE_ID = 'u-provider'
 const OPENAI_API_KEY_MESSAGE_ID = 'i-openai-key'
 const CONNECT_ACTION_ID = 'connect'
+const PROVIDER_RESPONSE_DELAY_MS = 350
 
 type SessionState = {
   choices: Record<string, string>
@@ -56,6 +57,30 @@ export function OnboardApp() {
     saved: false,
   })
   const [animatedCompleted, setAnimatedCompleted] = useState<Record<string, boolean>>({})
+  const [providerResponseReady, setProviderResponseReady] = useState<boolean>(false)
+
+  const selectedProvider = state.choices[PROVIDER_MESSAGE_ID]
+  const selectedProviderLabel = useMemo(() => {
+    if (selectedProvider === OPENAI_PROVIDER) {
+      return i18n.t('onboard.provider.openai')
+    }
+    return ''
+  }, [i18n, selectedProvider])
+
+  useEffect(() => {
+    if (selectedProvider !== OPENAI_PROVIDER) {
+      setProviderResponseReady(false)
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      setProviderResponseReady(true)
+    }, PROVIDER_RESPONSE_DELAY_MS)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [selectedProvider])
 
   const baseMessages = useMemo<Array<SessionMessage>>(
     () => [
@@ -70,24 +95,28 @@ export function OnboardApp() {
         id: PROVIDER_MESSAGE_ID,
         type: 'message',
         author: 'user',
-        content: '',
+        content: selectedProviderLabel,
         timestamp: formatTimestamp(new Date(startedAt.getTime() + 30_000)),
-        choices: {
-          name: i18n.t('onboard.choice.provider_name'),
-          options: [{ label: i18n.t('onboard.provider.openai'), value: OPENAI_PROVIDER, icon: 'openai' }],
-        },
+        choices:
+          selectedProvider.length === 0
+            ? {
+                name: i18n.t('onboard.choice.provider_name'),
+                options: [
+                  { label: i18n.t('onboard.provider.openai'), value: OPENAI_PROVIDER, icon: 'openai' },
+                ],
+              }
+            : undefined,
       },
     ],
-    [i18n, startedAt, username],
+    [i18n, selectedProvider.length, selectedProviderLabel, startedAt, username],
   )
 
-  const selectedProvider = state.choices[PROVIDER_MESSAGE_ID]
   const messages = useMemo<Array<SessionMessage>>(() => {
     if (!animatedCompleted['m-welcome']) {
       return baseMessages.filter((message) => message.id === 'm-welcome')
     }
 
-    if (selectedProvider !== OPENAI_PROVIDER) return baseMessages
+    if (selectedProvider !== OPENAI_PROVIDER || !providerResponseReady) return baseMessages
 
     const withInput: Array<SessionMessage> = [
       ...baseMessages,
@@ -154,7 +183,17 @@ export function OnboardApp() {
     }
 
     return withInput
-  }, [animatedCompleted, baseMessages, i18n, selectedProvider, startedAt, state.error, state.saved, state.saving])
+  }, [
+    animatedCompleted,
+    baseMessages,
+    i18n,
+    providerResponseReady,
+    selectedProvider,
+    startedAt,
+    state.error,
+    state.saved,
+    state.saving,
+  ])
 
   const animatedIds = useMemo(() => {
     const ids: Array<string> = []
@@ -175,6 +214,9 @@ export function OnboardApp() {
         agentName='Borg'
         systemName='Borg'
         onChoice={(messageId, value) => {
+          if (messageId === PROVIDER_MESSAGE_ID) {
+            setProviderResponseReady(false)
+          }
           setState((prev) => ({
             ...prev,
             error: '',
