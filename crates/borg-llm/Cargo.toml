@@ -12,6 +12,10 @@ serde.workspace = true
 testcontainers = "0.27.1"
 tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
+kalosm = { version = "0.4.0", default-features = false, features = ["language", "llama"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+kalosm = { version = "0.4.0", default-features = false, features = ["language", "llama", "metal"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
