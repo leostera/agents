@@ -3,17 +3,20 @@ use std::time::Duration;
 use anyhow::Result;
 use testcontainers::core::IntoContainerPort;
 use testcontainers::runners::AsyncRunner;
-use testcontainers::{ContainerAsync, GenericImage, ImageExt};
+use testcontainers::{ContainerAsync, GenericImage};
 use tokio::time::sleep;
 
-const VLLM_IMAGE_NAME: &str = "vllm/vllm-openai";
-const VLLM_IMAGE_TAG: &str = "latest";
-const VLLM_PORT: u16 = 8000;
-const DEFAULT_TEST_MODEL: &str = "Qwen/Qwen2.5-0.5B-Instruct";
+const OLLAMA_IMAGE_NAME: &str = "ollama/ollama";
+const OLLAMA_IMAGE_TAG: &str = "latest";
+const OLLAMA_PORT: u16 = 11434;
+const DEFAULT_TEST_MODEL: &str = "qwen2.5:0.5b";
 const DEFAULT_TEST_API_KEY: &str = "test-key";
-const MODELS_PATH: &str = "/v1/models";
-const MAX_READINESS_ATTEMPTS: usize = 1800;
+const TAGS_PATH: &str = "/api/tags";
+const PULL_PATH: &str = "/api/pull";
+const MAX_READINESS_ATTEMPTS: usize = 300;
 const READINESS_BACKOFF_MILLIS: u64 = 1000;
+const MAX_PULL_ATTEMPTS: usize = 5400;
+const PULL_BACKOFF_MILLIS: u64 = 1000;
 
 pub struct LlmContainer {
     _container: ContainerAsync<GenericImage>,
@@ -24,22 +27,20 @@ pub struct LlmContainer {
 
 impl LlmContainer {
     pub async fn start_vllm() -> Result<Self> {
-        Self::start_vllm_with_model(DEFAULT_TEST_MODEL).await
+        Self::start_ollama_with_model(DEFAULT_TEST_MODEL).await
     }
 
-    pub async fn start_vllm_with_model(model: impl Into<String>) -> Result<Self> {
+    pub async fn start_ollama_with_model(model: impl Into<String>) -> Result<Self> {
         let model = model.into();
-        let container = GenericImage::new(VLLM_IMAGE_NAME, VLLM_IMAGE_TAG)
-            .with_exposed_port(VLLM_PORT.tcp())
-            .with_env_var("VLLM_TARGET_DEVICE", "cpu")
-            .with_env_var("CUDA_VISIBLE_DEVICES", "")
-            .with_cmd(vec!["--model", model.as_str(), "--device", "cpu"])
+        let container = GenericImage::new(OLLAMA_IMAGE_NAME, OLLAMA_IMAGE_TAG)
+            .with_exposed_port(OLLAMA_PORT.tcp())
             .start()
             .await?;
 
-        let host_port = container.get_host_port_ipv4(VLLM_PORT.tcp()).await?;
+        let host_port = container.get_host_port_ipv4(OLLAMA_PORT.tcp()).await?;
         let base_url = format!("http://127.0.0.1:{host_port}");
         wait_until_ready(&base_url).await?;
+        pull_model(&base_url, &model).await?;
 
         Ok(Self {
             _container: container,
@@ -52,13 +53,9 @@ impl LlmContainer {
 
 async fn wait_until_ready(base_url: &str) -> Result<()> {
     let client = reqwest::Client::new();
-    let url = format!("{base_url}{MODELS_PATH}");
+    let url = format!("{base_url}{TAGS_PATH}");
     for _ in 0..MAX_READINESS_ATTEMPTS {
-        let response = client
-            .get(&url)
-            .bearer_auth(DEFAULT_TEST_API_KEY)
-            .send()
-            .await;
+        let response = client.get(&url).send().await;
         if let Ok(response) = response {
             if response.status().is_success() {
                 return Ok(());
@@ -67,5 +64,28 @@ async fn wait_until_ready(base_url: &str) -> Result<()> {
         sleep(Duration::from_millis(READINESS_BACKOFF_MILLIS)).await;
     }
 
-    anyhow::bail!("vllm container never became ready at {}", url);
+    anyhow::bail!("ollama container never became ready at {}", url);
+}
+
+async fn pull_model(base_url: &str, model: &str) -> Result<()> {
+    let client = reqwest::Client::new();
+    let url = format!("{base_url}{PULL_PATH}");
+    for _ in 0..MAX_PULL_ATTEMPTS {
+        let response = client
+            .post(&url)
+            .json(&serde_json::json!({
+                "model": model,
+                "stream": false
+            }))
+            .send()
+            .await;
+        if let Ok(response) = response {
+            if response.status().is_success() {
+                return Ok(());
+            }
+        }
+        sleep(Duration::from_millis(PULL_BACKOFF_MILLIS)).await;
+    }
+
+    anyhow::bail!("ollama model pull never completed for {} at {}", model, url);
 }
