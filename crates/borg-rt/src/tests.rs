@@ -70,6 +70,33 @@ fn execute_rejects_non_code_mode_shape() {
 }
 
 #[test]
+fn execute_invalid_borgos_symbol_returns_corrective_hint() {
+    let rt = CodeModeRuntime::default();
+    let err = rt
+        .execute("async () => { return BorgOs.ls('.'); }")
+        .unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("Borg.OS.ls"),
+        "unexpected error message: {message}"
+    );
+}
+
+#[test]
+fn ffi_handler_panic_is_reported_as_runtime_error() {
+    let rt = CodeModeRuntime::default().with_ffi_handler("os__ls", |_args| {
+        panic!("simulated ffi panic");
+    });
+    let err = rt
+        .execute("async () => { return Borg.OS.ls('.'); }")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("ffi execution panic"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn search_returns_sdk_capabilities_from_types() {
     let rt = CodeModeRuntime::default();
     let fetch_results = rt.search("fetch");

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
@@ -14,6 +16,7 @@ use crate::sdk::{ApiCapability, search_capabilities};
 use crate::types::{FfiHandler, FfiResult};
 
 const SDK_BUNDLE: &str = include_str!(concat!(env!("OUT_DIR"), "/borg_agent_sdk.bundle.js"));
+static RUNTIME_EXECUTION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Clone)]
 pub struct CodeModeRuntime {
@@ -58,61 +61,118 @@ impl CodeModeRuntime {
 
     pub fn execute(&self, code: &str) -> Result<ExecutionResult> {
         validate_code_mode_shape(code)?;
+        let _runtime_lock = runtime_execution_lock()
+            .lock()
+            .map_err(|_| anyhow!("code-mode runtime execution lock poisoned"))?;
 
-        info!(target: "borg_rt", "executing JS in deno_core runtime");
-        debug!(target: "borg_rt", code, "js payload");
+        let execution = catch_unwind(AssertUnwindSafe(|| {
+            info!(target: "borg_rt", "executing JS in deno_core runtime");
+            debug!(target: "borg_rt", code, "js payload");
 
-        let start = Instant::now();
-        let mut runtime = JsRuntime::new(RuntimeOptions::default());
-        install_ffi(&mut runtime, Arc::new(self.ffi_handlers.clone()))?;
+            let start = Instant::now();
+            let mut runtime = JsRuntime::new(RuntimeOptions::default());
+            install_ffi(&mut runtime, Arc::new(self.ffi_handlers.clone()))?;
 
-        if !self.prelude.trim().is_empty() {
-            runtime
-                .execute_script("borg_prelude.js", self.prelude.clone())
-                .map_err(|err| anyhow!("failed to execute prelude: {}", err))?;
-        }
-        runtime
-            .execute_script("borg_agent_sdk.js", self.sdk_bundle.clone())
-            .map_err(|err| anyhow!("failed to execute sdk bundle: {}", err))?;
-
-        let function = runtime
-            .execute_script("borg_exec_fn.js", format!("({})", code))
-            .map_err(|err| anyhow!("failed to compile code-mode function: {}", err))?;
-        let function = {
-            let scope = &mut runtime.handle_scope();
-            let local = v8::Local::new(scope, function);
-            if !local.is_function() {
-                return Err(anyhow!(
-                    "code-mode execute expects an async zero-arg function expression"
-                ));
+            if !self.prelude.trim().is_empty() {
+                runtime
+                    .execute_script("borg_prelude.js", self.prelude.clone())
+                    .map_err(|err| {
+                        anyhow!(normalize_runtime_error(format!(
+                            "failed to execute prelude: {}",
+                            err
+                        )))
+                    })?;
             }
-            let local_fn = v8::Local::<v8::Function>::try_from(local)
-                .map_err(|_| anyhow!("code-mode payload did not resolve to a function"))?;
-            v8::Global::new(scope, local_fn)
-        };
+            runtime
+                .execute_script("borg_agent_sdk.js", self.sdk_bundle.clone())
+                .map_err(|err| {
+                    anyhow!(normalize_runtime_error(format!(
+                        "failed to execute sdk bundle: {}",
+                        err
+                    )))
+                })?;
 
-        #[allow(deprecated)]
-        let value = deno_core::futures::executor::block_on(runtime.call_and_await(&function))
-            .map_err(|err| anyhow!("failed to execute code-mode function: {}", err))?;
+            let function = runtime
+                .execute_script("borg_exec_fn.js", format!("({})", code))
+                .map_err(|err| {
+                    anyhow!(normalize_runtime_error(format!(
+                        "failed to compile code-mode function: {}",
+                        err
+                    )))
+                })?;
+            let function = {
+                let scope = &mut runtime.handle_scope();
+                let local = v8::Local::new(scope, function);
+                if !local.is_function() {
+                    return Err(anyhow!(
+                        "code-mode execute expects an async zero-arg function expression"
+                    ));
+                }
+                let local_fn = v8::Local::<v8::Function>::try_from(local)
+                    .map_err(|_| anyhow!("code-mode payload did not resolve to a function"))?;
+                v8::Global::new(scope, local_fn)
+            };
 
-        let result_json: Value = {
-            let scope = &mut runtime.handle_scope();
-            let local = v8::Local::new(scope, value);
-            serde_v8::from_v8(scope, local).unwrap_or(Value::Null)
-        };
+            #[allow(deprecated)]
+            let value = deno_core::futures::executor::block_on(runtime.call_and_await(&function))
+                .map_err(|err| {
+                anyhow!(normalize_runtime_error(format!(
+                    "failed to execute code-mode function: {}",
+                    err
+                )))
+            })?;
 
-        trace!(target: "borg_rt", result = ?result_json, "js execution result");
-        let duration = start.elapsed();
-        let duration_ms = duration.as_millis();
-        info!(target: "borg_rt", duration_ms, "JS execution finished");
+            let result_json: Value = {
+                let scope = &mut runtime.handle_scope();
+                let local = v8::Local::new(scope, value);
+                serde_v8::from_v8(scope, local).unwrap_or(Value::Null)
+            };
 
-        Ok(ExecutionResult {
-            stdout: String::new(),
-            stderr: String::new(),
-            result_json,
-            duration,
-        })
+            trace!(target: "borg_rt", result = ?result_json, "js execution result");
+            let duration = start.elapsed();
+            let duration_ms = duration.as_millis();
+            info!(target: "borg_rt", duration_ms, "JS execution finished");
+
+            Ok(ExecutionResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                result_json,
+                duration,
+            })
+        }));
+
+        match execution {
+            Ok(result) => result,
+            Err(payload) => Err(anyhow!(
+                "code-mode runtime panicked during execution: {}",
+                panic_payload_to_string(payload)
+            )),
+        }
     }
+}
+
+fn runtime_execution_lock() -> &'static Mutex<()> {
+    RUNTIME_EXECUTION_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "unknown panic payload".to_string()
+}
+
+fn normalize_runtime_error(message: String) -> String {
+    if message.contains("BorgOs") || message.contains("borgos") {
+        return format!(
+            "{}. Hint: use `Borg.OS.ls(...)` (the `BorgOs` symbol is invalid).",
+            message
+        );
+    }
+    message
 }
 
 fn validate_code_mode_shape(code: &str) -> Result<()> {
