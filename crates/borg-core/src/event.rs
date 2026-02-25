@@ -4,9 +4,39 @@ use serde_json::Value;
 use crate::{TaskKind, Uri, uri};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionToolSchema {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionContextSnapshot {
+    pub model: String,
+    pub messages: Vec<Value>,
+    pub tools: Vec<SessionToolSchema>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
     TaskCreated { task_id: Uri, kind: TaskKind },
     TaskClaimed { task_id: Uri, worker_id: Uri },
+    SessionStarted {
+        task_id: Uri,
+        session_id: Uri,
+        agent_id: Uri,
+    },
+    SessionMessage {
+        task_id: Uri,
+        session_id: Uri,
+        index: usize,
+        message: Value,
+    },
+    ContextBuilt {
+        task_id: Uri,
+        session_id: Uri,
+        context: SessionContextSnapshot,
+    },
     AgentIdle { task_id: Uri },
     AgentToolCall {
         task_id: Uri,
@@ -24,6 +54,9 @@ impl Event {
         match self {
             Self::TaskCreated { task_id, .. } => task_id,
             Self::TaskClaimed { task_id, .. } => task_id,
+            Self::SessionStarted { task_id, .. } => task_id,
+            Self::SessionMessage { task_id, .. } => task_id,
+            Self::ContextBuilt { task_id, .. } => task_id,
             Self::AgentIdle { task_id } => task_id,
             Self::AgentToolCall { task_id, .. } => task_id,
             Self::AgentOutput { task_id, .. } => task_id,
@@ -36,6 +69,9 @@ impl Event {
         match self {
             Self::TaskCreated { .. } => uri!("borg", "task", "created"),
             Self::TaskClaimed { .. } => uri!("borg", "task", "claimed"),
+            Self::SessionStarted { .. } => uri!("borg", "session", "started"),
+            Self::SessionMessage { .. } => uri!("borg", "session", "message"),
+            Self::ContextBuilt { .. } => uri!("borg", "session", "context_built"),
             Self::AgentIdle { .. } => uri!("borg", "agent", "idle"),
             Self::AgentToolCall { .. } => uri!("borg", "agent", "tool_call"),
             Self::AgentOutput { .. } => uri!("borg", "agent", "output"),

@@ -22,10 +22,14 @@ impl SessionManager {
             .clone()
             .unwrap_or_else(|| format!("borg:session:{}", Uuid::now_v7()));
         let agent = Agent::new("borg-default")
+            .with_model(self.model.clone());
+        let agent = Agent {
+            agent_id: "borg:agent:default".to_string(),
+            ..agent
+        }
             .with_system_prompt(
                 "You are Borg's agent runtime. Use tools as needed, then respond clearly.",
-            )
-            .with_model(self.model.clone());
+            );
         Session::new(session_id, agent, self.db.clone()).await
     }
 }

@@ -6,7 +6,7 @@ mod task;
 mod uri;
 
 pub use entity::Entity;
-pub use event::Event;
+pub use event::{Event, SessionContextSnapshot, SessionToolSchema};
 pub use execution::ExecutionResult;
 pub use task::{Task, TaskEvent, TaskKind, TaskStatus};
 pub use uri::Uri;

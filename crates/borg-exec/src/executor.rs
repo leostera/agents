@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{AgentTools, Message, SessionResult};
-use borg_core::{Event, Task, TaskKind, TaskStatus, Uri};
+use borg_agent::{AgentTools, ContextWindow, Message, SessionResult, ToolSpec};
+use borg_core::{Event, SessionContextSnapshot, SessionToolSchema, Task, TaskKind, TaskStatus, Uri};
 use borg_db::{BorgDb, NewTask};
 use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
 use borg_rt::RuntimeEngine;
@@ -211,10 +211,11 @@ impl BorgExecutor {
 
     async fn process_user_message(&self, task: Task) -> Result<()> {
         let msg: InboxMessage = serde_json::from_value(task.payload.clone())?;
+        let task_id = task.task_id.clone();
 
         info!(
             target: "borg_exec",
-            task_id = %task.task_id,
+            task_id = %task_id,
             user_key = msg.user_key,
             text = msg.text,
             "processing user message task"
@@ -225,10 +226,28 @@ impl BorgExecutor {
             tool_runner: &tool_runner,
         };
         let mut session = self.session_manager.session_for_task(&msg).await?;
+        let session_id = Uri::parse(&session.session_id)?;
+        let agent_id = Uri::parse(&session.agent.agent_id)?;
+        let before_messages = session.read_messages(0, usize::MAX).await?;
+        if before_messages.len() <= 1 {
+            self.db
+                .log_event(Event::SessionStarted {
+                    task_id: task_id.clone(),
+                    session_id: session_id.clone(),
+                    agent_id,
+                })
+                .await?;
+            self.log_session_messages(&task_id, &session_id, 0, &before_messages)
+                .await?;
+        }
+
         session
             .add_message(Message::User {
                 content: msg.text.clone(),
             })
+            .await?;
+        let context = session.build_context().await?;
+        self.log_context_built(&task_id, &session_id, &session.agent.model, &context)
             .await?;
 
         let provider = self.configured_provider().await?;
@@ -247,13 +266,21 @@ impl BorgExecutor {
                 return Err(anyhow!("agent session error: {}", err));
             }
             SessionResult::Idle => {
+                let after_messages = session.read_messages(0, usize::MAX).await?;
+                self.log_session_messages(
+                    &task_id,
+                    &session_id,
+                    before_messages.len(),
+                    &after_messages,
+                )
+                .await?;
                 self.db
                     .log_event(Event::AgentIdle {
-                        task_id: task.task_id.clone(),
+                        task_id: task_id.clone(),
                     })
                     .await?;
                 self.db
-                    .complete_task(&task.task_id, "Agent idle")
+                    .complete_task(&task_id, "Agent idle")
                     .await?;
                 return Ok(());
             }
@@ -261,21 +288,23 @@ impl BorgExecutor {
 
         debug!(
             target: "borg_exec",
-            task_id = %task.task_id,
+            task_id = %task_id,
             tool_calls = output.tool_calls.len(),
             "agent session completed"
         );
         let persisted_messages = session.read_messages(0, usize::MAX).await?;
+        self.log_session_messages(&task_id, &session_id, before_messages.len(), &persisted_messages)
+            .await?;
         trace!(
             target: "borg_exec",
-            task_id = %task.task_id,
+            task_id = %task_id,
             messages = ?persisted_messages,
             "persistable session messages"
         );
         for call in &output.tool_calls {
             self.db
                 .log_event(Event::AgentToolCall {
-                    task_id: task.task_id.clone(),
+                    task_id: task_id.clone(),
                     name: call.tool_name.clone(),
                     arguments: call.arguments.clone(),
                     output: serde_json::to_value(&call.output)?,
@@ -286,23 +315,76 @@ impl BorgExecutor {
         let reply = output.reply;
         info!(
             target: "borg_exec",
-            task_id = %task.task_id,
+            task_id = %task_id,
             reply = reply.as_str(),
             "agent reply generated"
         );
         self.db
             .log_event(Event::AgentOutput {
-                task_id: task.task_id.clone(),
+                task_id: task_id.clone(),
                 message: reply.clone(),
             })
             .await?;
-        self.db
-            .complete_task(
-                &task.task_id,
-                &reply,
-            )
-            .await?;
+        self.db.complete_task(&task_id, &reply).await?;
 
         Ok(())
+    }
+
+    async fn log_session_messages(
+        &self,
+        task_id: &Uri,
+        session_id: &Uri,
+        from_index: usize,
+        messages: &[Message],
+    ) -> Result<()> {
+        for (index, message) in messages.iter().enumerate().skip(from_index) {
+            self.db
+                .log_event(Event::SessionMessage {
+                    task_id: task_id.clone(),
+                    session_id: session_id.clone(),
+                    index,
+                    message: serde_json::to_value(message)?,
+                })
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn log_context_built(
+        &self,
+        task_id: &Uri,
+        session_id: &Uri,
+        model: &str,
+        context: &ContextWindow,
+    ) -> Result<()> {
+        let tools = context
+            .tools
+            .iter()
+            .map(to_session_tool_schema)
+            .collect::<Vec<_>>();
+        let messages = context
+            .messages
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.db
+            .log_event(Event::ContextBuilt {
+                task_id: task_id.clone(),
+                session_id: session_id.clone(),
+                context: SessionContextSnapshot {
+                    model: model.to_string(),
+                    messages,
+                    tools,
+                },
+            })
+            .await
+    }
+}
+
+fn to_session_tool_schema(tool: &ToolSpec) -> SessionToolSchema {
+    SessionToolSchema {
+        name: tool.name.clone(),
+        description: tool.description.clone(),
+        parameters: tool.parameters.clone(),
     }
 }

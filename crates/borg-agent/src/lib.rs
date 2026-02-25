@@ -6,6 +6,7 @@ use borg_llm::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use tracing::info;
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -15,6 +16,30 @@ const AGENT_FINISHED_EVENT: &str = "agent_finished";
 
 pub struct AgentTools<'a> {
     pub tool_runner: &'a dyn ToolRunner,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextWindow {
+    pub messages: Vec<Message>,
+    pub tools: Vec<ToolSpec>,
+}
+
+#[async_trait]
+pub trait ContextManager: Send + Sync {
+    async fn build_context(&self, agent: &Agent, messages: &[Message]) -> Result<ContextWindow>;
+}
+
+#[derive(Debug, Default)]
+pub struct PassThroughContextManager;
+
+#[async_trait]
+impl ContextManager for PassThroughContextManager {
+    async fn build_context(&self, agent: &Agent, messages: &[Message]) -> Result<ContextWindow> {
+        Ok(ContextWindow {
+            messages: messages.to_vec(),
+            tools: agent.tools.clone(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,8 +177,8 @@ impl Agent {
                     }
                 }
 
-                let messages = match session.read_messages(0, usize::MAX).await {
-                    Ok(messages) => messages,
+                let context = match session.build_context().await {
+                    Ok(context) => context,
                     Err(err) => {
                         return finish_session(
                             session,
@@ -164,8 +189,8 @@ impl Agent {
                 };
                 let req = LlmRequest {
                     model: self.model.clone(),
-                    messages: to_provider_messages(&messages),
-                    tools: to_provider_tool_specs(&self.tools),
+                    messages: to_provider_messages(&context.messages),
+                    tools: to_provider_tool_specs(&context.tools),
                     temperature: None,
                     max_tokens: None,
                     api_key: None,
@@ -402,6 +427,7 @@ pub struct Session {
     pub session_id: String,
     pub agent: Agent,
     db: BorgDb,
+    context_manager: Arc<dyn ContextManager>,
     last_processed_len: usize,
     steering_messages: Vec<Message>,
     follow_up_messages: Vec<Message>,
@@ -414,6 +440,7 @@ impl Session {
             session_id: session_id.clone(),
             agent,
             db,
+            context_manager: Arc::new(PassThroughContextManager),
             last_processed_len: 0,
             steering_messages: Vec::new(),
             follow_up_messages: Vec::new(),
@@ -437,6 +464,10 @@ impl Session {
             .append_session_message(&self.session_id, &payload)
             .await?;
         Ok(())
+    }
+
+    pub fn set_context_manager(&mut self, context_manager: Arc<dyn ContextManager>) {
+        self.context_manager = context_manager;
     }
 
     pub async fn read_messages(&self, from: usize, limit: usize) -> Result<Vec<Message>> {
@@ -522,6 +553,13 @@ impl Session {
 
     pub fn pop_follow_up_messages(&mut self) -> Vec<Message> {
         std::mem::take(&mut self.follow_up_messages)
+    }
+
+    pub async fn build_context(&self) -> Result<ContextWindow> {
+        let messages = self.read_messages(0, usize::MAX).await?;
+        self.context_manager
+            .build_context(&self.agent, &messages)
+            .await
     }
 }
 
