@@ -83,7 +83,7 @@ impl BorgCliApp {
         info!(target: "borg_cli", config_db = %self.borg_dir.config_db().display(), bind, poll_ms, "starting borg machine");
 
         let db = self.open_config_db().await?;
-        let memory = MemoryStore::new(self.borg_dir.ltm_db())?;
+        let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
         let exec = ExecEngine::new(
             db.clone(),
             RuntimeEngine::default(),
@@ -143,7 +143,7 @@ impl BorgCliApp {
 
     async fn initialize_storage(&self) -> Result<()> {
         let db = self.open_config_db().await?;
-        let memory = MemoryStore::new(self.borg_dir.ltm_db())?;
+        let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
 
         db.migrate().await?;
         memory.migrate().await?;

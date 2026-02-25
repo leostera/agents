@@ -13,7 +13,10 @@ use indradb::{
 };
 use serde_json::Value;
 use tracing::{debug, info};
+use url::Url;
 use uuid::Uuid;
+
+use crate::fact_store::{FactRecord, FactValue};
 
 const ENTITY_GRAPH_DIR: &str = "entity_graph";
 const ENTITY_ID_NAMESPACE: &str = "borg";
@@ -77,9 +80,20 @@ impl IndraEntityGraph {
         let props_json = props.to_string();
         let search_text = format!("{} {} {}", label, entity_type, props_json);
 
-        let entity_id = match self.get_string_prop(&db, vertex_id, "entity_id")? {
-            Some(existing_id) if is_valid_entity_id(&existing_id) => existing_id,
-            _ => new_entity_id(entity_type),
+        let entity_id = if let Some(natural_key) = natural_key {
+            if is_uri_like(natural_key) {
+                natural_key.to_string()
+            } else {
+                match self.get_string_prop(&db, vertex_id, "entity_id")? {
+                    Some(existing_id) if is_valid_entity_id(&existing_id) => existing_id,
+                    _ => new_entity_id(entity_type),
+                }
+            }
+        } else {
+            match self.get_string_prop(&db, vertex_id, "entity_id")? {
+                Some(existing_id) if is_valid_entity_id(&existing_id) => existing_id,
+                _ => new_entity_id(entity_type),
+            }
         };
 
         set_vertex_prop_string(&db, vertex_id, "entity_id", &entity_id)?;
@@ -186,6 +200,50 @@ impl IndraEntityGraph {
         }
 
         Ok(out)
+    }
+
+    pub(crate) async fn apply_fact(&self, fact: &FactRecord) -> Result<()> {
+        let (namespace, kind, _) = split_entity_uri(fact.entity.as_str())?;
+        let entity_type = kind.clone();
+        let natural_key = fact.entity.to_string();
+        let field_key = field_uri_to_prop_key(fact.field.as_str());
+        let field_value = fact_value_to_json(&fact.value);
+
+        let existing = self.get_entity(fact.entity.as_str()).await?;
+        let mut props = existing
+            .as_ref()
+            .map(|entity| entity.props.clone())
+            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+
+        if !props.is_object() {
+            props = Value::Object(serde_json::Map::new());
+        }
+        let obj = props
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("props not object"))?;
+        obj.insert("uri".to_string(), Value::String(fact.entity.to_string()));
+        obj.insert("namespace".to_string(), Value::String(namespace.clone()));
+        obj.insert("kind".to_string(), Value::String(kind.clone()));
+        obj.insert("last_tx".to_string(), Value::String(fact.tx_id.to_string()));
+        obj.insert(
+            "last_stated_at".to_string(),
+            Value::String(fact.stated_at.to_rfc3339()),
+        );
+        obj.insert(field_key, field_value);
+
+        let mut label = existing
+            .as_ref()
+            .map(|entity| entity.label.clone())
+            .unwrap_or_else(|| fact.entity.to_string());
+        if fact.field.as_str() == "borg:fields:name" {
+            if let FactValue::Text(name) = &fact.value {
+                label = name.clone();
+            }
+        }
+
+        self.upsert_entity(&entity_type, &label, &props, Some(&natural_key))
+            .await?;
+        Ok(())
     }
 
     fn fetch_entity_by_vertex_id(
@@ -298,6 +356,52 @@ fn id(value: &str) -> Result<Identifier> {
     Identifier::new(value).map_err(|_| anyhow!("invalid indradb identifier: {}", value))
 }
 
+fn split_entity_uri(uri: &str) -> Result<(String, String, String)> {
+    let parsed = Url::parse(uri)?;
+    let ns = parsed.scheme().to_string();
+    let opaque = parsed.path().trim_start_matches('/');
+    let mut parts = opaque.split(':');
+    let kind = parts
+        .next()
+        .ok_or_else(|| anyhow!("invalid entity uri: {}", uri))?
+        .to_string();
+    let id = parts
+        .next()
+        .ok_or_else(|| anyhow!("invalid entity uri: {}", uri))?
+        .to_string();
+    if parts.next().is_some() {
+        return Err(anyhow!("invalid entity uri: {}", uri));
+    }
+    if ns.is_empty() || kind.is_empty() || id.is_empty() {
+        return Err(anyhow!("invalid entity uri: {}", uri));
+    }
+    Ok((ns, kind, id))
+}
+
+fn field_uri_to_prop_key(field_uri: &str) -> String {
+    let candidate = field_uri
+        .rsplit(':')
+        .next()
+        .unwrap_or(field_uri)
+        .split('/')
+        .next()
+        .unwrap_or(field_uri);
+    sanitize_identifier(candidate).to_lowercase()
+}
+
+fn fact_value_to_json(value: &FactValue) -> Value {
+    match value {
+        FactValue::Text(v) => Value::String(v.clone()),
+        FactValue::Integer(v) => Value::Number((*v).into()),
+        FactValue::Float(v) => serde_json::Number::from_f64(*v)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+        FactValue::Boolean(v) => Value::Bool(*v),
+        FactValue::Bytes(v) => Value::Array(v.iter().map(|b| Value::Number((*b).into())).collect()),
+        FactValue::Ref(uri) => Value::String(uri.to_string()),
+    }
+}
+
 fn sanitize_identifier(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for ch in input.chars() {
@@ -341,6 +445,22 @@ fn is_valid_entity_id(entity_id: &str) -> bool {
         return false;
     };
     ((uuid.as_u128() >> 76) & 0xF) == 0x7
+}
+
+fn is_uri_like(value: &str) -> bool {
+    let Ok(parsed) = Url::parse(value) else {
+        return false;
+    };
+    let ns = parsed.scheme();
+    let opaque = parsed.path().trim_start_matches('/');
+    let mut parts = opaque.split(':');
+    let Some(kind) = parts.next() else {
+        return false;
+    };
+    let Some(id) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none() && !ns.is_empty() && !kind.is_empty() && !id.is_empty()
 }
 
 fn parse_ts(ts: &str) -> Result<DateTime<Utc>> {
