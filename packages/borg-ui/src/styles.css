@@ -12,7 +12,7 @@
 .borg-session {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 15px;
 }
 
 .borg-message-row {
@@ -30,9 +30,10 @@
 .borg-message {
   width: min(680px, 100%);
   border: 1px solid var(--borg-border);
-  border-radius: 14px;
-  padding: 12px 14px;
+  border-radius: 15px;
+  padding: 10px 15px;
   background: color-mix(in srgb, var(--borg-panel) 82%, transparent);
+  position: relative;
 }
 
 .borg-message--user {
@@ -49,10 +50,17 @@
 }
 
 .borg-message__text {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   white-space: pre-wrap;
   line-height: 1.45;
   color: var(--borg-text);
+}
+
+.borg-message__timestamp {
+  margin: 10px 0 0;
+  font-size: 10px;
+  color: var(--borg-muted);
+  text-align: right;
 }
 
 .borg-session__input {
@@ -66,23 +74,33 @@
 
 .borg-inline-choices {
   display: flex;
-  gap: 8px;
-  margin-top: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .borg-inline-choice {
   border-radius: 10px;
-  border: 1px solid var(--borg-border);
-  background: color-mix(in srgb, var(--borg-panel) 84%, transparent);
+  border: 1px solid #475569;
+  background: #334155;
   color: var(--borg-text);
-  padding: 8px 12px;
+  padding: 10px 15px;
   cursor: pointer;
 }
 
 .borg-inline-choice--active {
-  border-color: color-mix(in srgb, var(--borg-accent) 55%, var(--borg-border));
+  border-color: color-mix(in srgb, var(--borg-accent) 60%, #475569);
   background: color-mix(in srgb, var(--borg-accent) 25%, var(--borg-panel));
+}
+
+.borg-inline-choice__content {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.borg-inline-choice__icon {
+  display: inline-block;
+  color: #e5e7eb;
 }
 
 .borg-choice {

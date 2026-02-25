@@ -40,9 +40,14 @@ function saveProvider(apiKey: string, saveFailedMessage: string) {
   )
 }
 
+function formatTimestamp(value: Date) {
+  return value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
 export function OnboardApp() {
   const i18n = useMemo(() => createI18n('en'), [])
   const username = useMemo(getUsername, [])
+  const startedAt = useMemo(() => new Date(), [])
   const [state, setState] = useState<SessionState>({
     choices: {},
     saving: false,
@@ -59,13 +64,14 @@ export function OnboardApp() {
         type: 'message',
         author: 'agent',
         content: i18n.t('onboard.agent.welcome', { username }),
+        timestamp: formatTimestamp(startedAt),
         choices: {
           name: i18n.t('onboard.choice.provider_name'),
-          options: [{ label: i18n.t('onboard.provider.openai'), value: OPENAI_PROVIDER }],
+          options: [{ label: i18n.t('onboard.provider.openai'), value: OPENAI_PROVIDER, icon: 'openai' }],
         },
       },
     ],
-    [i18n, username],
+    [i18n, startedAt, username],
   )
 
   const selectedProvider = state.choices[PROVIDER_MESSAGE_ID]
@@ -78,6 +84,7 @@ export function OnboardApp() {
         type: 'message',
         author: 'agent',
         content: i18n.t('onboard.agent.openai_key_prompt'),
+        timestamp: formatTimestamp(new Date(startedAt.getTime() + 60_000)),
       },
       {
         id: OPENAI_API_KEY_MESSAGE_ID,
@@ -85,6 +92,7 @@ export function OnboardApp() {
         inputType: 'text',
         author: 'agent',
         prompt: i18n.t('onboard.field.api_key'),
+        timestamp: formatTimestamp(new Date(startedAt.getTime() + 60_000)),
         payload: {
           name: i18n.t('onboard.field.api_key'),
           placeholder: 'sk-...',
@@ -111,7 +119,7 @@ export function OnboardApp() {
 
   return (
     <div>
-      <h1 className='onboard-heading' style={{ textAlign: 'center', marginBottom: 24 }}>
+      <h1 className='onboard-heading' style={{ textAlign: 'center', marginBottom: 25 }}>
         Welcome to Borg
       </h1>
       <Session
@@ -142,7 +150,7 @@ export function OnboardApp() {
       />
 
       {selectedProvider === OPENAI_PROVIDER && keyPromptVisible ? (
-        <section className='card' style={{ marginTop: 14 }}>
+        <section className='card' style={{ marginTop: 15 }}>
           {state.error.length > 0 ? <p className='notice-error'>{state.error}</p> : null}
           {state.saved ? <p className='notice-success'>{i18n.t('onboard.notice.saved')}</p> : null}
 

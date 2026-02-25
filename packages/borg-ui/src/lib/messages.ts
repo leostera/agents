@@ -1,5 +1,6 @@
 export type MessageAuthor = 'system' | 'agent' | 'user'
-export type MessageChoiceOption = { label: string; value: string }
+export type MessageChoiceIcon = 'openai'
+export type MessageChoiceOption = { label: string; value: string; icon?: MessageChoiceIcon }
 
 export type SessionMessage =
   | {
@@ -7,6 +8,7 @@ export type SessionMessage =
       type: 'message'
       author: MessageAuthor
       content: string
+      timestamp?: string
       choices?: {
         name: string
         options: Array<MessageChoiceOption>
@@ -18,10 +20,11 @@ export type SessionMessage =
       inputType: 'choice'
       author: Exclude<MessageAuthor, 'user'>
       prompt: string
+      timestamp?: string
       payload: {
         name: string
         placeholder: string
-        options: Array<{ label: string; value: string }>
+        options: Array<MessageChoiceOption>
       }
     }
   | {
@@ -30,6 +33,7 @@ export type SessionMessage =
       inputType: 'text'
       author: Exclude<MessageAuthor, 'user'>
       prompt: string
+      timestamp?: string
       payload: {
         name: string
         placeholder: string
