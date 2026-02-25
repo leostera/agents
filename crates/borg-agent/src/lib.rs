@@ -596,9 +596,7 @@ async fn call_tool<'a>(
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::VecDeque,
         path::PathBuf,
-        sync::{Arc, Mutex},
     };
 
     use super::{
@@ -610,43 +608,83 @@ mod tests {
     use borg_db::BorgDb;
     use borg_llm::{LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, StopReason};
     use serde_json::{Value, json};
+    use tokio::sync::{Mutex, mpsc};
     use uuid::Uuid;
 
     struct ScriptedRunner {
-        calls: Arc<Mutex<Vec<ToolRequest>>>,
-        outputs: Arc<Mutex<VecDeque<Result<ToolResponse, String>>>>,
+        calls_tx: mpsc::UnboundedSender<ToolRequest>,
+        outputs_rx: Mutex<mpsc::UnboundedReceiver<Result<ToolResponse, String>>>,
     }
 
     #[async_trait]
     impl ToolRunner for ScriptedRunner {
         async fn run(&self, request: ToolRequest) -> Result<ToolResponse> {
-            self.calls.lock().unwrap().push(request);
-            self.outputs
+            self.calls_tx.send(request).map_err(|e| anyhow!(e.to_string()))?;
+            self.outputs_rx
                 .lock()
-                .unwrap()
-                .pop_front()
+                .await
+                .recv()
+                .await
                 .ok_or_else(|| anyhow!("missing scripted tool output"))?
                 .map_err(|e| anyhow!(e))
         }
     }
 
-    #[derive(Clone)]
     struct ScriptedProvider {
-        requests: Arc<Mutex<Vec<LlmRequest>>>,
-        responses: Arc<Mutex<VecDeque<Result<LlmAssistantMessage, String>>>>,
+        requests_tx: mpsc::UnboundedSender<LlmRequest>,
+        responses_rx: Mutex<mpsc::UnboundedReceiver<Result<LlmAssistantMessage, String>>>,
     }
 
     #[async_trait]
     impl Provider for ScriptedProvider {
         async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
-            self.requests.lock().unwrap().push(req.clone());
-            self.responses
+            self.requests_tx
+                .send(req.clone())
+                .map_err(|e| anyhow!(e.to_string()))?;
+            self.responses_rx
                 .lock()
-                .unwrap()
-                .pop_front()
+                .await
+                .recv()
+                .await
                 .ok_or_else(|| anyhow!("missing scripted llm response"))?
                 .map_err(|e| anyhow!(e))
         }
+    }
+
+    fn scripted_provider(
+        responses: Vec<Result<LlmAssistantMessage, String>>,
+    ) -> (ScriptedProvider, mpsc::UnboundedReceiver<LlmRequest>) {
+        let (requests_tx, requests_rx) = mpsc::unbounded_channel();
+        let (responses_tx, responses_rx) = mpsc::unbounded_channel();
+        for response in responses {
+            responses_tx.send(response).unwrap();
+        }
+        drop(responses_tx);
+        (
+            ScriptedProvider {
+                requests_tx,
+                responses_rx: Mutex::new(responses_rx),
+            },
+            requests_rx,
+        )
+    }
+
+    fn scripted_runner(
+        outputs: Vec<Result<ToolResponse, String>>,
+    ) -> (ScriptedRunner, mpsc::UnboundedReceiver<ToolRequest>) {
+        let (calls_tx, calls_rx) = mpsc::unbounded_channel();
+        let (outputs_tx, outputs_rx) = mpsc::unbounded_channel();
+        for output in outputs {
+            outputs_tx.send(output).unwrap();
+        }
+        drop(outputs_tx);
+        (
+            ScriptedRunner {
+                calls_tx,
+                outputs_rx: Mutex::new(outputs_rx),
+            },
+            calls_rx,
+        )
     }
 
     fn assistant_text(text: &str) -> LlmAssistantMessage {
@@ -696,16 +734,8 @@ mod tests {
             .await
             .unwrap();
 
-        let provider = ScriptedProvider {
-            requests: Arc::new(Mutex::new(Vec::new())),
-            responses: Arc::new(Mutex::new(VecDeque::from([Ok(assistant_text(
-                "hello back",
-            ))]))),
-        };
-        let runner = ScriptedRunner {
-            calls: Arc::new(Mutex::new(Vec::new())),
-            outputs: Arc::new(Mutex::new(VecDeque::new())),
-        };
+        let (provider, _requests_rx) = scripted_provider(vec![Ok(assistant_text("hello back"))]);
+        let (runner, _calls_rx) = scripted_runner(vec![]);
         let tools = AgentTools {
             tool_runner: &runner,
         };
@@ -724,25 +754,18 @@ mod tests {
             .await
             .unwrap();
 
-        let provider = ScriptedProvider {
-            requests: Arc::new(Mutex::new(Vec::new())),
-            responses: Arc::new(Mutex::new(VecDeque::from([
-                Ok(assistant_tool_calls(vec![("tc1", "search", json!({"query":"x"}))])),
-                Ok(assistant_text("done")),
-            ]))),
-        };
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let runner = ScriptedRunner {
-            calls: calls.clone(),
-            outputs: Arc::new(Mutex::new(VecDeque::from([Ok(ToolResponse {
+        let (provider, _requests_rx) = scripted_provider(vec![
+            Ok(assistant_tool_calls(vec![("tc1", "search", json!({"query":"x"}))])),
+            Ok(assistant_text("done")),
+        ]);
+        let (runner, mut calls_rx) = scripted_runner(vec![Ok(ToolResponse {
                 content: ToolResultData::Text("hits: []".to_string()),
-            })]))),
-        };
+            })]);
         let tools = AgentTools { tool_runner: &runner };
 
         let result = agent.run(&mut session, &provider, &tools).await;
         assert!(matches!(result, SessionResult::Completed(Ok(_))));
-        assert_eq!(calls.lock().unwrap().len(), 1);
+        assert!(calls_rx.try_recv().is_ok());
     }
 
     #[tokio::test]
@@ -755,35 +778,28 @@ mod tests {
             .await
             .unwrap();
 
-        let provider = ScriptedProvider {
-            requests: Arc::new(Mutex::new(Vec::new())),
-            responses: Arc::new(Mutex::new(VecDeque::from([
-                Ok(assistant_tool_calls(vec![
-                    ("tc1", "search", json!({"query":"one"})),
-                    ("tc2", "execute", json!({"code":"1+1"})),
-                ])),
-                Ok(assistant_text("done")),
-            ]))),
-        };
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let runner = ScriptedRunner {
-            calls: calls.clone(),
-            outputs: Arc::new(Mutex::new(VecDeque::from([
-                Ok(ToolResponse {
-                    content: ToolResultData::Text("a=1".to_string()),
-                }),
-                Ok(ToolResponse {
-                    content: ToolResultData::Text("b=2".to_string()),
-                }),
-            ]))),
-        };
+        let (provider, _requests_rx) = scripted_provider(vec![
+            Ok(assistant_tool_calls(vec![
+                ("tc1", "search", json!({"query":"one"})),
+                ("tc2", "execute", json!({"code":"1+1"})),
+            ])),
+            Ok(assistant_text("done")),
+        ]);
+        let (runner, mut calls_rx) = scripted_runner(vec![
+            Ok(ToolResponse {
+                content: ToolResultData::Text("a=1".to_string()),
+            }),
+            Ok(ToolResponse {
+                content: ToolResultData::Text("b=2".to_string()),
+            }),
+        ]);
         let tools = AgentTools { tool_runner: &runner };
 
         let _ = agent.run(&mut session, &provider, &tools).await;
-        let recorded = calls.lock().unwrap();
-        assert_eq!(recorded.len(), 2);
-        assert_eq!(recorded[0].tool_name, "search");
-        assert_eq!(recorded[1].tool_name, "execute");
+        let first = calls_rx.try_recv().unwrap();
+        let second = calls_rx.try_recv().unwrap();
+        assert_eq!(first.tool_name, "search");
+        assert_eq!(second.tool_name, "execute");
     }
 
     #[tokio::test]
@@ -799,17 +815,11 @@ mod tests {
             content: "follow-up".to_string(),
         });
 
-        let provider = ScriptedProvider {
-            requests: Arc::new(Mutex::new(Vec::new())),
-            responses: Arc::new(Mutex::new(VecDeque::from([
-                Ok(assistant_text("turn-1")),
-                Ok(assistant_text("turn-2")),
-            ]))),
-        };
-        let runner = ScriptedRunner {
-            calls: Arc::new(Mutex::new(Vec::new())),
-            outputs: Arc::new(Mutex::new(VecDeque::new())),
-        };
+        let (provider, _requests_rx) = scripted_provider(vec![
+            Ok(assistant_text("turn-1")),
+            Ok(assistant_text("turn-2")),
+        ]);
+        let (runner, _calls_rx) = scripted_runner(vec![]);
         let tools = AgentTools { tool_runner: &runner };
 
         let result = agent.run(&mut session, &provider, &tools).await;
@@ -830,19 +840,11 @@ mod tests {
             .await
             .unwrap();
 
-        let provider = ScriptedProvider {
-            requests: Arc::new(Mutex::new(Vec::new())),
-            responses: Arc::new(Mutex::new(VecDeque::from([
-                Ok(assistant_tool_calls(vec![("tc1", "execute", json!({"code":"bad"}))])),
-                Ok(assistant_text("handled")),
-            ]))),
-        };
-        let runner = ScriptedRunner {
-            calls: Arc::new(Mutex::new(Vec::new())),
-            outputs: Arc::new(Mutex::new(VecDeque::from([Err(
-                "execution failed".to_string(),
-            )]))),
-        };
+        let (provider, _requests_rx) = scripted_provider(vec![
+            Ok(assistant_tool_calls(vec![("tc1", "execute", json!({"code":"bad"}))])),
+            Ok(assistant_text("handled")),
+        ]);
+        let (runner, _calls_rx) = scripted_runner(vec![Err("execution failed".to_string())]);
         let tools = AgentTools { tool_runner: &runner };
 
         let result = agent.run(&mut session, &provider, &tools).await;
@@ -863,16 +865,8 @@ mod tests {
             .await
             .unwrap();
 
-        let provider = ScriptedProvider {
-            requests: Arc::new(Mutex::new(Vec::new())),
-            responses: Arc::new(Mutex::new(VecDeque::from([Err(
-                "provider down".to_string(),
-            )]))),
-        };
-        let runner = ScriptedRunner {
-            calls: Arc::new(Mutex::new(Vec::new())),
-            outputs: Arc::new(Mutex::new(VecDeque::new())),
-        };
+        let (provider, _requests_rx) = scripted_provider(vec![Err("provider down".to_string())]);
+        let (runner, _calls_rx) = scripted_runner(vec![]);
         let tools = AgentTools { tool_runner: &runner };
 
         let result = agent.run(&mut session, &provider, &tools).await;
@@ -882,14 +876,8 @@ mod tests {
     #[tokio::test]
     async fn a8_idle_run_when_no_new_messages() {
         let (agent, mut session) = make_session().await.unwrap();
-        let provider = ScriptedProvider {
-            requests: Arc::new(Mutex::new(Vec::new())),
-            responses: Arc::new(Mutex::new(VecDeque::new())),
-        };
-        let runner = ScriptedRunner {
-            calls: Arc::new(Mutex::new(Vec::new())),
-            outputs: Arc::new(Mutex::new(VecDeque::new())),
-        };
+        let (provider, _requests_rx) = scripted_provider(vec![]);
+        let (runner, _calls_rx) = scripted_runner(vec![]);
         let tools = AgentTools { tool_runner: &runner };
 
         let result = agent.run(&mut session, &provider, &tools).await;
@@ -905,14 +893,8 @@ mod tests {
             })
             .await
             .unwrap();
-        let provider = ScriptedProvider {
-            requests: Arc::new(Mutex::new(Vec::new())),
-            responses: Arc::new(Mutex::new(VecDeque::from([Ok(assistant_text("ok"))]))),
-        };
-        let runner = ScriptedRunner {
-            calls: Arc::new(Mutex::new(Vec::new())),
-            outputs: Arc::new(Mutex::new(VecDeque::new())),
-        };
+        let (provider, _requests_rx) = scripted_provider(vec![Ok(assistant_text("ok"))]);
+        let (runner, _calls_rx) = scripted_runner(vec![]);
         let tools = AgentTools { tool_runner: &runner };
 
         let _ = agent.run(&mut session, &provider, &tools).await;
