@@ -328,6 +328,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "borg-agent"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "borg-llm",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "borg-cli"
 version = "0.1.0"
 dependencies = [
@@ -380,6 +391,7 @@ name = "borg-exec"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "borg-agent",
  "borg-core",
  "borg-db",
  "borg-llm",
@@ -398,9 +410,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "reqwest",
- "serde",
  "serde_json",
- "tracing",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [workspace]
-members = [
+members = ["crates/borg-agent",
   "crates/borg-cli",
   "crates/borg-core",
   "crates/borg-db",

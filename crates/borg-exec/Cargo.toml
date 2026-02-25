@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow.workspace = true
 borg-core = { path = "../borg-core" }
+borg-agent = { path = "../borg-agent" }
 borg-db = { path = "../borg-db" }
 borg-llm = { path = "../borg-llm" }
 borg-ltm = { path = "../borg-ltm" }

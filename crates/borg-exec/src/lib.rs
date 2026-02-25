@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
+use borg_agent::{AgentSession, AgentSessionArgs, AgentTools, Message};
 use borg_core::{Capability, Task, TaskKind};
 use borg_db::{BorgDb, NewTask};
-use borg_llm::{LlmSession, LlmSessionArgs, LlmTools, Message};
+use borg_llm::providers::openai::OpenAiProvider;
 use borg_rt::RuntimeEngine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -135,7 +136,7 @@ impl ExecEngine {
 
         let runtime = self.runtime.clone();
         let capabilities_catalog = self.search_capabilities("");
-        let tools = LlmTools {
+        let tools = AgentTools {
             execute: Box::new(move |code| {
                 let result = runtime.execute(code)?;
                 Ok(json!({
@@ -163,18 +164,19 @@ impl ExecEngine {
                 }
             }),
         };
-        let mut llm = LlmSession::new(LlmSessionArgs::new(task.task_id.clone()));
-        llm.add_message(Message::System {
+        let provider = OpenAiProvider::new(api_key);
+        let mut session = AgentSession::new(AgentSessionArgs::new(task.task_id.clone()));
+        session.add_message(Message::System {
             content: "You are Borg's agent runtime. Use tools as needed, then respond clearly."
                 .to_string(),
         });
-        llm.add_message(Message::User {
+        session.add_message(Message::User {
             content: msg.text.clone(),
         });
 
-        let output = llm.run(&api_key, &tools).await?;
+        let output = session.run_with_provider(&provider, &tools).await?;
         debug!(target: "borg_exec", task_id = task.task_id, tool_calls = output.tool_calls.len(), "llm session completed");
-        trace!(target: "borg_exec", task_id = task.task_id, messages = ?llm.read_messages(0, usize::MAX), "persistable session messages");
+        trace!(target: "borg_exec", task_id = task.task_id, messages = ?session.read_messages(0, usize::MAX), "persistable session messages");
         self.db
             .log_event(
                 &task.task_id,
