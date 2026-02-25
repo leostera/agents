@@ -1,31 +1,19 @@
-use std::{net::SocketAddr, process::Command as ProcessCommand, time::Duration};
+use std::{process::Command as ProcessCommand, time::Duration};
 
 use anyhow::Result;
+use borg_api::BorgApiServer;
+use borg_core::borgdir::BorgDir;
+use borg_db::BorgDb;
+use borg_exec::ExecEngine;
+use borg_ltm::MemoryStore;
+use borg_onboard::OnboardServer;
+use borg_rt::RuntimeEngine;
+use clap::{Parser, Subcommand};
+use tracing::{debug, error, info, warn};
 
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_ONBOARD_PORT: u16 = 3777;
 const DEFAULT_SCHEDULER_POLL_MS: u64 = 500;
-const HEALTH_STATUS_OK: &str = "ok";
-const BORG_SESSION_ID_HEADER: &str = "x-borg-session-id";
-use axum::{
-    Json, Router,
-    extract::{Path as AxumPath, Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode},
-    response::{Html, IntoResponse},
-    routing::{get, post},
-};
-use borg_core::borgdir::BorgDir;
-use borg_db::BorgDb;
-use borg_exec::{ExecEngine, InboxMessage};
-use borg_ltm::MemoryStore;
-use borg_onboard::OnboardServer;
-use borg_rt::RuntimeEngine;
-use borg_ui::render_dashboard;
-use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
-use tokio::net::TcpListener;
-use tracing::{debug, error, info, warn};
 
 #[derive(Parser, Debug)]
 #[command(name = "borg", about = "Borg prototype runtime")]
@@ -46,13 +34,6 @@ enum Command {
         #[arg(long, default_value_t = DEFAULT_SCHEDULER_POLL_MS)]
         poll_ms: u64,
     },
-}
-
-#[derive(Clone)]
-struct AppState {
-    db: BorgDb,
-    exec: ExecEngine,
-    memory: MemoryStore,
 }
 
 #[derive(Clone)]
@@ -94,16 +75,11 @@ impl BorgCliApp {
         db.migrate().await?;
         memory.migrate().await?;
 
-        let app_state = AppState {
-            db: db.clone(),
-            exec: exec.clone(),
-            memory,
-        };
-
+        let scheduler_exec = exec.clone();
         let scheduler = tokio::spawn(async move {
             info!(target: "borg_cli", "scheduler loop started");
             loop {
-                match exec.run_once().await {
+                match scheduler_exec.run_once().await {
                     Ok(true) => debug!(target: "borg_cli", "scheduler processed one task"),
                     Ok(false) => debug!(target: "borg_cli", "scheduler tick had no work"),
                     Err(err) => error!(target: "borg_cli", error = %err, "scheduler tick failed"),
@@ -112,34 +88,10 @@ impl BorgCliApp {
             }
         });
 
-        let router = Router::new()
-            .route("/", get(ui_dashboard))
-            .route("/health", get(health))
-            .route("/ports/http/inbox", post(http_inbox))
-            .route("/tasks", get(list_tasks))
-            .route("/tasks/:id", get(get_task))
-            .route("/tasks/:id/events", get(get_task_events))
-            .route("/memory/search", get(memory_search))
-            .route("/memory/entities/:id", get(get_memory_entity))
-            .with_state(app_state);
-
-        let addr: SocketAddr = bind.parse()?;
-        let listener = TcpListener::bind(addr).await?;
-        info!(target: "borg_cli", address = %addr, "http server listening");
-
-        let shutdown = async {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed waiting for ctrl-c signal");
-            info!(target: "borg_cli", "received ctrl-c, shutting down");
-        };
-
-        axum::serve(listener, router)
-            .with_graceful_shutdown(shutdown)
-            .await?;
-
+        let api_server = BorgApiServer::new(bind, db, exec, memory);
+        let result = api_server.run().await;
         scheduler.abort();
-        Ok(())
+        result
     }
 
     async fn initialize_storage(&self) -> Result<()> {
@@ -189,30 +141,11 @@ impl BorgCliApp {
     }
 }
 
-#[derive(Deserialize)]
-struct TasksQuery {
-    status: Option<String>,
-    limit: Option<usize>,
-}
-
-#[derive(Deserialize)]
-struct MemorySearchQuery {
-    q: String,
-    #[serde(rename = "type")]
-    entity_type: Option<String>,
-    limit: Option<usize>,
-}
-
-#[derive(Serialize)]
-struct ApiError {
-    error: String,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| {
-            "info,borg_cli=debug,borg_db=debug,borg_exec=debug,borg_ltm=debug,borg_rt=debug,borg_onboard=debug"
+            "info,borg_cli=debug,borg_api=debug,borg_ports=debug,borg_db=debug,borg_exec=debug,borg_ltm=debug,borg_rt=debug,borg_onboard=debug"
                 .to_string()
         }))
         .init();
@@ -224,125 +157,4 @@ async fn main() -> Result<()> {
         Command::Init { onboard_port } => app.init(onboard_port).await,
         Command::Start { bind, poll_ms } => app.start(bind, poll_ms).await,
     }
-}
-
-async fn health() -> impl IntoResponse {
-    debug!(target: "borg_cli", "health endpoint called");
-    Json(json!({ "status": HEALTH_STATUS_OK }))
-}
-
-async fn ui_dashboard(State(state): State<AppState>) -> impl IntoResponse {
-    debug!(target: "borg_cli", "ui dashboard endpoint called");
-    let tasks_count = state
-        .db
-        .list_tasks(None, 10_000)
-        .await
-        .map(|v| v.len())
-        .unwrap_or(0);
-    let entities_count = state
-        .memory
-        .search("movie", None, 10_000)
-        .await
-        .map(|v| v.len())
-        .unwrap_or(0);
-    Html(render_dashboard(tasks_count, entities_count))
-}
-
-async fn http_inbox(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(payload): Json<InboxMessage>,
-) -> impl IntoResponse {
-    info!(target: "borg_cli", user_key = payload.user_key, text = payload.text, "received HTTP inbox event");
-    let requested_session_id = headers
-        .get(BORG_SESSION_ID_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .map(ToOwned::to_owned);
-
-    match state
-        .exec
-        .enqueue_user_message(payload, requested_session_id)
-        .await
-    {
-        Ok((task_id, session_id)) => {
-            let mut response = (
-                StatusCode::OK,
-                Json(json!({ "task_id": task_id, "session_id": session_id })),
-            )
-                .into_response();
-            if let Ok(value) = HeaderValue::from_str(&session_id) {
-                response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
-            }
-            response
-        }
-        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
-}
-
-async fn list_tasks(
-    State(state): State<AppState>,
-    Query(query): Query<TasksQuery>,
-) -> impl IntoResponse {
-    let limit = query.limit.unwrap_or(100);
-    debug!(target: "borg_cli", status = ?query.status, limit, "listing tasks endpoint");
-    match state.db.list_tasks(query.status, limit).await {
-        Ok(tasks) => (StatusCode::OK, Json(json!({ "tasks": tasks }))).into_response(),
-        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
-}
-
-async fn get_task(
-    State(state): State<AppState>,
-    AxumPath(task_id): AxumPath<String>,
-) -> impl IntoResponse {
-    debug!(target: "borg_cli", task_id, "get task endpoint");
-    match state.db.get_task(&task_id).await {
-        Ok(Some(task)) => (StatusCode::OK, Json(json!({ "task": task }))).into_response(),
-        Ok(None) => api_error(StatusCode::NOT_FOUND, "task not found".to_string()),
-        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
-}
-
-async fn get_task_events(
-    State(state): State<AppState>,
-    AxumPath(task_id): AxumPath<String>,
-) -> impl IntoResponse {
-    debug!(target: "borg_cli", task_id, "get task events endpoint");
-    match state.db.get_task_events(&task_id).await {
-        Ok(events) => (StatusCode::OK, Json(json!({ "events": events }))).into_response(),
-        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
-}
-
-async fn memory_search(
-    State(state): State<AppState>,
-    Query(query): Query<MemorySearchQuery>,
-) -> impl IntoResponse {
-    let limit = query.limit.unwrap_or(25);
-    debug!(target: "borg_cli", q = query.q, entity_type = ?query.entity_type, limit, "memory search endpoint");
-
-    match state
-        .memory
-        .search(&query.q, query.entity_type.as_deref(), limit)
-        .await
-    {
-        Ok(entities) => (StatusCode::OK, Json(json!({ "entities": entities }))).into_response(),
-        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
-}
-
-async fn get_memory_entity(
-    State(state): State<AppState>,
-    AxumPath(entity_id): AxumPath<String>,
-) -> impl IntoResponse {
-    debug!(target: "borg_cli", entity_id, "get memory entity endpoint");
-    match state.memory.get_entity(&entity_id).await {
-        Ok(Some(entity)) => (StatusCode::OK, Json(json!({ "entity": entity }))).into_response(),
-        Ok(None) => api_error(StatusCode::NOT_FOUND, "entity not found".to_string()),
-        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-    }
-}
-
-fn api_error(status: StatusCode, error: String) -> axum::response::Response {
-    (status, Json(ApiError { error })).into_response()
 }

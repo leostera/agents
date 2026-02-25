@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/borg-agent",
+  "crates/borg-api",
   "crates/borg-cli",
   "crates/borg-core",
   "crates/borg-db",
@@ -7,6 +8,7 @@ members = ["crates/borg-agent",
   "crates/borg-llm",
   "crates/borg-ltm",
   "crates/borg-onboard",
+  "crates/borg-ports",
   "crates/borg-rt",
   "crates/borg-ui"
 ]

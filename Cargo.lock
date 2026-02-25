@@ -515,21 +515,35 @@ dependencies = [
 ]
 
 [[package]]
-name = "borg-cli"
+name = "borg-api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
+ "borg-db",
+ "borg-exec",
+ "borg-ltm",
+ "borg-ports",
+ "borg-ui",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "borg-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "borg-api",
  "borg-core",
  "borg-db",
  "borg-exec",
  "borg-ltm",
  "borg-onboard",
  "borg-rt",
- "borg-ui",
  "clap",
- "serde",
- "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -620,6 +634,22 @@ dependencies = [
  "anyhow",
  "axum 0.7.9",
  "borg-db",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "borg-ports"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum 0.7.9",
+ "borg-db",
+ "borg-exec",
+ "borg-ltm",
+ "borg-ui",
  "serde",
  "serde_json",
  "tokio",

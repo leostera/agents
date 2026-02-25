@@ -1,18 +1,17 @@
 [package]
-name = "borg-cli"
+name = "borg-api"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
-borg-api = { path = "../borg-api" }
-borg-core = { path = "../borg-core" }
+axum.workspace = true
 borg-db = { path = "../borg-db" }
 borg-exec = { path = "../borg-exec" }
 borg-ltm = { path = "../borg-ltm" }
-borg-onboard = { path = "../borg-onboard" }
-borg-rt = { path = "../borg-rt" }
-clap.workspace = true
+borg-ports = { path = "../borg-ports" }
+borg-ui = { path = "../borg-ui" }
+serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
