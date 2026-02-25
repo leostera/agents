@@ -1,6 +1,7 @@
 # AGENTS Router
 
 This file is the entrypoint for project-specific agent guidance.
+The `.agents/*` files are Codex-maintained project memory and should be updated by Codex periodically as behavior/contracts evolve.
 
 Use it as a router: pick the most relevant sub-agent doc below before making changes.
 
