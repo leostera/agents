@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_agent::{CapabilitySummary, ToolRequest, ToolResponse, ToolResultData, ToolRunner};
-use borg_rt::RuntimeEngine;
+use borg_rt::CodeModeRuntime;
 use serde_json::Value;
 
 #[derive(Clone)]
@@ -12,12 +12,12 @@ pub(crate) struct LocalCapability {
 }
 
 pub struct ExecToolRunner {
-    runtime: RuntimeEngine,
+    runtime: CodeModeRuntime,
     capabilities: Vec<LocalCapability>,
 }
 
 impl ExecToolRunner {
-    pub fn new(runtime: RuntimeEngine, capabilities: Vec<LocalCapability>) -> Self {
+    pub fn new(runtime: CodeModeRuntime, capabilities: Vec<LocalCapability>) -> Self {
         Self {
             runtime,
             capabilities,

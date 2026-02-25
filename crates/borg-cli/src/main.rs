@@ -7,7 +7,7 @@ use borg_db::BorgDb;
 use borg_exec::ExecEngine;
 use borg_ltm::MemoryStore;
 use borg_onboard::OnboardServer;
-use borg_rt::RuntimeEngine;
+use borg_rt::CodeModeRuntime;
 use clap::{Parser, Subcommand};
 use reqwest::Client;
 use serde::Deserialize;
@@ -108,7 +108,7 @@ impl BorgCliApp {
         let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
         let exec = ExecEngine::new(
             db.clone(),
-            RuntimeEngine::default(),
+            CodeModeRuntime::default(),
             Uri::parse(&format!("borg:worker:{}", Uuid::now_v7()))?,
         );
 
@@ -206,12 +206,18 @@ impl BorgCliApp {
         };
         if let Some(explicit) = &user_key {
             Uri::parse(explicit).map_err(|_| {
-                anyhow::anyhow!("invalid --user-key URI `{}` (expected URI like borg:user:alice)", explicit)
+                anyhow::anyhow!(
+                    "invalid --user-key URI `{}` (expected URI like borg:user:alice)",
+                    explicit
+                )
             })?;
         }
         let parsed_session_id = match session_id {
             Some(raw) => Some(Uri::parse(&raw).map_err(|_| {
-                anyhow::anyhow!("invalid --session-id URI `{}` (expected URI like borg:session:<id>)", raw)
+                anyhow::anyhow!(
+                    "invalid --session-id URI `{}` (expected URI like borg:session:<id>)",
+                    raw
+                )
             })?),
             None => None,
         };
@@ -241,7 +247,8 @@ impl BorgCliApp {
             }))?
         );
 
-        self.events(api, created.task_id.to_string(), poll_ms, true).await
+        self.events(api, created.task_id.to_string(), poll_ms, true)
+            .await
     }
 
     async fn events(

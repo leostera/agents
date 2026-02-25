@@ -5,7 +5,7 @@ use borg_core::{
 };
 use borg_db::{BorgDb, NewTask};
 use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
-use borg_rt::RuntimeEngine;
+use borg_rt::CodeModeRuntime;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::session_manager::SessionManager;
@@ -20,7 +20,7 @@ const DEFAULT_AGENT_MODEL: &str = "gpt-4o-mini";
 #[derive(Clone)]
 pub struct BorgExecutor {
     db: BorgDb,
-    runtime: RuntimeEngine,
+    runtime: CodeModeRuntime,
     worker_id: Uri,
     task_queue: TaskQueue,
     session_manager: SessionManager,
@@ -31,7 +31,7 @@ pub struct BorgExecutor {
 pub type ExecEngine = BorgExecutor;
 
 impl BorgExecutor {
-    pub fn new(db: BorgDb, runtime: RuntimeEngine, worker_id: Uri) -> Self {
+    pub fn new(db: BorgDb, runtime: CodeModeRuntime, worker_id: Uri) -> Self {
         let task_queue = TaskQueue::new();
         let agent_model = DEFAULT_AGENT_MODEL.to_string();
         let session_manager = SessionManager::new(db.clone(), agent_model.clone());

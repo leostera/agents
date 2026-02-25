@@ -2,6 +2,7 @@
 name = "borg-rt"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
 anyhow.workspace = true
@@ -9,3 +10,4 @@ deno_core.workspace = true
 serde_json.workspace = true
 borg-core = { path = "../borg-core" }
 tracing.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }

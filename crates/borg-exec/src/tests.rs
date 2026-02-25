@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use borg_core::{Event, TaskKind, TaskStatus, Uri, uri};
 use borg_db::{BorgDb, NewTask};
-use borg_rt::RuntimeEngine;
+use borg_rt::CodeModeRuntime;
 use serde_json::json;
 use tracing_subscriber::EnvFilter;
 
@@ -27,7 +27,7 @@ async fn failing_openai_exec(db: BorgDb, worker: &str) -> BorgExecutor {
     db.upsert_provider_api_key(OPENAI_PROVIDER, "test-key")
         .await
         .unwrap();
-    BorgExecutor::new(db, RuntimeEngine::default(), Uri::parse(worker).unwrap())
+    BorgExecutor::new(db, CodeModeRuntime::default(), Uri::parse(worker).unwrap())
         .with_openai_base_url(Some("http://127.0.0.1:1".to_string()))
 }
 
@@ -102,13 +102,26 @@ async fn run_processes_enqueued_task_and_marks_failed_when_provider_unreachable(
     };
     let (task_id, _) = exec.enqueue_user_message(msg, None).await.unwrap();
 
-    let done = wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
+    let done =
+        wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
     assert!(done);
 
     let events = db.get_task_events(&task_id).await.unwrap();
-    assert!(events.iter().any(|e| e.event_type.as_str() == "borg:task:created"));
-    assert!(events.iter().any(|e| e.event_type.as_str() == "borg:task:claimed"));
-    assert!(events.iter().any(|e| e.event_type.as_str() == "borg:task:failed"));
+    assert!(
+        events
+            .iter()
+            .any(|e| e.event_type.as_str() == "borg:task:created")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| e.event_type.as_str() == "borg:task:claimed")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| e.event_type.as_str() == "borg:task:failed")
+    );
 
     handle.abort();
     let _ = handle.await;
@@ -124,14 +137,9 @@ async fn session_resumes_same_agent_id_when_message_omits_agent() {
 
     let session_id = uri!("borg", "session");
     let custom_agent = uri!("borg", "agent", "support");
-    db.upsert_agent_spec(
-        &custom_agent,
-        "gpt-4o-mini",
-        "You are support.",
-        &json!([]),
-    )
-    .await
-    .unwrap();
+    db.upsert_agent_spec(&custom_agent, "gpt-4o-mini", "You are support.", &json!([]))
+        .await
+        .unwrap();
 
     let first = UserMessage {
         user_key: uri!("borg", "user", "u4"),
@@ -157,8 +165,10 @@ async fn session_resumes_same_agent_id_when_message_omits_agent() {
         .await
         .unwrap();
 
-    let done_a = wait_for_task_status(&db, &task_a, TaskStatus::Failed, Duration::from_secs(5)).await;
-    let done_b = wait_for_task_status(&db, &task_b, TaskStatus::Failed, Duration::from_secs(5)).await;
+    let done_a =
+        wait_for_task_status(&db, &task_a, TaskStatus::Failed, Duration::from_secs(5)).await;
+    let done_b =
+        wait_for_task_status(&db, &task_b, TaskStatus::Failed, Duration::from_secs(5)).await;
     assert!(done_a);
     assert!(done_b);
 
@@ -198,7 +208,8 @@ async fn context_built_event_contains_system_prompt_and_tool_schema() {
     };
 
     let (task_id, _) = exec.enqueue_user_message(msg, None).await.unwrap();
-    let done = wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
+    let done =
+        wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
     assert!(done);
 
     let events = db.get_task_events(&task_id).await.unwrap();
@@ -211,10 +222,12 @@ async fn context_built_event_contains_system_prompt_and_tool_schema() {
         })
         .unwrap();
 
-    assert!(context_event
-        .messages
-        .iter()
-        .any(|message| message.to_string().contains("system")));
+    assert!(
+        context_event
+            .messages
+            .iter()
+            .any(|message| message.to_string().contains("system"))
+    );
     assert!(!context_event.tools.is_empty());
 
     handle.abort();
@@ -238,7 +251,8 @@ async fn task_event_order_is_deterministic_for_failed_run() {
     };
     let (task_id, _) = exec.enqueue_user_message(msg, None).await.unwrap();
 
-    let done = wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
+    let done =
+        wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
     assert!(done);
 
     let events = db.get_task_events(&task_id).await.unwrap();
@@ -247,8 +261,14 @@ async fn task_event_order_is_deterministic_for_failed_run() {
         .map(|event| event.event_type.to_string())
         .collect();
 
-    let idx_created = names.iter().position(|name| name == "borg:task:created").unwrap();
-    let idx_claimed = names.iter().position(|name| name == "borg:task:claimed").unwrap();
+    let idx_created = names
+        .iter()
+        .position(|name| name == "borg:task:created")
+        .unwrap();
+    let idx_claimed = names
+        .iter()
+        .position(|name| name == "borg:task:claimed")
+        .unwrap();
     let idx_context = names
         .iter()
         .position(|name| name == "borg:session:context_built")
@@ -257,7 +277,10 @@ async fn task_event_order_is_deterministic_for_failed_run() {
         .iter()
         .position(|name| name == "borg:llm:request_sent")
         .unwrap();
-    let idx_failed = names.iter().position(|name| name == "borg:task:failed").unwrap();
+    let idx_failed = names
+        .iter()
+        .position(|name| name == "borg:task:failed")
+        .unwrap();
 
     assert!(idx_created < idx_claimed);
     assert!(idx_claimed < idx_context);
@@ -289,17 +312,14 @@ async fn recover_running_task_is_requeued_and_processed() {
         .unwrap();
 
     let worker = uri!("borg", "worker", "old-worker");
-    let claimed = db
-        .claim_next_runnable_task(&worker)
-        .await
-        .unwrap()
-        .unwrap();
+    let claimed = db.claim_next_runnable_task(&worker).await.unwrap().unwrap();
     assert_eq!(claimed.task_id, task_id);
 
     let exec = failing_openai_exec(db.clone(), "borg:worker:recovery").await;
     let handle = tokio::spawn(async move { exec.run().await.unwrap() });
 
-    let done = wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
+    let done =
+        wait_for_task_status(&db, &task_id, TaskStatus::Failed, Duration::from_secs(5)).await;
     assert!(done);
 
     handle.abort();
