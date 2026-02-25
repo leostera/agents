@@ -7,7 +7,7 @@ Scope: builds, workspace wiring, and command expectations.
 - Web build:
   - `bun run build:web`
 - Rust build:
-  - `cargo build -p borg-cli`
+  - `cargo build`
 - Full local build:
   - `bun run build && cargo build -p borg-cli` (or equivalent sequence)
 
@@ -36,5 +36,6 @@ Scope: builds, workspace wiring, and command expectations.
 ## Pre-Push Checklist
 
 1. `bun run build:web` succeeds.
-2. `cargo build -p borg-cli` succeeds.
-3. No unrelated local breakages.
+2. `cargo build` succeeds.
+3. `cargo test -p borg-exec -p borg-api -p borg-ports` succeeds for runtime-path changes.
+4. No unrelated local breakages.

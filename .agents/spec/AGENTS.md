@@ -14,6 +14,7 @@ Scope: keeping `ARCHITECTURE.md` aligned with implementation and direction.
   - single binary (`borg-cli`)
   - root SPA build
   - fail-loud dist loading in onboarding backend
+  - session-first ingress (`port -> session turn`), with tasks as separate explicit subsystem
 
 ## Diagram Expectations
 
@@ -30,6 +31,7 @@ Update `ARCHITECTURE.md` when any of these change:
 - crate/package ownership boundaries
 - onboarding flow semantics
 - scheduler or runtime lifecycle behavior
+- session/task ownership model (especially `port_bindings` and task-session semantics)
 
 ## Quality Bar
 

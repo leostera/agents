@@ -21,7 +21,7 @@ After any meaningful change:
 Run this sweep:
 1. Validate all command snippets still work.
 2. Validate crate/package paths still match repository layout.
-3. Compare `SPEC_V0.md` against AGENTS docs for drift.
+3. Compare `ARCHITECTURE.md` against AGENTS docs for drift.
 4. Prune stale notes and add missing decisions.
 
 ## Drift Signals (Must Update)

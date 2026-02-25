@@ -25,9 +25,12 @@ Use it as a router: pick the most relevant sub-agent doc below before making cha
 - Prefer named constants over magic values.
 - Initialize tracing before other app logic.
 - Prefer error propagation with `?` where possible.
+- Runtime model is session-first:
+  - ports feed long-lived sessions directly
+  - tasks are explicit and separate from normal chat ingress
 - Run both builds after substantial changes:
   - `bun run build:web`
-  - `cargo build -p borg-cli`
+  - `cargo build`
 
 ## Fast Start Checklist
 
