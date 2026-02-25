@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
-use borg_agent::{Agent, AgentTools, Message, Session, SessionResult};
+use async_trait::async_trait;
+use borg_agent::{Agent, AgentTools, Message, Session, SessionResult, ToolRequest, ToolResponse, ToolRunner};
 use borg_core::{Capability, Task, TaskKind};
 use borg_db::{BorgDb, NewTask};
 use borg_llm::providers::openai::OpenAiProvider;
@@ -16,6 +17,58 @@ pub struct ExecEngine {
     db: BorgDb,
     runtime: RuntimeEngine,
     worker_id: String,
+}
+
+struct ExecToolRunner {
+    runtime: RuntimeEngine,
+    capabilities: Vec<Capability>,
+}
+
+#[async_trait]
+impl ToolRunner for ExecToolRunner {
+    async fn run(&self, request: ToolRequest) -> Result<ToolResponse> {
+        match request.tool_name.as_str() {
+            "execute" => {
+                let code = request
+                    .arguments
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("execute tool requires code"))?;
+                let result = self.runtime.execute(code)?;
+                Ok(ToolResponse {
+                    content: json!({
+                        "result": result.result_json,
+                        "duration_ms": result.duration_ms
+                    }),
+                })
+            }
+            "search" => {
+                let query = request
+                    .arguments
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("search tool requires query"))?;
+                let q = query.to_lowercase();
+                let matches: Vec<Capability> = self
+                    .capabilities
+                    .iter()
+                    .filter(|cap| {
+                        cap.name.contains(&q) || cap.description.to_lowercase().contains(&q)
+                    })
+                    .cloned()
+                    .collect();
+                let result = if matches.is_empty() {
+                    json!(self.capabilities)
+                } else {
+                    json!(matches)
+                };
+                Ok(ToolResponse { content: result })
+            }
+            _ => Ok(ToolResponse {
+                content: json!({ "error": format!("unknown tool {}", request.tool_name) }),
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -128,36 +181,11 @@ impl ExecEngine {
             .context("invalid payload for user_message task")?;
 
         info!(target: "borg_exec", task_id = task.task_id, user_key = msg.user_key, text = msg.text, "processing user message task");
-        let runtime = self.runtime.clone();
-        let capabilities_catalog = self.search_capabilities("");
-        let tools = AgentTools {
-            execute: Box::new(move |code| {
-                let result = runtime.execute(code)?;
-                Ok(json!({
-                    "result": result.result_json,
-                    "duration_ms": result.duration_ms
-                }))
-            }),
-            search: Box::new({
-                let capabilities = capabilities_catalog.clone();
-                move |query| {
-                    let q = query.to_lowercase();
-                    let matches: Vec<Capability> = capabilities
-                        .iter()
-                        .filter(|cap| {
-                            cap.name.contains(&q)
-                                || cap.description.to_lowercase().contains(&q)
-                        })
-                        .cloned()
-                        .collect();
-                    if matches.is_empty() {
-                        Ok(json!(capabilities))
-                    } else {
-                        Ok(json!(matches))
-                    }
-                }
-            }),
+        let tool_runner = ExecToolRunner {
+            runtime: self.runtime.clone(),
+            capabilities: self.search_capabilities(""),
         };
+        let tools = AgentTools { tool_runner: &tool_runner };
         let agent = Agent::new("borg-default").with_system_prompt(
             "You are Borg's agent runtime. Use tools as needed, then respond clearly.",
         );

@@ -1,6 +1,9 @@
 use anyhow::{Result, anyhow};
+use async_trait::async_trait;
 use borg_db::BorgDb;
-use borg_llm::Provider;
+use borg_llm::{
+    LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason, ToolDescriptor,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::info;
@@ -11,8 +14,24 @@ const AGENT_STARTED_EVENT: &str = "agent_started";
 const AGENT_FINISHED_EVENT: &str = "agent_finished";
 
 pub struct AgentTools<'a> {
-    pub execute: Box<dyn Fn(&str) -> Result<Value> + Send + Sync + 'a>,
-    pub search: Box<dyn Fn(&str) -> Result<Value> + Send + Sync + 'a>,
+    pub tool_runner: &'a dyn ToolRunner,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolRequest {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResponse {
+    pub content: Value,
+}
+
+#[async_trait]
+pub trait ToolRunner: Send + Sync {
+    async fn run(&self, request: ToolRequest) -> Result<ToolResponse>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +39,16 @@ pub struct ToolSpec {
     pub name: String,
     pub description: String,
     pub parameters: Value,
+}
+
+impl From<&ToolSpec> for ToolDescriptor {
+    fn from(value: &ToolSpec) -> Self {
+        Self {
+            name: value.name.clone(),
+            description: value.description.clone(),
+            input_schema: value.parameters.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,30 +123,56 @@ impl Agent {
                     Ok(messages) => messages,
                     Err(err) => return finish_session(session, SessionResult::SessionError(err.to_string())).await,
                 };
-                let assistant_message = match provider
-                    .chat(
-                        &self.model,
-                        &to_provider_messages(&messages),
-                        &to_provider_tool_specs(&self.tools),
-                    )
-                    .await
-                {
+                let req = LlmRequest {
+                    model: self.model.clone(),
+                    messages: to_provider_messages(&messages),
+                    tools: to_provider_tool_specs(&self.tools),
+                    temperature: None,
+                    max_tokens: None,
+                    api_key: None,
+                };
+                let assistant_message = match provider.chat(&req).await {
                     Ok(message) => message,
                     Err(err) => return finish_session(session, SessionResult::SessionError(err.to_string())).await,
                 };
                 info!(target: "borg_agent", session_id = session.session_id, "turn_end");
 
-                let tool_calls = assistant_message
-                    .get("tool_calls")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
+                let tool_calls: Vec<(String, String, Value)> = assistant_message
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ProviderBlock::ToolCall {
+                            id,
+                            name,
+                            arguments_json,
+                        } => Some((id.clone(), name.clone(), arguments_json.clone())),
+                        _ => None,
+                    })
+                    .collect();
 
                 if tool_calls.is_empty() {
+                    if matches!(assistant_message.stop_reason, StopReason::Aborted | StopReason::Error) {
+                        return finish_session(
+                            session,
+                            SessionResult::SessionError(
+                                assistant_message
+                                    .error_message
+                                    .unwrap_or_else(|| "assistant aborted or errored".to_string()),
+                            ),
+                        )
+                        .await;
+                    }
+
                     last_reply = assistant_message
-                        .get("content")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
+                        .content
+                        .iter()
+                        .filter_map(|block| match block {
+                            ProviderBlock::Text(text) => Some(text.clone()),
+                            ProviderBlock::Thinking(text) => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
                         .trim()
                         .to_string();
                     if let Err(err) = session
@@ -134,11 +189,7 @@ impl Agent {
                 }
 
                 let mut interrupted = false;
-                for tool_call in tool_calls {
-                    let (tool_call_id, tool_name, arguments) = match parse_tool_call(&tool_call) {
-                        Ok(values) => values,
-                        Err(err) => return finish_session(session, SessionResult::SessionError(err.to_string())).await,
-                    };
+                for (tool_call_id, tool_name, arguments) in tool_calls {
 
                     if let Err(err) = session
                         .add_message(Message::ToolCall {
@@ -152,7 +203,7 @@ impl Agent {
                     }
 
                     info!(target: "borg_agent", session_id = session.session_id, tool_name, "tool_execution_start");
-                    let output = match call_tool(tools, &tool_name, &arguments) {
+                    let output = match call_tool(tools, &tool_call_id, &tool_name, &arguments).await {
                         Ok(value) => value,
                         Err(err) => return finish_session(session, SessionResult::SessionError(err.to_string())).await,
                     };
@@ -411,79 +462,44 @@ fn default_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-fn to_provider_tool_specs(tool_specs: &[ToolSpec]) -> Vec<Value> {
-    tool_specs
-        .iter()
-        .map(|tool| {
-            json!({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters
-                }
-            })
-        })
-        .collect()
+fn to_provider_tool_specs(tool_specs: &[ToolSpec]) -> Vec<ToolDescriptor> {
+    tool_specs.iter().map(ToolDescriptor::from).collect()
 }
 
-fn to_provider_messages(messages: &[Message]) -> Vec<Value> {
+fn to_provider_messages(messages: &[Message]) -> Vec<ProviderMessage> {
     messages
         .iter()
         .filter_map(|message| match message {
-            Message::System { content } => Some(json!({ "role": "system", "content": content })),
-            Message::User { content } => Some(json!({ "role": "user", "content": content })),
-            Message::Assistant { content } => Some(json!({ "role": "assistant", "content": content })),
+            Message::System { content } => Some(ProviderMessage::System { text: content.clone() }),
+            Message::User { content } => Some(ProviderMessage::User {
+                content: vec![ProviderBlock::Text(content.clone())],
+            }),
+            Message::Assistant { content } => Some(ProviderMessage::Assistant {
+                content: vec![ProviderBlock::Text(content.clone())],
+            }),
             Message::ToolCall {
                 tool_call_id,
                 name,
                 arguments,
-            } => Some(json!({
-                "role": "assistant",
-                "tool_calls": [{
-                    "id": tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": arguments.to_string()
-                    }
-                }]
-            })),
+            } => Some(ProviderMessage::Assistant {
+                content: vec![ProviderBlock::ToolCall {
+                    id: tool_call_id.clone(),
+                    name: name.clone(),
+                    arguments_json: arguments.clone(),
+                }],
+            }),
             Message::ToolResult {
                 tool_call_id,
                 name,
                 content,
-            } => Some(json!({
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "name": name,
-                "content": content.to_string()
-            })),
+            } => Some(ProviderMessage::ToolResult {
+                tool_call_id: tool_call_id.clone(),
+                name: name.clone(),
+                content: vec![ProviderBlock::Text(content.to_string())],
+            }),
             Message::SessionEvent { .. } => None,
         })
         .collect()
-}
-
-fn parse_tool_call(tool_call: &Value) -> Result<(String, String, Value)> {
-    let tool_call_id = tool_call
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("missing tool_call.id"))?
-        .to_string();
-    let function = tool_call
-        .get("function")
-        .ok_or_else(|| anyhow!("missing tool_call.function"))?;
-    let tool_name = function
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("missing tool name"))?
-        .to_string();
-    let raw_arguments = function
-        .get("arguments")
-        .and_then(Value::as_str)
-        .unwrap_or("{}");
-    let arguments: Value = serde_json::from_str(raw_arguments)?;
-    Ok((tool_call_id, tool_name, arguments))
 }
 
 fn awaiting_task_ids(output: &Value) -> Option<Vec<String>> {
@@ -500,57 +516,84 @@ fn awaiting_task_ids(output: &Value) -> Option<Vec<String>> {
     }
 }
 
-fn call_tool<'a>(tools: &AgentTools<'a>, tool_name: &str, arguments: &Value) -> Result<Value> {
-    match tool_name {
-        "execute" => {
-            let code = arguments
-                .get("code")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("execute tool requires code"))?;
-            (tools.execute)(code)
-        }
-        "search" => {
-            let query = arguments
-                .get("query")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("search tool requires query"))?;
-            (tools.search)(query)
-        }
-        _ => Ok(json!({ "error": format!("unknown tool {}", tool_name) })),
-    }
-}
-
-pub fn call_tool_for_testing<'a>(
+async fn call_tool<'a>(
     tools: &AgentTools<'a>,
+    tool_call_id: &str,
     tool_name: &str,
     arguments: &Value,
 ) -> Result<Value> {
-    call_tool(tools, tool_name, arguments)
+    let response = tools
+        .tool_runner
+        .run(ToolRequest {
+            tool_call_id: tool_call_id.to_string(),
+            tool_name: tool_name.to_string(),
+            arguments: arguments.clone(),
+        })
+        .await?;
+    Ok(response.content)
+}
+
+pub async fn call_tool_for_testing<'a>(
+    tools: &AgentTools<'a>,
+    tool_call_id: &str,
+    tool_name: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    call_tool(tools, tool_call_id, tool_name, arguments).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentTools, SessionResult, call_tool_for_testing};
-    use anyhow::anyhow;
+    use super::{AgentTools, SessionResult, ToolRequest, ToolResponse, ToolRunner, call_tool_for_testing};
+    use anyhow::{Result, anyhow};
+    use async_trait::async_trait;
     use serde_json::json;
+
+    struct TestRunner;
+
+    #[async_trait]
+    impl ToolRunner for TestRunner {
+        async fn run(&self, request: ToolRequest) -> Result<ToolResponse> {
+            match request.tool_name.as_str() {
+                "search" => Ok(ToolResponse { content: json!([]) }),
+                "execute" => Err(anyhow!("execution failed")),
+                _ => Ok(ToolResponse {
+                    content: json!({"error":"unknown tool"}),
+                }),
+            }
+        }
+    }
 
     #[test]
     fn injected_search_callback_can_return_empty_results() {
         let tools = AgentTools {
-            execute: Box::new(|_| Ok(json!({ "ok": true }))),
-            search: Box::new(|_| Ok(json!([]))),
+            tool_runner: &TestRunner,
         };
-        let out = call_tool_for_testing(&tools, "search", &json!({"query": "x"})).unwrap();
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let out = rt
+            .block_on(call_tool_for_testing(
+                &tools,
+                "tc1",
+                "search",
+                &json!({"query": "x"}),
+            ))
+            .expect("search result");
         assert_eq!(out, json!([]));
     }
 
     #[test]
     fn injected_execute_callback_propagates_errors() {
         let tools = AgentTools {
-            execute: Box::new(|_| Err(anyhow!("execution failed"))),
-            search: Box::new(|_| Ok(json!([]))),
+            tool_runner: &TestRunner,
         };
-        let err = call_tool_for_testing(&tools, "execute", &json!({"code": "1+1"}))
+        let rt = tokio::runtime::Runtime::new().expect("runtime");
+        let err = rt
+            .block_on(call_tool_for_testing(
+                &tools,
+                "tc2",
+                "execute",
+                &json!({"code": "1+1"}),
+            ))
             .expect_err("expected execution failure");
         assert!(err.to_string().contains("execution failed"));
     }

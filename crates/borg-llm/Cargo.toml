@@ -8,3 +8,4 @@ anyhow.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
+serde.workspace = true
