@@ -418,3 +418,210 @@ impl BorgExecutor {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use borg_core::TaskStatus;
+    use std::path::PathBuf;
+    use std::time::Duration;
+    use uuid::Uuid;
+
+    fn temp_db_path() -> PathBuf {
+        std::env::temp_dir().join(format!("borg-exec-test-{}.db", Uuid::now_v7()))
+    }
+
+    async fn open_test_db() -> BorgDb {
+        let path = temp_db_path();
+        let db = BorgDb::open_local(path.to_str().unwrap()).await.unwrap();
+        db.migrate().await.unwrap();
+        db
+    }
+
+    async fn wait_for_task_status(
+        db: &BorgDb,
+        task_id: &str,
+        status: TaskStatus,
+        timeout: Duration,
+    ) -> bool {
+        let start = std::time::Instant::now();
+        loop {
+            let task = db.get_task(task_id).await.unwrap();
+            if let Some(task) = task {
+                if task.status == status {
+                    return true;
+                }
+            }
+            if start.elapsed() >= timeout {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn enqueue_user_message_persists_task_and_session() {
+        let db = open_test_db().await;
+        let exec = BorgExecutor::new(db.clone(), RuntimeEngine::default(), "worker-test".to_string());
+
+        let msg = InboxMessage {
+            user_key: "u1".to_string(),
+            text: "hello".to_string(),
+            session_id: None,
+            metadata: json!({}),
+        };
+        let (task_id, session_id) = exec.enqueue_user_message(msg, None).await.unwrap();
+
+        let task = db.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(task.status, TaskStatus::Queued);
+        assert_eq!(task.kind, TaskKind::UserMessage);
+        assert!(session_id.starts_with("borg:session:"));
+    }
+
+    #[tokio::test]
+    async fn run_processes_enqueued_task_and_marks_failed_without_provider() {
+        let db = open_test_db().await;
+        let exec = BorgExecutor::new(
+            db.clone(),
+            RuntimeEngine::default(),
+            "worker-no-provider".to_string(),
+        );
+
+        let runner = exec.clone();
+        let handle = tokio::spawn(async move { runner.run().await.unwrap() });
+
+        let msg = InboxMessage {
+            user_key: "u2".to_string(),
+            text: "hello from test".to_string(),
+            session_id: None,
+            metadata: json!({}),
+        };
+        let (task_id, _) = exec.enqueue_user_message(msg, None).await.unwrap();
+
+        let done = wait_for_task_status(
+            &db,
+            &task_id,
+            TaskStatus::Failed,
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(done);
+
+        let events = db.get_task_events(&task_id).await.unwrap();
+        assert!(events.iter().any(|e| e.event_type == "task_created"));
+        assert!(events.iter().any(|e| e.event_type == "task_claimed"));
+        assert!(events.iter().any(|e| e.event_type == "task_failed"));
+
+        handle.abort();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn run_recovers_running_tasks_on_startup_and_executes_them() {
+        let db = open_test_db().await;
+
+        let payload = json!(InboxMessage {
+            user_key: "u3".to_string(),
+            text: "recover me".to_string(),
+            session_id: Some(format!("borg:session:{}", Uuid::now_v7())),
+            metadata: json!({}),
+        });
+        let task_id = db
+            .enqueue_task(NewTask {
+                kind: TaskKind::UserMessage,
+                payload,
+                parent_task_id: None,
+            })
+            .await
+            .unwrap();
+
+        let claimed = db.claim_next_runnable_task("old-worker").await.unwrap().unwrap();
+        assert_eq!(claimed.task_id, task_id);
+        assert_eq!(claimed.status, TaskStatus::Running);
+
+        let exec = BorgExecutor::new(
+            db.clone(),
+            RuntimeEngine::default(),
+            "recovery-worker".to_string(),
+        );
+        let handle = tokio::spawn(async move { exec.run().await.unwrap() });
+
+        let done = wait_for_task_status(
+            &db,
+            &task_id,
+            TaskStatus::Failed,
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(done);
+
+        let task = db.get_task(&task_id).await.unwrap().unwrap();
+        assert_eq!(task.claimed_by.unwrap(), "recovery-worker");
+        assert!(task.last_error.unwrap().contains("OpenAI provider is not configured"));
+
+        handle.abort();
+        let _ = handle.await;
+    }
+
+    #[tokio::test]
+    async fn run_reuses_explicit_session_id_across_multiple_tasks() {
+        let db = open_test_db().await;
+        let exec = BorgExecutor::new(
+            db.clone(),
+            RuntimeEngine::default(),
+            "worker-session".to_string(),
+        );
+
+        let runner = exec.clone();
+        let handle = tokio::spawn(async move { runner.run().await.unwrap() });
+
+        let session_id = format!("borg:session:{}", Uuid::now_v7());
+        let first = InboxMessage {
+            user_key: "u4".to_string(),
+            text: "first".to_string(),
+            session_id: None,
+            metadata: json!({}),
+        };
+        let second = InboxMessage {
+            user_key: "u4".to_string(),
+            text: "second".to_string(),
+            session_id: None,
+            metadata: json!({}),
+        };
+
+        let (task_a, returned_session_a) = exec
+            .enqueue_user_message(first, Some(session_id.clone()))
+            .await
+            .unwrap();
+        let (task_b, returned_session_b) = exec
+            .enqueue_user_message(second, Some(session_id.clone()))
+            .await
+            .unwrap();
+
+        assert_eq!(returned_session_a, session_id);
+        assert_eq!(returned_session_b, session_id);
+
+        let done_a = wait_for_task_status(
+            &db,
+            &task_a,
+            TaskStatus::Failed,
+            Duration::from_secs(5),
+        )
+        .await;
+        let done_b = wait_for_task_status(
+            &db,
+            &task_b,
+            TaskStatus::Failed,
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(done_a);
+        assert!(done_b);
+
+        let message_count = db.count_session_messages(&session_id).await.unwrap();
+        assert!(message_count >= 2);
+
+        handle.abort();
+        let _ = handle.await;
+    }
+}
