@@ -10,6 +10,7 @@ type MessageProps = {
   animate?: boolean
   speedMs?: number
   onAnimationComplete?: () => void
+  children?: React.ReactNode
 }
 
 const DEFAULT_SPEED_MS = 12
@@ -50,6 +51,7 @@ export function Message(props: MessageProps) {
       <div className={`borg-message ${isRight ? 'borg-message--user' : 'borg-message--agent'}`}>
         <p className='borg-message__author'>{roleLabel}</p>
         <p className='borg-message__text'>{visibleText}</p>
+        {props.children}
       </div>
     </article>
   )

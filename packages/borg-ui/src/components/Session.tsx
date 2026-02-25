@@ -30,14 +30,14 @@ export function Session(props: SessionProps) {
       {props.messages.map((message) => {
         if (message.type === 'message') {
           return (
-            <article key={message.id} className='borg-session__input'>
-              <Message
-                author={message.author}
-                authorLabel={getAuthorLabel(message.author)}
-                text={message.content}
-                animate={animated.has(message.id)}
-                onAnimationComplete={() => props.onMessageAnimationComplete?.(message.id)}
-              />
+            <Message
+              key={message.id}
+              author={message.author}
+              authorLabel={getAuthorLabel(message.author)}
+              text={message.content}
+              animate={animated.has(message.id)}
+              onAnimationComplete={() => props.onMessageAnimationComplete?.(message.id)}
+            >
               {message.choices && !animated.has(message.id) ? (
                 <div className='borg-inline-choices'>
                   {message.choices.options.map((option) => (
@@ -56,7 +56,7 @@ export function Session(props: SessionProps) {
                   ))}
                 </div>
               ) : null}
-            </article>
+            </Message>
           )
         }
 

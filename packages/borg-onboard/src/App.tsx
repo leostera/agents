@@ -58,7 +58,7 @@ export function OnboardApp() {
         id: 'm-welcome',
         type: 'message',
         author: 'agent',
-        content: `${i18n.t('onboard.agent.welcome', { username })}\n\n${i18n.t('onboard.agent.choose_provider')}`,
+        content: i18n.t('onboard.agent.welcome', { username }),
         choices: {
           name: i18n.t('onboard.choice.provider_name'),
           options: [{ label: i18n.t('onboard.provider.openai'), value: OPENAI_PROVIDER }],
