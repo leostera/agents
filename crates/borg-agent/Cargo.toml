@@ -8,4 +8,5 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+borg-db = { path = "../borg-db" }
 borg-llm = { path = "../borg-llm" }

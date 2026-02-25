@@ -332,6 +332,7 @@ name = "borg-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "borg-db",
  "borg-llm",
  "serde",
  "serde_json",

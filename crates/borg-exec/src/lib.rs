@@ -128,12 +128,6 @@ impl ExecEngine {
             .context("invalid payload for user_message task")?;
 
         info!(target: "borg_exec", task_id = task.task_id, user_key = msg.user_key, text = msg.text, "processing user message task");
-        let api_key = self
-            .db
-            .get_provider_api_key(OPENAI_PROVIDER)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("OpenAI provider is not configured"))?;
-
         let runtime = self.runtime.clone();
         let capabilities_catalog = self.search_capabilities("");
         let tools = AgentTools {
@@ -164,16 +158,23 @@ impl ExecEngine {
                 }
             }),
         };
-        let provider = OpenAiProvider::new(api_key);
         let agent = Agent::new("borg-default").with_system_prompt(
             "You are Borg's agent runtime. Use tools as needed, then respond clearly.",
         );
-        let mut session = Session::new(task.task_id.clone(), agent);
+        let agent_runner = agent.clone();
+        let mut session = Session::new(task.task_id.clone(), agent, self.db.clone()).await?;
         session.add_message(Message::User {
             content: msg.text.clone(),
-        });
+        }).await?;
 
-        let output = match session.run(&provider, &tools).await {
+        let api_key = self
+            .db
+            .get_provider_api_key(OPENAI_PROVIDER)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("OpenAI provider is not configured"))?;
+        let provider = OpenAiProvider::new(api_key);
+
+        let output = match agent_runner.run(&mut session, &provider, &tools).await {
             SessionResult::Completed(Ok(output)) => output,
             SessionResult::Completed(Err(err)) => {
                 return Err(anyhow::anyhow!("agent session completed with error: {}", err));
@@ -205,7 +206,8 @@ impl ExecEngine {
             }
         };
         debug!(target: "borg_exec", task_id = task.task_id, tool_calls = output.tool_calls.len(), "agent session completed");
-        trace!(target: "borg_exec", task_id = task.task_id, messages = ?session.read_messages(0, usize::MAX), "persistable session messages");
+        let persisted_messages = session.read_messages(0, usize::MAX).await?;
+        trace!(target: "borg_exec", task_id = task.task_id, messages = ?persisted_messages, "persistable session messages");
         self.db
             .log_event(
                 &task.task_id,
