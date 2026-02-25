@@ -11,6 +11,8 @@ async-trait.workspace = true
 serde.workspace = true
 testcontainers = "0.27.1"
 tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber.workspace = true

@@ -10,8 +10,8 @@ use borg_llm::providers::openai::OpenAiProvider;
 use borg_rt::RuntimeEngine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tracing::{error, info, warn};
 use tracing::{debug, trace};
+use tracing::{error, info, warn};
 
 const OPENAI_PROVIDER: &str = "openai";
 
@@ -201,15 +201,19 @@ impl ExecEngine {
             runtime: self.runtime.clone(),
             capabilities: self.search_capabilities(""),
         };
-        let tools = AgentTools { tool_runner: &tool_runner };
+        let tools = AgentTools {
+            tool_runner: &tool_runner,
+        };
         let agent = Agent::new("borg-default").with_system_prompt(
             "You are Borg's agent runtime. Use tools as needed, then respond clearly.",
         );
         let agent_runner = agent.clone();
         let mut session = Session::new(task.task_id.clone(), agent, self.db.clone()).await?;
-        session.add_message(Message::User {
-            content: msg.text.clone(),
-        }).await?;
+        session
+            .add_message(Message::User {
+                content: msg.text.clone(),
+            })
+            .await?;
 
         let api_key = self
             .db
@@ -221,7 +225,10 @@ impl ExecEngine {
         let output = match agent_runner.run(&mut session, &provider, &tools).await {
             SessionResult::Completed(Ok(output)) => output,
             SessionResult::Completed(Err(err)) => {
-                return Err(anyhow::anyhow!("agent session completed with error: {}", err));
+                return Err(anyhow::anyhow!(
+                    "agent session completed with error: {}",
+                    err
+                ));
             }
             SessionResult::SessionError(err) => {
                 return Err(anyhow::anyhow!("agent session error: {}", err));

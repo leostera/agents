@@ -1,5 +1,13 @@
+use tracing::{debug, trace};
+
 pub fn render_dashboard(tasks_count: usize, entities_count: usize) -> String {
-    format!(
+    debug!(
+        target: "borg_ui",
+        tasks_count,
+        entities_count,
+        "rendering dashboard html"
+    );
+    let html = format!(
         r#"<!doctype html>
 <html lang="en">
   <head>
@@ -47,5 +55,11 @@ pub fn render_dashboard(tasks_count: usize, entities_count: usize) -> String {
   </body>
 </html>"#,
         tasks_count, entities_count
-    )
+    );
+    trace!(
+        target: "borg_ui",
+        html_len = html.len(),
+        "dashboard html rendered"
+    );
+    html
 }

@@ -69,7 +69,10 @@ impl OnboardAssets {
         }
 
         if !js_path.exists() {
-            return Err(anyhow!("missing onboarding js asset: {}", js_path.display()));
+            return Err(anyhow!(
+                "missing onboarding js asset: {}",
+                js_path.display()
+            ));
         }
 
         if !css_path.exists() {

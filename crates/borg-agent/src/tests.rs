@@ -1,4 +1,3 @@
-
 use std::path::PathBuf;
 
 use super::{
@@ -10,7 +9,10 @@ use async_trait::async_trait;
 use borg_db::BorgDb;
 use borg_llm::{LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, StopReason};
 use serde_json::{Value, json};
+use std::sync::Once;
 use tokio::sync::{Mutex, mpsc};
+use tracing::{debug, info, trace};
+use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 struct ScriptedRunner {
@@ -21,6 +23,12 @@ struct ScriptedRunner {
 #[async_trait]
 impl ToolRunner for ScriptedRunner {
     async fn run(&self, request: ToolRequest) -> Result<ToolResponse> {
+        trace!(
+            target: "borg_agent_test",
+            tool_call_id = request.tool_call_id.as_str(),
+            tool_name = request.tool_name.as_str(),
+            "scripted runner received tool request"
+        );
         self.calls_tx
             .send(request)
             .map_err(|e| anyhow!(e.to_string()))?;
@@ -42,6 +50,12 @@ struct ScriptedProvider {
 #[async_trait]
 impl Provider for ScriptedProvider {
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        trace!(
+            target: "borg_agent_test",
+            model = req.model.as_str(),
+            message_count = req.messages.len(),
+            "scripted provider received chat request"
+        );
         self.requests_tx
             .send(req.clone())
             .map_err(|e| anyhow!(e.to_string()))?;
@@ -114,22 +128,46 @@ fn assistant_tool_calls(calls: Vec<(&str, &str, Value)>) -> LlmAssistantMessage 
     }
 }
 
+fn init_test_tracing() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                    EnvFilter::new("info,borg_agent=debug,borg_agent_test=trace")
+                }),
+            )
+            .with_test_writer()
+            .try_init()
+            .ok();
+    });
+}
+
 async fn make_test_db() -> Result<BorgDb> {
     let path = PathBuf::from(format!("/tmp/borg-agent-test-{}.db", Uuid::now_v7()));
+    debug!(
+        target: "borg_agent_test",
+        path = %path.display(),
+        "opening temporary unit-test db"
+    );
     let borg_db = BorgDb::open_local(path.to_string_lossy().as_ref()).await?;
     borg_db.migrate().await?;
+    trace!(target: "borg_agent_test", "unit-test db migrated");
     Ok(borg_db)
 }
 
 async fn make_session() -> Result<(Agent, Session)> {
+    init_test_tracing();
     let db = make_test_db().await?;
     let agent = Agent::new("test-agent").with_system_prompt("system prompt");
     let session = Session::new("test-session", agent.clone(), db).await?;
+    debug!(target: "borg_agent_test", "created test agent session");
     Ok((agent, session))
 }
 
 #[tokio::test]
 async fn a1_no_tool_completion() {
+    info!(target: "borg_agent_test", test = "a1_no_tool_completion", "starting test");
     let (agent, mut session) = make_session().await.unwrap();
     session
         .add_message(Message::User {
@@ -146,10 +184,12 @@ async fn a1_no_tool_completion() {
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::Completed(Ok(_))));
+    info!(target: "borg_agent_test", test = "a1_no_tool_completion", "test passed");
 }
 
 #[tokio::test]
 async fn a2_single_tool_then_answer() {
+    info!(target: "borg_agent_test", test = "a2_single_tool_then_answer", "starting test");
     let (agent, mut session) = make_session().await.unwrap();
     session
         .add_message(Message::User {
@@ -176,10 +216,12 @@ async fn a2_single_tool_then_answer() {
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::Completed(Ok(_))));
     assert!(calls_rx.try_recv().is_ok());
+    info!(target: "borg_agent_test", test = "a2_single_tool_then_answer", "test passed");
 }
 
 #[tokio::test]
 async fn a3_multiple_tools_keep_order() {
+    info!(target: "borg_agent_test", test = "a3_multiple_tools_keep_order", "starting test");
     let (agent, mut session) = make_session().await.unwrap();
     session
         .add_message(Message::User {
@@ -212,10 +254,17 @@ async fn a3_multiple_tools_keep_order() {
     let second = calls_rx.try_recv().unwrap();
     assert_eq!(first.tool_name, "search");
     assert_eq!(second.tool_name, "execute");
+    debug!(
+        target: "borg_agent_test",
+        first_tool = first.tool_name.as_str(),
+        second_tool = second.tool_name.as_str(),
+        "validated tool call ordering"
+    );
 }
 
 #[tokio::test]
 async fn a5_follow_up_continues_run() {
+    info!(target: "borg_agent_test", test = "a5_follow_up_continues_run", "starting test");
     let (agent, mut session) = make_session().await.unwrap();
     session
         .add_message(Message::User {
@@ -243,10 +292,12 @@ async fn a5_follow_up_continues_run() {
         msgs.iter()
             .any(|m| matches!(m, Message::User { content } if content == "follow-up"))
     );
+    info!(target: "borg_agent_test", test = "a5_follow_up_continues_run", "test passed");
 }
 
 #[tokio::test]
 async fn a6_tool_error_is_returned_as_tool_result() {
+    info!(target: "borg_agent_test", test = "a6_tool_error_is_returned_as_tool_result", "starting test");
     let (agent, mut session) = make_session().await.unwrap();
     session
         .add_message(Message::User {
@@ -280,10 +331,12 @@ async fn a6_tool_error_is_returned_as_tool_result() {
             }
         )
     }));
+    info!(target: "borg_agent_test", test = "a6_tool_error_is_returned_as_tool_result", "test passed");
 }
 
 #[tokio::test]
 async fn a7_provider_failure_surfaces_session_error() {
+    info!(target: "borg_agent_test", test = "a7_provider_failure_surfaces_session_error", "starting test");
     let (agent, mut session) = make_session().await.unwrap();
     session
         .add_message(Message::User {
@@ -300,10 +353,12 @@ async fn a7_provider_failure_surfaces_session_error() {
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::SessionError(_)));
+    info!(target: "borg_agent_test", test = "a7_provider_failure_surfaces_session_error", "test passed");
 }
 
 #[tokio::test]
 async fn a8_idle_run_when_no_new_messages() {
+    info!(target: "borg_agent_test", test = "a8_idle_run_when_no_new_messages", "starting test");
     let (agent, mut session) = make_session().await.unwrap();
     let (provider, _requests_rx) = scripted_provider(vec![]);
     let (runner, _calls_rx) = scripted_runner(vec![]);
@@ -313,10 +368,12 @@ async fn a8_idle_run_when_no_new_messages() {
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::Idle));
+    info!(target: "borg_agent_test", test = "a8_idle_run_when_no_new_messages", "test passed");
 }
 
 #[tokio::test]
 async fn a9_lifecycle_events_persisted_once() {
+    info!(target: "borg_agent_test", test = "a9_lifecycle_events_persisted_once", "starting test");
     let (agent, mut session) = make_session().await.unwrap();
     session
         .add_message(Message::User {
@@ -342,10 +399,18 @@ async fn a9_lifecycle_events_persisted_once() {
         .count();
     assert_eq!(started, 1);
     assert_eq!(finished, 1);
+    debug!(
+        target: "borg_agent_test",
+        started,
+        finished,
+        "validated lifecycle event cardinality"
+    );
 }
 
 #[tokio::test]
 async fn injected_tool_runner_helper_still_works() {
+    init_test_tracing();
+    info!(target: "borg_agent_test", test = "injected_tool_runner_helper_still_works", "starting test");
     struct InlineRunner;
     #[async_trait]
     impl ToolRunner for InlineRunner {
@@ -363,4 +428,5 @@ async fn injected_tool_runner_helper_still_works() {
         .await
         .unwrap();
     assert!(matches!(out, ToolResultData::Text(text) if text == "ok"));
+    info!(target: "borg_agent_test", test = "injected_tool_runner_helper_still_works", "test passed");
 }

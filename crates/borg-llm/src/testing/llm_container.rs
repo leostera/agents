@@ -5,6 +5,7 @@ use testcontainers::core::{IntoContainerPort, Mount};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tokio::time::sleep;
+use tracing::{debug, error, info, trace};
 
 const OLLAMA_IMAGE_NAME: &str = "ollama/ollama";
 const OLLAMA_IMAGE_TAG: &str = "latest";
@@ -34,7 +35,19 @@ impl LlmContainer {
 
     pub async fn start_ollama_with_model(model: impl Into<String>) -> Result<Self> {
         let model = model.into();
+        info!(
+            target: "borg_llm_test",
+            model = model.as_str(),
+            image = OLLAMA_IMAGE_NAME,
+            tag = OLLAMA_IMAGE_TAG,
+            "starting ollama test container"
+        );
         let host_models_dir = host_ollama_models_dir()?;
+        debug!(
+            target: "borg_llm_test",
+            host_models_dir = %host_models_dir.display(),
+            "resolved host model cache directory"
+        );
         let mount = Mount::bind_mount(
             host_models_dir.to_string_lossy().to_string(),
             OLLAMA_MODELS_DIR_IN_CONTAINER,
@@ -45,11 +58,22 @@ impl LlmContainer {
             .with_mount(mount)
             .start()
             .await?;
+        info!(target: "borg_llm_test", "ollama container started");
 
         let host_port = container.get_host_port_ipv4(OLLAMA_PORT.tcp()).await?;
         let base_url = format!("http://127.0.0.1:{host_port}");
+        info!(
+            target: "borg_llm_test",
+            base_url = base_url.as_str(),
+            "resolved ollama container endpoint"
+        );
         wait_until_ready(&base_url).await?;
         pull_model(&base_url, &model).await?;
+        info!(
+            target: "borg_llm_test",
+            model = model.as_str(),
+            "ollama container ready with requested model"
+        );
 
         Ok(Self {
             _container: container,
@@ -70,15 +94,45 @@ fn host_ollama_models_dir() -> Result<PathBuf> {
 async fn wait_until_ready(base_url: &str) -> Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{base_url}{TAGS_PATH}");
-    for _ in 0..MAX_READINESS_ATTEMPTS {
+    info!(
+        target: "borg_llm_test",
+        url = url.as_str(),
+        max_attempts = MAX_READINESS_ATTEMPTS,
+        "waiting for ollama readiness"
+    );
+    for attempt in 1..=MAX_READINESS_ATTEMPTS {
         let response = client.get(&url).send().await;
         if let Ok(response) = response {
             if response.status().is_success() {
+                info!(
+                    target: "borg_llm_test",
+                    attempt,
+                    "ollama readiness probe succeeded"
+                );
                 return Ok(());
             }
+            trace!(
+                target: "borg_llm_test",
+                attempt,
+                status = %response.status(),
+                "ollama readiness probe returned non-success status"
+            );
+        } else if let Err(err) = &response {
+            trace!(
+                target: "borg_llm_test",
+                attempt,
+                error = %err,
+                "ollama readiness probe failed"
+            );
         }
         sleep(Duration::from_millis(READINESS_BACKOFF_MILLIS)).await;
     }
+    error!(
+        target: "borg_llm_test",
+        url = url.as_str(),
+        max_attempts = MAX_READINESS_ATTEMPTS,
+        "ollama readiness timed out"
+    );
 
     anyhow::bail!("ollama container never became ready at {}", url);
 }
@@ -86,7 +140,14 @@ async fn wait_until_ready(base_url: &str) -> Result<()> {
 async fn pull_model(base_url: &str, model: &str) -> Result<()> {
     let client = reqwest::Client::new();
     let url = format!("{base_url}{PULL_PATH}");
-    for _ in 0..MAX_PULL_ATTEMPTS {
+    info!(
+        target: "borg_llm_test",
+        model,
+        url = url.as_str(),
+        max_attempts = MAX_PULL_ATTEMPTS,
+        "pulling ollama model for test"
+    );
+    for attempt in 1..=MAX_PULL_ATTEMPTS {
         let response = client
             .post(&url)
             .json(&serde_json::json!({
@@ -97,11 +158,39 @@ async fn pull_model(base_url: &str, model: &str) -> Result<()> {
             .await;
         if let Ok(response) = response {
             if response.status().is_success() {
+                info!(
+                    target: "borg_llm_test",
+                    model,
+                    attempt,
+                    "ollama model pull completed"
+                );
                 return Ok(());
             }
+            debug!(
+                target: "borg_llm_test",
+                model,
+                attempt,
+                status = %response.status(),
+                "ollama model pull returned non-success status"
+            );
+        } else if let Err(err) = &response {
+            trace!(
+                target: "borg_llm_test",
+                model,
+                attempt,
+                error = %err,
+                "ollama model pull request failed"
+            );
         }
         sleep(Duration::from_millis(PULL_BACKOFF_MILLIS)).await;
     }
+    error!(
+        target: "borg_llm_test",
+        model,
+        url = url.as_str(),
+        max_attempts = MAX_PULL_ATTEMPTS,
+        "ollama model pull timed out"
+    );
 
     anyhow::bail!("ollama model pull never completed for {} at {}", model, url);
 }

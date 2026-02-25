@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{Value, json};
+use tracing::{debug, error, info, trace};
 
 use crate::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
@@ -39,6 +40,13 @@ impl OpenAiProvider {
 #[async_trait]
 impl Provider for OpenAiProvider {
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        info!(
+            target: "borg_llm",
+            model = req.model.as_str(),
+            message_count = req.messages.len(),
+            tool_count = req.tools.len(),
+            "sending chat completion request"
+        );
         let body = json!({
             "model": req.model,
             "messages": to_openai_messages(&req.messages),
@@ -47,8 +55,20 @@ impl Provider for OpenAiProvider {
             "temperature": req.temperature,
             "max_tokens": req.max_tokens,
         });
+        trace!(
+            target: "borg_llm",
+            has_temperature = req.temperature.is_some(),
+            has_max_tokens = req.max_tokens.is_some(),
+            "chat request payload prepared"
+        );
 
         let api_key = req.api_key.as_deref().unwrap_or(&self.api_key);
+        debug!(
+            target: "borg_llm",
+            endpoint = self.chat_completions_url.as_str(),
+            request_api_key_override = req.api_key.is_some(),
+            "posting chat completion request"
+        );
         let response = self
             .http
             .post(&self.chat_completions_url)
@@ -56,14 +76,22 @@ impl Provider for OpenAiProvider {
             .json(&body)
             .send()
             .await?;
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "openai chat completions returned {}",
-                response.status()
-            ));
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            error!(
+                target: "borg_llm",
+                status = %status,
+                response_body = body.as_str(),
+                "chat completion request failed"
+            );
+            return Err(anyhow!("openai chat completions returned {}", status));
         }
 
+        debug!(target: "borg_llm", status = %status, "chat completion request succeeded");
         let payload: Value = response.json().await?;
+        trace!(target: "borg_llm", payload = ?payload, "raw chat completion payload");
         parse_openai_assistant_message(&payload)
     }
 }
@@ -190,9 +218,16 @@ fn parse_openai_assistant_message(payload: &Value) -> Result<LlmAssistantMessage
         _ => StopReason::EndOfTurn,
     };
 
-    Ok(LlmAssistantMessage {
+    let message = LlmAssistantMessage {
         content: blocks,
         stop_reason,
         error_message: None,
-    })
+    };
+    info!(
+        target: "borg_llm",
+        block_count = message.content.len(),
+        stop_reason = ?message.stop_reason,
+        "parsed assistant message from provider response"
+    );
+    Ok(message)
 }

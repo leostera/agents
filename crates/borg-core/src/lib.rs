@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::{trace, warn};
 
 pub mod borgdir;
 
@@ -28,15 +29,28 @@ impl TaskStatus {
     }
 
     pub fn from_str(value: &str) -> Option<Self> {
-        Some(match value {
+        let parsed = match value {
             "queued" => Self::Queued,
             "running" => Self::Running,
             "blocked" => Self::Blocked,
             "succeeded" => Self::Succeeded,
             "failed" => Self::Failed,
             "canceled" => Self::Canceled,
-            _ => return None,
-        })
+            _ => {
+                warn!(
+                    target: "borg_core",
+                    task_status = value,
+                    "unknown task status value"
+                );
+                return None;
+            }
+        };
+        trace!(
+            target: "borg_core",
+            task_status = value,
+            "parsed task status"
+        );
+        Some(parsed)
     }
 }
 
@@ -60,13 +74,22 @@ impl TaskKind {
     }
 
     pub fn from_str(value: &str) -> Option<Self> {
-        Some(match value {
+        let parsed = match value {
             "user_message" => Self::UserMessage,
             "agent_action" => Self::AgentAction,
             "tool_call" => Self::ToolCall,
             "system" => Self::System,
-            _ => return None,
-        })
+            _ => {
+                warn!(
+                    target: "borg_core",
+                    task_kind = value,
+                    "unknown task kind value"
+                );
+                return None;
+            }
+        };
+        trace!(target: "borg_core", task_kind = value, "parsed task kind");
+        Some(parsed)
     }
 }
 
