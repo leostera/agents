@@ -17,3 +17,6 @@ tracing.workspace = true
 uuid.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
