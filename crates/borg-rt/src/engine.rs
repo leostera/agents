@@ -102,14 +102,15 @@ impl CodeModeRuntime {
         };
 
         trace!(target: "borg_rt", result = ?result_json, "js execution result");
-        let duration_ms = start.elapsed().as_millis();
+        let duration = start.elapsed();
+        let duration_ms = duration.as_millis();
         info!(target: "borg_rt", duration_ms, "JS execution finished");
 
         Ok(ExecutionResult {
             stdout: String::new(),
             stderr: String::new(),
             result_json,
-            duration_ms,
+            duration,
         })
     }
 }
