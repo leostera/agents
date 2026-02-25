@@ -6,8 +6,9 @@ import { createI18n } from '@borg/i18n'
 import { Session, type SessionMessage } from '@borg/ui'
 
 const OPENAI_PROVIDER = 'openai'
-const PROVIDER_MESSAGE_ID = 'm-welcome'
+const PROVIDER_MESSAGE_ID = 'u-provider'
 const OPENAI_API_KEY_MESSAGE_ID = 'i-openai-key'
+const CONNECT_ACTION_ID = 'connect'
 
 type SessionState = {
   choices: Record<string, string>
@@ -64,6 +65,13 @@ export function OnboardApp() {
         author: 'agent',
         content: i18n.t('onboard.agent.welcome', { username }),
         timestamp: formatTimestamp(startedAt),
+      },
+      {
+        id: PROVIDER_MESSAGE_ID,
+        type: 'message',
+        author: 'user',
+        content: '',
+        timestamp: formatTimestamp(new Date(startedAt.getTime() + 30_000)),
         choices: {
           name: i18n.t('onboard.choice.provider_name'),
           options: [{ label: i18n.t('onboard.provider.openai'), value: OPENAI_PROVIDER, icon: 'openai' }],
@@ -75,9 +83,13 @@ export function OnboardApp() {
 
   const selectedProvider = state.choices[PROVIDER_MESSAGE_ID]
   const messages = useMemo<Array<SessionMessage>>(() => {
-    if (selectedProvider !== OPENAI_PROVIDER || !animatedCompleted['m-welcome']) return baseMessages
+    if (!animatedCompleted['m-welcome']) {
+      return baseMessages.filter((message) => message.id === 'm-welcome')
+    }
 
-    return [
+    if (selectedProvider !== OPENAI_PROVIDER) return baseMessages
+
+    const withInput: Array<SessionMessage> = [
       ...baseMessages,
       {
         id: 'm-key',
@@ -85,16 +97,64 @@ export function OnboardApp() {
         author: 'agent',
         content: i18n.t('onboard.agent.openai_key_prompt'),
         timestamp: formatTimestamp(new Date(startedAt.getTime() + 60_000)),
-        input: {
-          id: OPENAI_API_KEY_MESSAGE_ID,
-          inputType: 'text',
-          name: i18n.t('onboard.field.api_key'),
-          placeholder: 'sk-...',
-          secret: true,
-        },
       },
+      ...(!animatedCompleted['m-key']
+        ? []
+        : [
+            {
+              id: 'u-key',
+              type: 'message' as const,
+              author: 'user' as const,
+              content: '',
+              timestamp: formatTimestamp(new Date(startedAt.getTime() + 90_000)),
+              input: {
+                id: OPENAI_API_KEY_MESSAGE_ID,
+                inputType: 'text' as const,
+                name: i18n.t('onboard.field.api_key'),
+                placeholder: 'sk-...',
+                secret: true,
+              },
+              actions: [
+                {
+                  id: CONNECT_ACTION_ID,
+                  label: state.saving
+                    ? i18n.t('onboard.action.saving')
+                    : i18n.t('onboard.action.save_api_key'),
+                  disabled: state.saving,
+                },
+              ],
+            },
+          ]),
     ]
-  }, [animatedCompleted, baseMessages, i18n, selectedProvider, startedAt])
+
+    if (state.error.length > 0) {
+      return [
+        ...withInput,
+        {
+          id: 'm-error',
+          type: 'message',
+          author: 'system',
+          content: state.error,
+          timestamp: formatTimestamp(new Date(startedAt.getTime() + 90_000)),
+        },
+      ]
+    }
+
+    if (state.saved) {
+      return [
+        ...withInput,
+        {
+          id: 'm-saved',
+          type: 'message',
+          author: 'system',
+          content: i18n.t('onboard.notice.saved'),
+          timestamp: formatTimestamp(new Date(startedAt.getTime() + 90_000)),
+        },
+      ]
+    }
+
+    return withInput
+  }, [animatedCompleted, baseMessages, i18n, selectedProvider, startedAt, state.error, state.saved, state.saving])
 
   const animatedIds = useMemo(() => {
     const ids: Array<string> = []
@@ -116,6 +176,7 @@ export function OnboardApp() {
         choices={state.choices}
         animatedIds={animatedIds}
         agentName='Borg'
+        systemName='Borg'
         onChoice={(messageId, value) => {
           setState((prev) => ({
             ...prev,
@@ -130,37 +191,23 @@ export function OnboardApp() {
         onMessageAnimationComplete={(messageId) => {
           setAnimatedCompleted((prev) => ({ ...prev, [messageId]: true }))
         }}
+        onAction={(_, actionId) => {
+          if (actionId !== CONNECT_ACTION_ID) return
+
+          const apiKey = state.choices[OPENAI_API_KEY_MESSAGE_ID] ?? ''
+          setState((prev) => ({ ...prev, saving: true, error: '', saved: false }))
+
+          Effect.runPromise(saveProvider(apiKey.trim(), i18n.t('onboard.error.save_failed')))
+            .then(() => {
+              setState((prev) => ({ ...prev, saving: false, saved: true }))
+            })
+            .catch((error: unknown) => {
+              const message =
+                error instanceof Error ? error.message : i18n.t('onboard.error.save_failed')
+              setState((prev) => ({ ...prev, saving: false, error: message }))
+            })
+        }}
       />
-
-      {selectedProvider === OPENAI_PROVIDER && animatedCompleted['m-key'] ? (
-        <section className='card' style={{ marginTop: 15 }}>
-          {state.error.length > 0 ? <p className='notice-error'>{state.error}</p> : null}
-          {state.saved ? <p className='notice-success'>{i18n.t('onboard.notice.saved')}</p> : null}
-
-          <div className='actions'>
-            <button
-              className='btn-primary'
-              disabled={state.saving}
-              onClick={() => {
-                const apiKey = state.choices[OPENAI_API_KEY_MESSAGE_ID] ?? ''
-                setState((prev) => ({ ...prev, saving: true, error: '', saved: false }))
-
-                Effect.runPromise(saveProvider(apiKey.trim(), i18n.t('onboard.error.save_failed')))
-                  .then(() => {
-                    setState((prev) => ({ ...prev, saving: false, saved: true }))
-                  })
-                  .catch((error: unknown) => {
-                    const message =
-                      error instanceof Error ? error.message : i18n.t('onboard.error.save_failed')
-                    setState((prev) => ({ ...prev, saving: false, error: message }))
-                  })
-              }}
-            >
-              {state.saving ? i18n.t('onboard.action.saving') : i18n.t('onboard.action.save_api_key')}
-            </button>
-          </div>
-        </section>
-      ) : null}
     </div>
   )
 }
