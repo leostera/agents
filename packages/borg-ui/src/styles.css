@@ -34,11 +34,33 @@
   padding: 15px;
 }
 
-.borg-session__composer-text {
-  margin: 0 0 10px;
-  color: var(--borg-muted);
-  font-size: 13px;
-  line-height: 1.4;
+.borg-composer {
+  border: 1px solid #334155;
+  border-radius: 15px;
+  background: #0b1220;
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.borg-composer__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.borg-composer__input {
+  height: 45px;
+  border-radius: 10px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: var(--borg-text);
+  padding: 0 15px;
+  outline: none;
+}
+
+.borg-composer__input:focus {
+  border-color: var(--borg-accent);
 }
 
 .borg-message-row {
@@ -107,7 +129,7 @@
 .borg-inline-choice {
   border-radius: 10px;
   border: 1px solid #475569;
-  background: #334155;
+  background: #1f2937;
   color: var(--borg-text);
   padding: 10px 15px;
   cursor: pointer;

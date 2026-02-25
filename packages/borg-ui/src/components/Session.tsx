@@ -112,85 +112,156 @@ export function Session(props: SessionProps) {
     </>
   )
 
+  const renderComposer = (message: Extract<SessionMessage, { type: 'message' }>) => {
+    const primaryAction = message.actions?.[0]
+
+    return (
+      <div className='borg-composer'>
+        {message.choices ? (
+          <div className='borg-inline-choices'>
+            {message.choices.options.map((option) => (
+              <button
+                key={option.value}
+                type='button'
+                disabled={props.choices[message.id] === option.value}
+                className={
+                  props.choices[message.id] === option.value
+                    ? 'borg-inline-choice borg-inline-choice--active'
+                    : 'borg-inline-choice'
+                }
+                onClick={() => props.onChoice(message.id, option.value)}
+              >
+                <span className='borg-inline-choice__content'>
+                  {option.icon === 'openai' ? <OpenAiLogo /> : null}
+                  <span>{option.label}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {message.input ? (
+          <div className='borg-composer__row'>
+            <input
+              className='borg-composer__input'
+              type={message.input.secret ? 'password' : 'text'}
+              placeholder={message.input.placeholder}
+              value={props.choices[message.input.id] ?? ''}
+              onChange={(event) => props.onChoice(message.input!.id, event.currentTarget.value)}
+            />
+            {primaryAction ? (
+              <button
+                type='button'
+                className='borg-button borg-button--primary'
+                disabled={primaryAction.disabled}
+                onClick={() => props.onAction?.(message.id, primaryAction.id)}
+              >
+                {primaryAction.label}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!message.input && message.actions ? (
+          <div className='borg-message__actions'>
+            {message.actions.map((action) => (
+              <button
+                key={action.id}
+                type='button'
+                className='borg-button borg-button--primary'
+                disabled={action.disabled}
+                onClick={() => props.onAction?.(message.id, action.id)}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    )
+  }
+
   return (
     <section className='borg-session'>
       <div className='borg-session__feed'>
         {feedMessages.map((message) => {
-        if (message.type === 'message') {
-          return (
-            <Message
-              key={message.id}
-              author={message.author}
-              authorLabel={getAuthorLabel(message.author)}
-              text={message.content}
-              timestamp={message.timestamp}
-              animate={animated.has(message.id)}
-              onAnimationComplete={() => props.onMessageAnimationComplete?.(message.id)}
-            >
-              {renderMessageControls(message)}
-            </Message>
-          )
-        }
+          if (message.type === 'message') {
+            return (
+              <Message
+                key={message.id}
+                author={message.author}
+                authorLabel={getAuthorLabel(message.author)}
+                text={message.content}
+                timestamp={message.timestamp}
+                animate={animated.has(message.id)}
+                onAnimationComplete={() => props.onMessageAnimationComplete?.(message.id)}
+              >
+                {renderMessageControls(message)}
+              </Message>
+            )
+          }
 
-        if (message.inputType === 'choice') {
-          return (
-            <Message
-              key={message.id}
-              author={message.author}
-              authorLabel={getAuthorLabel(message.author)}
-              text={message.prompt}
-              timestamp={message.timestamp}
-            >
-              <div className='borg-session__input-body'>
-                <ChoiceInput
-                  name={message.payload.name}
-                  placeholder={message.payload.placeholder}
-                  options={message.payload.options}
-                  value={props.choices[message.id] ?? null}
-                  onChange={(value) => props.onChoice(message.id, value)}
-                />
-              </div>
-            </Message>
-          )
-        }
+          if (message.inputType === 'choice') {
+            return (
+              <Message
+                key={message.id}
+                author={message.author}
+                authorLabel={getAuthorLabel(message.author)}
+                text={message.prompt}
+                timestamp={message.timestamp}
+              >
+                <div className='borg-session__input-body'>
+                  <ChoiceInput
+                    name={message.payload.name}
+                    placeholder={message.payload.placeholder}
+                    options={message.payload.options}
+                    value={props.choices[message.id] ?? null}
+                    onChange={(value) => props.onChoice(message.id, value)}
+                  />
+                </div>
+              </Message>
+            )
+          }
 
-        if (message.inputType === 'text') {
-          return (
-            <Message
-              key={message.id}
-              author={message.author}
-              authorLabel={getAuthorLabel(message.author)}
-              text={message.prompt}
-              timestamp={message.timestamp}
-            >
-              <div className='borg-session__input-body'>
-                <TextInput
-                  name={message.payload.name}
-                  placeholder={message.payload.placeholder}
-                  value={props.choices[message.id] ?? null}
-                  secret={message.payload.secret}
-                  onChange={(value) => props.onChoice(message.id, value)}
-                />
-              </div>
-            </Message>
-          )
-        }
+          if (message.inputType === 'text') {
+            return (
+              <Message
+                key={message.id}
+                author={message.author}
+                authorLabel={getAuthorLabel(message.author)}
+                text={message.prompt}
+                timestamp={message.timestamp}
+              >
+                <div className='borg-session__input-body'>
+                  <TextInput
+                    name={message.payload.name}
+                    placeholder={message.payload.placeholder}
+                    value={props.choices[message.id] ?? null}
+                    secret={message.payload.secret}
+                    onChange={(value) => props.onChoice(message.id, value)}
+                  />
+                </div>
+              </Message>
+            )
+          }
 
-        return null
-      })}
+          return null
+        })}
       </div>
       {composerMessage ? (
-        <div className='borg-session__composer'>
-          {composerMessage.content.trim().length > 0 ? (
-            <p className='borg-session__composer-text'>{composerMessage.content}</p>
-          ) : null}
-          {renderMessageControls(composerMessage)}
-        </div>
+        <div className='borg-session__composer'>{renderComposer(composerMessage)}</div>
       ) : null}
     </section>
   )
 }
 
 function OpenAiLogo() {
-  return <Icon icon='streamline-logos:openai-logo-solid' className='borg-inline-choice__icon' width={16} height={16} />
+  return (
+    <Icon
+      icon='streamline-logos:openai-logo-solid'
+      className='borg-inline-choice__icon'
+      width={16}
+      height={16}
+    />
+  )
 }
