@@ -5,8 +5,7 @@ use serde_json::{Value, json};
 
 use crate::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
-    ToolDescriptor,
-    UserBlock,
+    ToolDescriptor, UserBlock,
 };
 
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
@@ -15,6 +14,7 @@ const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/comple
 pub struct OpenAiProvider {
     http: Client,
     api_key: String,
+    chat_completions_url: String,
 }
 
 impl OpenAiProvider {
@@ -22,6 +22,16 @@ impl OpenAiProvider {
         Self {
             http: Client::new(),
             api_key: api_key.into(),
+            chat_completions_url: OPENAI_CHAT_COMPLETIONS_URL.to_string(),
+        }
+    }
+
+    pub fn new_with_base_url(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
+        let base = base_url.into().trim_end_matches('/').to_string();
+        Self {
+            http: Client::new(),
+            api_key: api_key.into(),
+            chat_completions_url: format!("{}/v1/chat/completions", base),
         }
     }
 }
@@ -41,13 +51,16 @@ impl Provider for OpenAiProvider {
         let api_key = req.api_key.as_deref().unwrap_or(&self.api_key);
         let response = self
             .http
-            .post(OPENAI_CHAT_COMPLETIONS_URL)
+            .post(&self.chat_completions_url)
             .bearer_auth(api_key)
             .json(&body)
             .send()
             .await?;
         if !response.status().is_success() {
-            return Err(anyhow!("openai chat completions returned {}", response.status()));
+            return Err(anyhow!(
+                "openai chat completions returned {}",
+                response.status()
+            ));
         }
 
         let payload: Value = response.json().await?;
