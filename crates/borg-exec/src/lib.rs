@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::{debug, trace};
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 const OPENAI_PROVIDER: &str = "openai";
 
@@ -92,6 +93,8 @@ pub struct InboxMessage {
     pub user_key: String,
     pub text: String,
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
     pub metadata: Value,
 }
 
@@ -104,15 +107,24 @@ impl ExecEngine {
         }
     }
 
-    pub async fn enqueue_user_message(&self, msg: InboxMessage) -> Result<String> {
+    pub async fn enqueue_user_message(
+        &self,
+        mut msg: InboxMessage,
+        requested_session_id: Option<String>,
+    ) -> Result<(String, String)> {
+        let session_id = requested_session_id.unwrap_or_else(|| format!("borg:session:{}", Uuid::now_v7()));
+        msg.session_id = Some(session_id.clone());
         let payload = serde_json::to_value(msg).context("failed to serialize inbox message")?;
-        self.db
+        let task_id = self
+            .db
             .enqueue_task(NewTask {
                 kind: TaskKind::UserMessage,
                 payload,
                 parent_task_id: None,
             })
-            .await
+            .await?;
+
+        Ok((task_id, session_id))
     }
 
     pub async fn run_once(&self) -> Result<bool> {
@@ -208,7 +220,11 @@ impl ExecEngine {
             "You are Borg's agent runtime. Use tools as needed, then respond clearly.",
         );
         let agent_runner = agent.clone();
-        let mut session = Session::new(task.task_id.clone(), agent, self.db.clone()).await?;
+        let session_id = msg
+            .session_id
+            .clone()
+            .unwrap_or_else(|| format!("borg:session:{}", Uuid::now_v7()));
+        let mut session = Session::new(session_id.clone(), agent, self.db.clone()).await?;
         session
             .add_message(Message::User {
                 content: msg.text.clone(),

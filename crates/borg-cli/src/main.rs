@@ -6,10 +6,11 @@ const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_ONBOARD_PORT: u16 = 3777;
 const DEFAULT_SCHEDULER_POLL_MS: u64 = 500;
 const HEALTH_STATUS_OK: &str = "ok";
+const BORG_SESSION_ID_HEADER: &str = "x-borg-session-id";
 use axum::{
     Json, Router,
     extract::{Path as AxumPath, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse},
     routing::{get, post},
 };
@@ -249,11 +250,31 @@ async fn ui_dashboard(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn http_inbox(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<InboxMessage>,
 ) -> impl IntoResponse {
     info!(target: "borg_cli", user_key = payload.user_key, text = payload.text, "received HTTP inbox event");
-    match state.exec.enqueue_user_message(payload).await {
-        Ok(task_id) => (StatusCode::OK, Json(json!({ "task_id": task_id }))).into_response(),
+    let requested_session_id = headers
+        .get(BORG_SESSION_ID_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    match state
+        .exec
+        .enqueue_user_message(payload, requested_session_id)
+        .await
+    {
+        Ok((task_id, session_id)) => {
+            let mut response = (
+                StatusCode::OK,
+                Json(json!({ "task_id": task_id, "session_id": session_id })),
+            )
+                .into_response();
+            if let Ok(value) = HeaderValue::from_str(&session_id) {
+                response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
+            }
+            response
+        }
         Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
 }
