@@ -13,3 +13,6 @@ tracing.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 borg-agent = { path = "../borg-agent" }
 tokio.workspace = true
+oxc_allocator.workspace = true
+oxc_parser.workspace = true
+oxc_span.workspace = true

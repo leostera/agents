@@ -14,6 +14,7 @@ use crate::ffi::install_ffi;
 use crate::ops::default_ffi_handlers;
 use crate::sdk::{ApiCapability, search_capabilities};
 use crate::types::{FfiHandler, FfiResult};
+use crate::checker::precheck_borg_sdk_usage;
 
 const SDK_BUNDLE: &str = include_str!(concat!(env!("OUT_DIR"), "/borg_agent_sdk.bundle.js"));
 static RUNTIME_EXECUTION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -61,6 +62,7 @@ impl CodeModeRuntime {
 
     pub fn execute(&self, code: &str) -> Result<ExecutionResult> {
         validate_code_mode_shape(code)?;
+        precheck_borg_sdk_usage(code)?;
         let _runtime_lock = runtime_execution_lock()
             .lock()
             .map_err(|_| anyhow!("code-mode runtime execution lock poisoned"))?;

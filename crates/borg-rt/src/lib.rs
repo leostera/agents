@@ -1,3 +1,4 @@
+mod checker;
 mod engine;
 mod ffi;
 mod ops;

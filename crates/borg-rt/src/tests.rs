@@ -83,6 +83,37 @@ fn execute_invalid_borgos_symbol_returns_corrective_hint() {
 }
 
 #[test]
+fn execute_rejects_invalid_borg_ltm_namespace_before_runtime() {
+    let rt = CodeModeRuntime::default();
+    let err = rt
+        .execute(
+            "async () => { const memoryStorage = Borg.LTM; await memoryStorage.store('leo', 'realName', 'leandro'); return 'ok'; }",
+        )
+        .unwrap_err();
+    let message = err.to_string();
+    assert!(
+        message.contains("Borg.LTM") && message.contains("Borg.Memory"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn execute_allows_valid_borg_memory_calls() {
+    let rt = CodeModeRuntime::default().with_ffi_handler("memory__state_facts", |_args| {
+        Ok(json!({
+            "tx_id": "borg:tx:test",
+            "facts": []
+        }))
+    });
+    let result = rt
+        .execute(
+            "async () => { return Borg.Memory.stateFacts([{ source: 'borg:message:abc', entity: 'borg:user:leo', field: 'borg:field:real_name', value: { Text: 'Leandro' } }]); }",
+        )
+        .unwrap();
+    assert_eq!(result.result_json.get("tx_id"), Some(&json!("borg:tx:test")));
+}
+
+#[test]
 fn ffi_handler_panic_is_reported_as_runtime_error() {
     let rt = CodeModeRuntime::default().with_ffi_handler("os__ls", |_args| {
         panic!("simulated ffi panic");
