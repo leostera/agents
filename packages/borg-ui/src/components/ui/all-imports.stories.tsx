@@ -1,4 +1,5 @@
-import type { Meta, StoryObj } from '@storybook/react'
+import React from 'react'
+import type { Meta, StoryObj } from '@storybook/react-vite'
 
 const modules = import.meta.glob(['./*.tsx', '!./*.stories.tsx'], { eager: true })
 

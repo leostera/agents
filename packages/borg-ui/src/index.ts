@@ -1,3 +1,4 @@
+import './index.css'
 import './styles.css'
 
 export { Session } from './components/Session'
