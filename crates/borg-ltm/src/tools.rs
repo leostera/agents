@@ -8,7 +8,56 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "saveFacts".to_string(),
-            description: "Persist long-term memory facts. Input must be {\"facts\": FactInput[]}.".to_string(),
+            description: r#"
+This tool lets you persist information into Borg's long-term memory as durable facts.
+
+When to use:
+- The user shares a stable personal fact or preference worth remembering.
+- The user gives reusable environment details (paths, services, IDs, conventions).
+- You infer a useful, low-risk fact from explicit user statements.
+
+Why use it:
+- Future turns can recall this information via `searchMemory`.
+- Facts are durable across sessions and improve personalization.
+- Saving in batches reduces overhead and keeps memory writes coherent.
+
+How to use it well:
+- Save facts eagerly and granularly.
+- Prefer multiple small facts in one call over one large opaque blob.
+- Use canonical URIs for `source`, `entity`, and `field`.
+- Include `source` whenever you have message provenance.
+
+Input shape:
+{ "facts": FactInput[] }
+
+Examples:
+{
+  "facts": [
+    {
+      "source": "borg:message:telegram_2654566_13842",
+      "entity": "borg:user:leostera",
+      "field": "borg:field:full_name",
+      "value": { "Text": "Leandro Ostera Villalva" }
+    },
+    {
+      "source": "borg:message:telegram_2654566_13842",
+      "entity": "borg:user:leostera",
+      "field": "borg:field:nickname",
+      "value": { "Text": "Leo" }
+    }
+  ]
+}
+
+{
+  "facts": [
+    {
+      "entity": "borg:user:leostera",
+      "field": "borg:preference:favorite_movie",
+      "value": { "Text": "Minions" }
+    }
+  ]
+}
+"#.to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -23,7 +72,44 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "searchMemory".to_string(),
-            description: "Search long-term memory entities. Input must be {\"query\": SearchQuery}.".to_string(),
+            description: r#"
+This tool searches Borg's long-term memory for previously saved entities and facts.
+
+When to use:
+- Before answering questions about user preferences, profile, or prior context.
+- Before asking the user to repeat information that might already be known.
+- Before deciding to write new facts, to avoid duplication.
+
+Why use it:
+- Improves answer quality with grounded recalled data.
+- Reduces unnecessary follow-up questions.
+- Keeps conversations consistent across sessions.
+
+How to use it well:
+- Start with a focused `q` query and sensible `limit`.
+- Add `ns`/`kind` filters when you need narrower results.
+- Use `name.like` when you have partial names.
+
+Input shape:
+{ "query": SearchQuery }
+
+Examples:
+{
+  "query": {
+    "q": "girlfriend",
+    "limit": 10
+  }
+}
+
+{
+  "query": {
+    "ns": "borg",
+    "kind": "user",
+    "name": { "like": "leo" },
+    "limit": 5
+  }
+}
+"#.to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
