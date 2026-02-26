@@ -162,6 +162,25 @@ impl TelegramPort {
                         }
                     };
                     if commands.is_command(text) {
+                        if let Some(inbound) = PortMessage::from_telegram(&message) {
+                            if let Some(session_id) = inbound.session_id {
+                                if let Err(err) = exec
+                                    .merge_port_message_metadata(
+                                        "telegram",
+                                        &session_id,
+                                        &inbound.metadata,
+                                    )
+                                    .await
+                                {
+                                    bot.send_message(
+                                        message.chat.id,
+                                        format!("Failed to update session context: {err}"),
+                                    )
+                                    .await?;
+                                    return Ok(());
+                                }
+                            }
+                        }
                         let response = match commands.run(text).await {
                             Ok(Some(value)) => value,
                             Ok(None) => String::new(),
@@ -290,7 +309,7 @@ fn telegram_port_info(message: &Message) -> String {
 }
 
 fn telegram_help_text() -> &'static str {
-    "Available commands:\n/start - Show greeting\n/help - Show this help\n/compact - Compact current session context\n/port - Show current port info\n/participants - Show participants seen in this session\n/context - Dump the current context window"
+    "Available commands:\n/start - Show greeting\n/help - Show this help\n/compact - Compact current session context\n/port - Show current port info\n/participants - Show participants seen in this session\n/context - Dump the current context window\n/reset - Clear this session history and context"
 }
 
 async fn refresh_telegram_port_session_contexts(exec: &ExecEngine, bot: &Bot) -> Result<()> {
@@ -318,9 +337,14 @@ async fn refresh_telegram_port_session_contexts(exec: &ExecEngine, bot: &Bot) ->
             "chat_id": chat.id.0,
             "chat_type": telegram_chat_type_label(&chat),
             "participants": {},
+            "member_count": Value::Null,
             "last_message_id": Value::Null,
             "last_thread_id": Value::Null,
         });
+
+        if let Ok(member_count) = bot.get_chat_member_count(chat.id).await {
+            snapshot["member_count"] = json!(member_count);
+        }
 
         if chat.is_private() {
             let id = chat.id.0.to_string();
@@ -376,6 +400,10 @@ fn merge_telegram_session_context(existing: Option<Value>, snapshot: Value) -> V
         }
     }
 
+    if snapshot.get("member_count").is_some() {
+        out["member_count"] = snapshot["member_count"].clone();
+    }
+
     out
 }
 
@@ -410,6 +438,7 @@ fn build_telegram_command_registry(
         .add_command("compact", |req| async move { command_compact(req).await })
         .add_command("participants", |req| async move { command_participants(req).await })
         .add_command("context", |req| async move { command_context(req).await })
+        .add_command("reset", |req| async move { command_reset(req).await })
         .build()
 }
 
@@ -456,6 +485,20 @@ async fn command_context(req: CommandRequest<TelegramCommandState>) -> Result<St
     Ok(dump)
 }
 
+async fn command_reset(req: CommandRequest<TelegramCommandState>) -> Result<String> {
+    let session_id = telegram_session_id(&req.state.message)?;
+    let deleted_messages = req.state.exec.clear_session_history(&session_id).await?;
+    let _ = req
+        .state
+        .exec
+        .clear_port_session_context("telegram", &session_id)
+        .await?;
+    Ok(format!(
+        "Reset complete. Cleared {} message(s) and Telegram session context.",
+        deleted_messages
+    ))
+}
+
 fn telegram_session_id(message: &Message) -> Result<Uri> {
     Uri::from_parts(
         "borg",
@@ -490,6 +533,9 @@ fn format_participants_message(telegram_ctx: Option<&Value>, current_message: &M
     }
 
     let mut out = String::from("Participants:");
+    if let Some(member_count) = telegram_ctx.and_then(|ctx| ctx.get("member_count")).and_then(Value::as_i64) {
+        out.push_str(&format!(" (known {} / reported {})", participants.len(), member_count));
+    }
     for participant in participants {
         out.push_str("\n- ");
         out.push_str(&participant);

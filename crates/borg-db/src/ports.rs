@@ -217,4 +217,16 @@ impl BorgDb {
         }
         Ok(out)
     }
+
+    pub async fn clear_port_session_context(&self, port: &str, session_id: &Uri) -> Result<u64> {
+        let deleted = self
+            .conn
+            .execute(
+                "DELETE FROM port_session_ctx WHERE port = ?1 AND session_id = ?2",
+                (port.to_string(), session_id.to_string()),
+            )
+            .await
+            .context("failed to clear port session context")?;
+        Ok(deleted)
+    }
 }

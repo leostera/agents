@@ -122,7 +122,8 @@ impl BorgExecutor {
             "processing inbound port message on long-lived session"
         );
 
-        self.merge_port_context(port, &session_id, &msg.metadata).await?;
+        self.merge_port_message_metadata(port, &session_id, &msg.metadata)
+            .await?;
         let output = self.run_session_turn(&msg, None).await?;
         Ok(SessionTurnOutput {
             session_id,
@@ -211,6 +212,23 @@ impl BorgExecutor {
 
     pub async fn list_port_session_ids(&self, port: &str) -> Result<Vec<Uri>> {
         self.db.list_port_session_ids(port).await
+    }
+
+    pub async fn merge_port_message_metadata(
+        &self,
+        port: &str,
+        session_id: &Uri,
+        metadata: &Value,
+    ) -> Result<()> {
+        self.merge_port_context(port, session_id, metadata).await
+    }
+
+    pub async fn clear_session_history(&self, session_id: &Uri) -> Result<u64> {
+        self.db.clear_session_history(session_id).await
+    }
+
+    pub async fn clear_port_session_context(&self, port: &str, session_id: &Uri) -> Result<u64> {
+        self.db.clear_port_session_context(port, session_id).await
     }
 
     pub async fn run(self) -> Result<()> {
