@@ -166,6 +166,8 @@ declare global {
      * `Borg.URI.parse(raw)` when normalizing existing raw strings.
      *
      * Fact modeling guidelines:
+     * - Facts are persisted ONLY when calling `Borg.Memory.stateFacts([...])`.
+     * - Returning a JS object like `{ entity, field, value }` does NOT persist anything.
      * - Prefer many small atomic facts over one large compound fact.
      * - Keep one relationship per fact row.
      * - Reuse stable entity URIs across facts (do not create duplicates for the same person/object).
@@ -183,6 +185,9 @@ declare global {
      *   { source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"), entity: Borg.URI.parse("borg:user:leostera"), field: Borg.URI.parse("borg:relationship:girlfriend"), value: { Ref: Borg.URI.parse("borg:user:mariana_zabrodska") } },
      *   { source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"), entity: Borg.URI.parse("borg:user:mariana_zabrodska"), field: Borg.URI.parse("borg:relationship:boyfriend"), value: { Ref: Borg.URI.parse("borg:user:leostera") } }
      * ])`
+     *
+     * Anti-example (does not persist):
+     * `async () => { return { entity: "User:leostera", field: "full_name", value: "Leandro Ostera" }; }`
      */
     stateFacts(facts: BorgFactInput[]): BorgStateFactsResult;
     /**
