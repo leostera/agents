@@ -1,17 +1,19 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use borg_cmd::{CommandRegistry, CommandRequest};
 use borg_core::Uri;
 use borg_exec::{ExecEngine, UserMessage};
-use serde_json::{Value, json};
+use serde_json::json;
 use teloxide::prelude::*;
-use teloxide::types::{ChatAction, ChatFullInfo, ParseMode};
-use teloxide::utils::html;
-use tokio::task::JoinHandle;
-use tokio::time::{Duration, sleep};
-use tracing::warn;
 
 use crate::{Port, PortConfig, PortMessage};
+
+mod commands;
+mod context_sync;
+mod formatting;
+mod typing;
+
+use commands::build_telegram_command_registry;
+use typing::TypingLoop;
 
 const TELEGRAM_USER_KEY_PREFIX: &str = "telegram";
 const TELEGRAM_MESSAGE_LIMIT: usize = 4000;
@@ -85,10 +87,7 @@ impl PortMessage {
 impl Port for TelegramPort {
     fn init(config: PortConfig) -> Result<Self> {
         match config {
-            PortConfig::Telegram { exec, bot_token } => Ok(Self {
-                exec,
-                bot: Bot::new(bot_token),
-            }),
+            PortConfig::Telegram { exec, bot_token } => Self::new(exec, bot_token),
             _ => Err(anyhow!("invalid config for TelegramPort")),
         }
     }
@@ -129,19 +128,26 @@ impl Port for TelegramPort {
 }
 
 impl TelegramPort {
+    pub fn new(exec: ExecEngine, bot_token: impl Into<String>) -> Result<Self> {
+        Ok(Self {
+            exec,
+            bot: Bot::new(bot_token),
+        })
+    }
+
     pub async fn run(self) -> Result<()> {
-        let exec = self.exec.clone();
-        let bot = self.bot.clone();
-        if let Err(err) = refresh_telegram_port_session_contexts(&exec, &bot).await {
-            warn!(
+        let port = self.clone();
+        if let Err(err) = port.refresh_session_contexts().await {
+            tracing::warn!(
                 target: "borg_ports",
                 error = %err,
                 "failed refreshing telegram session contexts at startup"
             );
         }
 
-        teloxide::repl(bot, move |bot: Bot, message: Message| {
-            let exec = exec.clone();
+        teloxide::repl(self.bot.clone(), move |bot: Bot, message: Message| {
+            let command_port = port.clone();
+            let exec = command_port.exec.clone();
             async move {
                 let _typing = TypingLoop::start(bot.clone(), message.chat.id);
 
@@ -181,14 +187,17 @@ impl TelegramPort {
                                 }
                             }
                         }
-                        let response = match commands.run(text).await {
-                            Ok(Some(value)) => value,
-                            Ok(None) => String::new(),
-                            Err(err) => format!("Command error: {err}"),
+                        let response = if Self::is_help_command(text) {
+                            commands.help()
+                        } else {
+                            match commands.run(text).await {
+                                Ok(Some(value)) => value,
+                                Ok(None) => String::new(),
+                                Err(err) => format!("Command error: {err}"),
+                            }
                         };
                         if !response.is_empty() {
-                            bot.send_message(message.chat.id, truncate_telegram_message(response))
-                                .await?;
+                            command_port.send_text(message.chat.id, response).await?;
                         }
                         return Ok(());
                     }
@@ -215,19 +224,18 @@ impl TelegramPort {
                     }
 
                     if let Some(tool_calls) = response.tool_calls {
-                        for action in tool_calls {
-                            let formatted = format_tool_action_message(&action);
-                            bot.send_message(message.chat.id, truncate_telegram_message(formatted))
-                                .parse_mode(ParseMode::Html)
-                                .await?;
+                        for call in tool_calls {
+                            let formatted = port.format_tool_action_message(&call);
+                            port.send_text(message.chat.id, formatted).await?;
+                            let output = format!("Result:\n{}", call.output_message().trim());
+                            port.send_text(message.chat.id, output).await?;
                         }
                     }
 
                     let reply = response
                         .reply
                         .unwrap_or_else(|| "Message processed, no reply generated.".to_string());
-                    bot.send_message(message.chat.id, truncate_telegram_message(reply))
-                        .await?;
+                    port.send_text(message.chat.id, reply).await?;
 
                     if let Some(session_id) = response.session_id {
                         if let Ok(percent) = port
@@ -251,393 +259,15 @@ impl TelegramPort {
 
         Ok(())
     }
-}
 
-struct TypingLoop {
-    handle: JoinHandle<()>,
-}
-
-impl TypingLoop {
-    fn start(bot: Bot, chat_id: ChatId) -> Self {
-        let handle = tokio::spawn(async move {
-            loop {
-                let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
-                sleep(Duration::from_secs(TELEGRAM_TYPING_REFRESH_SECS)).await;
-            }
-        });
-        Self { handle }
-    }
-}
-
-impl Drop for TypingLoop {
-    fn drop(&mut self) {
-        self.handle.abort();
-    }
-}
-
-fn truncate_telegram_message(message: String) -> String {
-    if message.chars().count() <= TELEGRAM_MESSAGE_LIMIT {
-        return message;
-    }
-
-    let mut out = String::new();
-    for ch in message
-        .chars()
-        .take(TELEGRAM_MESSAGE_LIMIT.saturating_sub(3))
-    {
-        out.push(ch);
-    }
-    out.push_str("...");
-    out
-}
-
-fn telegram_port_info(message: &Message) -> String {
-    let chat_id = message.chat.id.0;
-    let chat_type = if message.chat.is_private() {
-        "private"
-    } else if message.chat.is_group() {
-        "group"
-    } else if message.chat.is_supergroup() {
-        "supergroup"
-    } else if message.chat.is_channel() {
-        "channel"
-    } else {
-        "unknown"
-    };
-    let session_uri = format!("borg:session:telegram_{chat_id}");
-    format!("Port: telegram\nChat: {chat_type}\nSession: {session_uri}")
-}
-
-fn telegram_help_text() -> &'static str {
-    "Available commands:\n/start - Show greeting\n/help - Show this help\n/compact - Compact current session context\n/port - Show current port info\n/participants - Show participants seen in this session\n/context - Dump the current context window\n/reset - Clear this session history and context"
-}
-
-async fn refresh_telegram_port_session_contexts(exec: &ExecEngine, bot: &Bot) -> Result<()> {
-    let sessions = exec.list_port_session_ids("telegram").await?;
-    for session_id in sessions {
-        let Some(chat_id) = telegram_chat_id_from_session_id(&session_id) else {
-            continue;
+    fn is_help_command(input: &str) -> bool {
+        let Some(first_token) = input.split_whitespace().next() else {
+            return false;
         };
-
-        let chat = match bot.get_chat(ChatId(chat_id)).await {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    target: "borg_ports",
-                    session_id = %session_id,
-                    chat_id,
-                    error = %err,
-                    "failed to fetch telegram chat during startup refresh"
-                );
-                continue;
-            }
-        };
-
-        let mut snapshot = json!({
-            "chat_id": chat.id.0,
-            "chat_type": telegram_chat_type_label(&chat),
-            "participants": {},
-            "member_count": Value::Null,
-            "last_message_id": Value::Null,
-            "last_thread_id": Value::Null,
-        });
-
-        if let Ok(member_count) = bot.get_chat_member_count(chat.id).await {
-            snapshot["member_count"] = json!(member_count);
+        if !first_token.starts_with('/') {
+            return false;
         }
-
-        if chat.is_private() {
-            let id = chat.id.0.to_string();
-            snapshot["participants"][&id] = json!({
-                "id": id,
-                "username": Value::Null,
-                "first_name": Value::Null,
-                "last_name": Value::Null
-            });
-        }
-
-        if let Ok(admins) = bot.get_chat_administrators(chat.id).await {
-            for admin in admins {
-                let user = admin.user;
-                let id = user.id.0.to_string();
-                snapshot["participants"][&id] = json!({
-                    "id": id,
-                    "username": user.username,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name
-                });
-            }
-        }
-
-        let merged = merge_telegram_session_context(
-            exec.get_port_session_context("telegram", &session_id).await?,
-            snapshot,
-        );
-        exec.upsert_port_session_context("telegram", &session_id, &merged)
-            .await?;
+        let command = first_token.trim_start_matches('/').split('@').next();
+        matches!(command, Some("help"))
     }
-    Ok(())
-}
-
-fn merge_telegram_session_context(existing: Option<Value>, snapshot: Value) -> Value {
-    let mut out = existing.unwrap_or_else(|| json!({}));
-    if out.get("participants").and_then(Value::as_object).is_none() {
-        out["participants"] = json!({});
-    }
-
-    out["chat_id"] = snapshot
-        .get("chat_id")
-        .cloned()
-        .unwrap_or(Value::Null);
-    out["chat_type"] = snapshot
-        .get("chat_type")
-        .cloned()
-        .unwrap_or_else(|| json!("unknown"));
-
-    if let Some(snapshot_participants) = snapshot.get("participants").and_then(Value::as_object) {
-        for (id, participant) in snapshot_participants {
-            out["participants"][id] = participant.clone();
-        }
-    }
-
-    if snapshot.get("member_count").is_some() {
-        out["member_count"] = snapshot["member_count"].clone();
-    }
-
-    out
-}
-
-fn telegram_chat_id_from_session_id(session_id: &Uri) -> Option<i64> {
-    let raw = session_id.as_str();
-    let prefix = "borg:session:telegram_";
-    let value = raw.strip_prefix(prefix)?;
-    value.parse::<i64>().ok()
-}
-
-fn telegram_chat_type_label(chat: &ChatFullInfo) -> &'static str {
-    if chat.is_private() {
-        "private"
-    } else if chat.is_group() {
-        "group"
-    } else if chat.is_supergroup() {
-        "supergroup"
-    } else if chat.is_channel() {
-        "channel"
-    } else {
-        "unknown"
-    }
-}
-
-fn build_telegram_command_registry(
-    state: TelegramCommandState,
-) -> Result<CommandRegistry<TelegramCommandState, String>> {
-    CommandRegistry::build(state)
-        .add_command("start", |req| async move { Ok(command_start(req)) })
-        .add_command("help", |req| async move { Ok(command_help(req)) })
-        .add_command("port", |req| async move { Ok(command_port(req)) })
-        .add_command("compact", |req| async move { command_compact(req).await })
-        .add_command("participants", |req| async move { command_participants(req).await })
-        .add_command("context", |req| async move { command_context(req).await })
-        .add_command("reset", |req| async move { command_reset(req).await })
-        .build()
-}
-
-fn command_start(req: CommandRequest<TelegramCommandState>) -> String {
-    let _ = req;
-    TELEGRAM_START_GREETING.to_string()
-}
-
-fn command_help(req: CommandRequest<TelegramCommandState>) -> String {
-    let _ = req;
-    telegram_help_text().to_string()
-}
-
-fn command_port(req: CommandRequest<TelegramCommandState>) -> String {
-    telegram_port_info(&req.state.message)
-}
-
-async fn command_compact(req: CommandRequest<TelegramCommandState>) -> Result<String> {
-    let session_id = telegram_session_id(&req.state.message)?;
-    let kept = req.state.exec.compact_session(&session_id).await?;
-    Ok(format!(
-        "Compacted session. Kept {} context message(s).",
-        kept
-    ))
-}
-
-async fn command_participants(req: CommandRequest<TelegramCommandState>) -> Result<String> {
-    let session_id = telegram_session_id(&req.state.message)?;
-    let ctx = req
-        .state
-        .exec
-        .get_port_session_context("telegram", &session_id)
-        .await?;
-    Ok(format_participants_message(
-        ctx.as_ref(),
-        &req.state.message,
-    ))
-}
-
-async fn command_context(req: CommandRequest<TelegramCommandState>) -> Result<String> {
-    let session_id = telegram_session_id(&req.state.message)?;
-    let context = req.state.exec.context_window_for_session(&session_id).await?;
-    let dump = serde_json::to_string_pretty(&context)?;
-    Ok(dump)
-}
-
-async fn command_reset(req: CommandRequest<TelegramCommandState>) -> Result<String> {
-    let session_id = telegram_session_id(&req.state.message)?;
-    let deleted_messages = req.state.exec.clear_session_history(&session_id).await?;
-    let _ = req
-        .state
-        .exec
-        .clear_port_session_context("telegram", &session_id)
-        .await?;
-    Ok(format!(
-        "Reset complete. Cleared {} message(s) and Telegram session context.",
-        deleted_messages
-    ))
-}
-
-fn telegram_session_id(message: &Message) -> Result<Uri> {
-    Uri::from_parts(
-        "borg",
-        "session",
-        Some(&format!("telegram_{}", message.chat.id.0)),
-    )
-    .map_err(Into::into)
-}
-
-fn format_participants_message(telegram_ctx: Option<&Value>, current_message: &Message) -> String {
-    let mut participants = std::collections::BTreeSet::<String>::new();
-    if let Some(current_sender) = telegram_sender_label(current_message) {
-        participants.insert(current_sender);
-    }
-
-    if let Some(ctx) = telegram_ctx {
-        if let Some(map) = ctx.get("participants").and_then(Value::as_object) {
-            for participant in map.values() {
-                let label = format_sender_label(
-                    participant.get("id").and_then(Value::as_str),
-                    participant.get("username").and_then(Value::as_str),
-                    participant.get("first_name").and_then(Value::as_str),
-                    participant.get("last_name").and_then(Value::as_str),
-                );
-                participants.insert(label);
-            }
-        }
-    }
-
-    if participants.is_empty() {
-        return "Participants: none seen in context yet".to_string();
-    }
-
-    let mut out = String::from("Participants:");
-    if let Some(member_count) = telegram_ctx.and_then(|ctx| ctx.get("member_count")).and_then(Value::as_i64) {
-        out.push_str(&format!(" (known {} / reported {})", participants.len(), member_count));
-    }
-    for participant in participants {
-        out.push_str("\n- ");
-        out.push_str(&participant);
-    }
-    out
-}
-
-fn telegram_sender_label(message: &Message) -> Option<String> {
-    let sender = message.from.as_ref()?;
-    Some(format_sender_label(
-        Some(&sender.id.0.to_string()),
-        sender.username.as_deref(),
-        Some(sender.first_name.as_str()),
-        sender.last_name.as_deref(),
-    ))
-}
-
-fn format_sender_label(
-    id: Option<&str>,
-    username: Option<&str>,
-    first_name: Option<&str>,
-    last_name: Option<&str>,
-) -> String {
-    let id = id.unwrap_or("unknown");
-    let username = username.map(|value| format!("@{value}"));
-    let full_name = format!(
-        "{} {}",
-        first_name.unwrap_or_default(),
-        last_name.unwrap_or_default()
-    )
-    .trim()
-    .to_string();
-    match (full_name.is_empty(), username) {
-        (false, Some(username)) => format!("{full_name} {username} ({id})"),
-        (false, None) => format!("{full_name} ({id})"),
-        (true, Some(username)) => format!("{username} ({id})"),
-        (true, None) => format!("({id})"),
-    }
-}
-
-fn format_tool_action_message(action: &str) -> String {
-    let Some((tool_name, raw_args)) = action.split_once(' ') else {
-        return format!("<b>Action:</b> {}", html::escape(action));
-    };
-    let tool_label = humanize_tool_name(tool_name);
-    let parsed_args = serde_json::from_str::<Value>(raw_args).ok();
-
-    if tool_name == "execute" {
-        if let Some(code) = parsed_args
-            .as_ref()
-            .and_then(|args| args.get("code"))
-            .and_then(Value::as_str)
-        {
-            let title = infer_execute_action_title(code);
-            return format!(
-                "<b>Action:</b> {}\n<pre><code>{}</code></pre>",
-                html::escape(title),
-                html::escape(code.trim())
-            );
-        }
-    }
-
-    let pretty_args = parsed_args
-        .as_ref()
-        .and_then(|value| serde_json::to_string_pretty(value).ok())
-        .unwrap_or_else(|| raw_args.to_string());
-    format!(
-        "<b>Action:</b> {}\n<pre><code>{}</code></pre>",
-        html::escape(tool_label),
-        html::escape(pretty_args.trim())
-    )
-}
-
-fn humanize_tool_name(tool_name: &str) -> &'static str {
-    match tool_name {
-        "execute" => "Running code",
-        "memory__search" => "Searching memory",
-        "memory__state_facts" => "Writing memory facts",
-        _ => "Running tool",
-    }
-}
-
-fn infer_execute_action_title(code: &str) -> &'static str {
-    let lower = code.to_ascii_lowercase();
-    if lower.contains("borg.os.ls") && lower.contains("movie") {
-        return "Scanning for movies";
-    }
-    if lower.contains("borg.os.ls") {
-        return "Scanning files";
-    }
-    if lower.contains("borg.memory.search") || lower.contains("memory__search") {
-        return "Searching memory";
-    }
-    if lower.contains("borg.memory.statefacts") || lower.contains("memory__state_facts") {
-        return "Saving to memory";
-    }
-    "Running code"
-}
-
-pub fn init_telegram_port(exec: ExecEngine, bot_token: impl Into<String>) -> Result<TelegramPort> {
-    TelegramPort::init(PortConfig::Telegram {
-        exec,
-        bot_token: bot_token.into(),
-    })
 }

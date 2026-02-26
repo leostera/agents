@@ -1,57 +1,190 @@
+type BorgUri = `${string}:${string}:${string}`;
+
+type PathLike = string;
+
+type BorgDirEntryKind = "file" | "directory" | "symlink" | "other";
+
+interface BorgDirEntry {
+  path: string;
+  name: string;
+  kind: BorgDirEntryKind;
+}
+
+interface BorgLsOptions {
+  absolute?: boolean;
+  recursive?: boolean;
+  maxDepth?: number;
+  includeHidden?: boolean;
+  withFileTypes?: boolean;
+}
+
+interface BorgLsResult {
+  cwd: string;
+  basePath: string;
+  entries: string[];
+  detailedEntries: BorgDirEntry[];
+}
+
+interface BorgFetchInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string | Record<string, unknown> | unknown[] | null;
+  timeoutMs?: number;
+}
+
+interface BorgFetchResponse {
+  ok: boolean;
+  status: number;
+  status_text: string;
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+  json: unknown | null;
+}
+
+type BorgFactValue =
+  | { Text: string }
+  | { Integer: number }
+  | { Float: number }
+  | { Boolean: boolean }
+  | { Bytes: number[] }
+  | { Ref: BorgUri };
+
+interface BorgFactInput {
+  source?: BorgUri;
+  entity: BorgUri;
+  field: BorgUri;
+  value: BorgFactValue;
+}
+
+interface BorgStateFactsResult {
+  tx_id: BorgUri;
+  facts: unknown[];
+}
+
+interface BorgNameFilter {
+  like: string;
+}
+
+interface BorgSearchQuery {
+  ns?: string;
+  kind?: string;
+  name?: BorgNameFilter;
+  q?: string;
+  limit?: number;
+}
+
+interface BorgSearchResults {
+  entities: unknown[];
+}
+
+interface BorgOS {
+  ls(path?: PathLike, options?: BorgLsOptions): BorgLsResult;
+}
+
+interface BorgMemory {
+  stateFacts(facts: BorgFactInput[]): BorgStateFactsResult;
+  search(query: BorgSearchQuery): BorgSearchResults;
+}
+
+interface BorgCurrentMessage {
+  uri(): BorgUri | null;
+}
+
+interface BorgMessage {
+  currentMessage(): BorgCurrentMessage;
+}
+
+interface BorgUser {
+  uri(): BorgUri | null;
+}
+
+interface BorgSdk {
+  OS: BorgOS;
+  Memory: BorgMemory;
+  Message: BorgMessage;
+  me(): BorgUser;
+  fetch(url: string, init?: BorgFetchInit): Promise<BorgFetchResponse>;
+}
+
 const ffiCall = (globalThis as { ffi?: (opName: string, args: unknown[]) => unknown }).ffi;
 
 if (typeof ffiCall !== "function") {
   throw new Error("borg-agent-sdk requires global ffi(opName, args)");
 }
 
-function sdkFetch(...args: unknown[]): unknown {
+function sdkFetch(...args: unknown[]): Promise<BorgFetchResponse> {
   const nativeFetch = (globalThis as { fetch?: (...fetchArgs: unknown[]) => unknown }).fetch;
   if (typeof nativeFetch === "function") {
-    return nativeFetch(...args);
+    return Promise.resolve(nativeFetch(...args) as Promise<BorgFetchResponse>);
   }
-  return ffiCall("net__fetch", args);
+  return Promise.resolve(ffiCall("net__fetch", args) as BorgFetchResponse);
 }
 
-const OS = {
-  ls: (...args: unknown[]) => ffiCall("os__ls", args),
-};
+function ffiInvoke<T>(opName: string, args: unknown[]): T {
+  return ffiCall(opName, args) as T;
+}
 
-const Memory = {
-  stateFacts: (...args: unknown[]) => ffiCall("memory__state_facts", args),
-  search: (...args: unknown[]) => ffiCall("memory__search", args),
-};
+function currentContext(): Record<string, unknown> {
+  return ffiInvoke<Record<string, unknown>>("context__current", []);
+}
 
-const URI = {
-  new: (ns: string, kind: string, id?: string) => {
-    if (!ns || !kind) {
-      throw new Error("Borg.URI.new requires non-empty ns and kind");
+const OS: BorgOS = {
+  ls(path?: PathLike, options?: BorgLsOptions): BorgLsResult {
+    const args: unknown[] = [];
+    if (path !== undefined) {
+      args.push(path);
     }
-    const value =
-      typeof id === "string" && id.length > 0
-        ? id
-        : typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    return `${ns}:${kind}:${value}`;
-  },
-  parse: (raw: string) => {
-    if (typeof raw !== "string") {
-      throw new Error("Borg.URI.parse requires a string");
+    if (options !== undefined) {
+      args.push(options);
     }
-    const value = raw.trim();
-    const parts = value.split(":");
-    if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
-      throw new Error(`Invalid Borg URI: ${raw}`);
-    }
-    return `${parts[0]}:${parts[1]}:${parts[2]}`;
+    return ffiInvoke<BorgLsResult>("os__ls", args);
   },
 };
 
-const Borg = Object.freeze({
+const Memory: BorgMemory = {
+  stateFacts(facts: BorgFactInput[]): BorgStateFactsResult {
+    return ffiInvoke<BorgStateFactsResult>("memory__state_facts", [facts]);
+  },
+  search(query: BorgSearchQuery): BorgSearchResults {
+    return ffiInvoke<BorgSearchResults>("memory__search", [query]);
+  },
+};
+
+const Message: BorgMessage = {
+  currentMessage(): BorgCurrentMessage {
+    const context = currentContext();
+    const currentMessageId = context?.current_message_id;
+    const uri =
+      typeof currentMessageId === "string"
+        ? (currentMessageId as BorgUri)
+        : null;
+    return Object.freeze({
+      uri(): BorgUri | null {
+        return uri;
+      },
+    });
+  },
+};
+
+const Borg: BorgSdk = Object.freeze({
   OS,
   Memory,
-  URI,
-  fetch: sdkFetch,
+  Message,
+  me(): BorgUser {
+    const context = currentContext();
+    const currentUserId = context?.current_user_id;
+    const uri =
+      typeof currentUserId === "string" ? (currentUserId as BorgUri) : null;
+    return Object.freeze({
+      uri(): BorgUri | null {
+        return uri;
+      },
+    });
+  },
+  fetch(url: string, init?: BorgFetchInit): Promise<BorgFetchResponse> {
+    return sdkFetch(url, init);
+  },
 });
 
 (globalThis as { Borg?: unknown }).Borg = Borg;

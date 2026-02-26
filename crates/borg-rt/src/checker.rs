@@ -4,10 +4,10 @@ use oxc_parser::Parser;
 use oxc_span::SourceType;
 
 const BORG_SUGGESTION_MEMORY: &str = "Hint: use `Borg.Memory.*`, not `Borg.LTM.*`.";
-const BORG_ALLOWED_ROOTS: &[&str] = &["OS", "Memory", "URI", "fetch"];
+const BORG_ALLOWED_ROOTS: &[&str] = &["OS", "Memory", "Message", "me", "fetch"];
 const BORG_ALLOWED_MEMORY_METHODS: &[&str] = &["stateFacts", "search"];
 const BORG_ALLOWED_OS_METHODS: &[&str] = &["ls"];
-const BORG_ALLOWED_URI_METHODS: &[&str] = &["new", "parse"];
+const BORG_ALLOWED_MESSAGE_METHODS: &[&str] = &["currentMessage"];
 
 pub fn precheck_borg_sdk_usage(code: &str) -> Result<()> {
     validate_javascript_syntax(code)?;
@@ -37,7 +37,7 @@ fn validate_borg_surface(code: &str) -> Result<()> {
                 ));
             }
             return Err(anyhow!(
-                "invalid Borg SDK namespace `Borg.{root}`. Allowed roots: Borg.OS, Borg.Memory, Borg.URI, Borg.fetch"
+                "invalid Borg SDK namespace `Borg.{root}`. Allowed roots: Borg.OS, Borg.Memory, Borg.Message, Borg.me, Borg.fetch"
             ));
         }
 
@@ -57,11 +57,11 @@ fn validate_borg_surface(code: &str) -> Result<()> {
                 ));
             }
         }
-        if root == "URI" && access.len() >= 2 {
+        if root == "Message" && access.len() >= 2 {
             let method = access[1].as_str();
-            if !BORG_ALLOWED_URI_METHODS.contains(&method) {
+            if !BORG_ALLOWED_MESSAGE_METHODS.contains(&method) {
                 return Err(anyhow!(
-                    "invalid Borg.URI API `Borg.URI.{method}`. Allowed methods: new, parse"
+                    "invalid Borg.Message API `Borg.Message.{method}`. Allowed methods: currentMessage"
                 ));
             }
         }
@@ -135,4 +135,3 @@ fn is_ident_start(c: char) -> bool {
 fn is_ident(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
-

@@ -1,12 +1,12 @@
 use serde_json::{Value, json};
 
-use crate::CodeModeRuntime;
+use crate::{CodeModeContext, CodeModeRuntime};
 
 #[test]
 fn executes_with_injected_sdk_and_ffi() {
     let rt = CodeModeRuntime::default();
     let result = rt
-        .execute("async () => { return Borg.OS.ls('.'); }")
+        .execute("async () => { return Borg.OS.ls('.'); }", CodeModeContext::default())
         .unwrap();
     assert!(result.result_json.is_object());
     let entries = result
@@ -22,7 +22,7 @@ fn custom_ffi_handler_can_override_sdk_behavior() {
     let rt =
         CodeModeRuntime::default().with_ffi_handler("os__ls", |args| Ok(json!({ "args": args })));
     let result = rt
-        .execute("async () => { return Borg.OS.ls('a', 'b'); }")
+        .execute("async () => { return Borg.OS.ls('a', 'b'); }", CodeModeContext::default())
         .unwrap();
     assert_eq!(result.result_json, json!({ "args": ["a", "b"] }));
 }
@@ -44,7 +44,7 @@ fn fetch_uses_net_ffi_and_returns_response_shape() {
         .execute(&format!(
             "async () => {{ return Borg.fetch('{}', {{ method: 'GET', headers: {{ 'x-test': '1' }} }}); }}",
             "http://example.test/hello"
-        ))
+        ), CodeModeContext::default())
         .unwrap();
 
     assert_eq!(result.result_json.get("status"), Some(&json!(200)));
@@ -60,9 +60,26 @@ fn fetch_uses_net_ffi_and_returns_response_shape() {
 }
 
 #[test]
+fn me_returns_current_user_uri_from_context() {
+    let rt = CodeModeRuntime::default();
+    let result = rt
+        .execute(
+            "async () => { return Borg.me().uri(); }",
+            CodeModeContext {
+                current_user_id: Some(
+                    borg_core::Uri::parse("borg:user:leostera").expect("valid uri"),
+                ),
+                ..CodeModeContext::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(result.result_json, json!("borg:user:leostera"));
+}
+
+#[test]
 fn execute_rejects_non_code_mode_shape() {
     let rt = CodeModeRuntime::default();
-    let err = rt.execute("Borg.OS.ls('.')").unwrap_err();
+    let err = rt.execute("Borg.OS.ls('.')", CodeModeContext::default()).unwrap_err();
     assert!(
         err.to_string().contains("async () =>"),
         "unexpected error: {err}"
@@ -73,7 +90,7 @@ fn execute_rejects_non_code_mode_shape() {
 fn execute_invalid_borgos_symbol_returns_corrective_hint() {
     let rt = CodeModeRuntime::default();
     let err = rt
-        .execute("async () => { return BorgOs.ls('.'); }")
+        .execute("async () => { return BorgOs.ls('.'); }", CodeModeContext::default())
         .unwrap_err();
     let message = err.to_string();
     assert!(
@@ -88,6 +105,7 @@ fn execute_rejects_invalid_borg_ltm_namespace_before_runtime() {
     let err = rt
         .execute(
             "async () => { const memoryStorage = Borg.LTM; await memoryStorage.store('leo', 'realName', 'leandro'); return 'ok'; }",
+            CodeModeContext::default(),
         )
         .unwrap_err();
     let message = err.to_string();
@@ -108,9 +126,19 @@ fn execute_allows_valid_borg_memory_calls() {
     let result = rt
         .execute(
             "async () => { return Borg.Memory.stateFacts([{ source: 'borg:message:abc', entity: 'borg:user:leo', field: 'borg:field:real_name', value: { Text: 'Leandro' } }]); }",
+            CodeModeContext::default(),
         )
         .unwrap();
     assert_eq!(result.result_json.get("tx_id"), Some(&json!("borg:tx:test")));
+}
+
+#[test]
+fn execute_allows_valid_borg_me_calls() {
+    let rt = CodeModeRuntime::default();
+    let result = rt
+        .execute("async () => { return Borg.me().uri(); }", CodeModeContext::default())
+        .unwrap();
+    assert_eq!(result.result_json, Value::Null);
 }
 
 #[test]
@@ -119,7 +147,7 @@ fn ffi_handler_panic_is_reported_as_runtime_error() {
         panic!("simulated ffi panic");
     });
     let err = rt
-        .execute("async () => { return Borg.OS.ls('.'); }")
+        .execute("async () => { return Borg.OS.ls('.'); }", CodeModeContext::default())
         .unwrap_err();
     assert!(
         err.to_string().contains("ffi execution panic"),

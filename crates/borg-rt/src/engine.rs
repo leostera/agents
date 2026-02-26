@@ -5,6 +5,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
+use borg_core::Uri;
 use borg_core::ExecutionResult;
 use deno_core::{JsRuntime, RuntimeOptions, serde_v8, v8};
 use serde_json::Value;
@@ -18,6 +19,57 @@ use crate::checker::precheck_borg_sdk_usage;
 
 const SDK_BUNDLE: &str = include_str!(concat!(env!("OUT_DIR"), "/borg_agent_sdk.bundle.js"));
 static RUNTIME_EXECUTION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[derive(Debug, Clone, Default)]
+pub struct CodeModeContext {
+    pub current_port_id: Option<Uri>,
+    pub current_message_id: Option<Uri>,
+    pub current_session_id: Option<Uri>,
+    pub current_user_id: Option<Uri>,
+}
+
+impl CodeModeContext {
+    pub fn to_json(&self) -> Value {
+        let mut obj = serde_json::Map::new();
+        if let Some(value) = &self.current_port_id {
+            obj.insert(
+                "current_port_id".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        if let Some(value) = &self.current_message_id {
+            obj.insert(
+                "current_message_id".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        if let Some(value) = &self.current_session_id {
+            obj.insert(
+                "current_session_id".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        if let Some(value) = &self.current_user_id {
+            obj.insert(
+                "current_user_id".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        Value::Object(obj)
+    }
+
+    pub fn from_json(value: &Value) -> Result<Self> {
+        let obj = value
+            .as_object()
+            .ok_or_else(|| anyhow!("context must be an object"))?;
+        Ok(Self {
+            current_port_id: parse_uri_field(obj, "current_port_id")?,
+            current_message_id: parse_uri_field(obj, "current_message_id")?,
+            current_session_id: parse_uri_field(obj, "current_session_id")?,
+            current_user_id: parse_uri_field(obj, "current_user_id")?,
+        })
+    }
+}
 
 #[derive(Clone)]
 pub struct CodeModeRuntime {
@@ -60,7 +112,7 @@ impl CodeModeRuntime {
         search_capabilities(query)
     }
 
-    pub fn execute(&self, code: &str) -> Result<ExecutionResult> {
+    pub fn execute(&self, code: &str, context: CodeModeContext) -> Result<ExecutionResult> {
         validate_code_mode_shape(code)?;
         precheck_borg_sdk_usage(code)?;
         let _runtime_lock = runtime_execution_lock()
@@ -73,12 +125,17 @@ impl CodeModeRuntime {
 
             let start = Instant::now();
             let mut runtime = JsRuntime::new(RuntimeOptions::default());
-            install_ffi(&mut runtime, Arc::new(self.ffi_handlers.clone()))?;
+            install_ffi(
+                &mut runtime,
+                Arc::new(self.ffi_handlers.clone()),
+                context.to_json(),
+            )?;
 
             if !self.prelude.trim().is_empty() {
                 runtime
                     .execute_script("borg_prelude.js", self.prelude.clone())
                     .map_err(|err| {
+                        info!(target: "borg_rt", error = %err, "code-mode prelude execution failure");
                         anyhow!(normalize_runtime_error(format!(
                             "failed to execute prelude: {}",
                             err
@@ -88,6 +145,7 @@ impl CodeModeRuntime {
             runtime
                 .execute_script("borg_agent_sdk.js", self.sdk_bundle.clone())
                 .map_err(|err| {
+                    info!(target: "borg_rt", error = %err, "code-mode sdk execution failure");
                     anyhow!(normalize_runtime_error(format!(
                         "failed to execute sdk bundle: {}",
                         err
@@ -97,6 +155,7 @@ impl CodeModeRuntime {
             let function = runtime
                 .execute_script("borg_exec_fn.js", format!("({})", code))
                 .map_err(|err| {
+                    info!(target: "borg_rt", error = %err, "code-mode function compile failure");
                     anyhow!(normalize_runtime_error(format!(
                         "failed to compile code-mode function: {}",
                         err
@@ -118,6 +177,7 @@ impl CodeModeRuntime {
             #[allow(deprecated)]
             let value = deno_core::futures::executor::block_on(runtime.call_and_await(&function))
                 .map_err(|err| {
+                info!(target: "borg_rt", error = %err, "code-mode function execution failure");
                 anyhow!(normalize_runtime_error(format!(
                     "failed to execute code-mode function: {}",
                     err
@@ -145,12 +205,33 @@ impl CodeModeRuntime {
 
         match execution {
             Ok(result) => result,
-            Err(payload) => Err(anyhow!(
-                "code-mode runtime panicked during execution: {}",
-                panic_payload_to_string(payload)
-            )),
+            Err(payload) => {
+                let panic_text = panic_payload_to_string(payload);
+                info!(
+                    target: "borg_rt",
+                    panic = panic_text.as_str(),
+                    "code-mode runtime panic caught"
+                );
+                Err(anyhow!(
+                    "code-mode runtime panicked during execution: {}",
+                    panic_text
+                ))
+            }
         }
     }
+}
+
+fn parse_uri_field(
+    obj: &serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<Option<Uri>> {
+    let Some(raw) = obj.get(field) else {
+        return Ok(None);
+    };
+    let text = raw
+        .as_str()
+        .ok_or_else(|| anyhow!("context field `{field}` must be a string"))?;
+    Ok(Some(Uri::parse(text)?))
 }
 
 fn runtime_execution_lock() -> &'static Mutex<()> {

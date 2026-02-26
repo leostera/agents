@@ -6,14 +6,14 @@ use borg_core::{
 };
 use borg_db::{BorgDb, NewTask};
 use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
-use borg_rt::CodeModeRuntime;
+use borg_rt::{CodeModeContext, CodeModeRuntime};
 use serde_json::{Value, json};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::session_manager::SessionManager;
 use crate::task_queue::TaskQueue;
-use crate::tool_runner::build_exec_toolchain;
-use crate::types::{SessionTurnOutput, UserMessage};
+use crate::tool_runner::build_exec_toolchain_with_context;
+use crate::types::{SessionTurnOutput, ToolCallSummary, UserMessage};
 use crate::port_context::{PortContext, TelegramSessionContext};
 
 const OPENAI_PROVIDER: &str = "openai";
@@ -134,7 +134,12 @@ impl BorgExecutor {
                     value
                         .tool_calls
                         .iter()
-                        .map(|call| format!("{} {}", call.tool_name, call.arguments))
+                        .map(|call| ToolCallSummary {
+                            tool_name: call.tool_name.clone(),
+                            arguments: call.arguments.clone(),
+                            output: serde_json::to_value(&call.output)
+                                .unwrap_or_else(|err| json!({ "Error": { "message": err.to_string() } })),
+                        })
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -191,6 +196,18 @@ impl BorgExecutor {
         let session = self.session_manager.session_for_task(&synthetic_msg).await?;
         let context = session.build_context().await?;
         Ok(context)
+    }
+
+    pub async fn agent_info_for_session(&self, session_id: &Uri) -> Result<(Uri, String)> {
+        let synthetic_msg = UserMessage {
+            user_key: Uri::from_parts("borg", "user", Some("system"))?,
+            text: String::new(),
+            session_id: Some(session_id.clone()),
+            agent_id: None,
+            metadata: json!({}),
+        };
+        let session = self.session_manager.session_for_task(&synthetic_msg).await?;
+        Ok((session.agent.agent_id.clone(), session.agent.model.clone()))
     }
 
     pub async fn get_port_session_context(
@@ -437,12 +454,13 @@ impl BorgExecutor {
         msg: &UserMessage,
         task_id: Option<&Uri>,
     ) -> Result<Option<borg_agent::SessionOutput>> {
-        let toolchain = build_exec_toolchain(self.runtime.clone())?;
+        let mut session = self.session_manager.session_for_task(msg).await?;
+        let session_id = session.session_id.clone();
+        let code_mode_context = self.code_mode_context_for_turn(msg, &session_id);
+        let toolchain = build_exec_toolchain_with_context(self.runtime.clone(), code_mode_context)?;
         let tools = AgentTools {
             tool_runner: &toolchain,
         };
-        let mut session = self.session_manager.session_for_task(msg).await?;
-        let session_id = session.session_id.clone();
         let before_messages = session.read_messages(0, usize::MAX).await?;
         if let Some(task_id) = task_id {
             let agent_id = session.agent.agent_id.clone();
@@ -579,6 +597,39 @@ impl BorgExecutor {
         }
 
         Ok(Some(output))
+    }
+
+    fn code_mode_context_for_turn(&self, msg: &UserMessage, session_id: &Uri) -> CodeModeContext {
+        let metadata = msg.metadata.as_object();
+        let port_name = metadata
+            .and_then(|obj| obj.get("port"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let current_port_id = Uri::from_parts("borg", "port", Some(port_name)).ok();
+
+        let chat_id = metadata
+            .and_then(|obj| obj.get("chat_id"))
+            .and_then(Value::as_i64);
+        let message_id = metadata
+            .and_then(|obj| obj.get("message_id"))
+            .and_then(Value::as_i64);
+        let current_message_id = match (chat_id, message_id) {
+            (Some(chat), Some(message)) => Uri::from_parts(
+                "borg",
+                "message",
+                Some(&format!("telegram_{chat}_{message}")),
+            )
+            .ok(),
+            (_, Some(message)) => Uri::from_parts("borg", "message", Some(&message.to_string())).ok(),
+            _ => None,
+        };
+
+        CodeModeContext {
+            current_port_id,
+            current_message_id,
+            current_session_id: Some(session_id.clone()),
+            current_user_id: Some(msg.user_key.clone()),
+        }
     }
 
     async fn merge_port_context(&self, port: &str, session_id: &Uri, metadata: &Value) -> Result<()> {

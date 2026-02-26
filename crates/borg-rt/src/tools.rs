@@ -3,19 +3,19 @@ use borg_agent::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use serde_json::{Value, json};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use crate::{CodeModeRuntime, sdk_types};
+use crate::{CodeModeContext, CodeModeRuntime, sdk_types};
 
 pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "search".to_string(),
-            description: "Return the full TypeScript SDK definitions from borg.d.ts so the model can inspect available APIs and their exact types. Input must be {\"query\": string}; query is currently ignored.".to_string(),
+            description: "Search for APIs available to execute code. ALWAYS use the `search` tool to search for APIs before executing code. Returns only APIs available in the TypeScript SDK definitions for the Borg SDK".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Currently ignored. Reserved for future targeted type search."
+                        "description": "fuzzy search terms to look for in the Borg SDK"
                     }
                 },
                 "required": ["query"],
@@ -24,16 +24,20 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "execute".to_string(),
-            description: "Execute JavaScript in Code Mode runtime. Input must be {\"code\": string} where code is exactly an async zero-arg arrow function, for example: async () => { const listing = Borg.OS.ls('.'); return listing; }. Returns JSON from the function return value. Use `Borg.OS.ls(...)` (not `BorgOs.ls(...)`).".to_string(),
+            description: "Execute JavaScript in Code Mode runtime. ALWAYS use the `search` tool to search for APIs before executing code. Input must be {\"code\": string} where code is exactly an async zero-arg arrow function, for example: `async () => { const listing = await Borg.OS.ls('.'); return listing; }`. Returns JSON from the function return value. The code must be valid TypeScript or JavaScript code that follows the APIs described by the `search` tool".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
+                    "hint": {
+                        "type": "string",
+                        "description": "The name of the action we're executing. For example: 'Downloading Minions movie...'"
+                    },
                     "code": {
                         "type": "string",
                         "description": "JavaScript function source in the shape `async () => { ... return <json-serializable-result>; }`"
                     }
                 },
-                "required": ["code"],
+                "required": ["code", "hint"],
                 "additionalProperties": false
             }),
         },
@@ -41,6 +45,13 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
 }
 
 pub fn build_code_mode_toolchain(runtime: CodeModeRuntime) -> Result<Toolchain> {
+    build_code_mode_toolchain_with_context(runtime, CodeModeContext::default())
+}
+
+pub fn build_code_mode_toolchain_with_context(
+    runtime: CodeModeRuntime,
+    context: CodeModeContext,
+) -> Result<Toolchain> {
     let search_spec = required_default_tool_spec("search")?;
     let execute_spec = required_default_tool_spec("execute")?;
 
@@ -84,6 +95,7 @@ pub fn build_code_mode_toolchain(runtime: CodeModeRuntime) -> Result<Toolchain> 
             })),
             move |request| {
                 let runtime = runtime.clone();
+                let context = context.clone();
                 async move {
                     let code = request
                         .arguments
@@ -92,7 +104,9 @@ pub fn build_code_mode_toolchain(runtime: CodeModeRuntime) -> Result<Toolchain> 
                         .ok_or_else(|| anyhow!("execute tool requires code"))?;
                     let code = code.to_string();
                     let result = tokio::task::spawn_blocking(move || {
-                        catch_unwind(AssertUnwindSafe(|| runtime.execute(&code)))
+                        catch_unwind(AssertUnwindSafe(|| {
+                            runtime.execute(&code, context)
+                        }))
                     })
                     .await
                     .map_err(|err| anyhow!("execute tool worker join error: {}", err))?

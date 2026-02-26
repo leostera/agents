@@ -12,9 +12,7 @@ use borg_core::{Event, Uri, uri};
 use borg_db::BorgDb;
 use borg_exec::{ExecEngine, UserMessage};
 use borg_ltm::MemoryStore;
-use borg_ports::{
-    BORG_SESSION_ID_HEADER, HttpPort, Port, PortMessage, init_http_port, init_telegram_port,
-};
+use borg_ports::{BORG_SESSION_ID_HEADER, HttpPort, Port, PortMessage, init_http_port, TelegramPort};
 use borg_ui::render_dashboard;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -100,7 +98,7 @@ async fn start_telegram_port(db: BorgDb, exec: ExecEngine) -> Result<Option<Join
         return Ok(None);
     }
 
-    let telegram_port = init_telegram_port(exec, token)?;
+    let telegram_port = TelegramPort::new(exec, token)?;
     let task = tokio::spawn(async move {
         if let Err(err) = telegram_port.run().await {
             error!(target: "borg_api", error = %err, "telegram port terminated");

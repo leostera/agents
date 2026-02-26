@@ -15,9 +15,36 @@ pub struct UserMessage {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ToolCallSummary {
+    pub tool_name: String,
+    pub arguments: Value,
+    pub output: Value,
+}
+
+impl ToolCallSummary {
+    pub fn output_message(&self) -> String {
+        if let Some(error) = self
+            .output
+            .get("Error")
+            .and_then(|value| value.get("message"))
+            .and_then(Value::as_str)
+        {
+            return error.to_string();
+        }
+
+        if let Some(execution) = self.output.get("Execution") {
+            return serde_json::to_string_pretty(execution)
+                .unwrap_or_else(|_| execution.to_string());
+        }
+
+        serde_json::to_string_pretty(&self.output).unwrap_or_else(|_| self.output.to_string())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SessionTurnOutput {
     pub session_id: Uri,
     pub reply: Option<String>,
     #[serde(default)]
-    pub tool_calls: Vec<String>,
+    pub tool_calls: Vec<ToolCallSummary>,
 }

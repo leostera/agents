@@ -73,6 +73,14 @@ where
         out.sort();
         out
     }
+
+    pub fn help(&self) -> String {
+        let mut lines = vec!["Available commands:".to_string()];
+        for command in self.commands() {
+            lines.push(format!("/{command}"));
+        }
+        lines.join("\n")
+    }
 }
 
 impl<S, R> CommandRegistryBuilder<S, R>
