@@ -23,6 +23,9 @@ Scope: builds, workspace wiring, and command expectations.
 
 - Root web build must produce `packages/borg-app/dist`.
 - Backend onboarding server expects dist assets and fails loudly if missing.
+- Workspace-level Cargo config forces bundled RocksDB compilation via:
+  - `.cargo/config.toml` with `ROCKSDB_COMPILE=1`
+  - This avoids accidental linking to missing system `librocksdb.a` when global Cargo env overrides are present.
 
 ## Commit Hygiene
 

@@ -23,7 +23,7 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "execute".to_string(),
-            description: "Execute JavaScript in Code Mode runtime. Input must be {\"code\": string} where code is exactly an async zero-arg arrow function, for example: async () => { const x = await Borg.fetch(...); return x; }. Returns JSON from the function return value.".to_string(),
+            description: "Execute JavaScript in Code Mode runtime. Input must be {\"code\": string} where code is exactly an async zero-arg arrow function, for example: async () => { const listing = Borg.OS.ls('.'); return listing; }. Returns JSON from the function return value. Use `Borg.OS.ls(...)` (not `BorgOs.ls(...)`).".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {

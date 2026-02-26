@@ -14,8 +14,7 @@ use crate::{
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 pub const DEFAULT_MAX_TURNS: usize = 6;
 pub const DEFAULT_AGENT_ID: &str = "borg:agent:default";
-pub const DEFAULT_SYSTEM_PROMPT: &str =
-    "You are Borg's agent runtime. Use tools as needed, then respond clearly.";
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are Borg's agent runtime. Use tools as needed, then respond clearly. When using the execute tool, code must be exactly an `async () => { ... return ... }` function. For filesystem listing, use `Borg.OS.ls(...)`; `BorgOs.ls(...)` is invalid.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {

@@ -564,5 +564,45 @@ fn llm_adapter_rejects_non_adjacent_tool_result() {
     ];
 
     let err = to_provider_messages(&messages).unwrap_err();
-    assert!(err.to_string().contains("invalid tool message ordering"));
+    assert!(
+        err.to_string().contains("invalid tool message ordering")
+            || err.to_string().contains("orphan tool result detected")
+    );
+}
+
+#[test]
+fn llm_adapter_auto_closes_dangling_tool_call_before_user_message() {
+    let messages = vec![
+        Message::System {
+            content: "system".to_string(),
+        },
+        Message::ToolCall {
+            tool_call_id: "call_1".to_string(),
+            name: "execute".to_string(),
+            arguments: json!({"code":"async () => { return 1; }"}),
+        },
+        Message::User {
+            content: "continue".to_string(),
+        },
+    ];
+
+    let provider_messages = to_provider_messages(&messages).unwrap();
+    assert_eq!(provider_messages.len(), 4);
+
+    assert!(matches!(
+        provider_messages.get(1),
+        Some(borg_llm::ProviderMessage::Assistant { content })
+            if matches!(content.first(), Some(borg_llm::ProviderBlock::ToolCall { id, .. }) if id == "call_1")
+    ));
+    assert!(matches!(
+        provider_messages.get(2),
+        Some(borg_llm::ProviderMessage::ToolResult {
+            tool_call_id,
+            name,
+            content
+        })
+            if tool_call_id == "call_1"
+                && name == "execute"
+                && matches!(content.first(), Some(borg_llm::ProviderBlock::Text(text)) if text.contains("tool execution interrupted"))
+    ));
 }

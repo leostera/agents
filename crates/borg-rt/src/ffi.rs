@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use deno_core::{JsRuntime, serde_v8, v8};
 use serde_json::Value;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::types::FfiRegistry;
 
@@ -61,11 +62,13 @@ fn ffi_callback(
         return;
     };
 
-    match handler(call_args) {
-        Ok(value) => match serde_v8::to_v8(scope, value) {
+    let handler_result = catch_unwind(AssertUnwindSafe(|| handler(call_args)));
+    match handler_result {
+        Ok(Ok(value)) => match serde_v8::to_v8(scope, value) {
             Ok(result) => rv.set(result),
             Err(err) => throw(scope, &format!("ffi serialization error: {}", err)),
         },
-        Err(err) => throw(scope, &format!("ffi execution error: {}", err)),
+        Ok(Err(err)) => throw(scope, &format!("ffi execution error: {}", err)),
+        Err(_) => throw(scope, "ffi execution panic"),
     }
 }

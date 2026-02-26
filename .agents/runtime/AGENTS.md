@@ -35,11 +35,13 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - `POST /ports/http` should return resolved `session_id` and `reply` (task ID optional).
 - `X-Borg-Session-Id` header should be set on successful response.
 - Invalid URI inputs at API boundary must fail with structured 400.
+- Code-mode filesystem API is `Borg.OS.ls(...)` (not `BorgOs.ls(...)`).
 
 ## Runtime Safety
 - Initialize tracing before application code in `main`.
 - Keep session turn logs and LLM request/response logs explicit.
 - Keep task lifecycle transitions explicit for task-subsystem events.
+- Convert `deno_core` runtime panics/FFI panics into structured tool errors; do not allow panics to escape runtime boundaries.
 
 ## Validate
 1. `cargo build`

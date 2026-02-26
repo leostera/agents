@@ -13,6 +13,13 @@
         "@frontman-ai/vite": "^0.2.6",
       },
     },
+    "packages/borg-agent-sdk": {
+      "name": "@borg/agent-sdk",
+      "version": "0.1.0",
+      "devDependencies": {
+        "vite": "^7.3.1",
+      },
+    },
     "packages/borg-app": {
       "name": "@borg/app",
       "version": "0.1.0",
@@ -74,6 +81,8 @@
     },
   },
   "packages": {
+    "@borg/agent-sdk": ["@borg/agent-sdk@workspace:packages/borg-agent-sdk"],
+
     "@borg/app": ["@borg/app@workspace:packages/borg-app"],
 
     "@borg/dashboard": ["@borg/dashboard@workspace:packages/borg-dashboard"],
