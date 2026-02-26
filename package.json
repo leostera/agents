@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "bun run vite",
     "build:web": "bun run vite build",
-    "build:rust": "./scripts/cargo-fast build -p borg-cli",
+    "build:rust": "./cargo build -p borg-cli",
     "build": "bun run build:web && bun run build:rust"
   },
   "dependencies": {
