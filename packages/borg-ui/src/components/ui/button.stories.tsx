@@ -6,8 +6,9 @@ const meta: Meta<typeof Button> = {
   title: 'UI/Button',
   component: Button,
   args: {
-    children: 'Save',
-    tone: 'default',
+    children: 'Save changes',
+    variant: 'default',
+    size: 'default',
   },
 }
 
@@ -16,9 +17,16 @@ type Story = StoryObj<typeof Button>
 
 export const Default: Story = {}
 
-export const Subtle: Story = {
+export const Secondary: Story = {
   args: {
-    tone: 'subtle',
+    variant: 'secondary',
     children: 'Cancel',
+  },
+}
+
+export const Destructive: Story = {
+  args: {
+    variant: 'destructive',
+    children: 'Delete',
   },
 }

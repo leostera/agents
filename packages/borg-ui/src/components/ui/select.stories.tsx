@@ -1,7 +1,14 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { useState } from 'react'
 
-import { UiSelect } from './select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  UiSelect,
+} from './select'
 
 const meta: Meta<typeof UiSelect> = {
   title: 'UI/Select',
@@ -22,5 +29,23 @@ export const Default: Story = {
   render: (args) => {
     const [value, setValue] = useState(args.value)
     return <UiSelect {...args} value={value} onValueChange={setValue} />
+  },
+}
+
+export const Primitive: Story = {
+  render: () => {
+    const [value, setValue] = useState('telegram')
+    return (
+      <Select value={value} onValueChange={setValue}>
+        <SelectTrigger>
+          <SelectValue placeholder='Choose a port' />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value='telegram'>telegram</SelectItem>
+          <SelectItem value='http'>http</SelectItem>
+          <SelectItem value='cli'>cli</SelectItem>
+        </SelectContent>
+      </Select>
+    )
   },
 }

@@ -1,24 +1,35 @@
 import type { Meta, StoryObj } from '@storybook/react'
 
-import { Card } from './card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './card'
 
 const meta: Meta<typeof Card> = {
   title: 'UI/Card',
   component: Card,
-  args: {
-    title: 'Users',
-  },
 }
 
 export default meta
 type Story = StoryObj<typeof Card>
 
 export const Default: Story = {
-  args: {
-    children: (
-      <p style={{ margin: 0, color: '#94a3b8' }}>
-        This is a story for a dashboard card body.
-      </p>
-    ),
-  },
+  render: () => (
+    <Card>
+      <CardHeader>
+        <CardTitle>Users</CardTitle>
+        <CardDescription>Registered accounts in the workspace</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <p style={{ margin: 0 }}>1,248 users</p>
+      </CardContent>
+    </Card>
+  ),
+}
+
+export const WithLegacyTitleProp: Story = {
+  render: () => (
+    <Card title='Sessions'>
+      <CardContent>
+        <p style={{ margin: 0 }}>42 active sessions</p>
+      </CardContent>
+    </Card>
+  ),
 }
