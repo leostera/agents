@@ -1,4 +1,5 @@
 use std::process::Command as ProcessCommand;
+use std::{io, io::Write};
 
 use anyhow::Result;
 use borg_api::BorgApiServer;
@@ -141,7 +142,11 @@ enum SessionCommand {
 #[derive(Subcommand, Debug)]
 enum MemoryCommand {
     /// Clear all LTM fact store and derived search/graph data.
-    Clear,
+    Clear {
+        /// Skip confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -432,18 +437,24 @@ impl BorgCliApp {
         Ok(())
     }
 
-    async fn memory_clear(&self) -> Result<()> {
+    async fn memory_clear(&self, yes: bool) -> Result<()> {
+        if !yes && !confirm_memory_clear()? {
+            println!("aborted");
+            return Ok(());
+        }
         remove_dir_if_exists(self.borg_dir.ltm_db()).await?;
         remove_dir_if_exists(self.borg_dir.search_db()).await?;
         fs::create_dir_all(self.borg_dir.ltm_db()).await?;
         fs::create_dir_all(self.borg_dir.search_db()).await?;
+        let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
+        memory.migrate().await?;
         info!(
             target: "borg_cli",
             ltm_db = %self.borg_dir.ltm_db().display(),
             search_db = %self.borg_dir.search_db().display(),
-            "cleared memory databases"
+            "cleared and reinitialized memory databases"
         );
-        println!("cleared memory stores");
+        println!("cleared and reinitialized memory stores");
         Ok(())
     }
 
@@ -517,6 +528,17 @@ async fn remove_dir_if_exists(path: &std::path::Path) -> Result<()> {
     }
 }
 
+fn confirm_memory_clear() -> Result<bool> {
+    print!(
+        "This will permanently delete all Borg memory data (facts, graph, and search index). Continue? [y/N]: "
+    );
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let normalized = input.trim().to_ascii_lowercase();
+    Ok(normalized == "y" || normalized == "yes")
+}
+
 #[derive(Debug, Deserialize, serde::Serialize)]
 struct TaskEventJson {
     event_id: Uri,
@@ -580,7 +602,7 @@ async fn main() -> Result<()> {
             }
         },
         Command::Memory { cmd } => match cmd {
-            MemoryCommand::Clear => app.memory_clear().await,
+            MemoryCommand::Clear { yes } => app.memory_clear(yes).await,
         },
         Command::Config { cmd } => match cmd {
             ConfigCommand::Set { key, value } => app.config_set(key, value).await,
