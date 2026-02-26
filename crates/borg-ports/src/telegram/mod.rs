@@ -26,6 +26,8 @@ const TELEGRAM_TYPING_REFRESH_SECS: u64 = 4;
 pub struct TelegramPort {
     exec: ExecEngine,
     bot: Bot,
+    bot_token: String,
+    http: reqwest::Client,
 }
 
 #[derive(Clone)]
@@ -35,8 +37,7 @@ struct TelegramCommandState {
 }
 
 impl PortMessage {
-    pub fn from_telegram(message: &Message) -> Option<Self> {
-        let text = message.text()?.to_string();
+    pub fn from_telegram_text(message: &Message, text: String, input_kind: &str) -> Option<Self> {
         let chat_id = message.chat.id.0;
         let user_id = message
             .from
@@ -67,6 +68,7 @@ impl PortMessage {
                 "chat_id": chat_id,
                 "chat_type": chat_type,
                 "message_id": message.id.0,
+                "input_kind": input_kind,
                 "thread_id": message.thread_id.map(|thread_id| thread_id.0.0),
                 "sender_id": message.from.as_ref().map(|u| u.id.0),
                 "sender_username": message.from.as_ref().and_then(|u| u.username.clone()),
@@ -129,9 +131,12 @@ impl Port for TelegramPort {
 
 impl TelegramPort {
     pub fn new(exec: ExecEngine, bot_token: impl Into<String>) -> Result<Self> {
+        let bot_token = bot_token.into();
         Ok(Self {
             exec,
-            bot: Bot::new(bot_token),
+            bot: Bot::new(bot_token.clone()),
+            bot_token,
+            http: reqwest::Client::new(),
         })
     }
 
@@ -168,7 +173,11 @@ impl TelegramPort {
                         }
                     };
                     if commands.is_command(text) {
-                        if let Some(inbound) = PortMessage::from_telegram(&message) {
+                        if let Some(inbound) = PortMessage::from_telegram_text(
+                            &message,
+                            text.to_string(),
+                            "text",
+                        ) {
                             if let Some(session_id) = inbound.session_id {
                                 if let Err(err) = exec
                                     .merge_port_message_metadata(
@@ -203,13 +212,24 @@ impl TelegramPort {
                     }
                 }
 
-                let Some(inbound) = PortMessage::from_telegram(&message) else {
-                    return Ok(());
+                let inbound = match command_port.inbound_from_telegram_message(&message).await {
+                    Ok(Some(inbound)) => inbound,
+                    Ok(None) => return Ok(()),
+                    Err(err) => {
+                        bot.send_message(
+                            message.chat.id,
+                            format!("Failed to process inbound message: {err}"),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
                 };
 
                 let port = TelegramPort {
                     exec,
                     bot: bot.clone(),
+                    bot_token: command_port.bot_token.clone(),
+                    http: command_port.http.clone(),
                 };
 
                 let mut outbound = port.handle_messages(vec![inbound]).await;
@@ -260,6 +280,63 @@ impl TelegramPort {
         .await;
 
         Ok(())
+    }
+
+    async fn inbound_from_telegram_message(&self, message: &Message) -> Result<Option<PortMessage>> {
+        if let Some(text) = message.text() {
+            return Ok(PortMessage::from_telegram_text(
+                message,
+                text.to_string(),
+                "text",
+            ));
+        }
+
+        if let Some(voice) = message.voice() {
+            let mime_type = voice
+                .mime_type
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "audio/ogg".to_string());
+            let audio = self
+                .download_telegram_file_bytes(voice.file.id.to_string().as_str())
+                .await?;
+            let transcript = self.exec.transcribe_audio(audio, mime_type.clone()).await?;
+            let transcript = transcript.trim();
+            if transcript.is_empty() {
+                return Err(anyhow!("voice transcription returned empty text"));
+            }
+
+            let text = format!("Voice message transcript:\n{}", transcript);
+            let mut inbound = PortMessage::from_telegram_text(message, text, "voice")
+                .ok_or_else(|| anyhow!("failed to build inbound telegram voice message"))?;
+            if let Some(metadata) = inbound.metadata.as_object_mut() {
+                metadata.insert(
+                    "voice_duration_secs".to_string(),
+                    json!(voice.duration.seconds()),
+                );
+                metadata.insert("voice_mime_type".to_string(), json!(mime_type));
+            }
+            return Ok(Some(inbound));
+        }
+
+        Ok(None)
+    }
+
+    async fn download_telegram_file_bytes(&self, file_id: &str) -> Result<Vec<u8>> {
+        let file = self
+            .bot
+            .get_file(teloxide::types::FileId(file_id.to_string()))
+            .await?;
+        let file_url = format!(
+            "https://api.telegram.org/file/bot{}/{}",
+            self.bot_token, file.path
+        );
+        let response = self.http.get(file_url).send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(anyhow!("telegram file download failed with status {}", status));
+        }
+        Ok(response.bytes().await?.to_vec())
     }
 
     fn is_help_command(input: &str) -> bool {

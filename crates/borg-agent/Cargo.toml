@@ -13,6 +13,7 @@ borg-llm = { path = "../borg-llm" }
 borg-core = { path = "../borg-core" }
 async-trait.workspace = true
 tokio.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 uuid.workspace = true

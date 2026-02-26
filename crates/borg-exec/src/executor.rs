@@ -5,7 +5,9 @@ use borg_core::{
     uri,
 };
 use borg_db::{BorgDb, NewTask};
+use borg_llm::Provider;
 use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
+use borg_llm::TranscriptionRequest;
 use borg_ltm::MemoryStore;
 use borg_rt::{CodeModeContext, CodeModeRuntime};
 use serde_json::{Value, json};
@@ -186,6 +188,23 @@ impl BorgExecutor {
             self.db.append_session_message(session_id, &payload).await?;
         }
         Ok(context.messages.len())
+    }
+
+    pub async fn transcribe_audio(
+        &self,
+        audio: Vec<u8>,
+        mime_type: impl Into<String>,
+    ) -> Result<String> {
+        let provider = self.configured_provider().await?;
+        provider
+            .transcribe(&TranscriptionRequest {
+                audio,
+                mime_type: mime_type.into(),
+                model: None,
+                language: None,
+                prompt: None,
+            })
+            .await
     }
 
     pub async fn context_window_for_session(&self, session_id: &Uri) -> Result<ContextWindow> {

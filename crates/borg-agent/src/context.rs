@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -249,7 +250,10 @@ fn with_context_metadata(
     let current_tokens_used = total_chars / CHAR_TO_TOKEN_RATIO;
     let max_tokens = max_chars.map(|chars| chars / CHAR_TO_TOKEN_RATIO);
     let tokens_left = max_tokens.map(|max| max.saturating_sub(current_tokens_used));
+    let now = Utc::now();
     let metadata = json!({
+        "current_datetime_utc": now.to_rfc3339(),
+        "current_unix_timestamp_secs": now.timestamp(),
         "current_tokens_used": current_tokens_used,
         "tokens_left": tokens_left,
         "autocompaction_policy": autocompaction_policy,

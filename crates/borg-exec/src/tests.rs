@@ -10,6 +10,7 @@ use borg_core::{Event, TaskKind, TaskStatus, Uri, uri};
 use borg_db::{BorgDb, NewTask};
 use borg_llm::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
+    TranscriptionRequest,
 };
 use borg_ltm::MemoryStore;
 use borg_rt::{CodeModeRuntime, default_tool_specs};
@@ -393,6 +394,10 @@ impl Provider for ScriptedProvider {
             .await
             .ok_or_else(|| anyhow!("scripted provider exhausted"))?
             .map_err(|err| anyhow!(err))
+    }
+
+    async fn transcribe(&self, _req: &TranscriptionRequest) -> Result<String> {
+        Err(anyhow!("transcribe not supported in scripted provider"))
     }
 }
 

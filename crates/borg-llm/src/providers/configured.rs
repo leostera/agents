@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tracing::info;
 
-use crate::{LlmAssistantMessage, LlmRequest, Provider};
+use crate::{LlmAssistantMessage, LlmRequest, Provider, TranscriptionRequest};
 
 use super::openai::OpenAiProvider;
 
@@ -67,6 +67,12 @@ impl Provider for ConfiguredProvider {
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
         match self {
             Self::OpenAi(provider) => provider.chat(req).await,
+        }
+    }
+
+    async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String> {
+        match self {
+            Self::OpenAi(provider) => provider.transcribe(req).await,
         }
     }
 }

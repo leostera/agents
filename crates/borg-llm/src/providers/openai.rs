@@ -6,16 +6,19 @@ use tracing::{debug, error, info, trace};
 
 use crate::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
-    ToolDescriptor, UserBlock,
+    ToolDescriptor, TranscriptionRequest, UserBlock,
 };
 
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
+const OPENAI_AUDIO_TRANSCRIPTIONS_URL: &str = "https://api.openai.com/v1/audio/transcriptions";
+const DEFAULT_TRANSCRIPTION_MODEL: &str = "gpt-4o-mini-transcribe";
 
 #[derive(Clone)]
 pub struct OpenAiProvider {
     http: Client,
     api_key: String,
     chat_completions_url: String,
+    audio_transcriptions_url: String,
 }
 
 impl OpenAiProvider {
@@ -24,6 +27,7 @@ impl OpenAiProvider {
             http: Client::new(),
             api_key: api_key.into(),
             chat_completions_url: OPENAI_CHAT_COMPLETIONS_URL.to_string(),
+            audio_transcriptions_url: OPENAI_AUDIO_TRANSCRIPTIONS_URL.to_string(),
         }
     }
 
@@ -33,6 +37,7 @@ impl OpenAiProvider {
             http: Client::new(),
             api_key: api_key.into(),
             chat_completions_url: format!("{}/v1/chat/completions", base),
+            audio_transcriptions_url: format!("{}/v1/audio/transcriptions", base),
         }
     }
 }
@@ -94,6 +99,79 @@ impl Provider for OpenAiProvider {
         trace!(target: "borg_llm", payload = ?payload, "raw chat completion payload");
         parse_openai_assistant_message(&payload)
     }
+
+    async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String> {
+        let model = req
+            .model
+            .as_deref()
+            .unwrap_or(DEFAULT_TRANSCRIPTION_MODEL)
+            .to_string();
+        info!(
+            target: "borg_llm",
+            model = model.as_str(),
+            mime_type = req.mime_type.as_str(),
+            bytes = req.audio.len(),
+            "sending audio transcription request"
+        );
+
+        let file_name = transcription_filename_for_mime(&req.mime_type);
+        let part = reqwest::multipart::Part::bytes(req.audio.clone())
+            .file_name(file_name)
+            .mime_str(&req.mime_type)?;
+        let mut form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("model", model);
+        if let Some(language) = req.language.as_ref().filter(|value| !value.trim().is_empty()) {
+            form = form.text("language", language.clone());
+        }
+        if let Some(prompt) = req.prompt.as_ref().filter(|value| !value.trim().is_empty()) {
+            form = form.text("prompt", prompt.clone());
+        }
+
+        let response = self
+            .http
+            .post(&self.audio_transcriptions_url)
+            .bearer_auth(&self.api_key)
+            .multipart(form)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            error!(
+                target: "borg_llm",
+                status = %status,
+                response_body = body.as_str(),
+                "audio transcription request failed"
+            );
+            return Err(anyhow!("openai audio transcriptions returned {}", status));
+        }
+
+        let payload: Value = response.json().await?;
+        let text = payload
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("missing text in openai transcription response"))?
+            .to_string();
+        debug!(target: "borg_llm", chars = text.len(), "audio transcription request succeeded");
+        Ok(text)
+    }
+}
+
+fn transcription_filename_for_mime(mime: &str) -> String {
+    let extension = match mime {
+        "audio/ogg" => "ogg",
+        "audio/opus" => "opus",
+        "audio/mpeg" => "mp3",
+        "audio/mp4" => "mp4",
+        "audio/wav" => "wav",
+        "audio/webm" => "webm",
+        _ => "bin",
+    };
+    format!("telegram_voice.{}", extension)
 }
 
 fn to_openai_tools(tools: &[ToolDescriptor]) -> Vec<Value> {

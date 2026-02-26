@@ -74,7 +74,17 @@ pub struct LlmAssistantMessage {
     pub error_message: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptionRequest {
+    pub audio: Vec<u8>,
+    pub mime_type: String,
+    pub model: Option<String>,
+    pub language: Option<String>,
+    pub prompt: Option<String>,
+}
+
 #[async_trait]
 pub trait Provider: Send + Sync {
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage>;
+    async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String>;
 }
