@@ -156,6 +156,15 @@ declare global {
 
   /**
    * Long-term memory APIs exposed by Borg.
+   *
+   * Valid APIs:
+   * - `Borg.Memory.stateFacts(...)`
+   * - `Borg.Memory.search(...)`
+   *
+   * Invalid / unsupported APIs:
+   * - `Borg.LTM.store(...)`
+   * - `Borg.LTM.search(...)`
+   * - any `Borg.LTM.*` namespace
    */
   interface BorgMemory {
     /**
@@ -186,8 +195,21 @@ declare global {
      *   { source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"), entity: Borg.URI.parse("borg:user:mariana_zabrodska"), field: Borg.URI.parse("borg:relationship:boyfriend"), value: { Ref: Borg.URI.parse("borg:user:leostera") } }
      * ])`
      *
+     * Example (single atomic fact):
+     * `Borg.Memory.stateFacts([
+     *   {
+     *     source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"),
+     *     entity: Borg.URI.parse("borg:user:leostera"),
+     *     field: Borg.URI.parse("borg:field:birth_date"),
+     *     value: { Text: "1991-09-28" }
+     *   }
+     * ])`
+     *
      * Anti-example (does not persist):
      * `async () => { return { entity: "User:leostera", field: "full_name", value: "Leandro Ostera" }; }`
+     *
+     * Anti-example (invalid API):
+     * `await Borg.LTM.store("Leandro Ostera", "full_name", "Leandro Ostera")`
      */
     stateFacts(facts: BorgFactInput[]): BorgStateFactsResult;
     /**
@@ -195,6 +217,9 @@ declare global {
      *
      * Example:
      * `Borg.Memory.search({ q: "movie", kind: "Preference", limit: 10 })`
+     *
+     * Example (search by namespace + kind):
+     * `Borg.Memory.search({ ns: "borg", kind: "user", limit: 20 })`
      */
     search(query: BorgSearchQuery): BorgSearchResults;
   }
