@@ -65,11 +65,38 @@ pub enum FactValue {
     Ref(Uri),
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FactArity {
+    #[default]
+    One,
+    Many,
+}
+
+impl FactArity {
+    fn as_db_value(self) -> &'static str {
+        match self {
+            Self::One => "one",
+            Self::Many => "many",
+        }
+    }
+
+    fn from_db_value(value: &str) -> Result<Self> {
+        match value {
+            "one" => Ok(Self::One),
+            "many" => Ok(Self::Many),
+            _ => Err(anyhow!("unsupported fact arity: {}", value)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FactInput {
     pub source: Uri,
     pub entity: Uri,
     pub field: Uri,
+    #[serde(default)]
+    pub arity: FactArity,
     pub value: FactValue,
 }
 
@@ -79,6 +106,7 @@ pub struct FactRecord {
     pub source: Uri,
     pub entity: Uri,
     pub field: Uri,
+    pub arity: FactArity,
     pub value: FactValue,
     pub tx_id: Uri,
     pub stated_at: DateTime<Utc>,
@@ -139,7 +167,7 @@ impl TursoFactStore {
 
             conn.execute(
                 &format!(
-                    "INSERT INTO {}(fact_id, source, entity, field, value_kind, value_text, value_int, value_float, value_bool, value_bytes, value_ref, tx_id, stated_at, retracted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL)",
+                    "INSERT INTO {}(fact_id, source, entity, field, arity, value_kind, value_text, value_int, value_float, value_bool, value_bytes, value_ref, tx_id, stated_at, retracted_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, NULL)",
                     FACTS_TABLE
                 ),
                 (
@@ -147,6 +175,7 @@ impl TursoFactStore {
                     fact.source.to_string(),
                     fact.entity.to_string(),
                     fact.field.to_string(),
+                    fact.arity.as_db_value().to_string(),
                     value_kind.to_string(),
                     value_text.clone(),
                     value_int,
@@ -171,6 +200,7 @@ impl TursoFactStore {
                 source: fact.source,
                 entity: fact.entity,
                 field: fact.field,
+                arity: fact.arity,
                 value: fact.value,
                 tx_id: tx_id.clone(),
                 stated_at,
@@ -185,7 +215,7 @@ impl TursoFactStore {
         let conn = self.open_conn().await?;
         let mut rows = conn
             .query(
-                &format!("SELECT fact_id, source, entity, field, value_kind, value_text, value_int, value_float, value_bool, value_bytes, value_ref, tx_id, stated_at FROM {} WHERE fact_id = ?1", FACTS_TABLE),
+                &format!("SELECT fact_id, source, entity, field, arity, value_kind, value_text, value_int, value_float, value_bool, value_bytes, value_ref, tx_id, stated_at FROM {} WHERE fact_id = ?1", FACTS_TABLE),
                 (fact_id.to_string(),),
             )
             .await?;
@@ -280,9 +310,29 @@ impl TursoFactStore {
             CREATE INDEX IF NOT EXISTS idx_ltm_projection_queue_status ON ltm_projection_queue(status);
             "#
         ).await?;
+        self.ensure_arity_column(&conn).await?;
 
         info!(target: "borg_ltm", "fact-store migrations completed");
         Ok(())
+    }
+
+    async fn ensure_arity_column(&self, conn: &Connection) -> Result<()> {
+        match conn
+            .execute(
+                "ALTER TABLE ltm_facts ADD COLUMN arity TEXT NOT NULL DEFAULT 'one'",
+                (),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                let message = err.to_string();
+                if message.contains("duplicate column name: arity") {
+                    return Ok(());
+                }
+                Err(err.into())
+            }
+        }
     }
 
     async fn open_conn(&self) -> Result<Connection> {
@@ -349,17 +399,18 @@ fn decode_value(
 }
 
 fn row_to_fact(row: &turso::Row) -> Result<FactRecord> {
-    let stated_at_raw: String = row.get(12)?;
+    let stated_at_raw: String = row.get(13)?;
     let stated_at = DateTime::parse_from_rfc3339(&stated_at_raw)?.with_timezone(&Utc);
-    let kind: String = row.get(4)?;
+    let arity: String = row.get(4)?;
+    let kind: String = row.get(5)?;
     let value = decode_value(
         &kind,
-        row.get(5)?,
         row.get(6)?,
         row.get(7)?,
         row.get(8)?,
         row.get(9)?,
         row.get(10)?,
+        row.get(11)?,
     )?;
 
     Ok(FactRecord {
@@ -367,8 +418,9 @@ fn row_to_fact(row: &turso::Row) -> Result<FactRecord> {
         source: Uri::parse(row.get::<String>(1)?)?,
         entity: Uri::parse(row.get::<String>(2)?)?,
         field: Uri::parse(row.get::<String>(3)?)?,
+        arity: FactArity::from_db_value(&arity)?,
         value,
-        tx_id: Uri::parse(row.get::<String>(11)?)?,
+        tx_id: Uri::parse(row.get::<String>(12)?)?,
         stated_at,
     })
 }
@@ -388,6 +440,7 @@ mod tests {
             source: Uri::parse(format!("borg:session:{}", Uuid::now_v7())).unwrap(),
             entity: Uri::parse(format!("plex:movies:{}", Uuid::now_v7())).unwrap(),
             field: Uri::parse("borg:fields:name").unwrap(),
+            arity: FactArity::One,
             value,
         }
     }

@@ -61,6 +61,9 @@ How to use it well:
 - Use canonical URIs for `source`, `entity`, and `field`.
 - Include `source` whenever you have message provenance.
 - Prefer creating first-class entity URIs and linking via `Ref` instead of embedding related attributes on the same entity.
+- Set `arity` explicitly when a field can hold multiple values.
+  - `one` (default): single-valued field, latest fact overwrites projection.
+  - `many`: multi-valued field, projection stores a deduplicated array.
 
 Entity modeling preference:
 - For new concrete entities (people, places, things), create a dedicated URI (for example `borg:person:<uuid>`).
@@ -92,6 +95,7 @@ Examples:
       "source": "borg:message:telegram_2654566_13842",
       "entity": "borg:user:leostera",
       "field": "borg:field:nickname",
+      "arity": "one",
       "value": { "Text": "Leo" }
     }
   ]
@@ -101,8 +105,15 @@ Examples:
   "facts": [
     {
       "entity": "borg:user:leostera",
-      "field": "borg:preference:favorite_movie",
-      "value": { "Text": "Minions" }
+      "field": "borg:preference:hobby",
+      "arity": "many",
+      "value": { "Text": "climbing" }
+    },
+    {
+      "entity": "borg:user:leostera",
+      "field": "borg:preference:hobby",
+      "arity": "many",
+      "value": { "Text": "cooking" }
     }
   ]
 }
@@ -188,6 +199,11 @@ User says: "my girlfriend's name is Mariana but her nickname is Maja"
                                 "field": {
                                     "type": "string",
                                     "description": "Field URI describing the property"
+                                },
+                                "arity": {
+                                    "type": "string",
+                                    "enum": ["one", "many"],
+                                    "description": "Field cardinality in the projection: one (default overwrite) or many (deduplicated array append)"
                                 },
                                 "value": {
                                     "description": "Fact value encoded as a single-key object variant",

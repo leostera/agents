@@ -16,7 +16,7 @@ use tracing::{debug, info};
 use url::Url;
 use uuid::Uuid;
 
-use crate::fact_store::{FactRecord, FactValue};
+use crate::fact_store::{FactArity, FactRecord, FactValue};
 
 const ENTITY_GRAPH_DIR: &str = "entity_graph";
 const ENTITY_ID_NAMESPACE: &str = "borg";
@@ -229,7 +229,7 @@ impl IndraEntityGraph {
             "last_stated_at".to_string(),
             Value::String(fact.stated_at.to_rfc3339()),
         );
-        obj.insert(field_key, field_value);
+        self.upsert_field_value(obj, &field_key, field_value, fact.arity);
 
         let mut label = existing
             .as_ref()
@@ -244,6 +244,42 @@ impl IndraEntityGraph {
         self.upsert_entity(&entity_type, &label, &props, Some(&natural_key))
             .await?;
         Ok(())
+    }
+
+    fn upsert_field_value(
+        &self,
+        object: &mut serde_json::Map<String, Value>,
+        field_key: &str,
+        field_value: Value,
+        arity: FactArity,
+    ) {
+        match arity {
+            FactArity::One => {
+                object.insert(field_key.to_string(), field_value);
+            }
+            FactArity::Many => {
+                let Some(existing) = object.get_mut(field_key) else {
+                    object.insert(field_key.to_string(), Value::Array(vec![field_value]));
+                    return;
+                };
+
+                match existing {
+                    Value::Array(values) => {
+                        if !values.contains(&field_value) {
+                            values.push(field_value);
+                        }
+                    }
+                    prior => {
+                        if *prior == field_value {
+                            *prior = Value::Array(vec![field_value]);
+                        } else {
+                            let previous = prior.clone();
+                            *prior = Value::Array(vec![previous, field_value]);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn fetch_entity_by_vertex_id(

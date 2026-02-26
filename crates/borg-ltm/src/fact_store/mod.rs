@@ -1,4 +1,4 @@
 mod turso_store;
 
 pub(crate) use turso_store::TursoFactStore;
-pub use turso_store::{FactInput, FactRecord, FactValue, StateFactsResult, Uri};
+pub use turso_store::{FactArity, FactInput, FactRecord, FactValue, StateFactsResult, Uri};

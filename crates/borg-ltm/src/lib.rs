@@ -14,6 +14,7 @@ mod tools;
 use entity_graph::IndraEntityGraph;
 use fact_store::TursoFactStore;
 pub use fact_store::{FactInput, FactRecord, FactValue, StateFactsResult, Uri};
+pub use fact_store::FactArity;
 use search_index::TantivySearchIndex;
 pub use tools::{build_memory_toolchain, default_tool_specs as default_memory_tool_specs};
 
@@ -362,10 +363,20 @@ mod tests {
     }
 
     fn make_fact(entity: Uri, field: &str, value: FactValue) -> FactInput {
+        make_fact_with_arity(entity, field, FactArity::One, value)
+    }
+
+    fn make_fact_with_arity(
+        entity: Uri,
+        field: &str,
+        arity: FactArity,
+        value: FactValue,
+    ) -> FactInput {
         FactInput {
             source: uri!("borg", "session").unwrap(),
             entity,
             field: Uri::parse(field).unwrap(),
+            arity,
             value,
         }
     }
@@ -493,6 +504,51 @@ mod tests {
         let found = wait_until_entity(&ltm, entity.clone()).await.unwrap();
         assert_eq!(found.label, "Minions");
         assert_eq!(found.props.get("year").and_then(|v| v.as_i64()), Some(2015));
+    }
+
+    #[tokio::test]
+    async fn many_arity_accumulates_distinct_values_into_array() {
+        let (root, search) = temp_paths("borg-ltm-many-arity");
+        let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
+        tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
+
+        let entity = uri!("borg", "user", "leostera").unwrap();
+        ltm.state_facts(vec![
+            make_fact_with_arity(
+                entity.clone(),
+                "borg:preference:hobby",
+                FactArity::Many,
+                FactValue::Text("climbing".to_string()),
+            ),
+            make_fact_with_arity(
+                entity.clone(),
+                "borg:preference:hobby",
+                FactArity::Many,
+                FactValue::Text("cooking".to_string()),
+            ),
+            make_fact_with_arity(
+                entity.clone(),
+                "borg:preference:hobby",
+                FactArity::Many,
+                FactValue::Text("climbing".to_string()),
+            ),
+        ])
+        .await
+        .unwrap();
+
+        let found = wait_until_entity(&ltm, entity).await.unwrap();
+        let hobbies = found
+            .props
+            .get("hobby")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        assert_eq!(hobbies.len(), 2);
+        assert!(hobbies.contains(&serde_json::Value::String("climbing".to_string())));
+        assert!(hobbies.contains(&serde_json::Value::String("cooking".to_string())));
     }
 
     #[tokio::test]
