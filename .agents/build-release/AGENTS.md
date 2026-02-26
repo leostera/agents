@@ -8,8 +8,9 @@ Scope: builds, workspace wiring, and command expectations.
   - `bun run build:web`
 - Rust build:
   - `cargo build`
+  - Fast local path (auto-uses `sccache` when installed): `./scripts/cargo-fast build -p borg-cli`
 - Full local build:
-  - `bun run build && cargo build -p borg-cli` (or equivalent sequence)
+  - `bun run build && ./scripts/cargo-fast build -p borg-cli` (or equivalent sequence)
 
 ## Dev Commands
 
