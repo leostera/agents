@@ -5,11 +5,12 @@ use borg_api::BorgApiServer;
 use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
 use borg_exec::ExecEngine;
-use borg_ltm::MemoryStore;
+use borg_ltm::{FactInput, MemoryStore, SearchQuery};
 use borg_onboard::OnboardServer;
 use borg_rt::CodeModeRuntime;
 use clap::{Parser, Subcommand};
 use reqwest::Client;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 use tracing::{error, info, warn};
@@ -52,9 +53,8 @@ enum Command {
         poll_ms: u64,
     },
     Session {
-        session_id: String,
-        #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
-        poll_ms: u64,
+        #[command(subcommand)]
+        cmd: SessionCommand,
     },
     Config {
         #[command(subcommand)]
@@ -79,6 +79,18 @@ enum TaskCommand {
 #[derive(Subcommand, Debug)]
 enum ConfigCommand {
     Set { key: String, value: String },
+}
+
+#[derive(Subcommand, Debug)]
+enum SessionCommand {
+    Stream {
+        session_id: String,
+        #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
+        poll_ms: u64,
+    },
+    ClearHistory {
+        session_id: String,
+    },
 }
 
 #[derive(Clone)]
@@ -111,9 +123,18 @@ impl BorgCliApp {
 
         let db = self.open_config_db().await?;
         let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
+        let memory_for_state_facts = memory.clone();
+        let memory_for_search = memory.clone();
+        let runtime = CodeModeRuntime::default()
+            .with_ffi_handler("memory__state_facts", move |args| {
+                ffi_memory_state_facts(memory_for_state_facts.clone(), args)
+            })
+            .with_ffi_handler("memory__search", move |args| {
+                ffi_memory_search(memory_for_search.clone(), args)
+            });
         let exec = ExecEngine::new(
             db.clone(),
-            CodeModeRuntime::default(),
+            runtime,
             Uri::parse(&format!("borg:worker:{}", Uuid::now_v7()))?,
         );
 
@@ -340,6 +361,26 @@ impl BorgCliApp {
         }
     }
 
+    async fn session_clear_history(&self, session_id: String) -> Result<()> {
+        let session_id = Uri::parse(&session_id).map_err(|_| {
+            anyhow::anyhow!(
+                "invalid session id `{}` (expected URI like borg:session:<id>)",
+                session_id
+            )
+        })?;
+        let db = self.open_config_db().await?;
+        db.migrate().await?;
+        let deleted = db.clear_session_history(&session_id).await?;
+        info!(
+            target: "borg_cli",
+            session_id = %session_id,
+            deleted,
+            "cleared session history"
+        );
+        println!("cleared {} message(s) for {}", deleted, session_id);
+        Ok(())
+    }
+
     fn open_browser(&self, url: &str) {
         let mut commands: Vec<ProcessCommand> = Vec::new();
 
@@ -371,6 +412,35 @@ impl BorgCliApp {
             warn!(target: "borg_cli", url, "failed to auto-open browser; open url manually");
         }
     }
+}
+
+fn parse_single_arg<T: DeserializeOwned>(args: Vec<Value>, op_name: &str) -> Result<T> {
+    let Some(first) = args.into_iter().next() else {
+        anyhow::bail!("{op_name} expects one argument");
+    };
+    serde_json::from_value(first)
+        .map_err(|err| anyhow::anyhow!("{op_name} argument decode error: {err}"))
+}
+
+fn ffi_memory_state_facts(memory: MemoryStore, args: Vec<Value>) -> Result<Value> {
+    let facts: Vec<FactInput> = parse_single_arg(args, "memory__state_facts")?;
+    if facts.is_empty() {
+        anyhow::bail!("memory__state_facts expects a non-empty facts array");
+    }
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::block_in_place(|| {
+        let result = handle.block_on(memory.state_facts(facts))?;
+        Ok(serde_json::to_value(result)?)
+    })
+}
+
+fn ffi_memory_search(memory: MemoryStore, args: Vec<Value>) -> Result<Value> {
+    let query: SearchQuery = parse_single_arg(args, "memory__search")?;
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::block_in_place(|| {
+        let result = handle.block_on(memory.search_query(query))?;
+        Ok(serde_json::to_value(result)?)
+    })
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
@@ -426,10 +496,15 @@ async fn main() -> Result<()> {
             api,
             poll_ms,
         } => app.events(api, task_id, poll_ms, false).await,
-        Command::Session {
-            session_id,
-            poll_ms,
-        } => app.session(session_id, poll_ms).await,
+        Command::Session { cmd } => match cmd {
+            SessionCommand::Stream {
+                session_id,
+                poll_ms,
+            } => app.session(session_id, poll_ms).await,
+            SessionCommand::ClearHistory { session_id } => {
+                app.session_clear_history(session_id).await
+            }
+        },
         Command::Config { cmd } => match cmd {
             ConfigCommand::Set { key, value } => app.config_set(key, value).await,
         },

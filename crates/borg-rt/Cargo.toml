@@ -12,3 +12,4 @@ borg-core = { path = "../borg-core" }
 tracing.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 borg-agent = { path = "../borg-agent" }
+tokio.workspace = true

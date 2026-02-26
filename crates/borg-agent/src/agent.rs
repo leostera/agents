@@ -12,9 +12,16 @@ use crate::{
 };
 
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
-pub const DEFAULT_MAX_TURNS: usize = 6;
+pub const DEFAULT_MAX_TURNS: usize = 50;
 pub const DEFAULT_AGENT_ID: &str = "borg:agent:default";
-pub const DEFAULT_SYSTEM_PROMPT: &str = "You are Borg's agent runtime. Use tools as needed, then respond clearly. When using the execute tool, code must be exactly an `async () => { ... return ... }` function. For filesystem listing, use `Borg.OS.ls(...)`; `BorgOs.ls(...)` is invalid.";
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are Borg's agent runtime. Always answer the latest user message directly. \
+Do not repeat previous answers unless the user asks you to. \
+Use tools when needed. \
+For long-term memory behavior: \
+1) If the user explicitly shares a preference/fact about themselves (e.g. favorite movie), store it in long-term memory without asking for extra confirmation. \
+2) If the user asks to recall previously stored preferences/facts (e.g. \"what is my least favorite movie?\"), search long-term memory first, then answer from results. \
+3) If memory has no matching fact, say you do not have that fact yet and ask one short follow-up question. \
+Keep responses concise and conversational.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {

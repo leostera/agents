@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use serde_json::{Value, json};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::{CodeModeRuntime, sdk_types};
 
@@ -89,7 +90,13 @@ pub fn build_code_mode_toolchain(runtime: CodeModeRuntime) -> Result<Toolchain> 
                         .get("code")
                         .and_then(Value::as_str)
                         .ok_or_else(|| anyhow!("execute tool requires code"))?;
-                    let result = runtime.execute(code)?;
+                    let code = code.to_string();
+                    let result = tokio::task::spawn_blocking(move || {
+                        catch_unwind(AssertUnwindSafe(|| runtime.execute(&code)))
+                    })
+                    .await
+                    .map_err(|err| anyhow!("execute tool worker join error: {}", err))?
+                    .map_err(|_| anyhow!("execute tool panicked"))??;
                     Ok(ToolResponse {
                         content: ToolResultData::Execution {
                             result: result.result_json,

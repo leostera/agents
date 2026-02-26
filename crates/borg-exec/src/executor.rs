@@ -140,13 +140,31 @@ impl BorgExecutor {
 
         loop {
             let task_id = self.task_queue.next().await?;
-            if let Err(err) = self.process_task_id(&task_id).await {
-                error!(
-                    target: "borg_exec",
-                    task_id = %task_id,
-                    error = %err,
-                    "executor task processing failed"
-                );
+            let exec = self.clone();
+            let task_id_for_worker = task_id.clone();
+            let join = tokio::spawn(async move { exec.process_task_id(&task_id_for_worker).await });
+            match join.await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    error!(
+                        target: "borg_exec",
+                        task_id = %task_id,
+                        error = %err,
+                        "executor task processing failed"
+                    );
+                }
+                Err(err) => {
+                    error!(
+                        target: "borg_exec",
+                        task_id = %task_id,
+                        error = %err,
+                        "executor task panicked; task will be marked failed and loop will continue"
+                    );
+                    let _ = self
+                        .db
+                        .fail_task(&task_id, &format!("executor panic: {}", err))
+                        .await;
+                }
             }
         }
     }

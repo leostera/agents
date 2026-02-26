@@ -79,4 +79,15 @@ impl BorgDb {
         let count: i64 = row.get(0)?;
         Ok(usize::try_from(count).unwrap_or(0))
     }
+
+    pub async fn clear_session_history(&self, session_id: &Uri) -> Result<u64> {
+        let deleted = self
+            .conn
+            .execute(
+                "DELETE FROM session_messages WHERE session_id = ?1",
+                (session_id.to_string(),),
+            )
+            .await?;
+        Ok(deleted)
+    }
 }

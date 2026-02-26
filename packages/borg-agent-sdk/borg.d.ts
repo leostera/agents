@@ -98,10 +98,115 @@ declare global {
   }
 
   /**
+   * Input fact payload for `Borg.Memory.stateFacts`.
+   *
+   * All URI-like fields must be canonical URI strings (for example `borg:source:cli`).
+   * `value` follows the tagged Rust enum shape expected by the backend.
+   */
+  interface BorgFactInput {
+    source: string;
+    entity: string;
+    field: string;
+    value:
+      | { Text: string }
+      | { Integer: number }
+      | { Float: number }
+      | { Boolean: boolean }
+      | { Bytes: number[] }
+      | { Ref: string };
+  }
+
+  /**
+   * Result payload returned by `Borg.Memory.stateFacts`.
+   *
+   * - `tx_id`: transaction URI for this state operation.
+   * - `facts`: persisted fact records (opaque but serializable).
+   */
+  interface BorgStateFactsResult {
+    tx_id: string;
+    facts: unknown[];
+  }
+
+  /**
+   * Partial name filter used by memory search query.
+   */
+  interface BorgNameFilter {
+    like: string;
+  }
+
+  /**
+   * Query payload for `Borg.Memory.search`.
+   *
+   * `q` and/or `name.like` can be used for text matching.
+   */
+  interface BorgSearchQuery {
+    ns?: string;
+    kind?: string;
+    name?: BorgNameFilter;
+    q?: string;
+    limit?: number;
+  }
+
+  /**
+   * Result payload returned by `Borg.Memory.search`.
+   */
+  interface BorgSearchResults {
+    entities: unknown[];
+  }
+
+  /**
+   * Long-term memory APIs exposed by Borg.
+   */
+  interface BorgMemory {
+    /**
+     * Persist one or more facts into the long-term memory store.
+     *
+     * `source`, `entity`, and `field` must be URI strings.
+     * Prefer using `Borg.URI.new(ns, kind)` for new identifiers and
+     * `Borg.URI.parse(raw)` when normalizing existing raw strings.
+     *
+     * Example:
+     * `Borg.Memory.stateFacts([{ source: Borg.URI.new("borg", "source"), entity: Borg.URI.new("borg", "user"), field: Borg.URI.parse("borg:preference:favorite_movie"), value: { Text: "Minions" } }])`
+     */
+    stateFacts(facts: BorgFactInput[]): BorgStateFactsResult;
+    /**
+     * Search long-term memory entities.
+     *
+     * Example:
+     * `Borg.Memory.search({ q: "movie", kind: "Preference", limit: 10 })`
+     */
+    search(query: BorgSearchQuery): BorgSearchResults;
+  }
+
+  /**
+   * URI helpers for constructing and validating Borg URI strings.
+   */
+  interface BorgURI {
+    /**
+     * Create a new URI in the form `${ns}:${kind}:${id}`.
+     * If `id` is omitted, a new random id is generated.
+     */
+    new(ns: string, kind: string, id?: string): string;
+    /**
+     * Validate and normalize an existing URI string.
+     * Throws when the input is not a valid `ns:kind:id` URI.
+     */
+    parse(raw: string): string;
+  }
+
+  /**
    * Top-level Borg SDK surface available inside Code Mode execution.
    */
   interface BorgSdk {
     OS: BorgOS;
+    /**
+     * Long-term memory namespace for storing and searching structured facts.
+     */
+    Memory: BorgMemory;
+    /**
+     * URI helper namespace.
+     */
+    URI: BorgURI;
     /**
      * Perform an HTTP request from the runtime.
      *

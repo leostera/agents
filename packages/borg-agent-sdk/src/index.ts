@@ -16,8 +16,41 @@ const OS = {
   ls: (...args: unknown[]) => ffiCall("os__ls", args),
 };
 
+const Memory = {
+  stateFacts: (...args: unknown[]) => ffiCall("memory__state_facts", args),
+  search: (...args: unknown[]) => ffiCall("memory__search", args),
+};
+
+const URI = {
+  new: (ns: string, kind: string, id?: string) => {
+    if (!ns || !kind) {
+      throw new Error("Borg.URI.new requires non-empty ns and kind");
+    }
+    const value =
+      typeof id === "string" && id.length > 0
+        ? id
+        : typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return `${ns}:${kind}:${value}`;
+  },
+  parse: (raw: string) => {
+    if (typeof raw !== "string") {
+      throw new Error("Borg.URI.parse requires a string");
+    }
+    const value = raw.trim();
+    const parts = value.split(":");
+    if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
+      throw new Error(`Invalid Borg URI: ${raw}`);
+    }
+    return `${parts[0]}:${parts[1]}:${parts[2]}`;
+  },
+};
+
 const Borg = Object.freeze({
   OS,
+  Memory,
+  URI,
   fetch: sdkFetch,
 });
 
