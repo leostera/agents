@@ -1495,6 +1495,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn policies_and_policy_uses_crud_endpoints_work() {
+        let app = test_app("policies").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/policies/borg:policy:session-read",
+            json!({"policy":{"effect":"allow","actions":["session.read"]}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) =
+            request_no_body(&app, Method::GET, "/api/policies/borg:policy:session-read").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["policy"]["policy"]["effect"], "allow");
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/policies").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["policies"].as_array().is_some_and(|v| !v.is_empty()));
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::PUT,
+            "/api/policies/borg:policy:session-read/uses/borg:agent:default",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/policies/borg:policy:session-read/uses",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["uses"].as_array().is_some_and(|v| !v.is_empty()));
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::DELETE,
+            "/api/policies/borg:policy:session-read/uses/borg:agent:default",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (status, _) =
+            request_no_body(&app, Method::DELETE, "/api/policies/borg:policy:session-read").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
     async fn agent_specs_crud_endpoints_work() {
         let app = test_app("agent-specs").await;
         let (status, _) = request_json(
@@ -1757,6 +1808,33 @@ mod tests {
 
         let (status, _) = request_no_body(&app, Method::DELETE, "/api/providers/missing").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn policies_negative_paths() {
+        let app = test_app("policies-negative").await;
+        let (status, _) = request_no_body(&app, Method::GET, "/api/policies/not-a-uri").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) =
+            request_no_body(&app, Method::GET, "/api/policies/borg:policy:missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::PUT,
+            "/api/policies/borg:policy:missing/uses/borg:agent:default",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::PUT,
+            "/api/policies/not-a-uri/uses/borg:agent:default",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
