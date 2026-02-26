@@ -4,7 +4,7 @@ use tracing::info;
 
 use crate::{LlmAssistantMessage, LlmRequest, Provider, TranscriptionRequest};
 
-use super::openai::OpenAiProvider;
+use super::openai::{OpenAiApiMode, OpenAiProvider};
 
 const OPENAI_PROVIDER: &str = "openai";
 
@@ -12,6 +12,7 @@ const OPENAI_PROVIDER: &str = "openai";
 pub struct ProviderSettings {
     pub openai_api_key: Option<String>,
     pub openai_base_url: Option<String>,
+    pub openai_api_mode: Option<String>,
     pub preferred_provider: Option<String>,
 }
 
@@ -42,15 +43,31 @@ impl ConfiguredProvider {
             .filter(|key| !key.is_empty())
             .ok_or_else(|| anyhow!("OpenAI provider is not configured"))?;
 
+        let api_mode_raw = settings
+            .openai_api_mode
+            .or_else(|| std::env::var("BORG_OPENAI_API_MODE").ok())
+            .unwrap_or_else(|| "completions".to_string())
+            .to_lowercase();
+        let api_mode = match api_mode_raw.as_str() {
+            "chat" | "chat_completions" => OpenAiApiMode::ChatCompletions,
+            "completions" => OpenAiApiMode::Completions,
+            _ => {
+                return Err(anyhow!(
+                    "unsupported OpenAI API mode `{}` (expected `chat_completions` or `completions`)",
+                    api_mode_raw
+                ));
+            }
+        };
+
         let provider = if let Some(base_url) = settings
             .openai_base_url
             .as_ref()
             .map(|url| url.trim().to_string())
             .filter(|url| !url.is_empty())
         {
-            OpenAiProvider::new_with_base_url(api_key, base_url)
+            OpenAiProvider::new_with_base_url_and_mode(api_key, base_url, api_mode)
         } else {
-            OpenAiProvider::new(api_key)
+            OpenAiProvider::new_with_mode(api_key, api_mode)
         };
 
         info!(

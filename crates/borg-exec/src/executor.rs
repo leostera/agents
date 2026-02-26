@@ -71,6 +71,7 @@ impl BorgExecutor {
         let settings = ProviderSettings {
             openai_api_key: self.db.get_provider_api_key(OPENAI_PROVIDER).await?,
             openai_base_url: self.openai_base_url.clone(),
+            openai_api_mode: None,
             preferred_provider: None,
         };
         ConfiguredProvider::from_settings(settings)

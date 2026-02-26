@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use serde_json::json;
+use std::collections::HashSet;
 
 use crate::{FactInput, MemoryStore, SearchQuery, Uri};
 
@@ -80,10 +81,17 @@ Entity modeling preference:
 - Ref: `{ "Ref": "borg:user:mariana" }`
 
 Input shape:
-{ "facts": FactInput[] }
+{ "entities": string[], "facts": FactInput[] }
+
+`entities` is REQUIRED and must list every entity URI that appears in `facts[*].entity`.
+This enforces entity-first memory modeling:
+- first discover entities via `searchMemory` (or create with `newEntity`)
+- then state facts only for that explicit entity set
+- this guarantees people/places/objects get stable, referenceable entity nodes
 
 Examples:
 {
+  "entities": ["borg:user:leostera"],
   "facts": [
     {
       "source": "borg:message:telegram_2654566_13842",
@@ -102,6 +110,7 @@ Examples:
 }
 
 {
+  "entities": ["borg:user:leostera"],
   "facts": [
     {
       "entity": "borg:user:leostera",
@@ -119,6 +128,7 @@ Examples:
 }
 
 {
+  "entities": ["borg:user:leostera", "borg:file:avatar", "borg:user:mariana"],
   "facts": [
     {
       "source": "borg:message:telegram_2654566_13843",
@@ -157,6 +167,10 @@ Entity-first example (preferred):
 User says: "my girlfriend's name is Mariana but her nickname is Maja"
 
 {
+  "entities": [
+    "borg:person:2a7f8f3b-1b11-4ef7-a1b0-9a3c2d4e5f6a",
+    "borg:user:leostera"
+  ],
   "facts": [
     {
       "source": "borg:message:telegram_2654566_13844",
@@ -182,6 +196,12 @@ User says: "my girlfriend's name is Mariana but her nickname is Maja"
             parameters: json!({
                 "type": "object",
                 "properties": {
+                    "entities": {
+                        "type": "array",
+                        "description": "Required set of entity URIs this batch is allowed to state facts about",
+                        "items": { "type": "string" },
+                        "minItems": 1
+                    },
                     "facts": {
                         "type": "array",
                         "description": "List of facts to persist in LTM",
@@ -257,7 +277,7 @@ User says: "my girlfriend's name is Mariana but her nickname is Maja"
                         }
                     }
                 },
-                "required": ["facts"],
+                "required": ["entities", "facts"],
                 "additionalProperties": false
             }),
         },
@@ -346,6 +366,16 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
         .add_tool(Tool::new(save_facts_spec, None, move |request| {
             let memory = memory_for_save.clone();
             async move {
+                let entities_value = request
+                    .arguments
+                    .get("entities")
+                    .cloned()
+                    .ok_or_else(|| anyhow!("saveFacts tool requires entities"))?;
+                let entities: Vec<String> = serde_json::from_value(entities_value)?;
+                if entities.is_empty() {
+                    return Err(anyhow!("saveFacts expects a non-empty entities array"));
+                }
+                let declared_entities: HashSet<String> = entities.into_iter().collect();
                 let facts_value = request
                     .arguments
                     .get("facts")
@@ -354,6 +384,16 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                 let facts: Vec<FactInput> = serde_json::from_value(facts_value)?;
                 if facts.is_empty() {
                     return Err(anyhow!("saveFacts expects a non-empty facts array"));
+                }
+                if let Some(missing) = facts
+                    .iter()
+                    .map(|fact| fact.entity.to_string())
+                    .find(|entity| !declared_entities.contains(entity))
+                {
+                    return Err(anyhow!(
+                        "saveFacts facts contain undeclared entity `{}`; include it in `entities`",
+                        missing
+                    ));
                 }
 
                 let result = memory.state_facts(facts).await?;

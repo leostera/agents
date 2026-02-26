@@ -10,33 +10,58 @@ use crate::{
 };
 
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
+const OPENAI_COMPLETIONS_URL: &str = "https://api.openai.com/v1/completions";
 const OPENAI_AUDIO_TRANSCRIPTIONS_URL: &str = "https://api.openai.com/v1/audio/transcriptions";
 const DEFAULT_TRANSCRIPTION_MODEL: &str = "gpt-4o-mini-transcribe";
+
+#[derive(Clone, Copy, Debug)]
+pub enum OpenAiApiMode {
+    ChatCompletions,
+    Completions,
+}
 
 #[derive(Clone)]
 pub struct OpenAiProvider {
     http: Client,
     api_key: String,
+    api_mode: OpenAiApiMode,
     chat_completions_url: String,
+    completions_url: String,
     audio_transcriptions_url: String,
 }
 
 impl OpenAiProvider {
     pub fn new(api_key: impl Into<String>) -> Self {
+        Self::new_with_mode(api_key, OpenAiApiMode::ChatCompletions)
+    }
+
+    pub fn new_with_mode(api_key: impl Into<String>, api_mode: OpenAiApiMode) -> Self {
         Self {
             http: Client::new(),
             api_key: api_key.into(),
+            api_mode,
             chat_completions_url: OPENAI_CHAT_COMPLETIONS_URL.to_string(),
+            completions_url: OPENAI_COMPLETIONS_URL.to_string(),
             audio_transcriptions_url: OPENAI_AUDIO_TRANSCRIPTIONS_URL.to_string(),
         }
     }
 
     pub fn new_with_base_url(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
+        Self::new_with_base_url_and_mode(api_key, base_url, OpenAiApiMode::ChatCompletions)
+    }
+
+    pub fn new_with_base_url_and_mode(
+        api_key: impl Into<String>,
+        base_url: impl Into<String>,
+        api_mode: OpenAiApiMode,
+    ) -> Self {
         let base = base_url.into().trim_end_matches('/').to_string();
         Self {
             http: Client::new(),
             api_key: api_key.into(),
+            api_mode,
             chat_completions_url: format!("{}/v1/chat/completions", base),
+            completions_url: format!("{}/v1/completions", base),
             audio_transcriptions_url: format!("{}/v1/audio/transcriptions", base),
         }
     }
@@ -45,59 +70,10 @@ impl OpenAiProvider {
 #[async_trait]
 impl Provider for OpenAiProvider {
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
-        info!(
-            target: "borg_llm",
-            model = req.model.as_str(),
-            message_count = req.messages.len(),
-            tool_count = req.tools.len(),
-            "sending chat completion request"
-        );
-        let body = json!({
-            "model": req.model,
-            "messages": to_openai_messages(&req.messages),
-            "tools": to_openai_tools(&req.tools),
-            "tool_choice": "auto",
-            "temperature": req.temperature,
-            "max_tokens": req.max_tokens,
-        });
-        trace!(
-            target: "borg_llm",
-            has_temperature = req.temperature.is_some(),
-            has_max_tokens = req.max_tokens.is_some(),
-            "chat request payload prepared"
-        );
-
-        let api_key = req.api_key.as_deref().unwrap_or(&self.api_key);
-        debug!(
-            target: "borg_llm",
-            endpoint = self.chat_completions_url.as_str(),
-            request_api_key_override = req.api_key.is_some(),
-            "posting chat completion request"
-        );
-        let response = self
-            .http
-            .post(&self.chat_completions_url)
-            .bearer_auth(api_key)
-            .json(&body)
-            .send()
-            .await?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            error!(
-                target: "borg_llm",
-                status = %status,
-                response_body = body.as_str(),
-                "chat completion request failed"
-            );
-            return Err(anyhow!("openai chat completions returned {}", status));
+        match self.api_mode {
+            OpenAiApiMode::ChatCompletions => self.chat_via_chat_completions(req).await,
+            OpenAiApiMode::Completions => self.chat_via_completions(req).await,
         }
-
-        debug!(target: "borg_llm", status = %status, "chat completion request succeeded");
-        let payload: Value = response.json().await?;
-        trace!(target: "borg_llm", payload = ?payload, "raw chat completion payload");
-        parse_openai_assistant_message(&payload)
     }
 
     async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String> {
@@ -158,6 +134,128 @@ impl Provider for OpenAiProvider {
             .to_string();
         debug!(target: "borg_llm", chars = text.len(), "audio transcription request succeeded");
         Ok(text)
+    }
+}
+
+impl OpenAiProvider {
+    async fn chat_via_chat_completions(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        info!(
+            target: "borg_llm",
+            model = req.model.as_str(),
+            message_count = req.messages.len(),
+            tool_count = req.tools.len(),
+            "sending chat completion request"
+        );
+        let body = json!({
+            "model": req.model,
+            "messages": to_openai_messages(&req.messages),
+            "tools": to_openai_tools(&req.tools),
+            "tool_choice": "auto",
+            "temperature": req.temperature,
+            "max_tokens": req.max_tokens,
+        });
+        trace!(
+            target: "borg_llm",
+            has_temperature = req.temperature.is_some(),
+            has_max_tokens = req.max_tokens.is_some(),
+            "chat request payload prepared"
+        );
+
+        let api_key = req.api_key.as_deref().unwrap_or(&self.api_key);
+        debug!(
+            target: "borg_llm",
+            endpoint = self.chat_completions_url.as_str(),
+            request_api_key_override = req.api_key.is_some(),
+            "posting chat completion request"
+        );
+        let response = self
+            .http
+            .post(&self.chat_completions_url)
+            .bearer_auth(api_key)
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            error!(
+                target: "borg_llm",
+                status = %status,
+                response_body = body.as_str(),
+                "chat completion request failed"
+            );
+            return Err(anyhow!("openai chat completions returned {}", status));
+        }
+
+        debug!(target: "borg_llm", status = %status, "chat completion request succeeded");
+        let payload: Value = response.json().await?;
+        trace!(target: "borg_llm", payload = ?payload, "raw chat completion payload");
+        parse_openai_assistant_message(&payload)
+    }
+
+    async fn chat_via_completions(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        info!(
+            target: "borg_llm",
+            model = req.model.as_str(),
+            message_count = req.messages.len(),
+            tool_count = req.tools.len(),
+            "sending completions request"
+        );
+        let body = json!({
+            "model": req.model,
+            "prompt": to_openai_completions_prompt(&req.messages, &req.tools),
+            "temperature": req.temperature,
+            "max_tokens": req.max_tokens,
+        });
+
+        let api_key = req.api_key.as_deref().unwrap_or(&self.api_key);
+        let response = self
+            .http
+            .post(&self.completions_url)
+            .bearer_auth(api_key)
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            error!(
+                target: "borg_llm",
+                status = %status,
+                response_body = body.as_str(),
+                "completions request failed"
+            );
+            return Err(anyhow!("openai completions returned {}", status));
+        }
+
+        let payload: Value = response.json().await?;
+        trace!(target: "borg_llm", payload = ?payload, "raw completions payload");
+        let text = payload
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let stop_reason = match payload
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("finish_reason"))
+            .and_then(Value::as_str)
+        {
+            Some("length") => StopReason::Error,
+            _ => StopReason::EndOfTurn,
+        };
+        Ok(LlmAssistantMessage {
+            content: vec![ProviderBlock::Text(text)],
+            stop_reason,
+            error_message: None,
+        })
     }
 }
 
@@ -230,6 +328,65 @@ fn to_openai_messages(messages: &[ProviderMessage]) -> Vec<Value> {
             }),
         })
         .collect()
+}
+
+fn to_openai_completions_prompt(messages: &[ProviderMessage], tools: &[ToolDescriptor]) -> String {
+    let mut prompt = String::new();
+
+    if !tools.is_empty() {
+        prompt.push_str("Available tools (function signatures in JSON Schema):\n");
+        for tool in tools {
+            prompt.push_str("- ");
+            prompt.push_str(tool.name.as_str());
+            prompt.push_str(": ");
+            prompt.push_str(tool.description.as_str());
+            prompt.push_str("\n  parameters: ");
+            prompt.push_str(&tool.input_schema.to_string());
+            prompt.push('\n');
+        }
+        prompt.push('\n');
+    }
+
+    for message in messages {
+        match message {
+            ProviderMessage::System { text } => {
+                prompt.push_str("[system]\n");
+                prompt.push_str(text);
+                prompt.push('\n');
+            }
+            ProviderMessage::User { content } => {
+                prompt.push_str("[user]\n");
+                let line = user_blocks_to_openai_content(content)
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                prompt.push_str(line.as_str());
+                prompt.push('\n');
+            }
+            ProviderMessage::Assistant { content } => {
+                prompt.push_str("[assistant]\n");
+                let line = blocks_to_openai_content(content)
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                prompt.push_str(line.as_str());
+                prompt.push('\n');
+            }
+            ProviderMessage::ToolResult { name, content, .. } => {
+                prompt.push_str("[tool_result:");
+                prompt.push_str(name);
+                prompt.push_str("]\n");
+                let line = blocks_to_openai_content(content)
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                prompt.push_str(line.as_str());
+                prompt.push('\n');
+            }
+        }
+    }
+    prompt.push_str("[assistant]\n");
+    prompt
 }
 
 fn blocks_to_openai_tool_calls(blocks: &[ProviderBlock]) -> Vec<Value> {
