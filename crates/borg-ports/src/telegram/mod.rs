@@ -5,7 +5,8 @@ use borg_exec::{ExecEngine, UserMessage};
 use serde_json::Value;
 use serde_json::json;
 use teloxide::prelude::*;
-use teloxide::types::ChatAction;
+use teloxide::types::{ChatAction, KeyboardButton, KeyboardMarkup, ParseMode};
+use teloxide::utils::html;
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, sleep};
 
@@ -17,6 +18,7 @@ const TELEGRAM_START_GREETING: &str =
     "Hi! I am Borg. Send me a message and I will reply in this chat.";
 const TELEGRAM_CONTEXT_MAX_TOKENS: usize = 128_000;
 const TELEGRAM_TYPING_REFRESH_SECS: u64 = 4;
+const TELEGRAM_COMPACT_COMMAND: &str = "/compact";
 
 #[derive(Clone)]
 pub struct TelegramPort {
@@ -160,6 +162,7 @@ impl TelegramPort {
                         for action in tool_calls {
                             let formatted = format_tool_action_message(&action);
                             bot.send_message(message.chat.id, truncate_telegram_message(formatted))
+                                .parse_mode(ParseMode::Html)
                                 .await?;
                         }
                     }
@@ -180,7 +183,16 @@ impl TelegramPort {
                             .await
                         {
                             let usage_line = format!("Context: ~{}% used", percent);
-                            bot.send_message(message.chat.id, usage_line).await?;
+                            let compact_keyboard =
+                                KeyboardMarkup::new(vec![vec![KeyboardButton::new(
+                                    TELEGRAM_COMPACT_COMMAND,
+                                )]])
+                            .resize_keyboard()
+                            .one_time_keyboard()
+                            .input_field_placeholder(TELEGRAM_COMPACT_COMMAND);
+                            bot.send_message(message.chat.id, usage_line)
+                                .reply_markup(compact_keyboard)
+                                .await?;
                         }
                     }
                 }
@@ -242,7 +254,7 @@ fn is_start_command(message: &Message) -> bool {
 
 fn format_tool_action_message(action: &str) -> String {
     let Some((tool_name, raw_args)) = action.split_once(' ') else {
-        return format!("Action: {}", action);
+        return format!("<b>Action:</b> {}", html::escape(action));
     };
     let tool_label = humanize_tool_name(tool_name);
     let parsed_args = serde_json::from_str::<Value>(raw_args).ok();
@@ -254,7 +266,11 @@ fn format_tool_action_message(action: &str) -> String {
             .and_then(Value::as_str)
         {
             let title = infer_execute_action_title(code);
-            return format!("Action: {}\n\n```js\n{}\n```", title, code.trim());
+            return format!(
+                "<b>Action:</b> {}\n<pre><code>{}</code></pre>",
+                html::escape(title),
+                html::escape(code.trim())
+            );
         }
     }
 
@@ -263,9 +279,9 @@ fn format_tool_action_message(action: &str) -> String {
         .and_then(|value| serde_json::to_string_pretty(value).ok())
         .unwrap_or_else(|| raw_args.to_string());
     format!(
-        "Action: {}\n\n```json\n{}\n```",
-        tool_label,
-        pretty_args.trim()
+        "<b>Action:</b> {}\n<pre><code>{}</code></pre>",
+        html::escape(tool_label),
+        html::escape(pretty_args.trim())
     )
 }
 
