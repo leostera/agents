@@ -330,7 +330,7 @@ async fn command_participants(req: CommandRequest<TelegramCommandState>) -> Resu
         .exec
         .list_session_messages(&session_id, 0, 10_000)
         .await?;
-    Ok(format_participants_message(&messages))
+    Ok(format_participants_message(&messages, &req.state.message))
 }
 
 async fn command_context(req: CommandRequest<TelegramCommandState>) -> Result<String> {
@@ -349,8 +349,12 @@ fn telegram_session_id(message: &Message) -> Result<Uri> {
     .map_err(Into::into)
 }
 
-fn format_participants_message(messages: &[Value]) -> String {
+fn format_participants_message(messages: &[Value], current_message: &Message) -> String {
     let mut participants = std::collections::BTreeSet::<String>::new();
+    if let Some(current_sender) = telegram_sender_label(current_message) {
+        participants.insert(current_sender);
+    }
+
     for message in messages {
         let Some(content) = message
             .get("content")
@@ -368,30 +372,16 @@ fn format_participants_message(messages: &[Value]) -> String {
             Some(value) => value,
             None => continue,
         };
-        let id = sender
-            .get("id")
-            .and_then(Value::as_i64)
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        let username = sender
-            .get("username")
-            .and_then(Value::as_str)
-            .map(|value| format!("@{value}"))
-            .unwrap_or_else(|| "unknown".to_string());
-        let first_name = sender
-            .get("first_name")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let last_name = sender
-            .get("last_name")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let full_name = format!("{} {}", first_name, last_name).trim().to_string();
-        let label = if full_name.is_empty() {
-            format!("{username} ({id})")
-        } else {
-            format!("{full_name} {username} ({id})")
-        };
+        let label = format_sender_label(
+            sender
+                .get("id")
+                .and_then(Value::as_i64)
+                .map(|value| value.to_string())
+                .as_deref(),
+            sender.get("username").and_then(Value::as_str),
+            sender.get("first_name").and_then(Value::as_str),
+            sender.get("last_name").and_then(Value::as_str),
+        );
         participants.insert(label);
     }
 
@@ -405,6 +395,40 @@ fn format_participants_message(messages: &[Value]) -> String {
         out.push_str(&participant);
     }
     out
+}
+
+fn telegram_sender_label(message: &Message) -> Option<String> {
+    let sender = message.from.as_ref()?;
+    Some(format_sender_label(
+        Some(&sender.id.0.to_string()),
+        sender.username.as_deref(),
+        Some(sender.first_name.as_str()),
+        sender.last_name.as_deref(),
+    ))
+}
+
+fn format_sender_label(
+    id: Option<&str>,
+    username: Option<&str>,
+    first_name: Option<&str>,
+    last_name: Option<&str>,
+) -> String {
+    let id = id.unwrap_or("unknown");
+    let username = username
+        .map(|value| format!("@{value}"))
+        .unwrap_or_else(|| "unknown".to_string());
+    let full_name = format!(
+        "{} {}",
+        first_name.unwrap_or_default(),
+        last_name.unwrap_or_default()
+    )
+    .trim()
+    .to_string();
+    if full_name.is_empty() {
+        format!("{username} ({id})")
+    } else {
+        format!("{full_name} {username} ({id})")
+    }
 }
 
 fn format_tool_action_message(action: &str) -> String {
