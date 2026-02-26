@@ -75,8 +75,11 @@ where
     }
 
     pub fn help(&self) -> String {
-        let mut lines = vec!["Available commands:".to_string()];
+        let mut lines = vec!["Available commands:".to_string(), "/help".to_string()];
         for command in self.commands() {
+            if command == "help" {
+                continue;
+            }
             lines.push(format!("/{command}"));
         }
         lines.join("\n")

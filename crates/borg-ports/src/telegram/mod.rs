@@ -227,8 +227,10 @@ impl TelegramPort {
                         for call in tool_calls {
                             let formatted = port.format_tool_action_message(&call);
                             port.send_text(message.chat.id, formatted).await?;
-                            let output = format!("Result:\n{}", call.output_message().trim());
-                            port.send_text(message.chat.id, output).await?;
+                            if call.is_error() {
+                                let output = format!("Result:\n{}", call.output_message().trim());
+                                port.send_text(message.chat.id, output).await?;
+                            }
                         }
                     }
 

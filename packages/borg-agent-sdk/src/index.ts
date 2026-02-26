@@ -42,49 +42,8 @@ interface BorgFetchResponse {
   json: unknown | null;
 }
 
-type BorgFactValue =
-  | { Text: string }
-  | { Integer: number }
-  | { Float: number }
-  | { Boolean: boolean }
-  | { Bytes: number[] }
-  | { Ref: BorgUri };
-
-interface BorgFactInput {
-  source?: BorgUri;
-  entity: BorgUri;
-  field: BorgUri;
-  value: BorgFactValue;
-}
-
-interface BorgStateFactsResult {
-  tx_id: BorgUri;
-  facts: unknown[];
-}
-
-interface BorgNameFilter {
-  like: string;
-}
-
-interface BorgSearchQuery {
-  ns?: string;
-  kind?: string;
-  name?: BorgNameFilter;
-  q?: string;
-  limit?: number;
-}
-
-interface BorgSearchResults {
-  entities: unknown[];
-}
-
 interface BorgOS {
   ls(path?: PathLike, options?: BorgLsOptions): BorgLsResult;
-}
-
-interface BorgMemory {
-  stateFacts(facts: BorgFactInput[]): BorgStateFactsResult;
-  search(query: BorgSearchQuery): BorgSearchResults;
 }
 
 interface BorgCurrentMessage {
@@ -101,7 +60,6 @@ interface BorgUser {
 
 interface BorgSdk {
   OS: BorgOS;
-  Memory: BorgMemory;
   Message: BorgMessage;
   me(): BorgUser;
   fetch(url: string, init?: BorgFetchInit): Promise<BorgFetchResponse>;
@@ -142,15 +100,6 @@ const OS: BorgOS = {
   },
 };
 
-const Memory: BorgMemory = {
-  stateFacts(facts: BorgFactInput[]): BorgStateFactsResult {
-    return ffiInvoke<BorgStateFactsResult>("memory__state_facts", [facts]);
-  },
-  search(query: BorgSearchQuery): BorgSearchResults {
-    return ffiInvoke<BorgSearchResults>("memory__search", [query]);
-  },
-};
-
 const Message: BorgMessage = {
   currentMessage(): BorgCurrentMessage {
     const context = currentContext();
@@ -169,7 +118,6 @@ const Message: BorgMessage = {
 
 const Borg: BorgSdk = Object.freeze({
   OS,
-  Memory,
   Message,
   me(): BorgUser {
     const context = currentContext();

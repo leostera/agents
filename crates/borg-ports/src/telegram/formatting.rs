@@ -152,7 +152,7 @@ impl TelegramPort {
         let tool_label = Self::humanize_tool_name(tool_name);
         let parsed_args = Some(call.arguments.clone());
 
-        if tool_name == "execute" {
+        if tool_name == "executeCode" {
             let hinted_title = parsed_args
                 .as_ref()
                 .and_then(|args| args.get("hint"))
@@ -190,9 +190,10 @@ impl TelegramPort {
 
     fn humanize_tool_name(tool_name: &str) -> &'static str {
         match tool_name {
-            "execute" => "Running code",
-            "memory__search" => "Searching memory",
-            "memory__state_facts" => "Writing memory facts",
+            "executeCode" => "Running code",
+            "searchApis" => "Searching APIs",
+            "searchMemory" => "Searching memory",
+            "saveFacts" => "Writing memory facts",
             _ => "Running tool",
         }
     }

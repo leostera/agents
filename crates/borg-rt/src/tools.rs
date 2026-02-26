@@ -8,8 +8,8 @@ use crate::{CodeModeContext, CodeModeRuntime, sdk_types};
 pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
-            name: "search".to_string(),
-            description: "Search for APIs available to execute code. ALWAYS use the `search` tool to search for APIs before executing code. Returns only APIs available in the TypeScript SDK definitions for the Borg SDK".to_string(),
+            name: "searchApis".to_string(),
+            description: "Search for APIs available to execute code. ALWAYS use the `searchApis` tool to search for APIs before executing code. Returns only APIs available in the TypeScript SDK definitions for the Borg SDK".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -23,8 +23,8 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "execute".to_string(),
-            description: "Execute JavaScript in Code Mode runtime. ALWAYS use the `search` tool to search for APIs before executing code. Input must be {\"code\": string} where code is exactly an async zero-arg arrow function, for example: `async () => { const listing = await Borg.OS.ls('.'); return listing; }`. Returns JSON from the function return value. The code must be valid TypeScript or JavaScript code that follows the APIs described by the `search` tool".to_string(),
+            name: "executeCode".to_string(),
+            description: "Execute JavaScript in Code Mode runtime. ALWAYS use the `searchApis` tool to search for APIs before executing code. Input must be {\"code\": string} where code is exactly an async zero-arg arrow function, for example: `async () => { const listing = await Borg.OS.ls('.'); return listing; }`. Returns JSON from the function return value. The code must be valid TypeScript or JavaScript code that follows the APIs described by the `searchApis` tool".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -52,8 +52,8 @@ pub fn build_code_mode_toolchain_with_context(
     runtime: CodeModeRuntime,
     context: CodeModeContext,
 ) -> Result<Toolchain> {
-    let search_spec = required_default_tool_spec("search")?;
-    let execute_spec = required_default_tool_spec("execute")?;
+    let search_spec = required_default_tool_spec("searchApis")?;
+    let execute_spec = required_default_tool_spec("executeCode")?;
 
     Toolchain::builder()
         .add_tool(Tool::new(search_spec, None, move |request| async move {
@@ -61,7 +61,7 @@ pub fn build_code_mode_toolchain_with_context(
                 .arguments
                 .get("query")
                 .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("search tool requires query"))?;
+                .ok_or_else(|| anyhow!("searchApis tool requires query"))?;
             let _ = query;
             Ok(ToolResponse {
                 content: ToolResultData::Text(sdk_types().to_string()),
@@ -101,7 +101,7 @@ pub fn build_code_mode_toolchain_with_context(
                         .arguments
                         .get("code")
                         .and_then(Value::as_str)
-                        .ok_or_else(|| anyhow!("execute tool requires code"))?;
+                        .ok_or_else(|| anyhow!("executeCode tool requires code"))?;
                     let code = code.to_string();
                     let result = tokio::task::spawn_blocking(move || {
                         catch_unwind(AssertUnwindSafe(|| {
@@ -109,8 +109,8 @@ pub fn build_code_mode_toolchain_with_context(
                         }))
                     })
                     .await
-                    .map_err(|err| anyhow!("execute tool worker join error: {}", err))?
-                    .map_err(|_| anyhow!("execute tool panicked"))??;
+                    .map_err(|err| anyhow!("executeCode tool worker join error: {}", err))?
+                    .map_err(|_| anyhow!("executeCode tool panicked"))??;
                     Ok(ToolResponse {
                         content: ToolResultData::Execution {
                             result: result.result_json,

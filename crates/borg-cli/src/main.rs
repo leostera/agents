@@ -190,6 +190,7 @@ impl BorgCliApp {
             });
         let exec = ExecEngine::new(
             db.clone(),
+            memory.clone(),
             runtime,
             Uri::parse(&format!("borg:worker:{}", Uuid::now_v7()))?,
         );

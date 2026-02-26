@@ -148,6 +148,16 @@ impl Toolchain {
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
+
+    pub fn merge(mut self, other: Toolchain) -> Result<Self> {
+        for (name, tool) in other.tools {
+            if self.tools.contains_key(&name) {
+                return Err(anyhow!("tool already registered: {}", name));
+            }
+            self.tools.insert(name, tool);
+        }
+        Ok(self)
+    }
 }
 
 impl Default for Toolchain {

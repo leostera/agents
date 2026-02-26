@@ -2,6 +2,7 @@ use anyhow::Result;
 use borg_agent::{Agent, Message, Session, SessionContextManager, SessionEventPayload, ToolSpec};
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
+use borg_ltm::default_memory_tool_specs;
 use borg_rt::default_tool_specs;
 use std::sync::Arc;
 
@@ -31,11 +32,11 @@ impl SessionManager {
             agent = agent
                 .with_model(spec.model)
                 .with_system_prompt(spec.system_prompt)
-                .with_tools(tools);
+                .with_tools(ensure_default_tools(tools));
         } else {
             agent = agent
                 .with_model(self.model.clone())
-                .with_tools(default_tool_specs());
+                .with_tools(ensure_default_tools(Vec::new()));
         }
 
         let mut session = Session::new(session_id.clone(), agent, self.db.clone()).await?;
@@ -70,4 +71,20 @@ impl SessionManager {
 
         Ok(uri!("borg", "agent", "default"))
     }
+}
+
+fn ensure_default_tools(existing: Vec<ToolSpec>) -> Vec<ToolSpec> {
+    let mut by_name: std::collections::BTreeMap<String, ToolSpec> = existing
+        .into_iter()
+        .map(|tool| (tool.name.clone(), tool))
+        .collect();
+
+    for tool in default_tool_specs()
+        .into_iter()
+        .chain(default_memory_tool_specs().into_iter())
+    {
+        by_name.insert(tool.name.clone(), tool);
+    }
+
+    by_name.into_values().collect()
 }

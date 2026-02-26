@@ -15,7 +15,6 @@ use crate::ffi::install_ffi;
 use crate::ops::default_ffi_handlers;
 use crate::sdk::{ApiCapability, search_capabilities};
 use crate::types::{FfiHandler, FfiResult};
-use crate::checker::precheck_borg_sdk_usage;
 
 const SDK_BUNDLE: &str = include_str!(concat!(env!("OUT_DIR"), "/borg_agent_sdk.bundle.js"));
 static RUNTIME_EXECUTION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -113,8 +112,6 @@ impl CodeModeRuntime {
     }
 
     pub fn execute(&self, code: &str, context: CodeModeContext) -> Result<ExecutionResult> {
-        validate_code_mode_shape(code)?;
-        precheck_borg_sdk_usage(code)?;
         let _runtime_lock = runtime_execution_lock()
             .lock()
             .map_err(|_| anyhow!("code-mode runtime execution lock poisoned"))?;
@@ -256,42 +253,4 @@ fn normalize_runtime_error(message: String) -> String {
         );
     }
     message
-}
-
-fn validate_code_mode_shape(code: &str) -> Result<()> {
-    let trimmed = code.trim().trim_end_matches(';').trim();
-    if !trimmed.starts_with("async") {
-        return Err(anyhow!(
-            "execute code must start with `async () => {{ ... }}`"
-        ));
-    }
-
-    let Some((lhs, rhs)) = trimmed.split_once("=>") else {
-        return Err(anyhow!(
-            "execute code must use an async arrow function (`async () => {{ ... }}`)"
-        ));
-    };
-
-    let lhs = lhs.trim();
-    if lhs != "async ()" {
-        return Err(anyhow!(
-            "execute code must have zero arguments (`async () => {{ ... }}`)"
-        ));
-    }
-
-    let rhs = rhs.trim();
-    if !rhs.starts_with('{') || !rhs.ends_with('}') {
-        return Err(anyhow!(
-            "execute code body must be a block (`async () => {{ ... }}`)"
-        ));
-    }
-
-    let body = rhs.trim_start_matches('{').trim_end_matches('}').trim();
-    if !body.contains("return") {
-        return Err(anyhow!(
-            "execute code body must include an explicit `return` statement"
-        ));
-    }
-
-    Ok(())
 }

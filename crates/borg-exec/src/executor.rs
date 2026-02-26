@@ -6,6 +6,7 @@ use borg_core::{
 };
 use borg_db::{BorgDb, NewTask};
 use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
+use borg_ltm::MemoryStore;
 use borg_rt::{CodeModeContext, CodeModeRuntime};
 use serde_json::{Value, json};
 use tracing::{debug, error, info, trace, warn};
@@ -25,6 +26,7 @@ const CONTEXT_USAGE_CHAR_TO_TOKEN_RATIO: usize = 4;
 #[derive(Clone)]
 pub struct BorgExecutor {
     db: BorgDb,
+    memory: MemoryStore,
     runtime: CodeModeRuntime,
     worker_id: Uri,
     task_queue: TaskQueue,
@@ -36,12 +38,13 @@ pub struct BorgExecutor {
 pub type ExecEngine = BorgExecutor;
 
 impl BorgExecutor {
-    pub fn new(db: BorgDb, runtime: CodeModeRuntime, worker_id: Uri) -> Self {
+    pub fn new(db: BorgDb, memory: MemoryStore, runtime: CodeModeRuntime, worker_id: Uri) -> Self {
         let task_queue = TaskQueue::new();
         let agent_model = DEFAULT_AGENT_MODEL.to_string();
         let session_manager = SessionManager::new(db.clone(), agent_model.clone());
         Self {
             db,
+            memory,
             runtime,
             worker_id,
             task_queue,
@@ -457,7 +460,11 @@ impl BorgExecutor {
         let mut session = self.session_manager.session_for_task(msg).await?;
         let session_id = session.session_id.clone();
         let code_mode_context = self.code_mode_context_for_turn(msg, &session_id);
-        let toolchain = build_exec_toolchain_with_context(self.runtime.clone(), code_mode_context)?;
+        let toolchain = build_exec_toolchain_with_context(
+            self.runtime.clone(),
+            code_mode_context,
+            self.memory.clone(),
+        )?;
         let tools = AgentTools {
             tool_runner: &toolchain,
         };

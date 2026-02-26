@@ -45,6 +45,20 @@ impl BorgDb {
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS users (
+                    user_key TEXT PRIMARY KEY,
+                    profile_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ports (
+                    port TEXT PRIMARY KEY,
+                    config_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS session_messages (
                     message_id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,

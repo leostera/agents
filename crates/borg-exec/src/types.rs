@@ -22,14 +22,21 @@ pub struct ToolCallSummary {
 }
 
 impl ToolCallSummary {
-    pub fn output_message(&self) -> String {
-        if let Some(error) = self
-            .output
+    pub fn error_message(&self) -> Option<String> {
+        self.output
             .get("Error")
             .and_then(|value| value.get("message"))
             .and_then(Value::as_str)
-        {
-            return error.to_string();
+            .map(ToString::to_string)
+    }
+
+    pub fn is_error(&self) -> bool {
+        self.error_message().is_some()
+    }
+
+    pub fn output_message(&self) -> String {
+        if let Some(error) = self.error_message() {
+            return error;
         }
 
         if let Some(execution) = self.output.get("Execution") {

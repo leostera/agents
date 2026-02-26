@@ -97,136 +97,6 @@ interface BorgFetchResponse {
   json: unknown | null;
 }
 
-/**
- * Tagged memory fact value. Choose exactly one variant.
- */
-type BorgFactValue =
-  | { Text: string }
-  | { Integer: number }
-  | { Float: number }
-  | { Boolean: boolean }
-  | { Bytes: number[] }
-  | { Ref: BorgUri };
-
-/**
- * One atomic memory fact to persist.
- *
- * Guidelines:
- * - Use canonical URIs in `source`, `entity`, and `field`.
- * - Prefer many small facts over one large compound fact.
- * - Use `{ Ref: <uri> }` for relationships.
- */
-interface BorgFactInput {
-  /**
-   * Provenance URI for this fact.
-   *
-   * Optional: when omitted, runtime defaults to the current message URI
-   * if available from port context.
-   */
-  source?: BorgUri;
-  entity: BorgUri;
-  field: BorgUri;
-  value: BorgFactValue;
-}
-
-/**
- * Result from `Borg.Memory.stateFacts(...)`.
- */
-interface BorgStateFactsResult {
-  /** Transaction identifier for this write operation. */
-  tx_id: BorgUri;
-  /** Persisted fact rows (opaque runtime payload). */
-  facts: unknown[];
-}
-
-/**
- * Name filter for memory search.
- */
-interface BorgNameFilter {
-  like: string;
-}
-
-/**
- * Query options for `Borg.Memory.search(...)`.
- */
-interface BorgSearchQuery {
-  /** Namespace filter, for example `borg`. */
-  ns?: string;
-  /** Kind filter, for example `user`. */
-  kind?: string;
-  /** Optional name-like filter. */
-  name?: BorgNameFilter;
-  /** Full-text query. */
-  q?: string;
-  /** Max results to return. */
-  limit?: number;
-}
-
-/**
- * Result from `Borg.Memory.search(...)`.
- */
-interface BorgSearchResults {
-  entities: unknown[];
-}
-
-interface BorgMemory {
-  /**
-   * Persist facts into long-term memory.
-   *
-   * Facts are persisted only when calling `Borg.Memory.stateFacts([...])`.
-   *
-   * Example:
-   * ```ts
-   * Borg.Memory.stateFacts([
-   *   {
-   *     entity: "borg:user:leostera",
-   *     field: "borg:field:telegram_id",
-   *     value: { Text: "2654566" }
-   *   },
-   *   {
-   *     source: "borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f",
-   *     entity: "borg:user:leostera",
-   *     field: "borg:relationship:girlfriend",
-   *     value: { Ref: "borg:user:mariana_zabrodska" }
-   *   }
-   * ])
-   * ```
-   *
-   * Example (source defaults from current message context):
-   * ```ts
-   * Borg.Memory.stateFacts([
-   *   {
-   *     entity: "borg:user:leostera",
-   *     field: "borg:field:favorite_movie",
-   *     value: { Text: "Minions" }
-   *   }
-   * ])
-   * ```
-   *
-   * Anti-example (does not persist):
-   * ```ts
-   * // Returning an object does not save anything:
-   * return { entity: "borg:user:leo", field: "borg:field:name", value: "Leo" }
-   * ```
-   */
-  stateFacts(facts: BorgFactInput[]): BorgStateFactsResult;
-
-  /**
-   * Search long-term memory entities.
-   *
-   * Example:
-   * ```ts
-   * const results = Borg.Memory.search({ q: "favorite movie", limit: 10 })
-   * ```
-   *
-   * Example:
-   * ```ts
-   * const users = Borg.Memory.search({ ns: "borg", kind: "user", limit: 20 })
-   * ```
-   */
-  search(query: BorgSearchQuery): BorgSearchResults;
-}
-
 interface BorgOS {
   /**
    * List files and directories under a path.
@@ -287,8 +157,6 @@ interface BorgUser {
 interface BorgSdk {
   /** Operating-system helpers. */
   OS: BorgOS;
-  /** Long-term memory helpers. */
-  Memory: BorgMemory;
   /** Current message context helpers. */
   Message: BorgMessage;
   /**
@@ -297,15 +165,7 @@ interface BorgSdk {
    * Example:
    * ```ts
    * const me = Borg.me().uri()
-   * if (me) {
-   *   Borg.Memory.stateFacts([
-   *     {
-   *       entity: me,
-   *       field: "borg:field:nickname",
-   *       value: { Text: "Leo" }
-   *     }
-   *   ])
-   * }
+   * if (me) console.log(me)
    * ```
    */
   me(): BorgUser;

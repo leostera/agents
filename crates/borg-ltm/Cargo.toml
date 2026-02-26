@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
+borg-agent = { path = "../borg-agent" }
 borg-core = { path = "../borg-core" }
 chrono.workspace = true
 serde.workspace = true

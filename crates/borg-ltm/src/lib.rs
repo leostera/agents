@@ -9,11 +9,13 @@ use tracing::{debug, info, warn};
 mod entity_graph;
 mod fact_store;
 mod search_index;
+mod tools;
 
 use entity_graph::IndraEntityGraph;
 use fact_store::TursoFactStore;
 pub use fact_store::{FactInput, FactRecord, FactValue, StateFactsResult, Uri};
 use search_index::TantivySearchIndex;
+pub use tools::{build_memory_toolchain, default_tool_specs as default_memory_tool_specs};
 
 const CONSOLIDATION_BATCH_SIZE: usize = 128;
 const COMMAND_BUFFER: usize = 1024;

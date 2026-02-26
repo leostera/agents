@@ -11,6 +11,7 @@ use borg_db::{BorgDb, NewTask};
 use borg_llm::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
 };
+use borg_ltm::MemoryStore;
 use borg_rt::{CodeModeRuntime, default_tool_specs};
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -25,6 +26,19 @@ fn temp_db_path() -> PathBuf {
     std::env::temp_dir().join(format!("borg-exec-test-{}.db", uuid::Uuid::now_v7()))
 }
 
+fn temp_memory_paths() -> (PathBuf, PathBuf) {
+    let root = std::env::temp_dir().join(format!("borg-exec-ltm-{}", uuid::Uuid::now_v7()));
+    let search = std::env::temp_dir().join(format!("borg-exec-search-{}", uuid::Uuid::now_v7()));
+    (root, search)
+}
+
+async fn open_test_memory() -> MemoryStore {
+    let (ltm_root, search_root) = temp_memory_paths();
+    let memory = MemoryStore::new(&ltm_root, &search_root).unwrap();
+    memory.migrate().await.unwrap();
+    memory
+}
+
 async fn open_test_db() -> BorgDb {
     let path = temp_db_path();
     let db = BorgDb::open_local(path.to_str().unwrap()).await.unwrap();
@@ -36,7 +50,13 @@ async fn failing_openai_exec(db: BorgDb, worker: &str) -> BorgExecutor {
     db.upsert_provider_api_key(OPENAI_PROVIDER, "test-key")
         .await
         .unwrap();
-    BorgExecutor::new(db, CodeModeRuntime::default(), Uri::parse(worker).unwrap())
+    let memory = open_test_memory().await;
+    BorgExecutor::new(
+        db,
+        memory,
+        CodeModeRuntime::default(),
+        Uri::parse(worker).unwrap(),
+    )
         .with_openai_base_url(Some("http://127.0.0.1:1".to_string()))
 }
 
@@ -420,12 +440,12 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
     let provider = ScriptedProvider::new(vec![
         Ok(assistant_tool_call(
             "call_search_1",
-            "search",
+            "searchApis",
             json!({ "query": "ls fetch" }),
         )),
         Ok(assistant_tool_call(
             "call_exec_1",
-            "execute",
+            "executeCode",
             json!({
                 "code": "async () => { const listing = Borg.OS.ls('.'); return { has_entries: listing.entries.length > 0, first_entry: listing.entries[0] ?? null }; }"
             }),
@@ -435,7 +455,7 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
         )),
     ]);
 
-    let toolchain = build_exec_toolchain(CodeModeRuntime::default()).unwrap();
+    let toolchain = build_exec_toolchain(CodeModeRuntime::default(), open_test_memory().await).unwrap();
     let tools = AgentTools {
         tool_runner: &toolchain,
     };
@@ -451,12 +471,12 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
     assert!(
         messages
             .iter()
-            .any(|message| matches!(message, Message::ToolCall { name, .. } if name == "search"))
+            .any(|message| matches!(message, Message::ToolCall { name, .. } if name == "searchApis"))
     );
     assert!(
         messages
             .iter()
-            .any(|message| matches!(message, Message::ToolCall { name, .. } if name == "execute"))
+            .any(|message| matches!(message, Message::ToolCall { name, .. } if name == "executeCode"))
     );
     assert!(messages.iter().any(|message| {
         matches!(
@@ -482,13 +502,13 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
     assert!(requests[1].messages.iter().any(|message| {
         matches!(
             message,
-            ProviderMessage::ToolResult { name, .. } if name == "search"
+            ProviderMessage::ToolResult { name, .. } if name == "searchApis"
         )
     }));
     assert!(requests[2].messages.iter().any(|message| {
         matches!(
             message,
-            ProviderMessage::ToolResult { name, .. } if name == "execute"
+            ProviderMessage::ToolResult { name, .. } if name == "executeCode"
         )
     }));
 }
@@ -498,7 +518,7 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
     init_test_tracing();
     let db = open_test_db().await;
     let agent = Agent::new(uri!("borg", "agent", "exec-e2e-invalid"))
-        .with_system_prompt("Call execute and then summarize the outcome.")
+        .with_system_prompt("Call executeCode and then summarize the outcome.")
         .with_tools(default_tool_specs());
     let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
         .await
@@ -513,13 +533,13 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
     let provider = ScriptedProvider::new(vec![
         Ok(assistant_tool_call(
             "call_exec_bad",
-            "execute",
+            "executeCode",
             json!({ "code": "Borg.OS.ls('.')" }),
         )),
         Ok(assistant_text("Saw tool failure and handled it.")),
     ]);
 
-    let toolchain = build_exec_toolchain(CodeModeRuntime::default()).unwrap();
+    let toolchain = build_exec_toolchain(CodeModeRuntime::default(), open_test_memory().await).unwrap();
     let tools = AgentTools {
         tool_runner: &toolchain,
     };
