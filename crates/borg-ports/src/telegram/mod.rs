@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use borg_cmd::{CommandRegistry, CommandRequest};
 use borg_core::Uri;
 use borg_exec::{ExecEngine, UserMessage};
 use serde_json::Value;
@@ -18,17 +19,18 @@ const TELEGRAM_START_GREETING: &str =
     "Hi! I am Borg. Send me a message and I will reply in this chat.";
 const TELEGRAM_CONTEXT_MAX_TOKENS: usize = 128_000;
 const TELEGRAM_TYPING_REFRESH_SECS: u64 = 4;
-const TELEGRAM_COMPACT_COMMAND: &str = "/compact";
-const TELEGRAM_PORT_COMMAND: &str = "/port";
-const TELEGRAM_HELP_COMMAND: &str = "/help";
-const TELEGRAM_PARTICIPANTS_COMMAND: &str = "/participants";
-const TELEGRAM_CONTEXT_COMMAND: &str = "/context";
 const TELEGRAM_CONTEXT_HEADER_PREFIX: &str = "TELEGRAM_CONTEXT_JSON: ";
 
 #[derive(Clone)]
 pub struct TelegramPort {
     exec: ExecEngine,
     bot: Bot,
+}
+
+#[derive(Clone)]
+struct TelegramCommandState {
+    exec: ExecEngine,
+    message: Message,
 }
 
 impl PortMessage {
@@ -137,111 +139,34 @@ impl TelegramPort {
             async move {
                 let _typing = TypingLoop::start(bot.clone(), message.chat.id);
 
-                if is_start_command(&message) {
-                    bot.send_message(message.chat.id, TELEGRAM_START_GREETING)
-                        .await?;
-                    return Ok(());
-                }
-
-                if is_help_command(&message) {
-                    bot.send_message(message.chat.id, telegram_help_text()).await?;
-                    return Ok(());
-                }
-
-                if is_compact_command(&message) {
-                    let session_id = match telegram_session_id(&message) {
+                if let Some(text) = message.text() {
+                    let command_state = TelegramCommandState {
+                        exec: exec.clone(),
+                        message: message.clone(),
+                    };
+                    let commands = match build_telegram_command_registry(command_state) {
                         Ok(value) => value,
                         Err(err) => {
                             bot.send_message(
                                 message.chat.id,
-                                format!("Failed to resolve session: {err}"),
+                                format!("Failed to load command registry: {err}"),
                             )
                             .await?;
                             return Ok(());
                         }
                     };
-                    match exec.compact_session(&session_id).await {
-                        Ok(messages_kept) => {
-                            let response =
-                                format!("Compacted session. Kept {} context message(s).", messages_kept);
-                            bot.send_message(message.chat.id, response).await?;
-                        }
-                        Err(err) => {
-                            bot.send_message(
-                                message.chat.id,
-                                format!("Failed to compact session: {err}"),
-                            )
-                            .await?;
-                        }
-                    }
-                    return Ok(());
-                }
-
-                if is_port_command(&message) {
-                    bot.send_message(message.chat.id, telegram_port_info(&message))
-                        .await?;
-                    return Ok(());
-                }
-
-                if is_participants_command(&message) {
-                    let session_id = match telegram_session_id(&message) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            bot.send_message(
-                                message.chat.id,
-                                format!("Failed to resolve session: {err}"),
-                            )
-                            .await?;
-                            return Ok(());
-                        }
-                    };
-                    match exec.list_session_messages(&session_id, 0, 10_000).await {
-                        Ok(messages) => {
-                            bot.send_message(
-                                message.chat.id,
-                                format_participants_message(&messages),
-                            )
-                            .await?;
-                        }
-                        Err(err) => {
-                            bot.send_message(
-                                message.chat.id,
-                                format!("Failed to load participants: {err}"),
-                            )
-                            .await?;
-                        }
-                    }
-                    return Ok(());
-                }
-
-                if is_context_command(&message) {
-                    let session_id = match telegram_session_id(&message) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            bot.send_message(
-                                message.chat.id,
-                                format!("Failed to resolve session: {err}"),
-                            )
-                            .await?;
-                            return Ok(());
-                        }
-                    };
-                    match exec.context_window_for_session(&session_id).await {
-                        Ok(context) => {
-                            let dump = serde_json::to_string_pretty(&context.messages)
-                                .unwrap_or_else(|_| "[]".to_string());
-                            bot.send_message(message.chat.id, truncate_telegram_message(dump))
+                    if commands.is_command(text) {
+                        let response = match commands.run(text).await {
+                            Ok(Some(value)) => value,
+                            Ok(None) => String::new(),
+                            Err(err) => format!("Command error: {err}"),
+                        };
+                        if !response.is_empty() {
+                            bot.send_message(message.chat.id, truncate_telegram_message(response))
                                 .await?;
                         }
-                        Err(err) => {
-                            bot.send_message(
-                                message.chat.id,
-                                format!("Failed to load context: {err}"),
-                            )
-                            .await?;
-                        }
+                        return Ok(());
                     }
-                    return Ok(());
                 }
 
                 let Some(inbound) = PortMessage::from_telegram(&message) else {
@@ -341,42 +266,6 @@ fn truncate_telegram_message(message: String) -> String {
     out
 }
 
-fn is_start_command(message: &Message) -> bool {
-    let Some(text) = message.text() else {
-        return false;
-    };
-    let command = text.split_whitespace().next().unwrap_or_default();
-    command == "/start" || command.starts_with("/start@")
-}
-
-fn is_compact_command(message: &Message) -> bool {
-    command_matches(message, TELEGRAM_COMPACT_COMMAND)
-}
-
-fn is_help_command(message: &Message) -> bool {
-    command_matches(message, TELEGRAM_HELP_COMMAND)
-}
-
-fn is_port_command(message: &Message) -> bool {
-    command_matches(message, TELEGRAM_PORT_COMMAND)
-}
-
-fn is_participants_command(message: &Message) -> bool {
-    command_matches(message, TELEGRAM_PARTICIPANTS_COMMAND)
-}
-
-fn is_context_command(message: &Message) -> bool {
-    command_matches(message, TELEGRAM_CONTEXT_COMMAND)
-}
-
-fn command_matches(message: &Message, command_name: &str) -> bool {
-    let Some(text) = message.text() else {
-        return false;
-    };
-    let command = text.split_whitespace().next().unwrap_or_default();
-    command == command_name || command.starts_with(&format!("{command_name}@"))
-}
-
 fn telegram_port_info(message: &Message) -> String {
     let chat_id = message.chat.id.0;
     let chat_type = if message.chat.is_private() {
@@ -396,6 +285,59 @@ fn telegram_port_info(message: &Message) -> String {
 
 fn telegram_help_text() -> &'static str {
     "Available commands:\n/start - Show greeting\n/help - Show this help\n/compact - Compact current session context\n/port - Show current port info\n/participants - Show participants seen in this session\n/context - Dump the current context window"
+}
+
+fn build_telegram_command_registry(
+    state: TelegramCommandState,
+) -> Result<CommandRegistry<TelegramCommandState, String>> {
+    CommandRegistry::build(state)
+        .add_command("start", |req| async move { Ok(command_start(req)) })
+        .add_command("help", |req| async move { Ok(command_help(req)) })
+        .add_command("port", |req| async move { Ok(command_port(req)) })
+        .add_command("compact", |req| async move { command_compact(req).await })
+        .add_command("participants", |req| async move { command_participants(req).await })
+        .add_command("context", |req| async move { command_context(req).await })
+        .build()
+}
+
+fn command_start(req: CommandRequest<TelegramCommandState>) -> String {
+    let _ = req;
+    TELEGRAM_START_GREETING.to_string()
+}
+
+fn command_help(req: CommandRequest<TelegramCommandState>) -> String {
+    let _ = req;
+    telegram_help_text().to_string()
+}
+
+fn command_port(req: CommandRequest<TelegramCommandState>) -> String {
+    telegram_port_info(&req.state.message)
+}
+
+async fn command_compact(req: CommandRequest<TelegramCommandState>) -> Result<String> {
+    let session_id = telegram_session_id(&req.state.message)?;
+    let kept = req.state.exec.compact_session(&session_id).await?;
+    Ok(format!(
+        "Compacted session. Kept {} context message(s).",
+        kept
+    ))
+}
+
+async fn command_participants(req: CommandRequest<TelegramCommandState>) -> Result<String> {
+    let session_id = telegram_session_id(&req.state.message)?;
+    let messages = req
+        .state
+        .exec
+        .list_session_messages(&session_id, 0, 10_000)
+        .await?;
+    Ok(format_participants_message(&messages))
+}
+
+async fn command_context(req: CommandRequest<TelegramCommandState>) -> Result<String> {
+    let session_id = telegram_session_id(&req.state.message)?;
+    let context = req.state.exec.context_window_for_session(&session_id).await?;
+    let dump = serde_json::to_string_pretty(&context)?;
+    Ok(dump)
 }
 
 fn telegram_session_id(message: &Message) -> Result<Uri> {
