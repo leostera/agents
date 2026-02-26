@@ -9,6 +9,7 @@
 [summary]: #summary
 
 Add a first-class "port command" concept so ports can intercept command-like user inputs (for example `/compact`) and execute explicit runtime actions before normal LLM turn handling.
+Commands should run against port-owned session context snapshots, not ad-hoc per-message parsing.
 
 ## Motivation
 [motivation]: #motivation
@@ -44,12 +45,14 @@ Proposed primitives:
 - `PortCommand` enum (initially minimal, e.g. `Compact`, `Help`)
 - `PortCommandRouter` trait per port implementation
 - `ExecEngine::handle_port_command(...)` for authoritative execution
+- `port_session_ctx` persistence (`port + session_id -> ctx_json`) with port-specific codecs (`PortContext`)
 
 Initial command contract:
 
 - command handlers are asynchronous
 - handlers receive `port`, `session_id`, sender metadata
 - handlers return structured command output (`handled`, optional reply)
+- for `/`-prefixed messages, command dispatch is attempted first (unknown commands return command error and do not run a normal agent turn)
 
 Non-goals in first iteration:
 

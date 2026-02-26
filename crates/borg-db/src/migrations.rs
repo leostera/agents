@@ -80,6 +80,15 @@ impl BorgDb {
                     PRIMARY KEY (port, conversation_key)
                 );
 
+                CREATE TABLE IF NOT EXISTS port_session_ctx (
+                    port TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    ctx_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (port, session_id)
+                );
+
                 CREATE TABLE IF NOT EXISTS agent_specs (
                     agent_id TEXT PRIMARY KEY,
                     model TEXT NOT NULL,

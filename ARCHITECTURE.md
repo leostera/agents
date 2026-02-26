@@ -104,6 +104,7 @@ flowchart TD
   - providers
   - port settings
   - port bindings (`port + conversation_key -> session_id`)
+  - port session context snapshots (`port + session_id -> ctx_json`)
   - sessions and session messages
   - tasks and task events
   - agent specs

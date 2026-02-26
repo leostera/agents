@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::{Agent, Message, ToolSpec};
 
@@ -20,6 +21,9 @@ const DEFAULT_KEEP_RECENT_MESSAGES: usize = 24;
 const SUMMARY_MAX_ITEMS: usize = 24;
 const SUMMARY_ITEM_MAX_CHARS: usize = 240;
 const TELEGRAM_CONTEXT_PREFIX: &str = "TELEGRAM_CONTEXT_JSON: ";
+const TELEGRAM_SESSION_CONTEXT_PREFIX: &str = "TELEGRAM_SESSION_CONTEXT_JSON: ";
+const CONTEXT_METADATA_PREFIX: &str = "BORG_CONTEXT_METADATA_JSON: ";
+const CHAR_TO_TOKEN_RATIO: usize = 4;
 
 #[derive(Debug, Default)]
 pub struct PassthroughContextManager;
@@ -27,8 +31,13 @@ pub struct PassthroughContextManager;
 #[async_trait]
 impl ContextManager for PassthroughContextManager {
     async fn build_context(&self, agent: &Agent, messages: &[Message]) -> Result<ContextWindow> {
+        let messages = with_context_metadata(
+            messages.to_vec(),
+            ContextMetadataPolicy::Passthrough,
+            None,
+        );
         Ok(ContextWindow {
-            messages: messages.to_vec(),
+            messages,
             tools: agent.tools.clone(),
         })
     }
@@ -64,6 +73,15 @@ impl ContextManager for CompactingContextManager {
         let total_chars: usize = messages.iter().map(message_char_count).sum();
         if total_chars <= self.max_chars {
             let pinned = with_pinned_telegram_context(messages.to_vec());
+            let pinned = with_context_metadata(
+                pinned,
+                ContextMetadataPolicy::Compacting {
+                    max_chars: self.max_chars,
+                    keep_recent_messages: self.keep_recent_messages,
+                    was_compacted: false,
+                },
+                Some(self.max_chars),
+            );
             return Ok(ContextWindow {
                 messages: pinned,
                 tools: agent.tools.clone(),
@@ -102,9 +120,57 @@ impl ContextManager for CompactingContextManager {
 
         compacted.extend_from_slice(recent);
         let compacted = with_pinned_telegram_context(compacted);
+        let compacted = with_context_metadata(
+            compacted,
+            ContextMetadataPolicy::Compacting {
+                max_chars: self.max_chars,
+                keep_recent_messages: self.keep_recent_messages,
+                was_compacted: true,
+            },
+            Some(self.max_chars),
+        );
         Ok(ContextWindow {
             messages: compacted,
             tools: agent.tools.clone(),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionContextManager {
+    inner: CompactingContextManager,
+    telegram_session_context: Option<serde_json::Value>,
+}
+
+impl Default for SessionContextManager {
+    fn default() -> Self {
+        Self {
+            inner: CompactingContextManager::default(),
+            telegram_session_context: None,
+        }
+    }
+}
+
+impl SessionContextManager {
+    pub fn for_telegram_session_context(telegram_session_context: serde_json::Value) -> Self {
+        Self {
+            inner: CompactingContextManager::default(),
+            telegram_session_context: Some(telegram_session_context),
+        }
+    }
+}
+
+#[async_trait]
+impl ContextManager for SessionContextManager {
+    async fn build_context(&self, agent: &Agent, messages: &[Message]) -> Result<ContextWindow> {
+        let context = self.inner.build_context(agent, messages).await?;
+        let messages = with_pinned_telegram_session_context(
+            context.messages,
+            self.telegram_session_context.clone(),
+        );
+        Ok(ContextWindow {
+            messages,
+            tools: context.tools,
         })
     }
 }
@@ -132,6 +198,68 @@ fn with_pinned_telegram_context(messages: Vec<Message>) -> Vec<Message> {
             _ => out.push(message),
         }
     }
+    out
+}
+
+fn with_pinned_telegram_session_context(
+    messages: Vec<Message>,
+    telegram_session_context: Option<serde_json::Value>,
+) -> Vec<Message> {
+    let Some(context) = telegram_session_context else {
+        return messages;
+    };
+    let content = format!("{}{}", TELEGRAM_SESSION_CONTEXT_PREFIX, context);
+    let mut out = Vec::with_capacity(messages.len() + 1);
+    out.push(Message::System { content });
+    for message in messages {
+        match &message {
+            Message::System { content } if content.starts_with(TELEGRAM_SESSION_CONTEXT_PREFIX) => {
+            }
+            _ => out.push(message),
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ContextMetadataPolicy {
+    Passthrough,
+    Compacting {
+        max_chars: usize,
+        keep_recent_messages: usize,
+        was_compacted: bool,
+    },
+}
+
+fn with_context_metadata(
+    messages: Vec<Message>,
+    autocompaction_policy: ContextMetadataPolicy,
+    max_chars: Option<usize>,
+) -> Vec<Message> {
+    let base_messages: Vec<Message> = messages
+        .into_iter()
+        .filter(|message| match message {
+            Message::System { content } => !content.starts_with(CONTEXT_METADATA_PREFIX),
+            _ => true,
+        })
+        .collect();
+
+    let total_chars: usize = base_messages.iter().map(message_char_count).sum();
+    let current_tokens_used = total_chars / CHAR_TO_TOKEN_RATIO;
+    let max_tokens = max_chars.map(|chars| chars / CHAR_TO_TOKEN_RATIO);
+    let tokens_left = max_tokens.map(|max| max.saturating_sub(current_tokens_used));
+    let metadata = json!({
+        "current_tokens_used": current_tokens_used,
+        "tokens_left": tokens_left,
+        "autocompaction_policy": autocompaction_policy,
+    });
+
+    let mut out = Vec::with_capacity(base_messages.len() + 1);
+    out.push(Message::System {
+        content: format!("{}{}", CONTEXT_METADATA_PREFIX, metadata),
+    });
+    out.extend(base_messages);
     out
 }
 

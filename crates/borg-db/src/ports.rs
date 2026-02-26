@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use borg_core::{Uri, uri};
 use chrono::Utc;
+use serde_json::Value;
 
 use crate::BorgDb;
 
@@ -124,5 +125,78 @@ impl BorgDb {
             .await
             .context("failed to upsert port binding")?;
         Ok(())
+    }
+
+    pub async fn upsert_port_session_context(
+        &self,
+        port: &str,
+        session_id: &Uri,
+        ctx: &Value,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                r#"
+                INSERT INTO port_session_ctx(port, session_id, ctx_json, created_at, updated_at)
+                VALUES(?1, ?2, ?3, ?4, ?5)
+                ON CONFLICT(port, session_id) DO UPDATE SET
+                  ctx_json = excluded.ctx_json,
+                  updated_at = excluded.updated_at
+                "#,
+                (
+                    port.to_string(),
+                    session_id.to_string(),
+                    ctx.to_string(),
+                    now.clone(),
+                    now,
+                ),
+            )
+            .await
+            .context("failed to upsert port session context")?;
+        Ok(())
+    }
+
+    pub async fn get_port_session_context(
+        &self,
+        port: &str,
+        session_id: &Uri,
+    ) -> Result<Option<Value>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT ctx_json FROM port_session_ctx WHERE port = ?1 AND session_id = ?2 LIMIT 1",
+                (port.to_string(), session_id.to_string()),
+            )
+            .await
+            .context("failed to query port session context")?;
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+        let raw: String = row.get(0)?;
+        let parsed = serde_json::from_str(&raw).context("invalid port session context json")?;
+        Ok(Some(parsed))
+    }
+
+    pub async fn get_any_port_session_context(
+        &self,
+        session_id: &Uri,
+    ) -> Result<Option<(String, Value)>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT port, ctx_json FROM port_session_ctx WHERE session_id = ?1 ORDER BY updated_at DESC LIMIT 1",
+                (session_id.to_string(),),
+            )
+            .await
+            .context("failed to query session port context")?;
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+        let port: String = row.get(0)?;
+        let raw: String = row.get(1)?;
+        let parsed = serde_json::from_str(&raw).context("invalid session port context json")?;
+        Ok(Some((port, parsed)))
     }
 }

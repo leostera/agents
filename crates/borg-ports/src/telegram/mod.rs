@@ -19,7 +19,6 @@ const TELEGRAM_START_GREETING: &str =
     "Hi! I am Borg. Send me a message and I will reply in this chat.";
 const TELEGRAM_CONTEXT_MAX_TOKENS: usize = 128_000;
 const TELEGRAM_TYPING_REFRESH_SECS: u64 = 4;
-const TELEGRAM_CONTEXT_HEADER_PREFIX: &str = "TELEGRAM_CONTEXT_JSON: ";
 
 #[derive(Clone)]
 pub struct TelegramPort {
@@ -325,12 +324,15 @@ async fn command_compact(req: CommandRequest<TelegramCommandState>) -> Result<St
 
 async fn command_participants(req: CommandRequest<TelegramCommandState>) -> Result<String> {
     let session_id = telegram_session_id(&req.state.message)?;
-    let messages = req
+    let ctx = req
         .state
         .exec
-        .list_session_messages(&session_id, 0, 10_000)
+        .get_port_session_context("telegram", &session_id)
         .await?;
-    Ok(format_participants_message(&messages, &req.state.message))
+    Ok(format_participants_message(
+        ctx.as_ref(),
+        &req.state.message,
+    ))
 }
 
 async fn command_context(req: CommandRequest<TelegramCommandState>) -> Result<String> {
@@ -349,40 +351,24 @@ fn telegram_session_id(message: &Message) -> Result<Uri> {
     .map_err(Into::into)
 }
 
-fn format_participants_message(messages: &[Value], current_message: &Message) -> String {
+fn format_participants_message(telegram_ctx: Option<&Value>, current_message: &Message) -> String {
     let mut participants = std::collections::BTreeSet::<String>::new();
     if let Some(current_sender) = telegram_sender_label(current_message) {
         participants.insert(current_sender);
     }
 
-    for message in messages {
-        let Some(content) = message
-            .get("content")
-            .and_then(Value::as_str)
-            .filter(|value| value.starts_with(TELEGRAM_CONTEXT_HEADER_PREFIX))
-        else {
-            continue;
-        };
-
-        let raw = &content[TELEGRAM_CONTEXT_HEADER_PREFIX.len()..];
-        let Ok(header) = serde_json::from_str::<Value>(raw) else {
-            continue;
-        };
-        let sender = match header.get("sender").and_then(Value::as_object) {
-            Some(value) => value,
-            None => continue,
-        };
-        let label = format_sender_label(
-            sender
-                .get("id")
-                .and_then(Value::as_i64)
-                .map(|value| value.to_string())
-                .as_deref(),
-            sender.get("username").and_then(Value::as_str),
-            sender.get("first_name").and_then(Value::as_str),
-            sender.get("last_name").and_then(Value::as_str),
-        );
-        participants.insert(label);
+    if let Some(ctx) = telegram_ctx {
+        if let Some(map) = ctx.get("participants").and_then(Value::as_object) {
+            for participant in map.values() {
+                let label = format_sender_label(
+                    participant.get("id").and_then(Value::as_str),
+                    participant.get("username").and_then(Value::as_str),
+                    participant.get("first_name").and_then(Value::as_str),
+                    participant.get("last_name").and_then(Value::as_str),
+                );
+                participants.insert(label);
+            }
+        }
     }
 
     if participants.is_empty() {

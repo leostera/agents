@@ -1,8 +1,9 @@
 use anyhow::Result;
-use borg_agent::{Agent, Message, Session, SessionEventPayload, ToolSpec};
+use borg_agent::{Agent, Message, Session, SessionContextManager, SessionEventPayload, ToolSpec};
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 use borg_rt::default_tool_specs;
+use std::sync::Arc;
 
 use crate::types::UserMessage;
 
@@ -37,7 +38,15 @@ impl SessionManager {
                 .with_tools(default_tool_specs());
         }
 
-        Session::new(session_id, agent, self.db.clone()).await
+        let mut session = Session::new(session_id.clone(), agent, self.db.clone()).await?;
+        if let Some((port, ctx)) = self.db.get_any_port_session_context(&session_id).await? {
+            if port == "telegram" {
+                session.set_context_manager(Arc::new(
+                    SessionContextManager::for_telegram_session_context(ctx),
+                ));
+            }
+        }
+        Ok(session)
     }
 
     async fn resolve_agent_id(&self, msg: &UserMessage, session_id: &Uri) -> Result<Uri> {

@@ -14,6 +14,7 @@ use crate::session_manager::SessionManager;
 use crate::task_queue::TaskQueue;
 use crate::tool_runner::build_exec_toolchain;
 use crate::types::{SessionTurnOutput, UserMessage};
+use crate::port_context::{PortContext, TelegramSessionContext};
 
 const OPENAI_PROVIDER: &str = "openai";
 const QUEUED_RETRY_DELAY_MILLIS: u64 = 100;
@@ -121,6 +122,7 @@ impl BorgExecutor {
             "processing inbound port message on long-lived session"
         );
 
+        self.merge_port_context(port, &session_id, &msg.metadata).await?;
         let output = self.run_session_turn(&msg, None).await?;
         Ok(SessionTurnOutput {
             session_id,
@@ -188,6 +190,14 @@ impl BorgExecutor {
         let session = self.session_manager.session_for_task(&synthetic_msg).await?;
         let context = session.build_context().await?;
         Ok(context)
+    }
+
+    pub async fn get_port_session_context(
+        &self,
+        port: &str,
+        session_id: &Uri,
+    ) -> Result<Option<Value>> {
+        self.db.get_port_session_context(port, session_id).await
     }
 
     pub async fn run(self) -> Result<()> {
@@ -418,10 +428,6 @@ impl BorgExecutor {
             }
         }
 
-        if let Some(header) = telegram_context_header(&msg.metadata) {
-            session.add_message(Message::System { content: header }).await?;
-        }
-
         session
             .add_message(Message::User {
                 content: msg.text.clone(),
@@ -544,6 +550,22 @@ impl BorgExecutor {
         Ok(Some(output))
     }
 
+    async fn merge_port_context(&self, port: &str, session_id: &Uri, metadata: &Value) -> Result<()> {
+        if port != "telegram" {
+            return Ok(());
+        }
+        let maybe_existing = self.db.get_port_session_context("telegram", session_id).await?;
+        let mut ctx = match maybe_existing {
+            Some(value) => TelegramSessionContext::from_json(value)?,
+            None => TelegramSessionContext::default(),
+        };
+        ctx.merge_message_metadata(metadata)?;
+        self.db
+            .upsert_port_session_context("telegram", session_id, &ctx.to_json()?)
+            .await?;
+        Ok(())
+    }
+
     async fn log_session_messages(
         &self,
         task_id: &Uri,
@@ -610,26 +632,4 @@ fn to_session_tool_schema(tool: &ToolSpec) -> SessionToolSchema {
         description: tool.description.clone(),
         parameters: tool.parameters.clone(),
     }
-}
-
-fn telegram_context_header(metadata: &Value) -> Option<String> {
-    let obj = metadata.as_object()?;
-    if obj.get("port")?.as_str()? != "telegram" {
-        return None;
-    }
-
-    let header = json!({
-        "port": "telegram",
-        "chat_id": obj.get("chat_id"),
-        "chat_type": obj.get("chat_type"),
-        "thread_id": obj.get("thread_id"),
-        "message_id": obj.get("message_id"),
-        "sender": {
-            "id": obj.get("sender_id"),
-            "username": obj.get("sender_username"),
-            "first_name": obj.get("sender_first_name"),
-            "last_name": obj.get("sender_last_name"),
-        }
-    });
-    Some(format!("TELEGRAM_CONTEXT_JSON: {}", header))
 }
