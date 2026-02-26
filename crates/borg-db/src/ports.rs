@@ -46,6 +46,36 @@ impl BorgDb {
         Ok(Some(row.get(0)?))
     }
 
+    pub async fn list_port_settings(&self, port: &str, limit: usize) -> Result<Vec<(String, String)>> {
+        let limit = i64::try_from(limit).unwrap_or(200);
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT key, value FROM port_settings WHERE port = ?1 ORDER BY key ASC LIMIT ?2",
+                (port.to_string(), limit),
+            )
+            .await
+            .context("failed to list port settings")?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push((row.get(0)?, row.get(1)?));
+        }
+        Ok(out)
+    }
+
+    pub async fn delete_port_setting(&self, port: &str, key: &str) -> Result<u64> {
+        let deleted = self
+            .conn
+            .execute(
+                "DELETE FROM port_settings WHERE port = ?1 AND key = ?2",
+                (port.to_string(), key.to_string()),
+            )
+            .await
+            .context("failed to delete port setting")?;
+        Ok(deleted)
+    }
+
     pub async fn resolve_port_session(
         &self,
         port: &str,

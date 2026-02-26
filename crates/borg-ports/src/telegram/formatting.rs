@@ -193,6 +193,7 @@ impl TelegramPort {
             "executeCode" => "Running code",
             "searchApis" => "Searching APIs",
             "searchMemory" => "Searching memory",
+            "newEntity" => "Creating entity",
             "saveFacts" => "Writing memory facts",
             _ => "Running tool",
         }

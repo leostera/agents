@@ -555,10 +555,12 @@ dependencies = [
  "borg-exec",
  "borg-ltm",
  "borg-ports",
+ "borg-rt",
  "borg-ui",
  "serde",
  "serde_json",
  "tokio",
+ "tower",
  "tracing",
 ]
 

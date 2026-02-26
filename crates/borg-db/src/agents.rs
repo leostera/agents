@@ -4,6 +4,7 @@ use serde_json::Value;
 
 use borg_core::Uri;
 
+use crate::utils::parse_ts;
 use crate::{AgentSpecRecord, BorgDb};
 
 impl BorgDb {
@@ -60,5 +61,41 @@ impl BorgDb {
             tools: serde_json::from_str(&row.get::<String>(3)?).unwrap_or(Value::Array(vec![])),
             updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at_raw)?.with_timezone(&Utc),
         }))
+    }
+
+    pub async fn list_agent_specs(&self, limit: usize) -> Result<Vec<AgentSpecRecord>> {
+        let limit = i64::try_from(limit).unwrap_or(100);
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT agent_id, model, system_prompt, tools_json, updated_at FROM agent_specs ORDER BY updated_at DESC LIMIT ?1",
+                (limit,),
+            )
+            .await?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let updated_at_raw: String = row.get(4)?;
+            out.push(AgentSpecRecord {
+                agent_id: Uri::parse(&row.get::<String>(0)?)?,
+                model: row.get(1)?,
+                system_prompt: row.get(2)?,
+                tools: serde_json::from_str(&row.get::<String>(3)?)
+                    .unwrap_or(Value::Array(vec![])),
+                updated_at: parse_ts(&updated_at_raw)?,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn delete_agent_spec(&self, agent_id: &Uri) -> Result<u64> {
+        let deleted = self
+            .conn
+            .execute(
+                "DELETE FROM agent_specs WHERE agent_id = ?1",
+                (agent_id.to_string(),),
+            )
+            .await?;
+        Ok(deleted)
     }
 }

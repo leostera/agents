@@ -64,14 +64,6 @@ pub struct UserRecord {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PortRecord {
-    pub port: String,
-    pub config: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProviderRecord {
     pub provider: String,
     pub api_key: String,

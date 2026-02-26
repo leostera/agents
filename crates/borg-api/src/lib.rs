@@ -50,17 +50,7 @@ impl BorgApiServer {
 
     pub async fn run(self) -> Result<()> {
         let telegram_task = start_telegram_port(self.state.db.clone(), self.exec.clone()).await?;
-        let router = Router::new()
-            .route("/", get(ui_dashboard))
-            .route("/health", get(health))
-            .route("/ports/http", post(ports_http))
-            .route("/tasks", get(list_tasks))
-            .route("/tasks/:id", get(get_task))
-            .route("/tasks/:id/events", get(get_task_events))
-            .route("/tasks/:id/output", get(get_task_output))
-            .route("/memory/search", get(memory_search))
-            .route("/memory/entities/:id", get(get_memory_entity))
-            .with_state(self.state);
+        let router = app_router(self.state);
 
         let addr: SocketAddr = self.bind.parse()?;
         let listener = TcpListener::bind(addr).await?;
@@ -83,6 +73,67 @@ impl BorgApiServer {
 
         Ok(())
     }
+}
+
+fn app_router(state: AppState) -> Router {
+    Router::new()
+        .route("/", get(ui_dashboard))
+        .route("/health", get(health))
+        .route("/ports/http", post(ports_http))
+        .route("/tasks", get(list_tasks))
+        .route("/tasks/:id", get(get_task))
+        .route("/tasks/:id/events", get(get_task_events))
+        .route("/tasks/:id/output", get(get_task_output))
+        .route("/memory/search", get(memory_search))
+        .route("/memory/entities/:id", get(get_memory_entity))
+        .route("/api/providers", get(api_list_providers))
+        .route(
+            "/api/providers/:provider",
+            get(api_get_provider)
+                .put(api_upsert_provider)
+                .delete(api_delete_provider),
+        )
+        .route("/api/agents/specs", get(api_list_agent_specs))
+        .route(
+            "/api/agents/specs/:agent_id",
+            get(api_get_agent_spec)
+                .put(api_upsert_agent_spec)
+                .delete(api_delete_agent_spec),
+        )
+        .route("/api/users", get(api_list_users).post(api_upsert_user))
+        .route(
+            "/api/users/:user_key",
+            get(api_get_user)
+                .patch(api_patch_user)
+                .delete(api_delete_user),
+        )
+        .route("/api/sessions", get(api_list_sessions).post(api_upsert_session))
+        .route(
+            "/api/sessions/:session_id",
+            get(api_get_session)
+                .patch(api_patch_session)
+                .delete(api_delete_session),
+        )
+        .route(
+            "/api/sessions/:session_id/messages",
+            get(api_list_session_messages)
+                .post(api_append_session_message)
+                .delete(api_clear_session_messages),
+        )
+        .route(
+            "/api/sessions/:session_id/messages/:message_index",
+            get(api_get_session_message)
+                .patch(api_patch_session_message)
+                .delete(api_delete_session_message),
+        )
+        .route("/api/ports/:port/settings", get(api_list_port_settings))
+        .route(
+            "/api/ports/:port/settings/:key",
+            get(api_get_port_setting)
+                .put(api_upsert_port_setting)
+                .delete(api_delete_port_setting),
+        )
+        .with_state(state)
 }
 
 async fn start_telegram_port(db: BorgDb, exec: ExecEngine) -> Result<Option<JoinHandle<()>>> {
@@ -150,6 +201,79 @@ struct HttpPortRequest {
     agent_id: Option<String>,
     #[serde(default)]
     metadata: Option<Value>,
+}
+
+#[derive(Deserialize)]
+struct LimitQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct SessionsQuery {
+    limit: Option<usize>,
+    port: Option<String>,
+    user_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PortSettingsQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct UpsertProviderRequest {
+    api_key: String,
+}
+
+#[derive(Deserialize)]
+struct UpsertAgentSpecRequest {
+    model: String,
+    system_prompt: String,
+    tools: Value,
+}
+
+#[derive(Deserialize)]
+struct UpsertUserRequest {
+    user_key: String,
+    profile: Value,
+}
+
+#[derive(Deserialize)]
+struct PatchUserRequest {
+    profile: Value,
+}
+
+#[derive(Deserialize)]
+struct UpsertSessionRequest {
+    session_id: String,
+    user_key: String,
+    port: String,
+    root_task_id: String,
+    state: Value,
+}
+
+#[derive(Deserialize)]
+struct PatchSessionRequest {
+    user_key: Option<String>,
+    port: Option<String>,
+    root_task_id: Option<String>,
+    state: Option<Value>,
+}
+
+#[derive(Deserialize)]
+struct SessionMessagesQuery {
+    from: Option<usize>,
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct UpsertSessionMessageRequest {
+    payload: Value,
+}
+
+#[derive(Deserialize)]
+struct UpsertPortSettingRequest {
+    value: String,
 }
 
 async fn health() -> impl IntoResponse {
@@ -282,6 +406,480 @@ fn validate_port_request(
     })
 }
 
+fn parse_uri_field(field: &str, raw: &str) -> Result<Uri, axum::response::Response> {
+    Uri::parse(raw).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ApiValidationError {
+                error: "invalid request".to_string(),
+                details: vec![ApiFieldError {
+                    field: field.to_string(),
+                    message: "must be a valid URI".to_string(),
+                }],
+            }),
+        )
+            .into_response()
+    })
+}
+
+async fn api_list_providers(
+    State(state): State<AppState>,
+    Query(query): Query<LimitQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(100);
+    match state.db.list_providers(limit).await {
+        Ok(providers) => (StatusCode::OK, Json(json!({ "providers": providers }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_get_provider(
+    State(state): State<AppState>,
+    AxumPath(provider): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.db.get_provider(&provider).await {
+        Ok(Some(found)) => (StatusCode::OK, Json(json!({ "provider": found }))).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "provider not found".to_string()),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_upsert_provider(
+    State(state): State<AppState>,
+    AxumPath(provider): AxumPath<String>,
+    Json(payload): Json<UpsertProviderRequest>,
+) -> impl IntoResponse {
+    match state.db.upsert_provider_api_key(&provider, &payload.api_key).await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_delete_provider(
+    State(state): State<AppState>,
+    AxumPath(provider): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.db.delete_provider(&provider).await {
+        Ok(0) => api_error(StatusCode::NOT_FOUND, "provider not found".to_string()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_list_agent_specs(
+    State(state): State<AppState>,
+    Query(query): Query<LimitQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(100);
+    match state.db.list_agent_specs(limit).await {
+        Ok(specs) => (StatusCode::OK, Json(json!({ "agent_specs": specs }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_get_agent_spec(
+    State(state): State<AppState>,
+    AxumPath(agent_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let agent_id = match parse_uri_field("agent_id", &agent_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.get_agent_spec(&agent_id).await {
+        Ok(Some(spec)) => (StatusCode::OK, Json(json!({ "agent_spec": spec }))).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "agent spec not found".to_string()),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_upsert_agent_spec(
+    State(state): State<AppState>,
+    AxumPath(agent_id): AxumPath<String>,
+    Json(payload): Json<UpsertAgentSpecRequest>,
+) -> impl IntoResponse {
+    let agent_id = match parse_uri_field("agent_id", &agent_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state
+        .db
+        .upsert_agent_spec(
+            &agent_id,
+            &payload.model,
+            &payload.system_prompt,
+            &payload.tools,
+        )
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_delete_agent_spec(
+    State(state): State<AppState>,
+    AxumPath(agent_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let agent_id = match parse_uri_field("agent_id", &agent_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.delete_agent_spec(&agent_id).await {
+        Ok(0) => api_error(StatusCode::NOT_FOUND, "agent spec not found".to_string()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_list_users(
+    State(state): State<AppState>,
+    Query(query): Query<LimitQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(100);
+    match state.db.list_users(limit).await {
+        Ok(users) => (StatusCode::OK, Json(json!({ "users": users }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_upsert_user(
+    State(state): State<AppState>,
+    Json(payload): Json<UpsertUserRequest>,
+) -> impl IntoResponse {
+    let user_key = match parse_uri_field("user_key", &payload.user_key) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.upsert_user(&user_key, &payload.profile).await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_get_user(
+    State(state): State<AppState>,
+    AxumPath(user_key): AxumPath<String>,
+) -> impl IntoResponse {
+    let user_key = match parse_uri_field("user_key", &user_key) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.get_user(&user_key).await {
+        Ok(Some(user)) => (StatusCode::OK, Json(json!({ "user": user }))).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "user not found".to_string()),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_patch_user(
+    State(state): State<AppState>,
+    AxumPath(user_key): AxumPath<String>,
+    Json(payload): Json<PatchUserRequest>,
+) -> impl IntoResponse {
+    let user_key = match parse_uri_field("user_key", &user_key) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.upsert_user(&user_key, &payload.profile).await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_delete_user(
+    State(state): State<AppState>,
+    AxumPath(user_key): AxumPath<String>,
+) -> impl IntoResponse {
+    let user_key = match parse_uri_field("user_key", &user_key) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.delete_user(&user_key).await {
+        Ok(0) => api_error(StatusCode::NOT_FOUND, "user not found".to_string()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_list_sessions(
+    State(state): State<AppState>,
+    Query(query): Query<SessionsQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(100);
+    let user_key = match query.user_key {
+        Some(raw) => match parse_uri_field("user_key", &raw) {
+            Ok(v) => Some(v),
+            Err(err) => return err,
+        },
+        None => None,
+    };
+    match state
+        .db
+        .list_sessions(limit, query.port.as_deref(), user_key.as_ref())
+        .await
+    {
+        Ok(sessions) => (StatusCode::OK, Json(json!({ "sessions": sessions }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_upsert_session(
+    State(state): State<AppState>,
+    Json(payload): Json<UpsertSessionRequest>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &payload.session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let user_key = match parse_uri_field("user_key", &payload.user_key) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let root_task_id = match parse_uri_field("root_task_id", &payload.root_task_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state
+        .db
+        .upsert_session(
+            &session_id,
+            &user_key,
+            &payload.port,
+            &root_task_id,
+            &payload.state,
+        )
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_get_session(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.get_session(&session_id).await {
+        Ok(Some(session)) => (StatusCode::OK, Json(json!({ "session": session }))).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "session not found".to_string()),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_patch_session(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+    Json(payload): Json<PatchSessionRequest>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let Some(existing) = (match state.db.get_session(&session_id).await {
+        Ok(v) => v,
+        Err(err) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }) else {
+        return api_error(StatusCode::NOT_FOUND, "session not found".to_string());
+    };
+
+    let user_key = match payload.user_key {
+        Some(raw) => match parse_uri_field("user_key", &raw) {
+            Ok(v) => v,
+            Err(err) => return err,
+        },
+        None => existing.user_key,
+    };
+    let root_task_id = match payload.root_task_id {
+        Some(raw) => match parse_uri_field("root_task_id", &raw) {
+            Ok(v) => v,
+            Err(err) => return err,
+        },
+        None => existing.root_task_id,
+    };
+    let port = payload.port.unwrap_or(existing.port);
+    let state_value = payload.state.unwrap_or(existing.state);
+
+    match state
+        .db
+        .upsert_session(&session_id, &user_key, &port, &root_task_id, &state_value)
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_delete_session(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.delete_session(&session_id).await {
+        Ok(0) => api_error(StatusCode::NOT_FOUND, "session not found".to_string()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_append_session_message(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+    Json(payload): Json<UpsertSessionMessageRequest>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.append_session_message(&session_id, &payload.payload).await {
+        Ok(message_index) => {
+            (StatusCode::OK, Json(json!({ "message_index": message_index }))).into_response()
+        }
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_list_session_messages(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<SessionMessagesQuery>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let from = query.from.unwrap_or(0);
+    let limit = query.limit.unwrap_or(100);
+    match state.db.list_session_messages(&session_id, from, limit).await {
+        Ok(messages) => (StatusCode::OK, Json(json!({ "messages": messages }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_get_session_message(
+    State(state): State<AppState>,
+    AxumPath((session_id, message_index)): AxumPath<(String, i64)>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.get_session_message(&session_id, message_index).await {
+        Ok(Some(message)) => (StatusCode::OK, Json(json!({ "message": message }))).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "session message not found".to_string()),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_patch_session_message(
+    State(state): State<AppState>,
+    AxumPath((session_id, message_index)): AxumPath<(String, i64)>,
+    Json(payload): Json<UpsertSessionMessageRequest>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state
+        .db
+        .update_session_message(&session_id, message_index, &payload.payload)
+        .await
+    {
+        Ok(0) => api_error(StatusCode::NOT_FOUND, "session message not found".to_string()),
+        Ok(_) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_delete_session_message(
+    State(state): State<AppState>,
+    AxumPath((session_id, message_index)): AxumPath<(String, i64)>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.delete_session_message(&session_id, message_index).await {
+        Ok(0) => api_error(StatusCode::NOT_FOUND, "session message not found".to_string()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_clear_session_messages(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.clear_session_history(&session_id).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_list_port_settings(
+    State(state): State<AppState>,
+    AxumPath(port): AxumPath<String>,
+    Query(query): Query<PortSettingsQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(200);
+    match state.db.list_port_settings(&port, limit).await {
+        Ok(items) => {
+            let settings: Vec<Value> = items
+                .into_iter()
+                .map(|(key, value)| json!({ "key": key, "value": value }))
+                .collect();
+            (StatusCode::OK, Json(json!({ "settings": settings }))).into_response()
+        }
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_get_port_setting(
+    State(state): State<AppState>,
+    AxumPath((port, key)): AxumPath<(String, String)>,
+) -> impl IntoResponse {
+    match state.db.get_port_setting(&port, &key).await {
+        Ok(Some(value)) => {
+            (StatusCode::OK, Json(json!({ "port": port, "key": key, "value": value })))
+                .into_response()
+        }
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "port setting not found".to_string()),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_upsert_port_setting(
+    State(state): State<AppState>,
+    AxumPath((port, key)): AxumPath<(String, String)>,
+    Json(payload): Json<UpsertPortSettingRequest>,
+) -> impl IntoResponse {
+    match state.db.upsert_port_setting(&port, &key, &payload.value).await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_delete_port_setting(
+    State(state): State<AppState>,
+    AxumPath((port, key)): AxumPath<(String, String)>,
+) -> impl IntoResponse {
+    match state.db.delete_port_setting(&port, &key).await {
+        Ok(0) => api_error(StatusCode::NOT_FOUND, "port setting not found".to_string()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
 async fn list_tasks(
     State(state): State<AppState>,
     Query(query): Query<TasksQuery>,
@@ -397,8 +995,113 @@ fn api_error(status: StatusCode, error: String) -> axum::response::Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{HttpPortRequest, validate_port_request};
-    use serde_json::json;
+    use super::{AppState, HttpPortRequest, app_router, validate_port_request};
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Method, Request, StatusCode};
+    use borg_core::Uri;
+    use borg_db::BorgDb;
+    use borg_exec::ExecEngine;
+    use borg_ltm::MemoryStore;
+    use borg_ports::init_http_port;
+    use borg_rt::CodeModeRuntime;
+    use serde_json::{Value, json};
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tower::ServiceExt;
+
+    fn test_root(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        let pid = std::process::id();
+        std::env::temp_dir().join(format!("borg-api-{name}-{pid}-{nanos}"))
+    }
+
+    async fn test_app(name: &str) -> axum::Router {
+        let root = test_root(name);
+        let db_path = root.join("config.db");
+        let memory_path = root.join("ltm");
+        let search_path = root.join("search");
+        std::fs::create_dir_all(&memory_path).expect("create memory path");
+        std::fs::create_dir_all(&search_path).expect("create search path");
+
+        let db = BorgDb::open_local(db_path.to_string_lossy().as_ref())
+            .await
+            .expect("open local db");
+        db.migrate().await.expect("migrate db");
+
+        let memory = MemoryStore::new(&memory_path, &search_path).expect("new memory store");
+        memory.migrate().await.expect("migrate memory");
+
+        let exec = ExecEngine::new(
+            db.clone(),
+            memory.clone(),
+            CodeModeRuntime::default(),
+            Uri::parse("borg:worker:test").expect("worker uri"),
+        );
+        let http_port = init_http_port(exec).expect("init http port");
+        let state = AppState {
+            db,
+            http_port,
+            memory,
+        };
+        app_router(state)
+    }
+
+    async fn request_json(
+        app: &axum::Router,
+        method: Method,
+        path: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .expect("build request"),
+            )
+            .await
+            .expect("request should succeed");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let parsed = if bytes.is_empty() {
+            json!({})
+        } else {
+            serde_json::from_slice(&bytes).expect("json response")
+        };
+        (status, parsed)
+    }
+
+    async fn request_no_body(app: &axum::Router, method: Method, path: &str) -> (StatusCode, Value) {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
+            .await
+            .expect("request should succeed");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let parsed = if bytes.is_empty() {
+            json!({})
+        } else {
+            serde_json::from_slice(&bytes).expect("json response")
+        };
+        (status, parsed)
+    }
 
     #[test]
     fn validate_port_request_rejects_invalid_uri_fields() {
@@ -425,5 +1128,215 @@ mod tests {
         assert_eq!(parsed.user_key.as_str(), "borg:user:test");
         assert_eq!(parsed.session_id.unwrap().as_str(), "borg:session:123");
         assert_eq!(parsed.agent_id.unwrap().as_str(), "borg:agent:default");
+    }
+
+    #[tokio::test]
+    async fn providers_crud_endpoints_work() {
+        let app = test_app("providers").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/providers/openai",
+            json!({"api_key":"sk-test"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/providers/openai").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["provider"]["provider"], "openai");
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/providers").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["providers"].as_array().is_some_and(|v| !v.is_empty()));
+
+        let (status, _) = request_no_body(&app, Method::DELETE, "/api/providers/openai").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn agent_specs_crud_endpoints_work() {
+        let app = test_app("agent-specs").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/agents/specs/borg:agent:default",
+            json!({
+                "model":"gpt-4o-mini",
+                "system_prompt":"you are borg",
+                "tools":[{"name":"search"}]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) =
+            request_no_body(&app, Method::GET, "/api/agents/specs/borg:agent:default").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["agent_spec"]["model"], "gpt-4o-mini");
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/agents/specs").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["agent_specs"].as_array().is_some_and(|v| !v.is_empty()));
+
+        let (status, _) =
+            request_no_body(&app, Method::DELETE, "/api/agents/specs/borg:agent:default").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn users_crud_endpoints_work() {
+        let app = test_app("users").await;
+        let (status, _) = request_json(
+            &app,
+            Method::POST,
+            "/api/users",
+            json!({"user_key":"borg:user:test","profile":{"name":"Test"}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/users/borg:user:test").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["user"]["profile"]["name"], "Test");
+
+        let (status, _) = request_json(
+            &app,
+            Method::PATCH,
+            "/api/users/borg:user:test",
+            json!({"profile":{"name":"Updated"}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/users").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["users"].as_array().is_some_and(|v| !v.is_empty()));
+
+        let (status, _) = request_no_body(&app, Method::DELETE, "/api/users/borg:user:test").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn port_settings_crud_endpoints_work() {
+        let app = test_app("port-settings").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/ports/telegram/settings/bot_token",
+            json!({"value":"123:abc"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/ports/telegram/settings/bot_token",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["value"], "123:abc");
+
+        let (status, body) =
+            request_no_body(&app, Method::GET, "/api/ports/telegram/settings").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["settings"].as_array().is_some_and(|v| !v.is_empty()));
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::DELETE,
+            "/api/ports/telegram/settings/bot_token",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn sessions_and_messages_crud_endpoints_work() {
+        let app = test_app("sessions").await;
+        let (status, _) = request_json(
+            &app,
+            Method::POST,
+            "/api/sessions",
+            json!({
+                "session_id":"borg:session:test",
+                "user_key":"borg:user:test",
+                "port":"http",
+                "root_task_id":"borg:task:root",
+                "state":{"mode":"chat"}
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/sessions/borg:session:test").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["session"]["port"], "http");
+
+        let (status, _) = request_json(
+            &app,
+            Method::PATCH,
+            "/api/sessions/borg:session:test",
+            json!({"state":{"mode":"agent"}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, _) = request_json(
+            &app,
+            Method::POST,
+            "/api/sessions/borg:session:test/messages",
+            json!({"payload":{"role":"user","content":"hello"}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/sessions/borg:session:test/messages/0",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["message"]["message_index"], 0);
+
+        let (status, _) = request_json(
+            &app,
+            Method::PATCH,
+            "/api/sessions/borg:session:test/messages/0",
+            json!({"payload":{"role":"user","content":"updated"}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/sessions/borg:session:test/messages?from=0&limit=10",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["messages"].as_array().is_some_and(|v| !v.is_empty()));
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::DELETE,
+            "/api/sessions/borg:session:test/messages/0",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::DELETE,
+            "/api/sessions/borg:session:test/messages",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (status, _) =
+            request_no_body(&app, Method::DELETE, "/api/sessions/borg:session:test").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
     }
 }

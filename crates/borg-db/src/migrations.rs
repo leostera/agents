@@ -52,13 +52,6 @@ impl BorgDb {
                     updated_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS ports (
-                    port TEXT PRIMARY KEY,
-                    config_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-
                 CREATE TABLE IF NOT EXISTS session_messages (
                     message_id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
@@ -113,7 +106,12 @@ impl BorgDb {
                 );
 
                 INSERT OR IGNORE INTO providers(provider, api_key, created_at, updated_at)
-                VALUES('kalosm', '', datetime('now'), datetime('now'));
+                VALUES(
+                    'kalosm',
+                    '',
+                    strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                    strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                );
                 "#,
             )
             .await

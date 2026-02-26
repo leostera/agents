@@ -2,10 +2,42 @@ use anyhow::{Result, anyhow};
 use borg_agent::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use serde_json::json;
 
-use crate::{FactInput, MemoryStore, SearchQuery};
+use crate::{FactInput, MemoryStore, SearchQuery, Uri};
 
 pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![
+        ToolSpec {
+            name: "newEntity".to_string(),
+            description: r#"
+Create a new entity URI when you cannot confidently find an existing one.
+
+When to use:
+- After a `searchMemory` lookup fails to find a reliable match.
+- Before saving facts about a concrete entity (person, movie, place, thing)
+  that should be referenceable later.
+
+Workflow:
+1) Try `searchMemory` first.
+2) If no strong match exists, call `newEntity`.
+3) Save intrinsic facts on that new URI via `saveFacts`.
+4) Link other entities to it using `Ref`.
+
+Input shape:
+{ "ns": string, "kind": string }
+
+Example:
+{ "ns": "borg", "kind": "person" }
+"#.to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "ns": { "type": "string", "description": "Entity namespace, e.g. borg" },
+                    "kind": { "type": "string", "description": "Entity kind, e.g. person, movie" }
+                },
+                "required": ["ns", "kind"],
+                "additionalProperties": false
+            }),
+        },
         ToolSpec {
             name: "saveFacts".to_string(),
             description: r#"
@@ -22,10 +54,27 @@ Why use it:
 - Saving in batches reduces overhead and keeps memory writes coherent.
 
 How to use it well:
+- Always attempt `searchMemory` first for likely existing entities.
+- If no reliable match exists, create an entity via `newEntity` first.
 - Save facts eagerly and granularly.
 - Prefer multiple small facts in one call over one large opaque blob.
 - Use canonical URIs for `source`, `entity`, and `field`.
 - Include `source` whenever you have message provenance.
+- Prefer creating first-class entity URIs and linking via `Ref` instead of embedding related attributes on the same entity.
+
+Entity modeling preference:
+- For new concrete entities (people, places, things), create a dedicated URI (for example `borg:person:<uuid>`).
+- Attach intrinsic attributes (`name`, `nickname`, etc.) to that entity.
+- Link users/things to that entity using relationship facts with `Ref`.
+- This keeps memory graph-structured and referenceable across future facts.
+
+`value` variants (single-key object):
+- Text: `{ "Text": "Leo" }`
+- Integer: `{ "Integer": 42 }`
+- Float: `{ "Float": 3.14 }`
+- Boolean: `{ "Boolean": true }`
+- Bytes: `{ "Bytes": [137, 80, 78, 71] }`
+- Ref: `{ "Ref": "borg:user:mariana" }`
 
 Input shape:
 { "facts": FactInput[] }
@@ -57,13 +106,139 @@ Examples:
     }
   ]
 }
+
+{
+  "facts": [
+    {
+      "source": "borg:message:telegram_2654566_13843",
+      "entity": "borg:user:leostera",
+      "field": "borg:field:age",
+      "value": { "Integer": 31 }
+    },
+    {
+      "source": "borg:message:telegram_2654566_13843",
+      "entity": "borg:user:leostera",
+      "field": "borg:field:height_m",
+      "value": { "Float": 1.78 }
+    },
+    {
+      "source": "borg:message:telegram_2654566_13843",
+      "entity": "borg:user:leostera",
+      "field": "borg:preference:vegan",
+      "value": { "Boolean": false }
+    },
+    {
+      "source": "borg:message:telegram_2654566_13843",
+      "entity": "borg:file:avatar",
+      "field": "borg:field:signature",
+      "value": { "Bytes": [1, 2, 3, 4] }
+    },
+    {
+      "source": "borg:message:telegram_2654566_13843",
+      "entity": "borg:user:leostera",
+      "field": "borg:relationship:girlfriend",
+      "value": { "Ref": "borg:user:mariana" }
+    }
+  ]
+}
+
+Entity-first example (preferred):
+User says: "my girlfriend's name is Mariana but her nickname is Maja"
+
+{
+  "facts": [
+    {
+      "source": "borg:message:telegram_2654566_13844",
+      "entity": "borg:person:2a7f8f3b-1b11-4ef7-a1b0-9a3c2d4e5f6a",
+      "field": "borg:field:name",
+      "value": { "Text": "Mariana" }
+    },
+    {
+      "source": "borg:message:telegram_2654566_13844",
+      "entity": "borg:person:2a7f8f3b-1b11-4ef7-a1b0-9a3c2d4e5f6a",
+      "field": "borg:field:nickname",
+      "value": { "Text": "Maja" }
+    },
+    {
+      "source": "borg:message:telegram_2654566_13844",
+      "entity": "borg:user:leostera",
+      "field": "borg:relationship:partnerOf",
+      "value": { "Ref": "borg:person:2a7f8f3b-1b11-4ef7-a1b0-9a3c2d4e5f6a" }
+    }
+  ]
+}
 "#.to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "facts": {
                         "type": "array",
-                        "description": "List of facts to persist in LTM"
+                        "description": "List of facts to persist in LTM",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source": {
+                                    "type": "string",
+                                    "description": "URI identifying provenance for this fact"
+                                },
+                                "entity": {
+                                    "type": "string",
+                                    "description": "Subject URI receiving this fact"
+                                },
+                                "field": {
+                                    "type": "string",
+                                    "description": "Field URI describing the property"
+                                },
+                                "value": {
+                                    "description": "Fact value encoded as a single-key object variant",
+                                    "oneOf": [
+                                        {
+                                            "type": "object",
+                                            "properties": { "Text": { "type": "string" } },
+                                            "required": ["Text"],
+                                            "additionalProperties": false
+                                        },
+                                        {
+                                            "type": "object",
+                                            "properties": { "Integer": { "type": "integer" } },
+                                            "required": ["Integer"],
+                                            "additionalProperties": false
+                                        },
+                                        {
+                                            "type": "object",
+                                            "properties": { "Float": { "type": "number" } },
+                                            "required": ["Float"],
+                                            "additionalProperties": false
+                                        },
+                                        {
+                                            "type": "object",
+                                            "properties": { "Boolean": { "type": "boolean" } },
+                                            "required": ["Boolean"],
+                                            "additionalProperties": false
+                                        },
+                                        {
+                                            "type": "object",
+                                            "properties": {
+                                                "Bytes": {
+                                                    "type": "array",
+                                                    "items": { "type": "integer" }
+                                                }
+                                            },
+                                            "required": ["Bytes"],
+                                            "additionalProperties": false
+                                        },
+                                        {
+                                            "type": "object",
+                                            "properties": { "Ref": { "type": "string" } },
+                                            "required": ["Ref"],
+                                            "additionalProperties": false
+                                        }
+                                    ]
+                                }
+                            },
+                            "required": ["source", "entity", "field", "value"],
+                            "additionalProperties": false
+                        }
                     }
                 },
                 "required": ["facts"],
@@ -93,7 +268,7 @@ How to use it well:
 Input shape:
 { "query": SearchQuery }
 
-`query` is an Elasticsearch-style query object (filters + text query fields),
+`query` is an Apache Lucene-like query object (filters + text query fields),
 adapted to Borg's memory schema (`q`, `ns`, `kind`, `name.like`, `limit`).
 
 Examples:
@@ -129,12 +304,29 @@ Examples:
 }
 
 pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
+    let new_entity_spec = required_default_tool_spec("newEntity")?;
     let save_facts_spec = required_default_tool_spec("saveFacts")?;
     let search_memory_spec = required_default_tool_spec("searchMemory")?;
     let memory_for_save = memory.clone();
     let memory_for_search = memory;
 
     Toolchain::builder()
+        .add_tool(Tool::new(new_entity_spec, None, move |request| async move {
+            let ns = request
+                .arguments
+                .get("ns")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| anyhow!("newEntity tool requires ns"))?;
+            let kind = request
+                .arguments
+                .get("kind")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| anyhow!("newEntity tool requires kind"))?;
+            let entity = Uri::from_parts(ns, kind, Some(&uuid::Uuid::now_v7().to_string()))?;
+            Ok(ToolResponse {
+                content: ToolResultData::Text(entity.to_string()),
+            })
+        }))?
         .add_tool(Tool::new(save_facts_spec, None, move |request| {
             let memory = memory_for_save.clone();
             async move {
