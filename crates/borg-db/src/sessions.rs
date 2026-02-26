@@ -90,12 +90,4 @@ impl BorgDb {
             .await?;
         Ok(deleted)
     }
-
-    pub async fn clear_all_session_histories(&self) -> Result<u64> {
-        let deleted = self
-            .conn
-            .execute("DELETE FROM session_messages", ())
-            .await?;
-        Ok(deleted)
-    }
 }

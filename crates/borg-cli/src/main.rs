@@ -135,10 +135,7 @@ enum SessionCommand {
     /// Delete all persisted messages for a session.
     ClearHistory {
         /// Session URI to clear.
-        session_id: Option<String>,
-        /// Clear history for all sessions.
-        #[arg(long)]
-        all: bool,
+        session_id: String,
     },
 }
 
@@ -155,11 +152,6 @@ enum MemoryCommand {
 #[derive(Clone)]
 struct BorgCliApp {
     borg_dir: BorgDir,
-}
-
-enum SessionHistoryClearTarget {
-    ClearSession { session_id: Uri },
-    ClearAllSessions,
 }
 
 impl BorgCliApp {
@@ -425,61 +417,24 @@ impl BorgCliApp {
         }
     }
 
-    async fn session_clear_history(&self, target: SessionHistoryClearTarget) -> Result<()> {
-        match target {
-            SessionHistoryClearTarget::ClearAllSessions => {
-                let db = self.open_config_db().await?;
-                db.migrate().await?;
-                let deleted = db.clear_all_session_histories().await?;
-                info!(
-                    target: "borg_cli",
-                    deleted,
-                    "cleared all session histories"
-                );
-                println!("cleared {} message(s) across all sessions", deleted);
-                Ok(())
-            }
-            SessionHistoryClearTarget::ClearSession { session_id } => {
-                let db = self.open_config_db().await?;
-                db.migrate().await?;
-                let deleted = db.clear_session_history(&session_id).await?;
-                info!(
-                    target: "borg_cli",
-                    session_id = %session_id,
-                    deleted,
-                    "cleared session history"
-                );
-                println!("cleared {} message(s) for {}", deleted, session_id);
-                Ok(())
-            }
-        }
-    }
-
-    fn parse_session_clear_target(
-        &self,
-        session_id: Option<String>,
-        all: bool,
-    ) -> Result<SessionHistoryClearTarget> {
-        if all {
-            if let Some(value) = session_id {
-                anyhow::bail!(
-                    "cannot pass both <session_id> (`{}`) and --all; choose one",
-                    value
-                );
-            }
-            return Ok(SessionHistoryClearTarget::ClearAllSessions);
-        }
-
-        let Some(session_id) = session_id else {
-            anyhow::bail!("expected <session_id> or --all");
-        };
+    async fn session_clear_history(&self, session_id: String) -> Result<()> {
         let session_id = Uri::parse(&session_id).map_err(|_| {
             anyhow::anyhow!(
                 "invalid session id `{}` (expected URI like borg:session:<id>)",
                 session_id
             )
         })?;
-        Ok(SessionHistoryClearTarget::ClearSession { session_id })
+        let db = self.open_config_db().await?;
+        db.migrate().await?;
+        let deleted = db.clear_session_history(&session_id).await?;
+        info!(
+            target: "borg_cli",
+            session_id = %session_id,
+            deleted,
+            "cleared session history"
+        );
+        println!("cleared {} message(s) for {}", deleted, session_id);
+        Ok(())
     }
 
     async fn memory_clear(&self, yes: bool) -> Result<()> {
@@ -642,9 +597,8 @@ async fn main() -> Result<()> {
                 session_id,
                 poll_ms,
             } => app.session(session_id, poll_ms).await,
-            SessionCommand::ClearHistory { session_id, all } => {
-                let target = app.parse_session_clear_target(session_id, all)?;
-                app.session_clear_history(target).await
+            SessionCommand::ClearHistory { session_id } => {
+                app.session_clear_history(session_id).await
             }
         },
         Command::Memory { cmd } => match cmd {
