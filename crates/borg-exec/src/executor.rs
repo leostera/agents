@@ -158,6 +158,38 @@ impl BorgExecutor {
         Ok(percent)
     }
 
+    pub async fn list_session_messages(
+        &self,
+        session_id: &Uri,
+        from: usize,
+        limit: usize,
+    ) -> Result<Vec<Value>> {
+        self.db.list_session_messages(session_id, from, limit).await
+    }
+
+    pub async fn compact_session(&self, session_id: &Uri) -> Result<usize> {
+        let context = self.context_window_for_session(session_id).await?;
+        self.db.clear_session_history(session_id).await?;
+        for message in &context.messages {
+            let payload = serde_json::to_value(message)?;
+            self.db.append_session_message(session_id, &payload).await?;
+        }
+        Ok(context.messages.len())
+    }
+
+    pub async fn context_window_for_session(&self, session_id: &Uri) -> Result<ContextWindow> {
+        let synthetic_msg = UserMessage {
+            user_key: Uri::from_parts("borg", "user", Some("system"))?,
+            text: String::new(),
+            session_id: Some(session_id.clone()),
+            agent_id: None,
+            metadata: json!({}),
+        };
+        let session = self.session_manager.session_for_task(&synthetic_msg).await?;
+        let context = session.build_context().await?;
+        Ok(context)
+    }
+
     pub async fn run(self) -> Result<()> {
         self.recover_tasks_on_startup().await?;
         info!(

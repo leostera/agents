@@ -5,7 +5,7 @@ use borg_exec::{ExecEngine, UserMessage};
 use serde_json::Value;
 use serde_json::json;
 use teloxide::prelude::*;
-use teloxide::types::{ChatAction, KeyboardButton, KeyboardMarkup, ParseMode};
+use teloxide::types::{ChatAction, ParseMode};
 use teloxide::utils::html;
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, sleep};
@@ -19,6 +19,11 @@ const TELEGRAM_START_GREETING: &str =
 const TELEGRAM_CONTEXT_MAX_TOKENS: usize = 128_000;
 const TELEGRAM_TYPING_REFRESH_SECS: u64 = 4;
 const TELEGRAM_COMPACT_COMMAND: &str = "/compact";
+const TELEGRAM_PORT_COMMAND: &str = "/port";
+const TELEGRAM_HELP_COMMAND: &str = "/help";
+const TELEGRAM_PARTICIPANTS_COMMAND: &str = "/participants";
+const TELEGRAM_CONTEXT_COMMAND: &str = "/context";
+const TELEGRAM_CONTEXT_HEADER_PREFIX: &str = "TELEGRAM_CONTEXT_JSON: ";
 
 #[derive(Clone)]
 pub struct TelegramPort {
@@ -138,6 +143,107 @@ impl TelegramPort {
                     return Ok(());
                 }
 
+                if is_help_command(&message) {
+                    bot.send_message(message.chat.id, telegram_help_text()).await?;
+                    return Ok(());
+                }
+
+                if is_compact_command(&message) {
+                    let session_id = match telegram_session_id(&message) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            bot.send_message(
+                                message.chat.id,
+                                format!("Failed to resolve session: {err}"),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    };
+                    match exec.compact_session(&session_id).await {
+                        Ok(messages_kept) => {
+                            let response =
+                                format!("Compacted session. Kept {} context message(s).", messages_kept);
+                            bot.send_message(message.chat.id, response).await?;
+                        }
+                        Err(err) => {
+                            bot.send_message(
+                                message.chat.id,
+                                format!("Failed to compact session: {err}"),
+                            )
+                            .await?;
+                        }
+                    }
+                    return Ok(());
+                }
+
+                if is_port_command(&message) {
+                    bot.send_message(message.chat.id, telegram_port_info(&message))
+                        .await?;
+                    return Ok(());
+                }
+
+                if is_participants_command(&message) {
+                    let session_id = match telegram_session_id(&message) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            bot.send_message(
+                                message.chat.id,
+                                format!("Failed to resolve session: {err}"),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    };
+                    match exec.list_session_messages(&session_id, 0, 10_000).await {
+                        Ok(messages) => {
+                            bot.send_message(
+                                message.chat.id,
+                                format_participants_message(&messages),
+                            )
+                            .await?;
+                        }
+                        Err(err) => {
+                            bot.send_message(
+                                message.chat.id,
+                                format!("Failed to load participants: {err}"),
+                            )
+                            .await?;
+                        }
+                    }
+                    return Ok(());
+                }
+
+                if is_context_command(&message) {
+                    let session_id = match telegram_session_id(&message) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            bot.send_message(
+                                message.chat.id,
+                                format!("Failed to resolve session: {err}"),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    };
+                    match exec.context_window_for_session(&session_id).await {
+                        Ok(context) => {
+                            let dump = serde_json::to_string_pretty(&context.messages)
+                                .unwrap_or_else(|_| "[]".to_string());
+                            bot.send_message(message.chat.id, truncate_telegram_message(dump))
+                                .await?;
+                        }
+                        Err(err) => {
+                            bot.send_message(
+                                message.chat.id,
+                                format!("Failed to load context: {err}"),
+                            )
+                            .await?;
+                        }
+                    }
+                    return Ok(());
+                }
+
                 let Some(inbound) = PortMessage::from_telegram(&message) else {
                     return Ok(());
                 };
@@ -183,16 +289,7 @@ impl TelegramPort {
                             .await
                         {
                             let usage_line = format!("Context: ~{}% used", percent);
-                            let compact_keyboard =
-                                KeyboardMarkup::new(vec![vec![KeyboardButton::new(
-                                    TELEGRAM_COMPACT_COMMAND,
-                                )]])
-                            .resize_keyboard()
-                            .one_time_keyboard()
-                            .input_field_placeholder(TELEGRAM_COMPACT_COMMAND);
-                            bot.send_message(message.chat.id, usage_line)
-                                .reply_markup(compact_keyboard)
-                                .await?;
+                            bot.send_message(message.chat.id, usage_line).await?;
                         }
                     }
                 }
@@ -250,6 +347,122 @@ fn is_start_command(message: &Message) -> bool {
     };
     let command = text.split_whitespace().next().unwrap_or_default();
     command == "/start" || command.starts_with("/start@")
+}
+
+fn is_compact_command(message: &Message) -> bool {
+    command_matches(message, TELEGRAM_COMPACT_COMMAND)
+}
+
+fn is_help_command(message: &Message) -> bool {
+    command_matches(message, TELEGRAM_HELP_COMMAND)
+}
+
+fn is_port_command(message: &Message) -> bool {
+    command_matches(message, TELEGRAM_PORT_COMMAND)
+}
+
+fn is_participants_command(message: &Message) -> bool {
+    command_matches(message, TELEGRAM_PARTICIPANTS_COMMAND)
+}
+
+fn is_context_command(message: &Message) -> bool {
+    command_matches(message, TELEGRAM_CONTEXT_COMMAND)
+}
+
+fn command_matches(message: &Message, command_name: &str) -> bool {
+    let Some(text) = message.text() else {
+        return false;
+    };
+    let command = text.split_whitespace().next().unwrap_or_default();
+    command == command_name || command.starts_with(&format!("{command_name}@"))
+}
+
+fn telegram_port_info(message: &Message) -> String {
+    let chat_id = message.chat.id.0;
+    let chat_type = if message.chat.is_private() {
+        "private"
+    } else if message.chat.is_group() {
+        "group"
+    } else if message.chat.is_supergroup() {
+        "supergroup"
+    } else if message.chat.is_channel() {
+        "channel"
+    } else {
+        "unknown"
+    };
+    let session_uri = format!("borg:session:telegram_{chat_id}");
+    format!("Port: telegram\nChat: {chat_type}\nSession: {session_uri}")
+}
+
+fn telegram_help_text() -> &'static str {
+    "Available commands:\n/start - Show greeting\n/help - Show this help\n/compact - Compact current session context\n/port - Show current port info\n/participants - Show participants seen in this session\n/context - Dump the current context window"
+}
+
+fn telegram_session_id(message: &Message) -> Result<Uri> {
+    Uri::from_parts(
+        "borg",
+        "session",
+        Some(&format!("telegram_{}", message.chat.id.0)),
+    )
+    .map_err(Into::into)
+}
+
+fn format_participants_message(messages: &[Value]) -> String {
+    let mut participants = std::collections::BTreeSet::<String>::new();
+    for message in messages {
+        let Some(content) = message
+            .get("content")
+            .and_then(Value::as_str)
+            .filter(|value| value.starts_with(TELEGRAM_CONTEXT_HEADER_PREFIX))
+        else {
+            continue;
+        };
+
+        let raw = &content[TELEGRAM_CONTEXT_HEADER_PREFIX.len()..];
+        let Ok(header) = serde_json::from_str::<Value>(raw) else {
+            continue;
+        };
+        let sender = match header.get("sender").and_then(Value::as_object) {
+            Some(value) => value,
+            None => continue,
+        };
+        let id = sender
+            .get("id")
+            .and_then(Value::as_i64)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let username = sender
+            .get("username")
+            .and_then(Value::as_str)
+            .map(|value| format!("@{value}"))
+            .unwrap_or_else(|| "unknown".to_string());
+        let first_name = sender
+            .get("first_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let last_name = sender
+            .get("last_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let full_name = format!("{} {}", first_name, last_name).trim().to_string();
+        let label = if full_name.is_empty() {
+            format!("{username} ({id})")
+        } else {
+            format!("{full_name} {username} ({id})")
+        };
+        participants.insert(label);
+    }
+
+    if participants.is_empty() {
+        return "Participants: none seen in context yet".to_string();
+    }
+
+    let mut out = String::from("Participants:");
+    for participant in participants {
+        out.push_str("\n- ");
+        out.push_str(&participant);
+    }
+    out
 }
 
 fn format_tool_action_message(action: &str) -> String {
