@@ -74,6 +74,7 @@ impl BorgApiServer {
 fn app_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(SystemController::ui_dashboard))
+        .route("/dashboard", get(SystemController::ui_dashboard))
         .route("/health", get(SystemController::health))
         .route("/ports/http", post(SystemController::ports_http))
         .route("/tasks", get(SystemController::list_tasks))
