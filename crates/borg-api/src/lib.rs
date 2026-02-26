@@ -133,6 +133,20 @@ fn app_router(state: AppState) -> Router {
                 .put(api_upsert_port_setting)
                 .delete(api_delete_port_setting),
         )
+        .route("/api/ports/:port/bindings", get(api_list_port_bindings))
+        .route(
+            "/api/ports/:port/bindings/:conversation_key",
+            get(api_get_port_binding)
+                .put(api_upsert_port_binding)
+                .delete(api_delete_port_binding),
+        )
+        .route(
+            "/api/ports/:port/sessions/:session_id/context",
+            get(api_get_port_session_context)
+                .put(api_upsert_port_session_context)
+                .delete(api_delete_port_session_context),
+        )
+        .route("/api/sessions/:session_id/context", get(api_get_any_port_session_context))
         .with_state(state)
 }
 
@@ -221,6 +235,11 @@ struct PortSettingsQuery {
 }
 
 #[derive(Deserialize)]
+struct PortBindingsQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
 struct UpsertProviderRequest {
     api_key: String,
 }
@@ -274,6 +293,18 @@ struct UpsertSessionMessageRequest {
 #[derive(Deserialize)]
 struct UpsertPortSettingRequest {
     value: String,
+}
+
+#[derive(Deserialize)]
+struct UpsertPortBindingRequest {
+    session_id: String,
+    #[serde(default)]
+    agent_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UpsertPortSessionContextRequest {
+    ctx: Value,
 }
 
 async fn health() -> impl IntoResponse {
@@ -880,6 +911,175 @@ async fn api_delete_port_setting(
     }
 }
 
+async fn api_list_port_bindings(
+    State(state): State<AppState>,
+    AxumPath(port): AxumPath<String>,
+    Query(query): Query<PortBindingsQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(200);
+    match state.db.list_port_bindings(&port, limit).await {
+        Ok(items) => {
+            let bindings: Vec<Value> = items
+                .into_iter()
+                .map(|(conversation_key, session_id, agent_id)| {
+                    json!({
+                        "conversation_key": conversation_key,
+                        "session_id": session_id,
+                        "agent_id": agent_id
+                    })
+                })
+                .collect();
+            (StatusCode::OK, Json(json!({ "bindings": bindings }))).into_response()
+        }
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_get_port_binding(
+    State(state): State<AppState>,
+    AxumPath((port, conversation_key)): AxumPath<(String, String)>,
+) -> impl IntoResponse {
+    let conversation_key = match parse_uri_field("conversation_key", &conversation_key) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state
+        .db
+        .get_port_binding_record(&port, &conversation_key)
+        .await
+    {
+        Ok(Some((conversation_key, session_id, agent_id))) => (
+            StatusCode::OK,
+            Json(json!({
+                "binding": {
+                    "conversation_key": conversation_key,
+                    "session_id": session_id,
+                    "agent_id": agent_id
+                }
+            })),
+        )
+            .into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "port binding not found".to_string()),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_upsert_port_binding(
+    State(state): State<AppState>,
+    AxumPath((port, conversation_key)): AxumPath<(String, String)>,
+    Json(payload): Json<UpsertPortBindingRequest>,
+) -> impl IntoResponse {
+    let conversation_key = match parse_uri_field("conversation_key", &conversation_key) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let session_id = match parse_uri_field("session_id", &payload.session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let agent_id = match payload.agent_id {
+        Some(raw) => match parse_uri_field("agent_id", &raw) {
+            Ok(v) => Some(v),
+            Err(err) => return err,
+        },
+        None => None,
+    };
+
+    match state
+        .db
+        .upsert_port_binding_record(&port, &conversation_key, &session_id, agent_id.as_ref())
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_delete_port_binding(
+    State(state): State<AppState>,
+    AxumPath((port, conversation_key)): AxumPath<(String, String)>,
+) -> impl IntoResponse {
+    let conversation_key = match parse_uri_field("conversation_key", &conversation_key) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.delete_port_binding(&port, &conversation_key).await {
+        Ok(0) => api_error(StatusCode::NOT_FOUND, "port binding not found".to_string()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_get_port_session_context(
+    State(state): State<AppState>,
+    AxumPath((port, session_id)): AxumPath<(String, String)>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.get_port_session_context(&port, &session_id).await {
+        Ok(Some(ctx)) => {
+            (StatusCode::OK, Json(json!({ "port": port, "session_id": session_id, "ctx": ctx })))
+                .into_response()
+        }
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "port session context not found".to_string()),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_upsert_port_session_context(
+    State(state): State<AppState>,
+    AxumPath((port, session_id)): AxumPath<(String, String)>,
+    Json(payload): Json<UpsertPortSessionContextRequest>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state
+        .db
+        .upsert_port_session_context(&port, &session_id, &payload.ctx)
+        .await
+    {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_delete_port_session_context(
+    State(state): State<AppState>,
+    AxumPath((port, session_id)): AxumPath<(String, String)>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.clear_port_session_context(&port, &session_id).await {
+        Ok(0) => api_error(StatusCode::NOT_FOUND, "port session context not found".to_string()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_get_any_port_session_context(
+    State(state): State<AppState>,
+    AxumPath(session_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let session_id = match parse_uri_field("session_id", &session_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.get_any_port_session_context(&session_id).await {
+        Ok(Some((port, ctx))) => {
+            (StatusCode::OK, Json(json!({ "port": port, "session_id": session_id, "ctx": ctx })))
+                .into_response()
+        }
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "session context not found".to_string()),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
 async fn list_tasks(
     State(state): State<AppState>,
     Query(query): Query<TasksQuery>,
@@ -1253,6 +1453,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn port_bindings_and_context_endpoints_work() {
+        let app = test_app("port-bindings-context").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/ports/telegram/bindings/borg:user:chat1",
+            json!({
+                "session_id":"borg:session:s1",
+                "agent_id":"borg:agent:default"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/ports/telegram/bindings/borg:user:chat1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["binding"]["session_id"], "borg:session:s1");
+
+        let (status, body) =
+            request_no_body(&app, Method::GET, "/api/ports/telegram/bindings").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["bindings"].as_array().is_some_and(|v| !v.is_empty()));
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/ports/telegram/sessions/borg:session:s1/context",
+            json!({"ctx":{"chat_id":"123"}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/ports/telegram/sessions/borg:session:s1/context",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ctx"]["chat_id"], "123");
+
+        let (status, body) =
+            request_no_body(&app, Method::GET, "/api/sessions/borg:session:s1/context").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["port"], "telegram");
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::DELETE,
+            "/api/ports/telegram/sessions/borg:session:s1/context",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::DELETE,
+            "/api/ports/telegram/bindings/borg:user:chat1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
     async fn sessions_and_messages_crud_endpoints_work() {
         let app = test_app("sessions").await;
         let (status, _) = request_json(
@@ -1338,5 +1607,92 @@ mod tests {
         let (status, _) =
             request_no_body(&app, Method::DELETE, "/api/sessions/borg:session:test").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn providers_negative_paths() {
+        let app = test_app("providers-negative").await;
+        let (status, _) = request_no_body(&app, Method::GET, "/api/providers/missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = request_no_body(&app, Method::DELETE, "/api/providers/missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn agents_negative_paths() {
+        let app = test_app("agents-negative").await;
+        let (status, _) = request_no_body(&app, Method::GET, "/api/agents/specs/not-a-uri").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) =
+            request_no_body(&app, Method::DELETE, "/api/agents/specs/borg:agent:missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn users_negative_paths() {
+        let app = test_app("users-negative").await;
+        let (status, _) = request_no_body(&app, Method::GET, "/api/users/not-a-uri").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) =
+            request_no_body(&app, Method::DELETE, "/api/users/borg:user:missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn sessions_negative_paths() {
+        let app = test_app("sessions-negative").await;
+        let (status, _) = request_no_body(&app, Method::GET, "/api/sessions/not-a-uri").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) =
+            request_no_body(&app, Method::GET, "/api/sessions/borg:session:missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/sessions/borg:session:missing/messages/0",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn ports_negative_paths() {
+        let app = test_app("ports-negative").await;
+        let (status, _) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/ports/telegram/settings/missing",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/ports/telegram/bindings/not-a-uri",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/ports/telegram/sessions/not-a-uri/context",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/sessions/borg:session:missing/context",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }
