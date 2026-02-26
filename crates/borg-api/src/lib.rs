@@ -6,7 +6,7 @@ use axum::{
     extract::{Path as AxumPath, Query, State},
     http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse},
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use borg_core::{Event, Uri, uri};
 use borg_db::BorgDb;
@@ -92,6 +92,18 @@ fn app_router(state: AppState) -> Router {
             get(api_get_provider)
                 .put(api_upsert_provider)
                 .delete(api_delete_provider),
+        )
+        .route("/api/policies", get(api_list_policies))
+        .route(
+            "/api/policies/:policy_id",
+            get(api_get_policy)
+                .put(api_upsert_policy)
+                .delete(api_delete_policy),
+        )
+        .route("/api/policies/:policy_id/uses", get(api_list_policy_uses))
+        .route(
+            "/api/policies/:policy_id/uses/:entity_id",
+            put(api_attach_policy_to_entity).delete(api_detach_policy_from_entity),
         )
         .route("/api/agents/specs", get(api_list_agent_specs))
         .route(
@@ -242,6 +254,11 @@ struct PortBindingsQuery {
 #[derive(Deserialize)]
 struct UpsertProviderRequest {
     api_key: String,
+}
+
+#[derive(Deserialize)]
+struct UpsertPolicyRequest {
+    policy: Value,
 }
 
 #[derive(Deserialize)]
@@ -492,6 +509,129 @@ async fn api_delete_provider(
 ) -> impl IntoResponse {
     match state.db.delete_provider(&provider).await {
         Ok(0) => api_error(StatusCode::NOT_FOUND, "provider not found".to_string()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_list_policies(
+    State(state): State<AppState>,
+    Query(query): Query<LimitQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(100);
+    match state.db.list_policies(limit).await {
+        Ok(policies) => (StatusCode::OK, Json(json!({ "policies": policies }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_get_policy(
+    State(state): State<AppState>,
+    AxumPath(policy_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let policy_id = match parse_uri_field("policy_id", &policy_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.get_policy(&policy_id).await {
+        Ok(Some(policy)) => (StatusCode::OK, Json(json!({ "policy": policy }))).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "policy not found".to_string()),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_upsert_policy(
+    State(state): State<AppState>,
+    AxumPath(policy_id): AxumPath<String>,
+    Json(payload): Json<UpsertPolicyRequest>,
+) -> impl IntoResponse {
+    let policy_id = match parse_uri_field("policy_id", &policy_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.upsert_policy(&policy_id, &payload.policy).await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_delete_policy(
+    State(state): State<AppState>,
+    AxumPath(policy_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let policy_id = match parse_uri_field("policy_id", &policy_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.delete_policy(&policy_id).await {
+        Ok(0) => api_error(StatusCode::NOT_FOUND, "policy not found".to_string()),
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_list_policy_uses(
+    State(state): State<AppState>,
+    AxumPath(policy_id): AxumPath<String>,
+    Query(query): Query<LimitQuery>,
+) -> impl IntoResponse {
+    let policy_id = match parse_uri_field("policy_id", &policy_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.get_policy(&policy_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return api_error(StatusCode::NOT_FOUND, "policy not found".to_string()),
+        Err(err) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+    let limit = query.limit.unwrap_or(200);
+    match state.db.list_policy_uses(&policy_id, limit).await {
+        Ok(uses) => (StatusCode::OK, Json(json!({ "uses": uses }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_attach_policy_to_entity(
+    State(state): State<AppState>,
+    AxumPath((policy_id, entity_id)): AxumPath<(String, String)>,
+) -> impl IntoResponse {
+    let policy_id = match parse_uri_field("policy_id", &policy_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let entity_id = match parse_uri_field("entity_id", &entity_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state.db.get_policy(&policy_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return api_error(StatusCode::NOT_FOUND, "policy not found".to_string()),
+        Err(err) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+    match state.db.attach_policy_to_entity(&policy_id, &entity_id).await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn api_detach_policy_from_entity(
+    State(state): State<AppState>,
+    AxumPath((policy_id, entity_id)): AxumPath<(String, String)>,
+) -> impl IntoResponse {
+    let policy_id = match parse_uri_field("policy_id", &policy_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    let entity_id = match parse_uri_field("entity_id", &entity_id) {
+        Ok(v) => v,
+        Err(err) => return err,
+    };
+    match state
+        .db
+        .detach_policy_from_entity(&policy_id, &entity_id)
+        .await
+    {
+        Ok(0) => api_error(StatusCode::NOT_FOUND, "policy association not found".to_string()),
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
     }
