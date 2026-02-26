@@ -2,6 +2,7 @@ mod agents;
 mod core;
 mod migrations;
 mod ports;
+mod policies;
 mod providers;
 mod sessions;
 mod tasks;
@@ -69,4 +70,19 @@ pub struct ProviderRecord {
     pub api_key: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PolicyRecord {
+    pub policy_id: Uri,
+    pub policy: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PolicyUseRecord {
+    pub policy_id: Uri,
+    pub entity_id: Uri,
+    pub created_at: DateTime<Utc>,
 }

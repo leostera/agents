@@ -105,6 +105,20 @@ impl BorgDb {
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS policies (
+                    policy_id TEXT PRIMARY KEY,
+                    policy_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS policies_use (
+                    policy_id TEXT NOT NULL,
+                    entity_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(policy_id, entity_id)
+                );
+
                 INSERT OR IGNORE INTO providers(provider, api_key, created_at, updated_at)
                 VALUES(
                     'kalosm',
