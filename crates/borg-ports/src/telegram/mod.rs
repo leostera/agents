@@ -560,9 +560,7 @@ fn format_sender_label(
     last_name: Option<&str>,
 ) -> String {
     let id = id.unwrap_or("unknown");
-    let username = username
-        .map(|value| format!("@{value}"))
-        .unwrap_or_else(|| "unknown".to_string());
+    let username = username.map(|value| format!("@{value}"));
     let full_name = format!(
         "{} {}",
         first_name.unwrap_or_default(),
@@ -570,10 +568,11 @@ fn format_sender_label(
     )
     .trim()
     .to_string();
-    if full_name.is_empty() {
-        format!("{username} ({id})")
-    } else {
-        format!("{full_name} {username} ({id})")
+    match (full_name.is_empty(), username) {
+        (false, Some(username)) => format!("{full_name} {username} ({id})"),
+        (false, None) => format!("{full_name} ({id})"),
+        (true, Some(username)) => format!("{username} ({id})"),
+        (true, None) => format!("({id})"),
     }
 }
 
