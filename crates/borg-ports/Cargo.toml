@@ -8,6 +8,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 borg-exec = { path = "../borg-exec" }
 borg-core = { path = "../borg-core" }
+borg-cmd = { path = "../borg-cmd" }
 axum.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

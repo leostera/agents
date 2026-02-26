@@ -579,6 +579,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "borg-cmd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "borg-core"
 version = "0.1.0"
 dependencies = [
@@ -679,6 +686,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum 0.7.9",
+ "borg-cmd",
  "borg-core",
  "borg-exec",
  "serde",
