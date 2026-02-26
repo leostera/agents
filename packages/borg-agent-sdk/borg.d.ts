@@ -165,8 +165,24 @@ declare global {
      * Prefer using `Borg.URI.new(ns, kind)` for new identifiers and
      * `Borg.URI.parse(raw)` when normalizing existing raw strings.
      *
-     * Example:
-     * `Borg.Memory.stateFacts([{ source: Borg.URI.new("borg", "source"), entity: Borg.URI.new("borg", "user"), field: Borg.URI.parse("borg:preference:favorite_movie"), value: { Text: "Minions" } }])`
+     * Fact modeling guidelines:
+     * - Prefer many small atomic facts over one large compound fact.
+     * - Keep one relationship per fact row.
+     * - Reuse stable entity URIs across facts (do not create duplicates for the same person/object).
+     * - Use `{ Ref: "<uri>" }` when linking one entity to another entity URI.
+     * - Use scalar values (`Text`, `Integer`, `Boolean`, etc.) for primitive attributes.
+     * - For `source`, prefer the most specific provenance URI available:
+     *   1) `borg:message:<uuid>` (best),
+     *   2) `borg:session:<id>`,
+     *   3) `borg:user:<id>` (fallback).
+     *
+     * Example (good, granular):
+     * `Borg.Memory.stateFacts([
+     *   { source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"), entity: Borg.URI.parse("borg:user:leostera"), field: Borg.URI.parse("borg:field:telegram_id"), value: { Text: "2654566" } },
+     *   { source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"), entity: Borg.URI.parse("borg:user:mariana_zabrodska"), field: Borg.URI.parse("borg:field:telegram_id"), value: { Text: "123456789" } },
+     *   { source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"), entity: Borg.URI.parse("borg:user:leostera"), field: Borg.URI.parse("borg:relationship:girlfriend"), value: { Ref: Borg.URI.parse("borg:user:mariana_zabrodska") } },
+     *   { source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"), entity: Borg.URI.parse("borg:user:mariana_zabrodska"), field: Borg.URI.parse("borg:relationship:boyfriend"), value: { Ref: Borg.URI.parse("borg:user:leostera") } }
+     * ])`
      */
     stateFacts(facts: BorgFactInput[]): BorgStateFactsResult;
     /**
