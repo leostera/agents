@@ -93,6 +93,9 @@ How to use it well:
 Input shape:
 { "query": SearchQuery }
 
+`query` is an Elasticsearch-style query object (filters + text query fields),
+adapted to Borg's memory schema (`q`, `ns`, `kind`, `name.like`, `limit`).
+
 Examples:
 {
   "query": {
