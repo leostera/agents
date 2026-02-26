@@ -12,8 +12,8 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 uuid.workspace = true
-indradb = { package = "indradb-lib", version = "5.0.0", features = ["rocksdb-datastore"] }
+indradb.workspace = true
 turso.workspace = true
 tokio = { workspace = true, features = ["sync"] }
-tantivy = "0.22"
-url = { version = "2", features = ["serde"] }
+tantivy.workspace = true
+url.workspace = true

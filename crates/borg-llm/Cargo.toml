@@ -9,7 +9,7 @@ reqwest.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
 serde.workspace = true
-testcontainers = "0.27.1"
+testcontainers.workspace = true
 tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
 

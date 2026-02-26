@@ -7,7 +7,6 @@ use axum::{
 use borg_core::{Event, Uri, uri};
 use borg_exec::UserMessage;
 use borg_ports::{BORG_SESSION_ID_HEADER, Port, PortMessage};
-use borg_ui::render_dashboard;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::{debug, info};
@@ -65,7 +64,7 @@ impl SystemController {
             .await
             .map(|v| v.len())
             .unwrap_or(0);
-        Html(render_dashboard(tasks_count, entities_count))
+        Html(Self::render_dashboard(tasks_count, entities_count))
     }
 
     pub(crate) async fn ports_http(
@@ -220,6 +219,12 @@ impl SystemController {
             Ok(None) => api_error(StatusCode::NOT_FOUND, "entity not found".to_string()),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
+    }
+
+    fn render_dashboard(tasks_count: usize, entities_count: usize) -> String {
+        format!(
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>Borg Dashboard</title></head><body><h1>Borg Dashboard</h1><ul><li>Tasks: {tasks_count}</li><li>Memory entities: {entities_count}</li></ul></body></html>"
+        )
     }
 }
 
