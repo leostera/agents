@@ -125,6 +125,33 @@ impl BorgDb {
         )))
     }
 
+    pub async fn get_port_binding_record(
+        &self,
+        port: &str,
+        conversation_key: &Uri,
+    ) -> Result<Option<(Uri, Uri, Option<Uri>)>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT conversation_key, session_id, agent_id FROM port_bindings WHERE port = ?1 AND conversation_key = ?2 LIMIT 1",
+                (port.to_string(), conversation_key.to_string()),
+            )
+            .await
+            .context("failed to query port binding record")?;
+
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+        let conversation_key: String = row.get(0)?;
+        let session_id: String = row.get(1)?;
+        let agent_id: Option<String> = row.get(2)?;
+        Ok(Some((
+            Uri::parse(&conversation_key)?,
+            Uri::parse(&session_id)?,
+            agent_id.map(|value| Uri::parse(&value)).transpose()?,
+        )))
+    }
+
     async fn upsert_port_binding(
         &self,
         port: &str,
@@ -155,6 +182,58 @@ impl BorgDb {
             .await
             .context("failed to upsert port binding")?;
         Ok(())
+    }
+
+    pub async fn upsert_port_binding_record(
+        &self,
+        port: &str,
+        conversation_key: &Uri,
+        session_id: &Uri,
+        agent_id: Option<&Uri>,
+    ) -> Result<()> {
+        self.upsert_port_binding(port, conversation_key, session_id, agent_id)
+            .await
+    }
+
+    pub async fn list_port_bindings(
+        &self,
+        port: &str,
+        limit: usize,
+    ) -> Result<Vec<(Uri, Uri, Option<Uri>)>> {
+        let limit = i64::try_from(limit).unwrap_or(200);
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT conversation_key, session_id, agent_id FROM port_bindings WHERE port = ?1 ORDER BY updated_at DESC LIMIT ?2",
+                (port.to_string(), limit),
+            )
+            .await
+            .context("failed to list port bindings")?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let conversation_key: String = row.get(0)?;
+            let session_id: String = row.get(1)?;
+            let agent_id: Option<String> = row.get(2)?;
+            out.push((
+                Uri::parse(&conversation_key)?,
+                Uri::parse(&session_id)?,
+                agent_id.map(|value| Uri::parse(&value)).transpose()?,
+            ));
+        }
+        Ok(out)
+    }
+
+    pub async fn delete_port_binding(&self, port: &str, conversation_key: &Uri) -> Result<u64> {
+        let deleted = self
+            .conn
+            .execute(
+                "DELETE FROM port_bindings WHERE port = ?1 AND conversation_key = ?2",
+                (port.to_string(), conversation_key.to_string()),
+            )
+            .await
+            .context("failed to delete port binding")?;
+        Ok(deleted)
     }
 
     pub async fn upsert_port_session_context(
