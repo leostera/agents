@@ -200,6 +200,19 @@ impl BorgExecutor {
         self.db.get_port_session_context(port, session_id).await
     }
 
+    pub async fn upsert_port_session_context(
+        &self,
+        port: &str,
+        session_id: &Uri,
+        ctx: &Value,
+    ) -> Result<()> {
+        self.db.upsert_port_session_context(port, session_id, ctx).await
+    }
+
+    pub async fn list_port_session_ids(&self, port: &str) -> Result<Vec<Uri>> {
+        self.db.list_port_session_ids(port).await
+    }
+
     pub async fn run(self) -> Result<()> {
         self.recover_tasks_on_startup().await?;
         info!(

@@ -3,13 +3,13 @@ use async_trait::async_trait;
 use borg_cmd::{CommandRegistry, CommandRequest};
 use borg_core::Uri;
 use borg_exec::{ExecEngine, UserMessage};
-use serde_json::Value;
-use serde_json::json;
+use serde_json::{Value, json};
 use teloxide::prelude::*;
-use teloxide::types::{ChatAction, ParseMode};
+use teloxide::types::{ChatAction, ChatFullInfo, ParseMode};
 use teloxide::utils::html;
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, sleep};
+use tracing::warn;
 
 use crate::{Port, PortConfig, PortMessage};
 
@@ -132,6 +132,13 @@ impl TelegramPort {
     pub async fn run(self) -> Result<()> {
         let exec = self.exec.clone();
         let bot = self.bot.clone();
+        if let Err(err) = refresh_telegram_port_session_contexts(&exec, &bot).await {
+            warn!(
+                target: "borg_ports",
+                error = %err,
+                "failed refreshing telegram session contexts at startup"
+            );
+        }
 
         teloxide::repl(bot, move |bot: Bot, message: Message| {
             let exec = exec.clone();
@@ -284,6 +291,113 @@ fn telegram_port_info(message: &Message) -> String {
 
 fn telegram_help_text() -> &'static str {
     "Available commands:\n/start - Show greeting\n/help - Show this help\n/compact - Compact current session context\n/port - Show current port info\n/participants - Show participants seen in this session\n/context - Dump the current context window"
+}
+
+async fn refresh_telegram_port_session_contexts(exec: &ExecEngine, bot: &Bot) -> Result<()> {
+    let sessions = exec.list_port_session_ids("telegram").await?;
+    for session_id in sessions {
+        let Some(chat_id) = telegram_chat_id_from_session_id(&session_id) else {
+            continue;
+        };
+
+        let chat = match bot.get_chat(ChatId(chat_id)).await {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    target: "borg_ports",
+                    session_id = %session_id,
+                    chat_id,
+                    error = %err,
+                    "failed to fetch telegram chat during startup refresh"
+                );
+                continue;
+            }
+        };
+
+        let mut snapshot = json!({
+            "chat_id": chat.id.0,
+            "chat_type": telegram_chat_type_label(&chat),
+            "participants": {},
+            "last_message_id": Value::Null,
+            "last_thread_id": Value::Null,
+        });
+
+        if chat.is_private() {
+            let id = chat.id.0.to_string();
+            snapshot["participants"][&id] = json!({
+                "id": id,
+                "username": Value::Null,
+                "first_name": Value::Null,
+                "last_name": Value::Null
+            });
+        }
+
+        if let Ok(admins) = bot.get_chat_administrators(chat.id).await {
+            for admin in admins {
+                let user = admin.user;
+                let id = user.id.0.to_string();
+                snapshot["participants"][&id] = json!({
+                    "id": id,
+                    "username": user.username,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name
+                });
+            }
+        }
+
+        let merged = merge_telegram_session_context(
+            exec.get_port_session_context("telegram", &session_id).await?,
+            snapshot,
+        );
+        exec.upsert_port_session_context("telegram", &session_id, &merged)
+            .await?;
+    }
+    Ok(())
+}
+
+fn merge_telegram_session_context(existing: Option<Value>, snapshot: Value) -> Value {
+    let mut out = existing.unwrap_or_else(|| json!({}));
+    if out.get("participants").and_then(Value::as_object).is_none() {
+        out["participants"] = json!({});
+    }
+
+    out["chat_id"] = snapshot
+        .get("chat_id")
+        .cloned()
+        .unwrap_or(Value::Null);
+    out["chat_type"] = snapshot
+        .get("chat_type")
+        .cloned()
+        .unwrap_or_else(|| json!("unknown"));
+
+    if let Some(snapshot_participants) = snapshot.get("participants").and_then(Value::as_object) {
+        for (id, participant) in snapshot_participants {
+            out["participants"][id] = participant.clone();
+        }
+    }
+
+    out
+}
+
+fn telegram_chat_id_from_session_id(session_id: &Uri) -> Option<i64> {
+    let raw = session_id.as_str();
+    let prefix = "borg:session:telegram_";
+    let value = raw.strip_prefix(prefix)?;
+    value.parse::<i64>().ok()
+}
+
+fn telegram_chat_type_label(chat: &ChatFullInfo) -> &'static str {
+    if chat.is_private() {
+        "private"
+    } else if chat.is_group() {
+        "group"
+    } else if chat.is_supergroup() {
+        "supergroup"
+    } else if chat.is_channel() {
+        "channel"
+    } else {
+        "unknown"
+    }
 }
 
 fn build_telegram_command_registry(

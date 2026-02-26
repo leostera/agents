@@ -46,6 +46,7 @@ Proposed primitives:
 - `PortCommandRouter` trait per port implementation
 - `ExecEngine::handle_port_command(...)` for authoritative execution
 - `port_session_ctx` persistence (`port + session_id -> ctx_json`) with port-specific codecs (`PortContext`)
+- startup refresh hook so ports can rehydrate context snapshots from upstream APIs (best effort)
 
 Initial command contract:
 

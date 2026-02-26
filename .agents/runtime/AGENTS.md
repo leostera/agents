@@ -30,6 +30,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - `providers` table stores provider credentials (`openai` currently).
 - `port_bindings` stores `port + conversation_key -> session_id (+ optional agent_id)`.
 - `port_session_ctx` stores port-owned per-session context snapshots (`port + session_id -> ctx_json`).
+- Telegram port refreshes known session context snapshots on startup (best-effort chat/admin hydration).
 - Onboarding persists provider key via `POST /api/providers/openai`.
 
 ## API/Port Expectations

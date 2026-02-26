@@ -132,6 +132,7 @@ Tracing is initialized before app logic and spans:
 - context build and LLM request/response events
 - tool execution and memory calls
 - task lifecycle for explicit task work
+- port startup context refresh (for example Telegram chat/admin snapshot hydration into `port_session_ctx`)
 
 ## 10. Current Non-Goals
 - distributed scheduling

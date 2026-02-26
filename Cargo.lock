@@ -693,6 +693,7 @@ dependencies = [
  "serde_json",
  "teloxide",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

@@ -199,4 +199,22 @@ impl BorgDb {
         let parsed = serde_json::from_str(&raw).context("invalid session port context json")?;
         Ok(Some((port, parsed)))
     }
+
+    pub async fn list_port_session_ids(&self, port: &str) -> Result<Vec<Uri>> {
+        let mut rows = self
+            .conn
+            .query(
+                "SELECT DISTINCT session_id FROM port_bindings WHERE port = ?1",
+                (port.to_string(),),
+            )
+            .await
+            .context("failed to list port session ids")?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let raw: String = row.get(0)?;
+            out.push(Uri::parse(&raw)?);
+        }
+        Ok(out)
+    }
 }
