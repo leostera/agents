@@ -1,12 +1,8 @@
 import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
-import * as Select from '@radix-ui/react-select'
-import { Check, ChevronDown } from 'lucide-react'
-import { cva, type VariantProps } from 'class-variance-authority'
-import { clsx } from 'clsx'
-import { twMerge } from 'tailwind-merge'
 
 import { createI18n } from '@borg/i18n'
+import { Button, Card, UiSelect } from '@borg/ui'
 import './styles.css'
 
 type DashboardAppProps = {
@@ -14,39 +10,6 @@ type DashboardAppProps = {
 }
 
 type JsonMap = Record<string, unknown>
-
-function cn(...parts: Array<string | false | null | undefined>) {
-  return twMerge(clsx(parts))
-}
-
-const buttonVariants = cva('dash-btn', {
-  variants: {
-    tone: {
-      default: 'dash-btn-default',
-      subtle: 'dash-btn-subtle',
-    },
-  },
-  defaultVariants: {
-    tone: 'default',
-  },
-})
-
-function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement> & VariantProps<typeof buttonVariants>) {
-  const { className, tone, ...rest } = props
-  return <button className={cn(buttonVariants({ tone }), className)} {...rest} />
-}
-
-function Card(props: React.PropsWithChildren<{ title: string; right?: React.ReactNode }>) {
-  return (
-    <section className='dash-card'>
-      <header className='dash-card-head'>
-        <h3>{props.title}</h3>
-        {props.right}
-      </header>
-      {props.children}
-    </section>
-  )
-}
 
 function toArray(value: unknown): Array<JsonMap> {
   return Array.isArray(value) ? (value as Array<JsonMap>) : []
@@ -143,28 +106,14 @@ export function DashboardApp(props: DashboardAppProps) {
           <p className='onboard-tagline'>{i18n.t('dashboard.tagline')}</p>
         </div>
         <div className='dash-actions'>
-          <Select.Root value={port} onValueChange={setPort}>
-            <Select.Trigger className='dash-select-trigger' aria-label='Port'>
-              <Select.Value />
-              <Select.Icon>
-                <ChevronDown size={14} />
-              </Select.Icon>
-            </Select.Trigger>
-            <Select.Portal>
-              <Select.Content className='dash-select-content'>
-                <Select.Viewport>
-                  {['telegram', 'http'].map((option) => (
-                    <Select.Item key={option} value={option} className='dash-select-item'>
-                      <Select.ItemText>{option}</Select.ItemText>
-                      <Select.ItemIndicator className='dash-select-check'>
-                        <Check size={14} />
-                      </Select.ItemIndicator>
-                    </Select.Item>
-                  ))}
-                </Select.Viewport>
-              </Select.Content>
-            </Select.Portal>
-          </Select.Root>
+          <UiSelect
+            value={port}
+            onValueChange={setPort}
+            options={[
+              { label: 'telegram', value: 'telegram' },
+              { label: 'http', value: 'http' },
+            ]}
+          />
           <Button tone='subtle' onClick={() => loadAll(port)} disabled={loading}>
             {loading ? 'Loading...' : 'Refresh'}
           </Button>
