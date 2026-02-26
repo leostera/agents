@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_core::Uri;
 use borg_exec::{ExecEngine, UserMessage};
+use serde_json::Value;
 use serde_json::json;
 use teloxide::prelude::*;
 use teloxide::types::ChatAction;
@@ -157,7 +158,8 @@ impl TelegramPort {
 
                     if let Some(tool_calls) = response.tool_calls {
                         for action in tool_calls {
-                            bot.send_message(message.chat.id, format!("Action: {}", action))
+                            let formatted = format_tool_action_message(&action);
+                            bot.send_message(message.chat.id, truncate_telegram_message(formatted))
                                 .await?;
                         }
                     }
@@ -236,6 +238,61 @@ fn is_start_command(message: &Message) -> bool {
     };
     let command = text.split_whitespace().next().unwrap_or_default();
     command == "/start" || command.starts_with("/start@")
+}
+
+fn format_tool_action_message(action: &str) -> String {
+    let Some((tool_name, raw_args)) = action.split_once(' ') else {
+        return format!("Action: {}", action);
+    };
+    let tool_label = humanize_tool_name(tool_name);
+    let parsed_args = serde_json::from_str::<Value>(raw_args).ok();
+
+    if tool_name == "execute" {
+        if let Some(code) = parsed_args
+            .as_ref()
+            .and_then(|args| args.get("code"))
+            .and_then(Value::as_str)
+        {
+            let title = infer_execute_action_title(code);
+            return format!("Action: {}\n\n```js\n{}\n```", title, code.trim());
+        }
+    }
+
+    let pretty_args = parsed_args
+        .as_ref()
+        .and_then(|value| serde_json::to_string_pretty(value).ok())
+        .unwrap_or_else(|| raw_args.to_string());
+    format!(
+        "Action: {}\n\n```json\n{}\n```",
+        tool_label,
+        pretty_args.trim()
+    )
+}
+
+fn humanize_tool_name(tool_name: &str) -> &'static str {
+    match tool_name {
+        "execute" => "Running code",
+        "memory__search" => "Searching memory",
+        "memory__state_facts" => "Writing memory facts",
+        _ => "Running tool",
+    }
+}
+
+fn infer_execute_action_title(code: &str) -> &'static str {
+    let lower = code.to_ascii_lowercase();
+    if lower.contains("borg.os.ls") && lower.contains("movie") {
+        return "Scanning for movies";
+    }
+    if lower.contains("borg.os.ls") {
+        return "Scanning files";
+    }
+    if lower.contains("borg.memory.search") || lower.contains("memory__search") {
+        return "Searching memory";
+    }
+    if lower.contains("borg.memory.statefacts") || lower.contains("memory__state_facts") {
+        return "Saving to memory";
+    }
+    "Running code"
 }
 
 pub fn init_telegram_port(exec: ExecEngine, bot_token: impl Into<String>) -> Result<TelegramPort> {
