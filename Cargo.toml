@@ -35,3 +35,6 @@ teloxide = "0.17"
 oxc_allocator = "0.52.0"
 oxc_parser = "0.52.0"
 oxc_span = "0.52.0"
+
+[profile.dev.package."*"]
+debug = 0
