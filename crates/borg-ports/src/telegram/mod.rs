@@ -4,6 +4,9 @@ use borg_core::Uri;
 use borg_exec::{ExecEngine, UserMessage};
 use serde_json::json;
 use teloxide::prelude::*;
+use teloxide::types::ChatAction;
+use tokio::task::JoinHandle;
+use tokio::time::{Duration, sleep};
 
 use crate::{Port, PortConfig, PortMessage};
 
@@ -11,6 +14,8 @@ const TELEGRAM_USER_KEY_PREFIX: &str = "telegram";
 const TELEGRAM_MESSAGE_LIMIT: usize = 4000;
 const TELEGRAM_START_GREETING: &str =
     "Hi! I am Borg. Send me a message and I will reply in this chat.";
+const TELEGRAM_CONTEXT_MAX_TOKENS: usize = 128_000;
+const TELEGRAM_TYPING_REFRESH_SECS: u64 = 4;
 
 #[derive(Clone)]
 pub struct TelegramPort {
@@ -29,6 +34,17 @@ impl PortMessage {
             .unwrap_or(chat_id as u64);
         let session_id =
             Uri::from_parts("borg", "session", Some(&format!("telegram_{chat_id}"))).ok();
+        let chat_type = if message.chat.is_private() {
+            "private"
+        } else if message.chat.is_group() {
+            "group"
+        } else if message.chat.is_supergroup() {
+            "supergroup"
+        } else if message.chat.is_channel() {
+            "channel"
+        } else {
+            "unknown"
+        };
 
         Some(Self {
             port: "telegram".to_string(),
@@ -38,13 +54,19 @@ impl PortMessage {
             metadata: json!({
                 "port": "telegram",
                 "chat_id": chat_id,
+                "chat_type": chat_type,
                 "message_id": message.id.0,
-                "thread_id": message.thread_id.map(|thread_id| thread_id.0.0)
+                "thread_id": message.thread_id.map(|thread_id| thread_id.0.0),
+                "sender_id": message.from.as_ref().map(|u| u.id.0),
+                "sender_username": message.from.as_ref().and_then(|u| u.username.clone()),
+                "sender_first_name": message.from.as_ref().map(|u| u.first_name.clone()),
+                "sender_last_name": message.from.as_ref().and_then(|u| u.last_name.clone())
             }),
             session_id,
             agent_id: None,
             task_id: None,
             reply: None,
+            tool_calls: None,
             error: None,
         })
     }
@@ -78,6 +100,7 @@ impl Port for TelegramPort {
                     task_id: None,
                     session_id: Some(output.session_id),
                     reply: output.reply,
+                    tool_calls: Some(output.tool_calls),
                     error: None,
                     ..message
                 },
@@ -85,6 +108,7 @@ impl Port for TelegramPort {
                     task_id: None,
                     session_id: message.session_id,
                     reply: None,
+                    tool_calls: None,
                     error: Some(err.to_string()),
                     ..message
                 },
@@ -103,6 +127,8 @@ impl TelegramPort {
         teloxide::repl(bot, move |bot: Bot, message: Message| {
             let exec = exec.clone();
             async move {
+                let _typing = TypingLoop::start(bot.clone(), message.chat.id);
+
                 if is_start_command(&message) {
                     bot.send_message(message.chat.id, TELEGRAM_START_GREETING)
                         .await?;
@@ -129,11 +155,32 @@ impl TelegramPort {
                         return Ok(());
                     }
 
+                    if let Some(tool_calls) = response.tool_calls {
+                        for action in tool_calls {
+                            bot.send_message(message.chat.id, format!("Action: {}", action))
+                                .await?;
+                        }
+                    }
+
                     let reply = response
                         .reply
                         .unwrap_or_else(|| "Message processed, no reply generated.".to_string());
                     bot.send_message(message.chat.id, truncate_telegram_message(reply))
                         .await?;
+
+                    if let Some(session_id) = response.session_id {
+                        if let Ok(percent) = port
+                            .exec
+                            .estimate_session_context_usage_percent(
+                                &session_id,
+                                TELEGRAM_CONTEXT_MAX_TOKENS,
+                            )
+                            .await
+                        {
+                            let usage_line = format!("Context: ~{}% used", percent);
+                            bot.send_message(message.chat.id, usage_line).await?;
+                        }
+                    }
                 }
 
                 Ok(())
@@ -142,6 +189,28 @@ impl TelegramPort {
         .await;
 
         Ok(())
+    }
+}
+
+struct TypingLoop {
+    handle: JoinHandle<()>,
+}
+
+impl TypingLoop {
+    fn start(bot: Bot, chat_id: ChatId) -> Self {
+        let handle = tokio::spawn(async move {
+            loop {
+                let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
+                sleep(Duration::from_secs(TELEGRAM_TYPING_REFRESH_SECS)).await;
+            }
+        });
+        Self { handle }
+    }
+}
+
+impl Drop for TypingLoop {
+    fn drop(&mut self) {
+        self.handle.abort();
     }
 }
 

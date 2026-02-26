@@ -12,5 +12,6 @@ pub struct PortMessage {
     pub agent_id: Option<Uri>,
     pub task_id: Option<String>,
     pub reply: Option<String>,
+    pub tool_calls: Option<Vec<String>>,
     pub error: Option<String>,
 }

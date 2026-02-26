@@ -25,6 +25,7 @@ impl PortMessage {
             agent_id: payload.agent_id,
             task_id: None,
             reply: None,
+            tool_calls: None,
             error: None,
         }
     }
@@ -60,6 +61,7 @@ impl Port for HttpPort {
                     task_id: None,
                     session_id: Some(output.session_id),
                     reply: output.reply,
+                    tool_calls: Some(output.tool_calls),
                     error: None,
                     ..message
                 },
@@ -67,6 +69,7 @@ impl Port for HttpPort {
                     task_id: None,
                     session_id: message.session_id,
                     reply: None,
+                    tool_calls: None,
                     error: Some(err.to_string()),
                     ..message
                 },

@@ -4,7 +4,7 @@ use borg_db::BorgDb;
 use std::sync::Arc;
 
 use crate::{
-    Agent, ContextManager, ContextWindow, Message, PassThroughContextManager, SessionEndStatus,
+    Agent, CompactingContextManager, ContextManager, ContextWindow, Message, SessionEndStatus,
     SessionEventPayload, SessionOutput, SessionResult,
 };
 
@@ -28,7 +28,7 @@ impl Session {
             session_id,
             agent,
             db,
-            context_manager: Arc::new(PassThroughContextManager),
+            context_manager: Arc::new(CompactingContextManager::default()),
             last_processed_len: 0,
             steering_messages: Vec::new(),
             follow_up_messages: Vec::new(),

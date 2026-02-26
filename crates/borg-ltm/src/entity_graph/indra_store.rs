@@ -303,7 +303,7 @@ impl IndraEntityGraph {
             entity_id: Uri::parse(&entity_id)?,
             entity_type: Uri::parse(&entity_type)?,
             label,
-            props: serde_json::from_str(props_json).unwrap_or(Value::Null),
+            props: serde_json::from_str(props_json)?,
             created_at,
             updated_at,
         }))

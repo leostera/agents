@@ -47,3 +47,9 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 1. `cargo build`
 2. `cargo test -p borg-exec -p borg-api -p borg-ports`
 3. `cargo run -p borg-cli -- start` and smoke `POST /ports/http`
+
+## Open TODOs
+- Handle provider `context_length_exceeded` failures gracefully instead of surfacing raw 400 errors.
+  - Minimum: user-facing guidance to shorten input.
+  - Optional improvement: chunk/summarize oversized user input before retry.
+- Telegram outbound replies should include a small context-usage indicator (for example `% of context window used`).

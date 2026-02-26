@@ -13,6 +13,7 @@ use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
+use tokio::fs;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -21,42 +22,69 @@ const DEFAULT_ONBOARD_PORT: u16 = 3777;
 const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
 
 #[derive(Parser, Debug)]
-#[command(name = "borg", about = "Borg prototype runtime")]
+#[command(
+    name = "borg",
+    about = "Borg runtime CLI",
+    long_about = "Manage Borg services, tasks, sessions, memory, and configuration."
+)]
 struct Cli {
+    /// Top-level command to run.
     #[command(subcommand)]
     cmd: Command,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Initialize local Borg storage and start onboarding server.
     Init {
+        /// Port for the onboarding web server.
         #[arg(long, default_value_t = DEFAULT_ONBOARD_PORT)]
         onboard_port: u16,
     },
+    /// Start the Borg runtime (API + executor loop).
     Start {
+        /// API bind address in host:port form.
         #[arg(long, default_value = DEFAULT_HTTP_BIND)]
         bind: String,
     },
+    /// Task operations against the API.
     Task {
+        /// Task subcommand.
         #[command(subcommand)]
         cmd: TaskCommand,
+        /// API address in host:port form.
         #[arg(long, default_value = DEFAULT_HTTP_BIND)]
         api: String,
+        /// Poll interval (ms) for streaming task events.
         #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
         poll_ms: u64,
     },
+    /// Stream task events by task id.
     Events {
+        /// Task URI (for example borg:task:...).
         task_id: String,
+        /// API address in host:port form.
         #[arg(long, default_value = DEFAULT_HTTP_BIND)]
         api: String,
+        /// Poll interval (ms) for checking new events.
         #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
         poll_ms: u64,
     },
+    /// Session utilities (stream and history operations).
     Session {
+        /// Session subcommand.
         #[command(subcommand)]
         cmd: SessionCommand,
     },
+    /// Memory maintenance commands.
+    Memory {
+        /// Memory subcommand.
+        #[command(subcommand)]
+        cmd: MemoryCommand,
+    },
+    /// Set persisted runtime configuration values.
     Config {
+        /// Config subcommand.
         #[command(subcommand)]
         cmd: ConfigCommand,
     },
@@ -64,13 +92,19 @@ enum Command {
 
 #[derive(Subcommand, Debug)]
 enum TaskCommand {
+    /// Fetch one task by id.
     Get {
+        /// Task URI (for example borg:task:...).
         id: String,
     },
+    /// Send a new user message to the HTTP port and stream events.
     New {
+        /// User message text.
         text: String,
+        /// User URI (for example borg:user:alice).
         #[arg(long)]
         user_key: Option<String>,
+        /// Optional existing session URI.
         #[arg(long)]
         session_id: Option<String>,
     },
@@ -78,19 +112,36 @@ enum TaskCommand {
 
 #[derive(Subcommand, Debug)]
 enum ConfigCommand {
-    Set { key: String, value: String },
+    /// Persist one config key/value pair.
+    Set {
+        /// Config key (for example providers.openai or ports.telegram).
+        key: String,
+        /// Config value to persist.
+        value: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
 enum SessionCommand {
+    /// Stream messages for a session.
     Stream {
+        /// Session URI (for example borg:session:...).
         session_id: String,
+        /// Poll interval (ms) for checking new session messages.
         #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
         poll_ms: u64,
     },
+    /// Delete all persisted messages for a session.
     ClearHistory {
+        /// Session URI to clear.
         session_id: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum MemoryCommand {
+    /// Clear all LTM fact store and derived search/graph data.
+    Clear,
 }
 
 #[derive(Clone)]
@@ -381,6 +432,21 @@ impl BorgCliApp {
         Ok(())
     }
 
+    async fn memory_clear(&self) -> Result<()> {
+        remove_dir_if_exists(self.borg_dir.ltm_db()).await?;
+        remove_dir_if_exists(self.borg_dir.search_db()).await?;
+        fs::create_dir_all(self.borg_dir.ltm_db()).await?;
+        fs::create_dir_all(self.borg_dir.search_db()).await?;
+        info!(
+            target: "borg_cli",
+            ltm_db = %self.borg_dir.ltm_db().display(),
+            search_db = %self.borg_dir.search_db().display(),
+            "cleared memory databases"
+        );
+        println!("cleared memory stores");
+        Ok(())
+    }
+
     fn open_browser(&self, url: &str) {
         let mut commands: Vec<ProcessCommand> = Vec::new();
 
@@ -441,6 +507,14 @@ fn ffi_memory_search(memory: MemoryStore, args: Vec<Value>) -> Result<Value> {
         let result = handle.block_on(memory.search_query(query))?;
         Ok(serde_json::to_value(result)?)
     })
+}
+
+async fn remove_dir_if_exists(path: &std::path::Path) -> Result<()> {
+    match fs::remove_dir_all(path).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err.into()),
+    }
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
@@ -504,6 +578,9 @@ async fn main() -> Result<()> {
             SessionCommand::ClearHistory { session_id } => {
                 app.session_clear_history(session_id).await
             }
+        },
+        Command::Memory { cmd } => match cmd {
+            MemoryCommand::Clear => app.memory_clear().await,
         },
         Command::Config { cmd } => match cmd {
             ConfigCommand::Set { key, value } => app.config_set(key, value).await,

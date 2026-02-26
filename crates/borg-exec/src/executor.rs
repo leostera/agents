@@ -7,6 +7,7 @@ use borg_core::{
 use borg_db::{BorgDb, NewTask};
 use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
 use borg_rt::CodeModeRuntime;
+use serde_json::{Value, json};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::session_manager::SessionManager;
@@ -18,6 +19,7 @@ const OPENAI_PROVIDER: &str = "openai";
 const QUEUED_RETRY_DELAY_MILLIS: u64 = 100;
 const DEFAULT_AGENT_MODEL: &str = "gpt-4o-mini";
 const STARTUP_REQUEUE_MAX_RETRIES: u8 = 5;
+const CONTEXT_USAGE_CHAR_TO_TOKEN_RATIO: usize = 4;
 
 #[derive(Clone)]
 pub struct BorgExecutor {
@@ -122,12 +124,38 @@ impl BorgExecutor {
         let output = self.run_session_turn(&msg, None).await?;
         Ok(SessionTurnOutput {
             session_id,
-            reply: output.map(|value| value.reply),
+            reply: output.as_ref().map(|value| value.reply.clone()),
+            tool_calls: output
+                .as_ref()
+                .map(|value| {
+                    value
+                        .tool_calls
+                        .iter()
+                        .map(|call| format!("{} {}", call.tool_name, call.arguments))
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
     }
 
     pub async fn get_task_events(&self, task_id: &Uri) -> Result<Vec<TaskEvent>> {
         self.db.get_task_events(task_id).await
+    }
+
+    pub async fn estimate_session_context_usage_percent(
+        &self,
+        session_id: &Uri,
+        max_context_tokens: usize,
+    ) -> Result<usize> {
+        let messages = self.db.list_session_messages(session_id, 0, 10_000).await?;
+        let total_chars: usize = messages
+            .iter()
+            .map(|message| message.to_string().chars().count())
+            .sum();
+        let estimated_tokens = total_chars / CONTEXT_USAGE_CHAR_TO_TOKEN_RATIO;
+        let max_tokens = max_context_tokens.max(1);
+        let percent = ((estimated_tokens.saturating_mul(100)) / max_tokens).min(100);
+        Ok(percent)
     }
 
     pub async fn run(self) -> Result<()> {
@@ -358,6 +386,10 @@ impl BorgExecutor {
             }
         }
 
+        if let Some(header) = telegram_context_header(&msg.metadata) {
+            session.add_message(Message::System { content: header }).await?;
+        }
+
         session
             .add_message(Message::User {
                 content: msg.text.clone(),
@@ -546,4 +578,26 @@ fn to_session_tool_schema(tool: &ToolSpec) -> SessionToolSchema {
         description: tool.description.clone(),
         parameters: tool.parameters.clone(),
     }
+}
+
+fn telegram_context_header(metadata: &Value) -> Option<String> {
+    let obj = metadata.as_object()?;
+    if obj.get("port")?.as_str()? != "telegram" {
+        return None;
+    }
+
+    let header = json!({
+        "port": "telegram",
+        "chat_id": obj.get("chat_id"),
+        "chat_type": obj.get("chat_type"),
+        "thread_id": obj.get("thread_id"),
+        "message_id": obj.get("message_id"),
+        "sender": {
+            "id": obj.get("sender_id"),
+            "username": obj.get("sender_username"),
+            "first_name": obj.get("sender_first_name"),
+            "last_name": obj.get("sender_last_name"),
+        }
+    });
+    Some(format!("TELEGRAM_CONTEXT_JSON: {}", header))
 }

@@ -18,4 +18,6 @@ pub struct UserMessage {
 pub struct SessionTurnOutput {
     pub session_id: Uri,
     pub reply: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Vec<String>,
 }
