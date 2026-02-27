@@ -521,6 +521,8 @@ impl BorgExecutor {
     ) -> Result<Option<borg_agent::SessionOutput>> {
         let mut session = self.session_manager.session_for_task(msg).await?;
         let session_id = session.session_id.clone();
+        self.ensure_session_record(msg, &session_id, task_id, &session.agent.agent_id)
+            .await?;
         let code_mode_context = self.code_mode_context_for_turn(msg, &session_id);
         let toolchain = build_exec_toolchain_with_context(
             self.runtime.clone(),
@@ -666,6 +668,58 @@ impl BorgExecutor {
         }
 
         Ok(Some(output))
+    }
+
+    async fn ensure_session_record(
+        &self,
+        msg: &UserMessage,
+        session_id: &Uri,
+        task_id: Option<&Uri>,
+        agent_id: &Uri,
+    ) -> Result<()> {
+        let existing = self.db.get_session(session_id).await?;
+        let port = msg
+            .metadata
+            .as_object()
+            .and_then(|obj| obj.get("port"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .and_then(|value| Uri::parse(value).ok())
+            .or_else(|| {
+                msg.metadata
+                    .as_object()
+                    .and_then(|obj| obj.get("port"))
+                    .and_then(Value::as_str)
+                    .and_then(|value| Uri::from_parts("borg", "port", Some(value)).ok())
+            })
+            .or_else(|| existing.as_ref().map(|session| session.port.clone()))
+            .unwrap_or_else(|| uri!("borg", "port", "runtime"));
+
+        let mut users = existing
+            .as_ref()
+            .map(|session| session.users.clone())
+            .unwrap_or_default();
+        if !users.iter().any(|user| user == &msg.user_key) {
+            users.push(msg.user_key.clone());
+        }
+        if users.is_empty() {
+            users.push(msg.user_key.clone());
+        }
+
+        self.db.upsert_session(session_id, &users, &port).await?;
+
+        if let Some(task_id) = task_id {
+            debug!(
+                target: "borg_exec",
+                task_id = %task_id,
+                session_id = %session_id,
+                agent_id = %agent_id,
+                "ensured session record for task turn"
+            );
+        }
+
+        Ok(())
     }
 
     fn code_mode_context_for_turn(&self, msg: &UserMessage, session_id: &Uri) -> CodeModeContext {

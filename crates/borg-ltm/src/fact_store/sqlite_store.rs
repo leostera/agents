@@ -9,14 +9,118 @@ use std::{
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::query::Query;
+use sqlx::sqlite::{SqliteArguments, SqliteConnectOptions, SqliteRow};
+use sqlx::{Decode, Encode, Row, Sqlite, SqlitePool, Type};
 use tracing::info;
-use turso::{Builder, Connection};
 use url::Url;
 use uuid::Uuid;
 
 const FACTS_DB_FILE: &str = "facts.db";
 const FACTS_TABLE: &str = "ltm_facts";
 const QUEUED_STATUS: &str = "queued";
+
+struct Connection {
+    pool: SqlitePool,
+}
+
+impl Connection {
+    async fn execute<'q, A>(&self, sql: &'q str, args: A) -> Result<u64>
+    where
+        A: SqlBind<'q>,
+    {
+        let query = args.bind(sqlx::query(sql));
+        let result = query.execute(&self.pool).await?;
+        Ok(result.rows_affected())
+    }
+
+    async fn query<'q, A>(&self, sql: &'q str, args: A) -> Result<Rows>
+    where
+        A: SqlBind<'q>,
+    {
+        let query = args.bind(sqlx::query(sql));
+        let rows = query.fetch_all(&self.pool).await?;
+        Ok(Rows {
+            iter: rows.into_iter(),
+        })
+    }
+
+    async fn execute_batch(&self, sql: &str) -> Result<()> {
+        sqlx::raw_sql(sql).execute(&self.pool).await?;
+        Ok(())
+    }
+}
+
+struct Rows {
+    iter: std::vec::IntoIter<SqliteRow>,
+}
+
+impl Rows {
+    async fn next(&mut self) -> Result<Option<RowView>> {
+        Ok(self.iter.next().map(|row| RowView { row }))
+    }
+}
+
+struct RowView {
+    row: SqliteRow,
+}
+
+impl RowView {
+    fn get<T>(&self, index: usize) -> Result<T>
+    where
+        T: Type<Sqlite> + for<'r> Decode<'r, Sqlite>,
+    {
+        Ok(self.row.try_get(index)?)
+    }
+}
+
+trait SqlBind<'q> {
+    fn bind(
+        self,
+        query: Query<'q, Sqlite, SqliteArguments<'q>>,
+    ) -> Query<'q, Sqlite, SqliteArguments<'q>>;
+}
+
+impl<'q> SqlBind<'q> for () {
+    fn bind(
+        self,
+        query: Query<'q, Sqlite, SqliteArguments<'q>>,
+    ) -> Query<'q, Sqlite, SqliteArguments<'q>> {
+        query
+    }
+}
+
+macro_rules! impl_sql_bind_tuple {
+    ($($name:ident),+) => {
+        impl<'q, $($name),+> SqlBind<'q> for ($($name,)+)
+        where
+            $(
+                $name: 'q + Send + Encode<'q, Sqlite> + Type<Sqlite>,
+            )+
+        {
+            #[allow(non_snake_case)]
+            fn bind(self, query: Query<'q, Sqlite, SqliteArguments<'q>>) -> Query<'q, Sqlite, SqliteArguments<'q>> {
+                let ($($name,)+) = self;
+                query$(.bind($name))+
+            }
+        }
+    };
+}
+
+impl_sql_bind_tuple!(A);
+impl_sql_bind_tuple!(A, B);
+impl_sql_bind_tuple!(A, B, C);
+impl_sql_bind_tuple!(A, B, C, D);
+impl_sql_bind_tuple!(A, B, C, D, E);
+impl_sql_bind_tuple!(A, B, C, D, E, F);
+impl_sql_bind_tuple!(A, B, C, D, E, F, G);
+impl_sql_bind_tuple!(A, B, C, D, E, F, G, H);
+impl_sql_bind_tuple!(A, B, C, D, E, F, G, H, I);
+impl_sql_bind_tuple!(A, B, C, D, E, F, G, H, I, J);
+impl_sql_bind_tuple!(A, B, C, D, E, F, G, H, I, J, K);
+impl_sql_bind_tuple!(A, B, C, D, E, F, G, H, I, J, K, L);
+impl_sql_bind_tuple!(A, B, C, D, E, F, G, H, I, J, K, L, M);
+impl_sql_bind_tuple!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Uri(Url);
@@ -119,13 +223,13 @@ pub struct StateFactsResult {
 }
 
 #[derive(Clone)]
-pub(crate) struct TursoFactStore {
+pub(crate) struct SqliteFactStore {
     db_path: PathBuf,
     schema_ready: Arc<AtomicBool>,
     schema_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
-impl TursoFactStore {
+impl SqliteFactStore {
     pub(crate) fn new(root: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)?;
         let db_path = root.join(FACTS_DB_FILE);
@@ -330,16 +434,21 @@ impl TursoFactStore {
                 if message.contains("duplicate column name: arity") {
                     return Ok(());
                 }
-                Err(err.into())
+                Err(err)
             }
         }
     }
 
     async fn open_conn(&self) -> Result<Connection> {
-        let db = Builder::new_local(self.db_path.to_string_lossy().as_ref())
-            .build()
+        let options = SqliteConnectOptions::new()
+            .filename(&self.db_path)
+            .create_if_missing(true)
+            .foreign_keys(true);
+        let pool = SqlitePool::connect_with(options).await?;
+        sqlx::query("PRAGMA busy_timeout = 5000")
+            .execute(&pool)
             .await?;
-        Ok(db.connect()?)
+        Ok(Connection { pool })
     }
 }
 
@@ -398,7 +507,7 @@ fn decode_value(
     }
 }
 
-fn row_to_fact(row: &turso::Row) -> Result<FactRecord> {
+fn row_to_fact(row: &RowView) -> Result<FactRecord> {
     let stated_at_raw: String = row.get(13)?;
     let stated_at = DateTime::parse_from_rfc3339(&stated_at_raw)?.with_timezone(&Utc);
     let arity: String = row.get(4)?;
@@ -456,7 +565,7 @@ mod tests {
     #[tokio::test]
     async fn state_facts_persists_and_loads_records() {
         let root = make_root();
-        let store = TursoFactStore::new(&root).unwrap();
+        let store = SqliteFactStore::new(&root).unwrap();
         store.migrate().await.unwrap();
 
         let result = store
@@ -485,7 +594,7 @@ mod tests {
     #[tokio::test]
     async fn roundtrips_all_fact_value_variants() {
         let root = make_root();
-        let store = TursoFactStore::new(&root).unwrap();
+        let store = SqliteFactStore::new(&root).unwrap();
         store.migrate().await.unwrap();
 
         let values = vec![
@@ -517,7 +626,7 @@ mod tests {
     #[tokio::test]
     async fn projection_queue_dequeue_and_mark_projected() {
         let root = make_root();
-        let store = TursoFactStore::new(&root).unwrap();
+        let store = SqliteFactStore::new(&root).unwrap();
         store.migrate().await.unwrap();
 
         let result = store
@@ -542,14 +651,14 @@ mod tests {
     #[tokio::test]
     async fn facts_are_durable_across_reopen() {
         let root = make_root();
-        let store_a = TursoFactStore::new(&root).unwrap();
+        let store_a = SqliteFactStore::new(&root).unwrap();
         store_a.migrate().await.unwrap();
         let result = store_a
             .state_facts(vec![make_fact(FactValue::Text("persisted".to_string()))])
             .await
             .unwrap();
 
-        let store_b = TursoFactStore::new(&root).unwrap();
+        let store_b = SqliteFactStore::new(&root).unwrap();
         store_b.migrate().await.unwrap();
         let loaded = store_b
             .load_fact(result.facts[0].fact_id.as_str())

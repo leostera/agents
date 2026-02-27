@@ -89,7 +89,10 @@ fn app_router(state: AppState) -> Router {
         .route("/tasks/:id/events", get(SystemController::get_task_events))
         .route("/tasks/:id/output", get(SystemController::get_task_output))
         .route("/memory/search", get(SystemController::memory_search))
-        .route("/api/memory/explorer", get(SystemController::memory_explorer))
+        .route(
+            "/api/memory/explorer",
+            get(SystemController::memory_explorer),
+        )
         .route(
             "/memory/entities/:id",
             get(SystemController::get_memory_entity),
@@ -714,10 +717,8 @@ mod tests {
             "/api/sessions",
             json!({
                 "session_id":"borg:session:test",
-                "user_key":"borg:user:test",
-                "port":"http",
-                "root_task_id":"borg:task:root",
-                "state":{"mode":"chat"}
+                "users":["borg:user:test"],
+                "port":"borg:port:http"
             }),
         )
         .await;
@@ -726,13 +727,14 @@ mod tests {
         let (status, body) =
             request_no_body(&app, Method::GET, "/api/sessions/borg:session:test").await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["session"]["port"], "http");
+        assert_eq!(body["session"]["port"], "borg:port:http");
+        assert_eq!(body["session"]["users"][0], "borg:user:test");
 
         let (status, _) = request_json(
             &app,
             Method::PATCH,
             "/api/sessions/borg:session:test",
-            json!({"state":{"mode":"agent"}}),
+            json!({"users":["borg:user:test", "borg:user:other"]}),
         )
         .await;
         assert_eq!(status, StatusCode::OK);

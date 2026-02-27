@@ -1,19 +1,29 @@
 use anyhow::{Context, Result};
-use turso::Builder;
+use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 
-use crate::BorgDb;
+use crate::{BorgDb, CompatConn};
 
 impl BorgDb {
-    pub fn new(conn: turso::Connection) -> Self {
-        Self { conn }
+    pub fn new(sqlite: SqlitePool) -> Self {
+        Self {
+            conn: CompatConn::new(sqlite),
+        }
     }
 
     pub async fn open_local(path: &str) -> Result<Self> {
-        let db = Builder::new_local(path).build().await?;
-        let conn = db.connect()?;
-        conn.execute("PRAGMA busy_timeout = 5000", ())
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .foreign_keys(true);
+        let sqlite = SqlitePool::connect_with(options)
+            .await
+            .context("failed to open sqlx sqlite pool")?;
+
+        sqlx::query("PRAGMA busy_timeout = 5000")
+            .execute(&sqlite)
             .await
             .context("failed to configure sqlite busy_timeout")?;
-        Ok(Self::new(conn))
+
+        Ok(Self::new(sqlite))
     }
 }

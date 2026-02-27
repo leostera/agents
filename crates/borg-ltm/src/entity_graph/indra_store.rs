@@ -50,7 +50,28 @@ impl IndraEntityGraph {
     pub(crate) fn new(root: &Path) -> Result<Self> {
         let graph_path = root.join(ENTITY_GRAPH_DIR);
         std::fs::create_dir_all(&graph_path)?;
-        let db = RocksdbDatastore::new_db(&graph_path)?;
+        let mut last_error: Option<anyhow::Error> = None;
+        let mut db = None;
+        for _ in 0..240 {
+            match RocksdbDatastore::new_db(&graph_path) {
+                Ok(value) => {
+                    db = Some(value);
+                    break;
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    if message.contains("LOCK") || message.contains("lock hold") {
+                        last_error = Some(err.into());
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        continue;
+                    }
+                    return Err(err.into());
+                }
+            }
+        }
+        let db = db.ok_or_else(|| {
+            last_error.unwrap_or_else(|| anyhow!("failed to initialize indradb datastore"))
+        })?;
 
         info!(
             target: "borg_ltm",
@@ -254,12 +275,14 @@ impl IndraEntityGraph {
         let mut edges: Vec<RawTraversalEdge> = Vec::new();
 
         while let Some(current_vertex_id) = queue.pop_front() {
-            let outbound_edges =
-                util::extract_edges(db.get(SpecificVertexQuery::single(current_vertex_id).outbound()?)?)
-                    .unwrap_or_default();
-            let inbound_edges =
-                util::extract_edges(db.get(SpecificVertexQuery::single(current_vertex_id).inbound()?)?)
-                    .unwrap_or_default();
+            let outbound_edges = util::extract_edges(
+                db.get(SpecificVertexQuery::single(current_vertex_id).outbound()?)?,
+            )
+            .unwrap_or_default();
+            let inbound_edges = util::extract_edges(
+                db.get(SpecificVertexQuery::single(current_vertex_id).inbound()?)?,
+            )
+            .unwrap_or_default();
 
             for edge in outbound_edges.into_iter().chain(inbound_edges) {
                 let relation = edge.t.to_string();

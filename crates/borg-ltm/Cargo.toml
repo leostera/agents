@@ -13,7 +13,7 @@ serde_json.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 indradb.workspace = true
-turso.workspace = true
+sqlx.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tantivy.workspace = true
 url.workspace = true

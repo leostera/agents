@@ -13,12 +13,12 @@ use borg_llm::{
     TranscriptionRequest,
 };
 use borg_ltm::MemoryStore;
-use borg_rt::{CodeModeRuntime, default_tool_specs};
+use borg_rt::{CodeModeContext, CodeModeRuntime, default_tool_specs};
 use serde_json::json;
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
-use crate::tool_runner::build_exec_toolchain;
+use crate::tool_runner::build_exec_toolchain_with_context;
 use crate::{BorgExecutor, UserMessage};
 
 const OPENAI_PROVIDER: &str = "openai";
@@ -597,8 +597,12 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
         )),
     ]);
 
-    let toolchain =
-        build_exec_toolchain(CodeModeRuntime::default(), open_test_memory().await).unwrap();
+    let toolchain = build_exec_toolchain_with_context(
+        CodeModeRuntime::default(),
+        CodeModeContext::default(),
+        open_test_memory().await,
+    )
+    .unwrap();
     let tools = AgentTools {
         tool_runner: &toolchain,
     };
@@ -685,8 +689,12 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
         Ok(assistant_text("Saw tool failure and handled it.")),
     ]);
 
-    let toolchain =
-        build_exec_toolchain(CodeModeRuntime::default(), open_test_memory().await).unwrap();
+    let toolchain = build_exec_toolchain_with_context(
+        CodeModeRuntime::default(),
+        CodeModeContext::default(),
+        open_test_memory().await,
+    )
+    .unwrap();
     let tools = AgentTools {
         tool_runner: &toolchain,
     };

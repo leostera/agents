@@ -1,4 +1,3 @@
-use std::process::Command as ProcessCommand;
 use std::{io, io::Write};
 
 use anyhow::Result;
@@ -14,7 +13,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::fs;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
@@ -171,8 +170,12 @@ impl BorgCliApp {
     async fn start(&self, bind: String) -> Result<()> {
         info!(target: "borg_cli", config_db = %self.borg_dir.config_db().display(), bind, "starting borg machine");
 
+        self.borg_dir.ensure_initialized().await?;
         let db = self.open_config_db().await?;
         let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
+        db.migrate().await?;
+        memory.migrate().await?;
+
         let memory_for_state_facts = memory.clone();
         let memory_for_search = memory.clone();
         let runtime = CodeModeRuntime::default()
@@ -189,9 +192,6 @@ impl BorgCliApp {
             Uri::parse(&format!("borg:worker:{}", Uuid::now_v7()))?,
         );
 
-        db.migrate().await?;
-        memory.migrate().await?;
-
         let scheduler_exec = exec.clone();
         let scheduler = tokio::spawn(async move {
             info!(target: "borg_cli", "executor loop started");
@@ -207,6 +207,7 @@ impl BorgCliApp {
     }
 
     async fn initialize_storage(&self) -> Result<()> {
+        self.borg_dir.ensure_initialized().await?;
         let db = self.open_config_db().await?;
         let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
 
@@ -216,6 +217,7 @@ impl BorgCliApp {
     }
 
     async fn open_config_db(&self) -> Result<BorgDb> {
+        self.borg_dir.ensure_initialized().await?;
         let config_path = self.borg_dir.config_db().to_string_lossy().to_string();
         BorgDb::open_local(&config_path).await
     }
@@ -477,38 +479,6 @@ impl BorgCliApp {
         );
         println!("cleared and reinitialized memory stores");
         Ok(())
-    }
-
-    fn open_browser(&self, url: &str) {
-        let mut commands: Vec<ProcessCommand> = Vec::new();
-
-        #[cfg(target_os = "macos")]
-        {
-            let mut cmd = ProcessCommand::new("open");
-            cmd.arg(url);
-            commands.push(cmd);
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            let mut cmd = ProcessCommand::new("xdg-open");
-            cmd.arg(url);
-            commands.push(cmd);
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            let mut cmd = ProcessCommand::new("cmd");
-            cmd.arg("/C").arg("start").arg(url);
-            commands.push(cmd);
-        }
-
-        let opened = commands.into_iter().any(|mut c| c.spawn().is_ok());
-        if opened {
-            info!(target: "borg_cli", url, "opened onboarding url in browser");
-        } else {
-            warn!(target: "borg_cli", url, "failed to auto-open browser; open url manually");
-        }
     }
 }
 

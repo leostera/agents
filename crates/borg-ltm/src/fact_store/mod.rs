@@ -1,4 +1,4 @@
-mod turso_store;
+mod sqlite_store;
 
-pub(crate) use turso_store::TursoFactStore;
-pub use turso_store::{FactArity, FactInput, FactRecord, FactValue, StateFactsResult, Uri};
+pub(crate) use sqlite_store::SqliteFactStore;
+pub use sqlite_store::{FactArity, FactInput, FactRecord, FactValue, StateFactsResult, Uri};

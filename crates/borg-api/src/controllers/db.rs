@@ -8,6 +8,7 @@ use borg_core::Config;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tracing::{debug, warn};
 
 use crate::AppState;
 use crate::controllers::common::{api_error, parse_uri_field};
@@ -21,6 +22,8 @@ pub(crate) struct LimitQuery {
 pub(crate) struct SessionsQuery {
     limit: Option<usize>,
     port: Option<String>,
+    user: Option<String>,
+    users: Option<String>,
     user_key: Option<String>,
 }
 
@@ -67,18 +70,14 @@ pub(crate) struct PatchUserRequest {
 #[derive(Deserialize)]
 pub(crate) struct UpsertSessionRequest {
     session_id: String,
-    user_key: String,
+    users: Vec<String>,
     port: String,
-    root_task_id: String,
-    state: Value,
 }
 
 #[derive(Deserialize)]
 pub(crate) struct PatchSessionRequest {
-    user_key: Option<String>,
+    users: Option<Vec<String>>,
     port: Option<String>,
-    root_task_id: Option<String>,
-    state: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -484,8 +483,35 @@ impl DbController {
         Query(query): Query<SessionsQuery>,
     ) -> impl IntoResponse {
         let limit = query.limit.unwrap_or(100);
-        let user_key = match query.user_key {
-            Some(raw) => match parse_uri_field("user_key", &raw) {
+        let raw_user_filter = query
+            .users
+            .clone()
+            .or(query.user.clone())
+            .or(query.user_key.clone());
+        let raw_port = query.port.clone();
+        debug!(
+            target: "borg_api",
+            limit,
+            port = ?raw_port,
+            user = ?raw_user_filter,
+            "list_sessions request received"
+        );
+        let user_key = match raw_user_filter.as_deref() {
+            Some(raw) => match parse_uri_field("user_key", raw) {
+                Ok(v) => Some(v),
+                Err(err) => {
+                    warn!(
+                        target: "borg_api",
+                        user = raw,
+                        "list_sessions rejected invalid user_key filter"
+                    );
+                    return err;
+                }
+            },
+            None => None,
+        };
+        let port = match query.port.as_deref() {
+            Some(raw) => match parse_uri_field("port", raw) {
                 Ok(v) => Some(v),
                 Err(err) => return err,
             },
@@ -493,11 +519,31 @@ impl DbController {
         };
         match state
             .db
-            .list_sessions(limit, query.port.as_deref(), user_key.as_ref())
+            .list_sessions(limit, port.as_ref(), user_key.as_ref())
             .await
         {
-            Ok(sessions) => (StatusCode::OK, Json(json!({ "sessions": sessions }))).into_response(),
-            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            Ok(sessions) => {
+                debug!(
+                    target: "borg_api",
+                    count = sessions.len(),
+                    limit,
+                    port = ?raw_port,
+                    user = ?raw_user_filter,
+                    "list_sessions request completed"
+                );
+                (StatusCode::OK, Json(json!({ "sessions": sessions }))).into_response()
+            }
+            Err(err) => {
+                warn!(
+                    target: "borg_api",
+                    error = %err,
+                    limit,
+                    port = ?raw_port,
+                    user = ?raw_user_filter,
+                    "list_sessions failed"
+                );
+                api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+            }
         }
     }
 
@@ -509,25 +555,26 @@ impl DbController {
             Ok(v) => v,
             Err(err) => return err,
         };
-        let user_key = match parse_uri_field("user_key", &payload.user_key) {
+        let port = match parse_uri_field("port", &payload.port) {
             Ok(v) => v,
             Err(err) => return err,
         };
-        let root_task_id = match parse_uri_field("root_task_id", &payload.root_task_id) {
-            Ok(v) => v,
-            Err(err) => return err,
-        };
-        match state
-            .db
-            .upsert_session(
-                &session_id,
-                &user_key,
-                &payload.port,
-                &root_task_id,
-                &payload.state,
-            )
-            .await
+        let users = match payload
+            .users
+            .iter()
+            .map(|value| parse_uri_field("users[]", value))
+            .collect::<Result<Vec<_>, _>>()
         {
+            Ok(value) if !value.is_empty() => value,
+            Ok(_) => {
+                return api_error(
+                    StatusCode::BAD_REQUEST,
+                    "users must not be empty".to_string(),
+                );
+            }
+            Err(err) => return err,
+        };
+        match state.db.upsert_session(&session_id, &users, &port).await {
             Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
@@ -566,28 +613,32 @@ impl DbController {
             return api_error(StatusCode::NOT_FOUND, "session not found".to_string());
         };
 
-        let user_key = match payload.user_key {
-            Some(raw) => match parse_uri_field("user_key", &raw) {
+        let users = match payload.users {
+            Some(raw_users) => match raw_users
+                .iter()
+                .map(|value| parse_uri_field("users[]", value))
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(value) if !value.is_empty() => value,
+                Ok(_) => {
+                    return api_error(
+                        StatusCode::BAD_REQUEST,
+                        "users must not be empty".to_string(),
+                    );
+                }
+                Err(err) => return err,
+            },
+            None => existing.users,
+        };
+        let port = match payload.port {
+            Some(raw) => match parse_uri_field("port", &raw) {
                 Ok(v) => v,
                 Err(err) => return err,
             },
-            None => existing.user_key,
+            None => existing.port,
         };
-        let root_task_id = match payload.root_task_id {
-            Some(raw) => match parse_uri_field("root_task_id", &raw) {
-                Ok(v) => v,
-                Err(err) => return err,
-            },
-            None => existing.root_task_id,
-        };
-        let port = payload.port.unwrap_or(existing.port);
-        let state_value = payload.state.unwrap_or(existing.state);
 
-        match state
-            .db
-            .upsert_session(&session_id, &user_key, &port, &root_task_id, &state_value)
-            .await
-        {
+        match state.db.upsert_session(&session_id, &users, &port).await {
             Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
