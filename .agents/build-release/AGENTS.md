@@ -8,6 +8,8 @@ Scope: builds, workspace wiring, and command expectations.
   - `bun run build:web`
 - Rust build:
   - `cargo build`
+- Rust test gate (used by pre-commit hook):
+  - `cargo test`
 - Full local build:
   - `bun run build && cargo build -p borg-cli` (or equivalent sequence)
 
@@ -42,3 +44,10 @@ Scope: builds, workspace wiring, and command expectations.
 2. `cargo build` succeeds.
 3. `cargo test -p borg-exec -p borg-api -p borg-ports` succeeds for runtime-path changes.
 4. No unrelated local breakages.
+
+## Git Hooks
+
+- Versioned hooks are stored in `.githooks/`.
+- Enable once per clone: `git config core.hooksPath .githooks`.
+- Pre-commit hook runs `cargo test` and blocks commits on failure.
+- Emergency bypass: `SKIP_PRECOMMIT_TESTS=1 git commit ...`

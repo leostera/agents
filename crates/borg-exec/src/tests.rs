@@ -586,6 +586,7 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
             "call_exec_1",
             "executeCode",
             json!({
+                "hint": "Inspect cwd entries",
                 "code": "async () => { const listing = Borg.OS.ls('.'); return { has_entries: listing.entries.length > 0, first_entry: listing.entries[0] ?? null }; }"
             }),
         )),
@@ -624,7 +625,7 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
             Message::ToolResult {
                 content: ToolResultData::Text(text),
                 ..
-            } if text.contains("declare global") && text.contains("interface BorgSdk")
+            } if text.contains("interface BorgSdk") && text.contains("declare const Borg")
         )
     }));
     assert!(messages.iter().any(|message| {
@@ -674,7 +675,9 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
         Ok(assistant_tool_call(
             "call_exec_bad",
             "executeCode",
-            json!({ "code": "Borg.OS.ls('.')" }),
+            json!({
+                "code": "Borg.OS.ls('.')"
+            }),
         )),
         Ok(assistant_text("Saw tool failure and handled it.")),
     ]);
@@ -695,7 +698,7 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
             Message::ToolResult {
                 content: ToolResultData::Error { message },
                 ..
-            } if message.contains("async () =>")
+            } if message.contains("missing required property `hint`")
         )
     }));
 }

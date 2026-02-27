@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${SKIP_PRECOMMIT_TESTS:-0}" == "1" ]]; then
+  echo "[pre-commit] SKIP_PRECOMMIT_TESTS=1; skipping cargo test"
+  exit 0
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "[pre-commit] cargo is not installed or not on PATH"
+  exit 1
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+echo "[pre-commit] Running cargo test..."
+cargo test
+
+echo "[pre-commit] cargo test passed"
