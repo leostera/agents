@@ -416,18 +416,18 @@ impl BorgExecutor {
         };
 
         let Some(task) = claimed_task else {
-            if let Some(task) = self.db.get_task(task_id).await? {
-                if task.status == TaskStatus::Queued {
-                    debug!(
-                        target: "borg_exec",
-                        task_id = %task_id,
-                        delay_ms = QUEUED_RETRY_DELAY_MILLIS,
-                        "task still queued but not claimable yet, requeueing"
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(QUEUED_RETRY_DELAY_MILLIS))
-                        .await;
-                    self.task_queue.queue(task_id.clone()).await?;
-                }
+            if let Some(task) = self.db.get_task(task_id).await?
+                && task.status == TaskStatus::Queued
+            {
+                debug!(
+                    target: "borg_exec",
+                    task_id = %task_id,
+                    delay_ms = QUEUED_RETRY_DELAY_MILLIS,
+                    "task still queued but not claimable yet, requeueing"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(QUEUED_RETRY_DELAY_MILLIS))
+                    .await;
+                self.task_queue.queue(task_id.clone()).await?;
             }
             debug!(
                 target: "borg_exec",

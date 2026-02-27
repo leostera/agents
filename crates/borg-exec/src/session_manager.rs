@@ -40,12 +40,12 @@ impl SessionManager {
         }
 
         let mut session = Session::new(session_id.clone(), agent, self.db.clone()).await?;
-        if let Some((port, ctx)) = self.db.get_any_port_session_context(&session_id).await? {
-            if port == "telegram" {
-                session.set_context_manager(Arc::new(
-                    SessionContextManager::for_telegram_session_context(ctx),
-                ));
-            }
+        if let Some((port, ctx)) = self.db.get_any_port_session_context(&session_id).await?
+            && port == "telegram"
+        {
+            session.set_context_manager(Arc::new(
+                SessionContextManager::for_telegram_session_context(ctx),
+            ));
         }
         Ok(session)
     }

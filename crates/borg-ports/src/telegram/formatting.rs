@@ -41,7 +41,11 @@ impl TelegramPort {
 
             let window = &remaining[..split_byte];
             let preferred = window.rfind('\n').unwrap_or(split_byte);
-            let take = if preferred == 0 { split_byte } else { preferred };
+            let take = if preferred == 0 {
+                split_byte
+            } else {
+                preferred
+            };
             let (head, tail) = remaining.split_at(take);
             chunks.push(head.trim_end().to_string());
             remaining = tail.trim_start_matches('\n');
@@ -77,17 +81,17 @@ impl TelegramPort {
             participants.insert(current_sender);
         }
 
-        if let Some(ctx) = telegram_ctx {
-            if let Some(map) = ctx.get("participants").and_then(Value::as_object) {
-                for participant in map.values() {
-                    let label = Self::format_sender_label(
-                        participant.get("id").and_then(Value::as_str),
-                        participant.get("username").and_then(Value::as_str),
-                        participant.get("first_name").and_then(Value::as_str),
-                        participant.get("last_name").and_then(Value::as_str),
-                    );
-                    participants.insert(label);
-                }
+        if let Some(ctx) = telegram_ctx
+            && let Some(map) = ctx.get("participants").and_then(Value::as_object)
+        {
+            for participant in map.values() {
+                let label = Self::format_sender_label(
+                    participant.get("id").and_then(Value::as_str),
+                    participant.get("username").and_then(Value::as_str),
+                    participant.get("first_name").and_then(Value::as_str),
+                    participant.get("last_name").and_then(Value::as_str),
+                );
+                participants.insert(label);
             }
         }
 

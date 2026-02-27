@@ -27,7 +27,8 @@ pub struct TelegramParticipant {
 
 impl TelegramSessionContext {
     pub fn from_json(value: Value) -> Result<Self> {
-        serde_json::from_value(value).map_err(|err| anyhow!("invalid telegram session context: {err}"))
+        serde_json::from_value(value)
+            .map_err(|err| anyhow!("invalid telegram session context: {err}"))
     }
 }
 

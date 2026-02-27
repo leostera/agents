@@ -114,7 +114,6 @@ impl TelegramCommandState {
             "session",
             Some(&format!("telegram_{}", self.message.chat.id.0)),
         )
-        .map_err(Into::into)
     }
 }
 

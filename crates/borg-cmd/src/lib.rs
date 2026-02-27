@@ -104,7 +104,9 @@ where
 
     pub fn build(self) -> Result<CommandRegistry<S, R>> {
         if self.handlers.is_empty() {
-            return Err(anyhow!("command registry must contain at least one command"));
+            return Err(anyhow!(
+                "command registry must contain at least one command"
+            ));
         }
         Ok(CommandRegistry {
             state: self.state,

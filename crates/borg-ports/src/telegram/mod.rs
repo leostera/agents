@@ -173,28 +173,23 @@ impl TelegramPort {
                         }
                     };
                     if commands.is_command(text) {
-                        if let Some(inbound) = PortMessage::from_telegram_text(
-                            &message,
-                            text.to_string(),
-                            "text",
-                        ) {
-                            if let Some(session_id) = inbound.session_id {
-                                if let Err(err) = exec
-                                    .merge_port_message_metadata(
-                                        "telegram",
-                                        &session_id,
-                                        &inbound.metadata,
-                                    )
-                                    .await
-                                {
-                                    bot.send_message(
-                                        message.chat.id,
-                                        format!("Failed to update session context: {err}"),
-                                    )
-                                    .await?;
-                                    return Ok(());
-                                }
-                            }
+                        if let Some(inbound) =
+                            PortMessage::from_telegram_text(&message, text.to_string(), "text")
+                            && let Some(session_id) = inbound.session_id
+                            && let Err(err) = exec
+                                .merge_port_message_metadata(
+                                    "telegram",
+                                    &session_id,
+                                    &inbound.metadata,
+                                )
+                                .await
+                        {
+                            bot.send_message(
+                                message.chat.id,
+                                format!("Failed to update session context: {err}"),
+                            )
+                            .await?;
+                            return Ok(());
                         }
                         let response = if Self::is_help_command(text) {
                             commands.help()
@@ -259,18 +254,17 @@ impl TelegramPort {
                         .unwrap_or_else(|| "Message processed, no reply generated.".to_string());
                     port.send_text(message.chat.id, reply).await?;
 
-                    if let Some(session_id) = response.session_id {
-                        if let Ok(percent) = port
+                    if let Some(session_id) = response.session_id
+                        && let Ok(percent) = port
                             .exec
                             .estimate_session_context_usage_percent(
                                 &session_id,
                                 TELEGRAM_CONTEXT_MAX_TOKENS,
                             )
                             .await
-                        {
-                            let usage_line = format!("Context: ~{}% used", percent);
-                            bot.send_message(message.chat.id, usage_line).await?;
-                        }
+                    {
+                        let usage_line = format!("Context: ~{}% used", percent);
+                        bot.send_message(message.chat.id, usage_line).await?;
                     }
                 }
 
@@ -282,7 +276,10 @@ impl TelegramPort {
         Ok(())
     }
 
-    async fn inbound_from_telegram_message(&self, message: &Message) -> Result<Option<PortMessage>> {
+    async fn inbound_from_telegram_message(
+        &self,
+        message: &Message,
+    ) -> Result<Option<PortMessage>> {
         if let Some(text) = message.text() {
             return Ok(PortMessage::from_telegram_text(
                 message,
@@ -334,7 +331,10 @@ impl TelegramPort {
         let response = self.http.get(file_url).send().await?;
         let status = response.status();
         if !status.is_success() {
-            return Err(anyhow!("telegram file download failed with status {}", status));
+            return Err(anyhow!(
+                "telegram file download failed with status {}",
+                status
+            ));
         }
         Ok(response.bytes().await?.to_vec())
     }
