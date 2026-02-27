@@ -189,8 +189,6 @@ impl BorgDb {
                        strftime('%Y-%m-%dT%H:%M:%SZ', datetime(updated_at)) IS NULL
                        AND strftime('%Y-%m-%dT%H:%M:%SZ', datetime(updated_at, 'unixepoch')) IS NULL
                    );
-                UPDATE providers
-                SET enabled = CASE WHEN enabled IS NULL OR enabled = 0 THEN 0 ELSE 1 END;
                 UPDATE provider_usage_summaries
                 SET last_used = NULL
                 WHERE trim(coalesce(last_used, '')) = '';
@@ -302,6 +300,13 @@ impl BorgDb {
             .context("failed to run db migrations")?;
 
         self.ensure_providers_enabled_column().await?;
+        self.conn
+            .execute(
+                "UPDATE providers SET enabled = CASE WHEN enabled IS NULL OR enabled = 0 THEN 0 ELSE 1 END",
+                (),
+            )
+            .await
+            .context("failed to normalize providers.enabled values")?;
 
         info!(target: "borg_db", "control-plane/task migrations completed");
         Ok(())
