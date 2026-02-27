@@ -2,6 +2,7 @@ import React from 'react'
 import {
   Avatar,
   AvatarFallback,
+  Badge,
   Sidebar,
   SidebarContent,
   SidebarFooter,
@@ -32,6 +33,7 @@ type SectionGroup = {
 type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
   title?: string
   activeId: string
+  isOffline?: boolean
   onSelect: (id: string) => void
   onOpenCommandMenu?: () => void
   groups: SectionGroup[]
@@ -42,6 +44,7 @@ type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
 export function AppSidebar({
   title = 'Borg',
   activeId,
+  isOffline = false,
   onSelect,
   onOpenCommandMenu,
   groups,
@@ -61,18 +64,29 @@ export function AppSidebar({
       {...props}
     >
       <SidebarHeader className='p-3'>
-        <div className='flex items-center gap-2 px-1'>
-          <p className='min-w-0 flex-1 truncate text-[10px] uppercase tracking-[0.16em] text-muted-foreground'>{title}</p>
-          <button
-            type='button'
-            onClick={handleSearch}
-            className='text-muted-foreground hover:text-foreground inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/60 px-2 font-mono text-[10px] transition-colors'
-            aria-label='Open command menu (Cmd+K)'
-            title='Open command menu (Cmd+K)'
-          >
-            <Command className='size-3.5' />
-            <span>K</span>
-          </button>
+        <div className='px-1'>
+          <div className='flex items-center gap-2'>
+            <p className='min-w-0 truncate text-[10px] uppercase tracking-[0.16em] text-muted-foreground'>{title}</p>
+            {isOffline ? (
+              <Badge
+                variant='outline'
+                className='border-red-500/40 bg-red-500/10 px-1.5 py-0 text-[9px] font-medium uppercase tracking-[0.08em] text-red-700'
+              >
+                Offline
+              </Badge>
+            ) : null}
+            <div className='flex-1' />
+            <button
+              type='button'
+              onClick={handleSearch}
+              className='text-muted-foreground hover:text-foreground inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/60 px-2 font-mono text-[10px] transition-colors'
+              aria-label='Open command menu (Cmd+K)'
+              title='Open command menu (Cmd+K)'
+            >
+              <Command className='size-3.5' />
+              <span>K</span>
+            </button>
+          </div>
         </div>
       </SidebarHeader>
       <SidebarSeparator className='mx-3' />

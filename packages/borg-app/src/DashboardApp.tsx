@@ -1,11 +1,14 @@
 import React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button, SidebarInset, SidebarProvider } from '@borg/ui'
-import { Bell, LayoutDashboard, Plus, Route, ScanSearch, Settings2 } from 'lucide-react'
+import { Bell, LayoutDashboard, Map, Plus, Route, ScanSearch, Settings2 } from 'lucide-react'
 import { createI18n } from '@borg/i18n'
+import { BorgApiError, createBorgApiClient } from '@borg/api'
 import { AppSidebar } from './AppSidebar'
 import { CommandK, type CommandSectionGroup } from './CommandK'
+import { MemoryEntityPage } from './pages/memory/entity'
 import { MemoryExplorerPage } from './pages/memory/explorer'
+import { MemoryGraphPage } from './pages/memory/graph'
 import { ObservabilityOverviewPage } from './pages/observability'
 import { ObservabilityAlertsPage } from './pages/observability/alerts'
 import { ObservabilityTracingPage } from './pages/observability/tracing'
@@ -20,6 +23,12 @@ type DashboardRouteGroup = {
   id: string
   title: string
   items: DashboardRouteItem[]
+}
+
+type ResolvedDashboardRoute = {
+  id: string
+  entityUri: string | null
+  explorerUri: string | null
 }
 
 const SECTION_GROUPS: DashboardRouteGroup[] = [
@@ -69,6 +78,12 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
         icon: ScanSearch,
         path: '/memory/explorer',
       },
+      {
+        id: 'memory-graph',
+        title: 'Graph',
+        icon: Map,
+        path: '/memory/graph',
+      },
     ],
   },
   {
@@ -91,6 +106,41 @@ const SECTION_BY_PATH = Object.fromEntries(ALL_SECTIONS.map((section) => [sectio
 const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
   '/dashboard': SECTION_BY_ID['overview-home'],
   '/dashbaord': SECTION_BY_ID['overview-home'],
+  '/memory': SECTION_BY_ID['memory-graph'],
+  '/memory/search': SECTION_BY_ID['memory-explorer'],
+}
+const MEMORY_ENTITY_PREFIX = '/memory/entity/'
+const MEMORY_EXPLORER_PREFIX = '/memory/explorer/'
+const borgApi = createBorgApiClient()
+
+function normalizePathname(pathname: string): string {
+  return pathname.replace(/\/+$/, '') || '/'
+}
+
+function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
+  const normalizedPathname = normalizePathname(pathname)
+  if (normalizedPathname.startsWith(MEMORY_ENTITY_PREFIX) && normalizedPathname.length > MEMORY_ENTITY_PREFIX.length) {
+    const encodedUri = normalizedPathname.slice(MEMORY_ENTITY_PREFIX.length)
+    try {
+      return { id: 'memory-entity', entityUri: decodeURIComponent(encodedUri), explorerUri: null }
+    } catch {
+      return { id: 'memory-entity', entityUri: encodedUri, explorerUri: null }
+    }
+  }
+  if (normalizedPathname.startsWith(MEMORY_EXPLORER_PREFIX) && normalizedPathname.length > MEMORY_EXPLORER_PREFIX.length) {
+    const encodedUri = normalizedPathname.slice(MEMORY_EXPLORER_PREFIX.length)
+    try {
+      return { id: 'memory-explorer', entityUri: null, explorerUri: decodeURIComponent(encodedUri) }
+    } catch {
+      return { id: 'memory-explorer', entityUri: null, explorerUri: encodedUri }
+    }
+  }
+
+  const section =
+    SECTION_BY_PATH[normalizedPathname] ??
+    SECTION_BY_PATH_ALIASES[normalizedPathname] ??
+    SECTION_BY_ID['overview-home']
+  return { id: section.id, entityUri: null, explorerUri: null }
 }
 
 function resolveUsername(): string {
@@ -111,12 +161,13 @@ function initialsFromUsername(username: string): string {
 }
 
 export function DashboardApp() {
-  const [activeId, setActiveId] = useState<string>(() => {
-    if (typeof window === 'undefined') return ALL_SECTIONS[0].id
-    const pathname = window.location.pathname.replace(/\/+$/, '') || '/'
-    return SECTION_BY_PATH[pathname]?.id ?? SECTION_BY_PATH_ALIASES[pathname]?.id ?? ALL_SECTIONS[0].id
+  const [route, setRoute] = useState<ResolvedDashboardRoute>(() => {
+    if (typeof window === 'undefined') return { id: ALL_SECTIONS[0].id, entityUri: null, explorerUri: null }
+    return resolveRouteFromPath(window.location.pathname)
   })
+  const activeId = route.id
   const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false)
+  const [isOffline, setIsOffline] = useState(false)
   const i18n = useMemo(() => createI18n('en'), [])
   const username = useMemo(resolveUsername, [])
   const initials = useMemo(() => initialsFromUsername(username), [username])
@@ -127,13 +178,16 @@ export function DashboardApp() {
       'observability-overview': () => <ObservabilityOverviewPage />,
       'observability-alerts': () => <ObservabilityAlertsPage />,
       'observability-tracing': () => <ObservabilityTracingPage />,
-      'memory-explorer': () => <MemoryExplorerPage />,
+      'memory-graph': () => <MemoryGraphPage />,
+      'memory-explorer': () => <MemoryExplorerPage explorerUri={route.explorerUri ?? undefined} />,
+      'memory-entity': () => <MemoryEntityPage entityUri={route.entityUri ?? ''} />,
       'settings-providers': () => <ProvidersPage />,
     }
     return sectionById[activeId] ?? sectionById['overview-home']
-  }, [activeId])
+  }, [activeId, route.entityUri, route.explorerUri])
 
   const activeTitle = useMemo(() => {
+    if (activeId === 'memory-entity') return 'Entity'
     const section = ALL_SECTIONS.find((item) => item.id === activeId)
     return section?.title ?? 'Overview'
   }, [activeId])
@@ -142,8 +196,11 @@ export function DashboardApp() {
     if (activeId === 'settings-providers') {
       return i18n.t('dashboard.subtitle.settings.providers')
     }
+    if (activeId === 'memory-entity') {
+      return route.entityUri ?? i18n.t('dashboard.subtitle.default')
+    }
     return i18n.t('dashboard.subtitle.default')
-  }, [activeId, i18n])
+  }, [activeId, i18n, route.entityUri])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -159,18 +216,49 @@ export function DashboardApp() {
 
   useEffect(() => {
     const handlePopState = () => {
-      const pathname = window.location.pathname.replace(/\/+$/, '') || '/'
-      const section = SECTION_BY_PATH[pathname] ?? SECTION_BY_PATH_ALIASES[pathname] ?? SECTION_BY_ID['overview-home']
-      setActiveId(section.id)
+      setRoute(resolveRouteFromPath(window.location.pathname))
     }
 
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
+  useEffect(() => {
+    let isActive = true
+    let timeoutId: number | undefined
+
+    const checkConnectivity = async () => {
+      try {
+        await borgApi.listProviders(1)
+        if (isActive) {
+          setIsOffline(false)
+        }
+      } catch (error) {
+        if (!isActive) return
+        if (error instanceof BorgApiError && typeof error.status === 'number') {
+          setIsOffline(false)
+        } else {
+          setIsOffline(true)
+        }
+      } finally {
+        if (isActive) {
+          timeoutId = window.setTimeout(() => {
+            void checkConnectivity()
+          }, 15000)
+        }
+      }
+    }
+
+    void checkConnectivity()
+    return () => {
+      isActive = false
+      if (timeoutId) window.clearTimeout(timeoutId)
+    }
+  }, [])
+
   const handleSelectSection = (sectionId: string) => {
     const section = SECTION_BY_ID[sectionId]
-    setActiveId(sectionId)
+    setRoute({ id: sectionId, entityUri: null, explorerUri: null })
     if (section && window.location.pathname !== section.path) {
       window.history.pushState(null, '', section.path)
     }
@@ -192,29 +280,35 @@ export function DashboardApp() {
     return null
   }, [activeId])
 
+  const isExplorerImmersive = activeId === 'memory-graph'
+  const isHeadlineHidden = activeId === 'memory-graph' || activeId === 'memory-explorer'
+
   return (
     <section className='borg-dashboard-shell text-foreground'>
       <SidebarProvider defaultOpen>
         <AppSidebar
           activeId={activeId}
+          isOffline={isOffline}
           onSelect={handleSelectSection}
           onOpenCommandMenu={() => setIsCommandMenuOpen(true)}
           groups={SECTION_GROUPS}
           username={username}
           initials={initials}
         />
-        <SidebarInset className='p-4 md:p-6'>
-          <div className='borg-dashboard-content'>
-            <div className='borg-dashboard-headline'>
-              <div className='borg-dashboard-headline-main'>
-                <h2>{activeTitle}</h2>
-                <p>{activeSubtitle}</p>
+        <SidebarInset className={isExplorerImmersive ? 'p-0 md:p-0' : 'p-4 md:p-6'}>
+          <div className={`borg-dashboard-content${isExplorerImmersive ? ' borg-dashboard-content--full' : ''}`}>
+            {!isHeadlineHidden ? (
+              <div className='borg-dashboard-headline'>
+                <div className='borg-dashboard-headline-main'>
+                  <h2>{activeTitle}</h2>
+                  <p>{activeSubtitle}</p>
+                </div>
+                <div className='borg-dashboard-headline-actions'>{headlineActions}</div>
               </div>
-              <div className='borg-dashboard-headline-actions'>{headlineActions}</div>
-            </div>
-          <section id={activeId}>
-            <ActiveSection />
-          </section>
+            ) : null}
+            <section id={activeId} className={isExplorerImmersive ? 'borg-dashboard-section--full' : undefined}>
+              <ActiveSection />
+            </section>
           </div>
         </SidebarInset>
       </SidebarProvider>

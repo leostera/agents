@@ -23,6 +23,17 @@
   width: 100%;
 }
 
+.borg-dashboard-content--full {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.borg-dashboard-section--full {
+  flex: 1;
+  min-height: 0;
+}
+
 .borg-dashboard-headline {
   margin-bottom: 1rem;
   display: grid;

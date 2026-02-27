@@ -3,6 +3,12 @@ import { BorgApiError, createBorgApiClient } from '@borg/api'
 import {
   Badge,
   Button,
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
   Table,
   TableBody,
   TableCell,
@@ -10,7 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from '@borg/ui'
-import { CheckCircle2, LoaderCircle, Pause, Play, TriangleAlert, Unplug } from 'lucide-react'
+import { CheckCircle2, Cpu, LoaderCircle, Pause, Play, TriangleAlert, Unplug } from 'lucide-react'
 import { ConnectProviderForm } from './ConnectProviderForm'
 
 type ProviderRecord = {
@@ -153,14 +159,11 @@ export function ProvidersPage() {
     setPausedProviders((current) => ({ ...current, [provider]: !current[provider] }))
   }
 
+  const providerRows = React.useMemo(() => Object.values(providersByName), [providersByName])
+  const showEmptyState = !isLoading && providerRows.length === 0
+
   return (
     <section className='space-y-4'>
-      {errorMessage ? (
-        <div className='flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive'>
-          <TriangleAlert className='size-3.5' />
-          {errorMessage}
-        </div>
-      ) : null}
       {statusMessage ? (
         <div className='flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-600/10 px-3 py-2 text-xs text-emerald-700'>
           <CheckCircle2 className='size-3.5' />
@@ -168,97 +171,113 @@ export function ProvidersPage() {
         </div>
       ) : null}
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Provider</TableHead>
-            <TableHead>Tokens Used</TableHead>
-            <TableHead>Token Rate</TableHead>
-            <TableHead>Models</TableHead>
-            <TableHead>Cost</TableHead>
-            <TableHead>Last Used On</TableHead>
-            <TableHead>Last Session</TableHead>
-            <TableHead>Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {SUPPORTED_PROVIDERS.map((name) => {
-            const provider = providersByName[name]
-            const isConnected = Boolean(provider?.api_key)
-            const metrics = PROVIDER_METRICS[name]
-            const isPaused = Boolean(pausedProviders[name])
+      {isLoading ? (
+        <div className='text-muted-foreground inline-flex items-center gap-2 text-xs'>
+          <LoaderCircle className='size-3.5 animate-spin' />
+          Loading providers...
+        </div>
+      ) : null}
 
-            return (
-              <TableRow key={name}>
-                <TableCell className='font-medium'>
-                  <div className='flex items-center gap-2'>
-                    <span>{metrics.providerLabel}</span>
-                    {!isConnected ? <Badge variant='outline'>not connected</Badge> : null}
-                    {isPaused ? <Badge variant='outline'>paused</Badge> : null}
-                  </div>
-                </TableCell>
-                <TableCell>{isConnected ? metrics.tokensUsed : '—'}</TableCell>
-                <TableCell>{isConnected ? metrics.tokenRate : '—'}</TableCell>
-                <TableCell className='max-w-[280px]'>
-                  <div className='flex flex-wrap gap-1'>
-                    {isConnected
-                      ? metrics.models.map((model) => (
-                          <Badge key={model} variant='secondary'>
-                            {model}
-                          </Badge>
-                        ))
-                      : '—'}
-                  </div>
-                </TableCell>
-                <TableCell>{isConnected ? metrics.cost : '—'}</TableCell>
-                <TableCell>{isConnected ? metrics.lastUsedOn : '—'}</TableCell>
-                <TableCell className='font-mono text-[11px]'>{isConnected ? metrics.lastSession : '—'}</TableCell>
-                <TableCell>
-                  <div className='flex items-center gap-1'>
-                    <Button
-                      size='icon-sm'
-                      variant='outline'
-                      onClick={() => void handleDisconnect(name)}
-                      disabled={!isConnected}
-                      aria-label={`Disconnect ${metrics.providerLabel}`}
-                      title='Disconnect'
-                    >
-                      <Unplug className='size-3.5' />
-                    </Button>
-                    <Button
-                      size='icon-sm'
-                      variant='outline'
-                      onClick={() => handleTogglePause(name)}
-                      disabled={!isConnected}
-                      aria-label={`${isPaused ? 'Resume' : 'Pause'} ${metrics.providerLabel}`}
-                      title={isPaused ? 'Resume' : 'Pause'}
-                    >
-                      {isPaused ? <Play className='size-3.5' /> : <Pause className='size-3.5' />}
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            )
-          })}
-          {!isLoading && Object.keys(providersByName).length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={8} className='text-muted-foreground'>
-                No providers configured yet.
-              </TableCell>
-            </TableRow>
+      {showEmptyState ? (
+        <Empty className='border'>
+          <EmptyHeader>
+            <EmptyMedia variant='icon'>
+              <Cpu />
+            </EmptyMedia>
+            <EmptyTitle>No Providers Configured</EmptyTitle>
+            <EmptyDescription>No providers configured yet. Connect your first provider.</EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent className='flex-row justify-center'>
+            <Button onClick={() => setIsDialogOpen(true)}>+ Connect Provider</Button>
+          </EmptyContent>
+          {errorMessage ? (
+            <p className='inline-flex items-center gap-2 text-xs text-destructive'>
+              <TriangleAlert className='size-3.5' />
+              {errorMessage}
+            </p>
           ) : null}
-          {isLoading ? (
+        </Empty>
+      ) : (
+        <Table>
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={8}>
-                <span className='text-muted-foreground inline-flex items-center gap-2'>
-                  <LoaderCircle className='size-3.5 animate-spin' />
-                  Loading providers...
-                </span>
-              </TableCell>
+              <TableHead>Provider</TableHead>
+              <TableHead>Tokens Used</TableHead>
+              <TableHead>Token Rate</TableHead>
+              <TableHead>Models</TableHead>
+              <TableHead>Cost</TableHead>
+              <TableHead>Last Used On</TableHead>
+              <TableHead>Last Session</TableHead>
+              <TableHead>Actions</TableHead>
             </TableRow>
-          ) : null}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {providerRows.map((provider) => {
+              const providerKey = provider.provider
+              const metrics =
+                PROVIDER_METRICS[providerKey as keyof typeof PROVIDER_METRICS] ?? {
+                  providerLabel: formatProviderName(providerKey).toLowerCase(),
+                  tokensUsed: '—',
+                  tokenRate: '—',
+                  models: [],
+                  cost: '—',
+                  lastUsedOn: '—',
+                  lastSession: '—',
+                }
+              const isPaused = Boolean(pausedProviders[providerKey])
+
+              return (
+                <TableRow key={providerKey}>
+                  <TableCell className='font-medium'>
+                    <div className='flex items-center gap-2'>
+                      <span>{metrics.providerLabel}</span>
+                      {isPaused ? <Badge variant='outline'>paused</Badge> : null}
+                    </div>
+                  </TableCell>
+                  <TableCell>{metrics.tokensUsed}</TableCell>
+                  <TableCell>{metrics.tokenRate}</TableCell>
+                  <TableCell className='max-w-[280px]'>
+                    <div className='flex flex-wrap gap-1'>
+                      {metrics.models.length > 0
+                        ? metrics.models.map((model) => (
+                            <Badge key={model} variant='secondary'>
+                              {model}
+                            </Badge>
+                          ))
+                        : '—'}
+                    </div>
+                  </TableCell>
+                  <TableCell>{metrics.cost}</TableCell>
+                  <TableCell>{metrics.lastUsedOn}</TableCell>
+                  <TableCell className='font-mono text-[11px]'>{metrics.lastSession}</TableCell>
+                  <TableCell>
+                    <div className='flex items-center gap-1'>
+                      <Button
+                        size='icon-sm'
+                        variant='outline'
+                        onClick={() => void handleDisconnect(providerKey)}
+                        aria-label={`Disconnect ${metrics.providerLabel}`}
+                        title='Disconnect'
+                      >
+                        <Unplug className='size-3.5' />
+                      </Button>
+                      <Button
+                        size='icon-sm'
+                        variant='outline'
+                        onClick={() => handleTogglePause(providerKey)}
+                        aria-label={`${isPaused ? 'Resume' : 'Pause'} ${metrics.providerLabel}`}
+                        title={isPaused ? 'Resume' : 'Pause'}
+                      >
+                        {isPaused ? <Play className='size-3.5' /> : <Pause className='size-3.5' />}
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
+      )}
 
       <ConnectProviderForm
         open={isDialogOpen}

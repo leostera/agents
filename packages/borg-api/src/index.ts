@@ -20,6 +20,21 @@ export type MemorySearchResponse = {
   entities?: MemoryEntity[]
 }
 
+export type MemoryEntityResponse = {
+  entity?: MemoryEntity
+}
+
+export type MemoryExplorerEdge = {
+  source: string
+  target: string
+  relation: string
+}
+
+export type MemoryExplorerResponse = {
+  entities?: MemoryEntity[]
+  edges?: MemoryExplorerEdge[]
+}
+
 export class BorgApiError extends Error {
   status?: number
   bodyText?: string
@@ -75,7 +90,17 @@ export class BorgApiClient {
   }
 
   private async request(path: string, init?: RequestInit): Promise<Response> {
-    const response = await fetch(this.url(path), init)
+    let response: Response
+    try {
+      response = await fetch(this.url(path), init)
+    } catch (error) {
+      const fallbackOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+      const message =
+        error instanceof TypeError
+          ? `Borg API unavailable at ${this.baseUrl || fallbackOrigin}`
+          : 'Unable to reach Borg API'
+      throw new BorgApiError(message)
+    }
     if (!response.ok) {
       const bodyText = await readResponseBody(response)
       throw new BorgApiError(`Request failed (${response.status})`, {
@@ -141,6 +166,35 @@ export class BorgApiClient {
     }
     const data = await this.requestJson<MemorySearchResponse>(`/memory/search?${searchParams.toString()}`)
     return Array.isArray(data.entities) ? data.entities : []
+  }
+
+  async getMemoryEntity(uri: string): Promise<MemoryEntity | null> {
+    try {
+      const data = await this.requestJson<MemoryEntityResponse>(`/memory/entities/${encodeURIComponent(uri)}`)
+      return data.entity ?? null
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null
+      }
+      throw error
+    }
+  }
+
+  async exploreMemory(params: {
+    query: string
+    limit?: number
+    maxNodes?: number
+  }): Promise<{ entities: MemoryEntity[]; edges: MemoryExplorerEdge[] }> {
+    const searchParams = new URLSearchParams({
+      query: params.query.trim(),
+      limit: String(params.limit ?? 25),
+      max_nodes: String(params.maxNodes ?? 300),
+    })
+    const data = await this.requestJson<MemoryExplorerResponse>(`/api/memory/explorer?${searchParams.toString()}`)
+    return {
+      entities: Array.isArray(data.entities) ? data.entities : [],
+      edges: Array.isArray(data.edges) ? data.edges : [],
+    }
   }
 }
 
