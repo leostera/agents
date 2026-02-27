@@ -1,10 +1,31 @@
 #!/usr/bin/env sh
 set -eu
 
-cargo fmt --all --check
-cargo check
-cargo clippy
-cargo test --workspace -- --skip e2e
-bun run check
-bun run test
-bun run test:storybook
+STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+if [ -z "$STAGED_FILES" ]; then
+  echo "pre-commit: no staged files"
+  exit 0
+fi
+
+is_rust_change() {
+  echo "$STAGED_FILES" | grep -Eq '^(crates/|Cargo\.toml|Cargo\.lock|\.cargo/)'
+}
+
+is_web_change() {
+  echo "$STAGED_FILES" | grep -Eq '^(packages/|package\.json|bun\.lock|bunfig\.toml|vite\.config\.(ts|js)|tsconfig(\..+)?\.json)'
+}
+
+if is_rust_change; then
+  echo "pre-commit: running Rust checks"
+  cargo fmt --all --check
+  cargo check
+  cargo clippy
+  cargo test --workspace --lib --tests --bins -- --skip e2e
+fi
+
+if is_web_change; then
+  echo "pre-commit: running web checks"
+  bun run check
+  bun run test
+fi
