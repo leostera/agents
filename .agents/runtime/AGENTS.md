@@ -41,6 +41,9 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - `X-Borg-Session-Id` header should be set on successful response.
 - Invalid URI inputs at API boundary must fail with structured 400.
 - Code-mode filesystem API is `Borg.OS.ls(...)` (not `BorgOs.ls(...)`).
+- Telegram command `/model` supports:
+  - `/model` to show current `agent_id` + model for the chat session.
+  - `/model <model_name>` to persist model on the resolved agent spec.
 
 ## Runtime Safety
 - Initialize tracing before application code in `main`.

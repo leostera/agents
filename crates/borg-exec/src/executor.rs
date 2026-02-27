@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{AgentTools, ContextWindow, Message, SessionResult, ToolSpec};
+use borg_agent::{AgentTools, ContextWindow, Message, Session, SessionResult, ToolSpec};
 use borg_core::{
     Event, SessionContextSnapshot, SessionToolSchema, Task, TaskEvent, TaskKind, TaskStatus, Uri,
     uri,
@@ -221,34 +221,41 @@ impl BorgExecutor {
     }
 
     pub async fn context_window_for_session(&self, session_id: &Uri) -> Result<ContextWindow> {
-        let synthetic_msg = UserMessage {
-            user_key: Uri::from_parts("borg", "user", Some("system"))?,
-            text: String::new(),
-            session_id: Some(session_id.clone()),
-            agent_id: None,
-            metadata: json!({}),
-        };
-        let session = self
-            .session_manager
-            .session_for_task(&synthetic_msg)
-            .await?;
+        let session = self.session_for_session_id(session_id).await?;
         let context = session.build_context().await?;
         Ok(context)
     }
 
     pub async fn agent_info_for_session(&self, session_id: &Uri) -> Result<(Uri, String)> {
-        let synthetic_msg = UserMessage {
-            user_key: Uri::from_parts("borg", "user", Some("system"))?,
-            text: String::new(),
-            session_id: Some(session_id.clone()),
-            agent_id: None,
-            metadata: json!({}),
-        };
-        let session = self
-            .session_manager
-            .session_for_task(&synthetic_msg)
-            .await?;
+        let session = self.session_for_session_id(session_id).await?;
         Ok((session.agent.agent_id.clone(), session.agent.model.clone()))
+    }
+
+    pub async fn set_model_for_session(
+        &self,
+        session_id: &Uri,
+        model: &str,
+    ) -> Result<(Uri, String)> {
+        let model = model.trim();
+        if model.is_empty() {
+            return Err(anyhow!("model must not be empty"));
+        }
+
+        let session = self.session_for_session_id(session_id).await?;
+        let agent_id = session.agent.agent_id.clone();
+        let (system_prompt, tools) = if let Some(spec) = self.db.get_agent_spec(&agent_id).await? {
+            (spec.system_prompt, spec.tools)
+        } else {
+            (
+                session.agent.system_prompt.clone(),
+                serde_json::to_value(&session.agent.tools)?,
+            )
+        };
+
+        self.db
+            .upsert_agent_spec(&agent_id, model, &system_prompt, &tools)
+            .await?;
+        Ok((agent_id, model.to_string()))
     }
 
     pub async fn get_port_session_context(
@@ -289,6 +296,17 @@ impl BorgExecutor {
 
     pub async fn clear_port_session_context(&self, port: &str, session_id: &Uri) -> Result<u64> {
         self.db.clear_port_session_context(port, session_id).await
+    }
+
+    async fn session_for_session_id(&self, session_id: &Uri) -> Result<Session> {
+        let synthetic_msg = UserMessage {
+            user_key: Uri::from_parts("borg", "user", Some("system"))?,
+            text: String::new(),
+            session_id: Some(session_id.clone()),
+            agent_id: None,
+            metadata: json!({}),
+        };
+        self.session_manager.session_for_task(&synthetic_msg).await
     }
 
     pub async fn run(self) -> Result<()> {

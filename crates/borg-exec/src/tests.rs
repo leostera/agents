@@ -366,6 +366,96 @@ async fn openrouter_transcription_requires_openai_fallback_key() {
 }
 
 #[tokio::test]
+async fn set_model_for_session_updates_existing_agent_spec_and_preserves_fields() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let exec = BorgExecutor::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        uri!("borg", "worker", "set-model-existing"),
+    );
+    let default_agent_id = uri!("borg", "agent", "default");
+    let existing_tools = json!([{
+        "name": "tool-a",
+        "description": "demo",
+        "parameters": { "type": "object" }
+    }]);
+    db.upsert_agent_spec(
+        &default_agent_id,
+        "gpt-4o-mini",
+        "Keep this system prompt.",
+        &existing_tools,
+    )
+    .await
+    .unwrap();
+
+    let session_id = uri!("borg", "session", "model-update-existing");
+    let (agent_id, model) = exec
+        .set_model_for_session(&session_id, "openai/gpt-4.1-mini")
+        .await
+        .unwrap();
+
+    assert_eq!(agent_id, default_agent_id);
+    assert_eq!(model, "openai/gpt-4.1-mini");
+
+    let updated = db.get_agent_spec(&default_agent_id).await.unwrap().unwrap();
+    assert_eq!(updated.model, "openai/gpt-4.1-mini");
+    assert_eq!(updated.system_prompt, "Keep this system prompt.");
+    assert_eq!(updated.tools, existing_tools);
+}
+
+#[tokio::test]
+async fn set_model_for_session_creates_default_agent_spec_when_missing() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let exec = BorgExecutor::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        uri!("borg", "worker", "set-model-new"),
+    );
+
+    let session_id = uri!("borg", "session", "model-update-new");
+    let (agent_id, model) = exec
+        .set_model_for_session(&session_id, "openai/gpt-4.1-nano")
+        .await
+        .unwrap();
+
+    assert_eq!(agent_id, uri!("borg", "agent", "default"));
+    assert_eq!(model, "openai/gpt-4.1-nano");
+
+    let created = db.get_agent_spec(&agent_id).await.unwrap().unwrap();
+    assert_eq!(created.model, "openai/gpt-4.1-nano");
+    assert!(!created.system_prompt.is_empty());
+    assert!(
+        created
+            .tools
+            .as_array()
+            .is_some_and(|tools| !tools.is_empty())
+    );
+}
+
+#[tokio::test]
+async fn set_model_for_session_rejects_empty_model() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let exec = BorgExecutor::new(
+        db,
+        memory,
+        CodeModeRuntime::default(),
+        uri!("borg", "worker", "set-model-invalid"),
+    );
+
+    let session_id = uri!("borg", "session", "model-update-invalid");
+    let err = exec
+        .set_model_for_session(&session_id, "   ")
+        .await
+        .expect_err("empty model must fail");
+    assert!(err.to_string().contains("model must not be empty"));
+}
+
+#[tokio::test]
 async fn recover_running_task_is_requeued_and_processed() {
     let db = open_test_db().await;
     let payload = json!(UserMessage {
