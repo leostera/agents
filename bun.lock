@@ -78,8 +78,20 @@
       "name": "@borg/dashboard",
       "version": "0.1.0",
       "dependencies": {
+        "@borg/explorer": "workspace:*",
         "@borg/i18n": "workspace:*",
         "@borg/ui": "workspace:*",
+        "react": "^18.3.1",
+      },
+      "peerDependencies": {
+        "react": "^18.0.0",
+        "react-dom": "^18.0.0",
+      },
+    },
+    "packages/borg-explorer": {
+      "name": "@borg/explorer",
+      "version": "0.1.0",
+      "dependencies": {
         "react": "^18.3.1",
       },
       "peerDependencies": {
@@ -197,6 +209,8 @@
     "@borg/app": ["@borg/app@workspace:packages/borg-app"],
 
     "@borg/dashboard": ["@borg/dashboard@workspace:packages/borg-dashboard"],
+
+    "@borg/explorer": ["@borg/explorer@workspace:packages/borg-explorer"],
 
     "@borg/i18n": ["@borg/i18n@workspace:packages/borg-i18n"],
 
