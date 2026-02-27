@@ -111,6 +111,17 @@ pub(crate) struct UpsertPortSessionContextRequest {
 pub(crate) struct DbController;
 
 impl DbController {
+    pub(crate) async fn list_llm_calls(
+        State(state): State<AppState>,
+        Query(query): Query<LimitQuery>,
+    ) -> impl IntoResponse {
+        let limit = query.limit.unwrap_or(500);
+        match state.db.list_llm_calls(limit).await {
+            Ok(calls) => (StatusCode::OK, Json(json!({ "llm_calls": calls }))).into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
     pub(crate) async fn list_providers(
         State(state): State<AppState>,
         Query(query): Query<LimitQuery>,
@@ -786,6 +797,17 @@ impl DbController {
         }
     }
 
+    pub(crate) async fn list_ports(
+        State(state): State<AppState>,
+        Query(query): Query<LimitQuery>,
+    ) -> impl IntoResponse {
+        let limit = query.limit.unwrap_or(200);
+        match state.db.list_ports(limit).await {
+            Ok(ports) => (StatusCode::OK, Json(json!({ "ports": ports }))).into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    }
+
     pub(crate) async fn list_port_settings(
         State(state): State<AppState>,
         AxumPath(port): AxumPath<String>,
@@ -800,6 +822,23 @@ impl DbController {
                     .collect();
                 (StatusCode::OK, Json(json!({ "settings": settings }))).into_response()
             }
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    }
+
+    pub(crate) async fn delete_port(
+        State(state): State<AppState>,
+        AxumPath(port): AxumPath<String>,
+    ) -> impl IntoResponse {
+        match state.db.delete_port(&port).await {
+            Ok(()) => match state
+                .ports_supervisor
+                .on_port_setting_changed(&port, "enabled")
+                .await
+            {
+                Ok(()) => StatusCode::NO_CONTENT.into_response(),
+                Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            },
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
@@ -829,7 +868,14 @@ impl DbController {
             .upsert_port_setting(&port, &key, &payload.value)
             .await
         {
-            Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+            Ok(()) => match state
+                .ports_supervisor
+                .on_port_setting_changed(&port, &key)
+                .await
+            {
+                Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+                Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            },
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
@@ -840,7 +886,14 @@ impl DbController {
     ) -> impl IntoResponse {
         match state.db.delete_port_setting(&port, &key).await {
             Ok(0) => api_error(StatusCode::NOT_FOUND, "port setting not found".to_string()),
-            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Ok(_) => match state
+                .ports_supervisor
+                .on_port_setting_changed(&port, &key)
+                .await
+            {
+                Ok(()) => StatusCode::NO_CONTENT.into_response(),
+                Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            },
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }

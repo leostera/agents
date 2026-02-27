@@ -26,6 +26,7 @@ const TELEGRAM_TYPING_REFRESH_SECS: u64 = 4;
 pub struct TelegramPort {
     exec: ExecEngine,
     bot: Bot,
+    port_name: String,
     bot_token: String,
     http: reqwest::Client,
 }
@@ -33,19 +34,19 @@ pub struct TelegramPort {
 #[derive(Clone)]
 struct TelegramCommandState {
     exec: ExecEngine,
+    port_name: String,
     message: Message,
 }
 
 impl PortMessage {
-    pub fn from_telegram_text(message: &Message, text: String, input_kind: &str) -> Option<Self> {
+    pub fn from_telegram_text(
+        port_name: &str,
+        message: &Message,
+        text: String,
+        input_kind: &str,
+    ) -> Option<Self> {
         let chat_id = message.chat.id.0;
-        let user_id = message
-            .from
-            .as_ref()
-            .map(|user| user.id.0)
-            .unwrap_or(chat_id as u64);
-        let session_id =
-            Uri::from_parts("borg", "session", Some(&format!("telegram_{chat_id}"))).ok();
+        let user_key = TelegramPort::conversation_user_key(message)?;
         let chat_type = if message.chat.is_private() {
             "private"
         } else if message.chat.is_group() {
@@ -59,12 +60,11 @@ impl PortMessage {
         };
 
         Some(Self {
-            port: "telegram".to_string(),
-            user_key: Uri::from_parts(TELEGRAM_USER_KEY_PREFIX, "user", Some(&user_id.to_string()))
-                .ok()?,
+            port: port_name.to_string(),
+            user_key,
             text,
             metadata: json!({
-                "port": "telegram",
+                "port": port_name,
                 "chat_id": chat_id,
                 "chat_type": chat_type,
                 "message_id": message.id.0,
@@ -75,7 +75,7 @@ impl PortMessage {
                 "sender_first_name": message.from.as_ref().map(|u| u.first_name.clone()),
                 "sender_last_name": message.from.as_ref().and_then(|u| u.last_name.clone())
             }),
-            session_id,
+            session_id: None,
             agent_id: None,
             task_id: None,
             reply: None,
@@ -89,7 +89,7 @@ impl PortMessage {
 impl Port for TelegramPort {
     fn init(config: PortConfig) -> Result<Self> {
         match config {
-            PortConfig::Telegram { exec, bot_token } => Self::new(exec, bot_token),
+            PortConfig::Telegram { exec, bot_token } => Self::new(exec, "telegram", bot_token),
             _ => Err(anyhow!("invalid config for TelegramPort")),
         }
     }
@@ -130,11 +130,16 @@ impl Port for TelegramPort {
 }
 
 impl TelegramPort {
-    pub fn new(exec: ExecEngine, bot_token: impl Into<String>) -> Result<Self> {
+    pub fn new(
+        exec: ExecEngine,
+        port_name: impl Into<String>,
+        bot_token: impl Into<String>,
+    ) -> Result<Self> {
         let bot_token = bot_token.into();
         Ok(Self {
             exec,
             bot: Bot::new(bot_token.clone()),
+            port_name: port_name.into(),
             bot_token,
             http: reqwest::Client::new(),
         })
@@ -159,6 +164,7 @@ impl TelegramPort {
                 if let Some(text) = message.text() {
                     let command_state = TelegramCommandState {
                         exec: exec.clone(),
+                        port_name: command_port.port_name.clone(),
                         message: message.clone(),
                     };
                     let commands = match build_telegram_command_registry(command_state) {
@@ -173,12 +179,15 @@ impl TelegramPort {
                         }
                     };
                     if commands.is_command(text) {
-                        if let Some(inbound) =
-                            PortMessage::from_telegram_text(&message, text.to_string(), "text")
-                            && let Some(session_id) = inbound.session_id
+                        if let Some(inbound) = PortMessage::from_telegram_text(
+                            &command_port.port_name,
+                            &message,
+                            text.to_string(),
+                            "text",
+                        ) && let Some(session_id) = inbound.session_id
                             && let Err(err) = exec
                                 .merge_port_message_metadata(
-                                    "telegram",
+                                    &command_port.port_name,
                                     &session_id,
                                     &inbound.metadata,
                                 )
@@ -223,6 +232,7 @@ impl TelegramPort {
                 let port = TelegramPort {
                     exec,
                     bot: bot.clone(),
+                    port_name: command_port.port_name.clone(),
                     bot_token: command_port.bot_token.clone(),
                     http: command_port.http.clone(),
                 };
@@ -282,6 +292,7 @@ impl TelegramPort {
     ) -> Result<Option<PortMessage>> {
         if let Some(text) = message.text() {
             return Ok(PortMessage::from_telegram_text(
+                &self.port_name,
                 message,
                 text.to_string(),
                 "text",
@@ -304,8 +315,9 @@ impl TelegramPort {
             }
 
             let text = format!("Voice message transcript:\n{}", transcript);
-            let mut inbound = PortMessage::from_telegram_text(message, text, "voice")
-                .ok_or_else(|| anyhow!("failed to build inbound telegram voice message"))?;
+            let mut inbound =
+                PortMessage::from_telegram_text(&self.port_name, message, text, "voice")
+                    .ok_or_else(|| anyhow!("failed to build inbound telegram voice message"))?;
             if let Some(metadata) = inbound.metadata.as_object_mut() {
                 metadata.insert(
                     "voice_duration_secs".to_string(),
@@ -348,5 +360,15 @@ impl TelegramPort {
         }
         let command = first_token.trim_start_matches('/').split('@').next();
         matches!(command, Some("help"))
+    }
+
+    fn conversation_user_key(message: &Message) -> Option<Uri> {
+        let chat_id = message.chat.id.0;
+        let user_id = message
+            .from
+            .as_ref()
+            .map(|user| user.id.0)
+            .unwrap_or(chat_id as u64);
+        Uri::from_parts(TELEGRAM_USER_KEY_PREFIX, "user", Some(&user_id.to_string())).ok()
     }
 }

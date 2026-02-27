@@ -9,7 +9,7 @@ use super::TelegramPort;
 
 impl TelegramPort {
     pub(super) async fn refresh_session_contexts(&self) -> Result<()> {
-        let sessions = self.exec.list_port_session_ids("telegram").await?;
+        let sessions = self.exec.list_port_session_ids(&self.port_name).await?;
         for session_id in sessions {
             let Some(chat_id) = Self::chat_id_from_session_id(&session_id) else {
                 continue;
@@ -67,12 +67,12 @@ impl TelegramPort {
 
             let merged = Self::merge_session_context(
                 self.exec
-                    .get_port_session_context("telegram", &session_id)
+                    .get_port_session_context(&self.port_name, &session_id)
                     .await?,
                 snapshot,
             );
             self.exec
-                .upsert_port_session_context("telegram", &session_id, &merged)
+                .upsert_port_session_context(&self.port_name, &session_id, &merged)
                 .await?;
         }
         Ok(())
@@ -106,8 +106,7 @@ impl TelegramPort {
 
     fn chat_id_from_session_id(session_id: &Uri) -> Option<i64> {
         let raw = session_id.as_str();
-        let prefix = "borg:session:telegram_";
-        let value = raw.strip_prefix(prefix)?;
+        let value = raw.strip_prefix("borg:session:")?.rsplit('_').next()?;
         value.parse::<i64>().ok()
     }
 

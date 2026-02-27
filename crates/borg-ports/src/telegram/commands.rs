@@ -29,17 +29,17 @@ fn command_start(req: CommandRequest<TelegramCommandState>) -> String {
 }
 
 fn command_port(req: CommandRequest<TelegramCommandState>) -> String {
-    TelegramPort::port_info(&req.state.message)
+    TelegramPort::port_info(&req.state.port_name, &req.state.message)
 }
 
 async fn command_agent(req: CommandRequest<TelegramCommandState>) -> Result<String> {
-    let session_id = req.state.session_id()?;
+    let session_id = req.state.session_id().await?;
     let (agent_id, model) = req.state.exec.agent_info_for_session(&session_id).await?;
     Ok(format_agent_summary(&agent_id, &model, &session_id))
 }
 
 async fn command_model(req: CommandRequest<TelegramCommandState>) -> Result<String> {
-    let session_id = req.state.session_id()?;
+    let session_id = req.state.session_id().await?;
     match parse_model_command_action(&req.args) {
         ModelCommandAction::Show => {
             let (agent_id, model) = req.state.exec.agent_info_for_session(&session_id).await?;
@@ -61,7 +61,7 @@ async fn command_model(req: CommandRequest<TelegramCommandState>) -> Result<Stri
 }
 
 async fn command_compact(req: CommandRequest<TelegramCommandState>) -> Result<String> {
-    let session_id = req.state.session_id()?;
+    let session_id = req.state.session_id().await?;
     let kept = req.state.exec.compact_session(&session_id).await?;
     Ok(format!(
         "Compacted session. Kept {} context message(s).",
@@ -70,11 +70,11 @@ async fn command_compact(req: CommandRequest<TelegramCommandState>) -> Result<St
 }
 
 async fn command_participants(req: CommandRequest<TelegramCommandState>) -> Result<String> {
-    let session_id = req.state.session_id()?;
+    let session_id = req.state.session_id().await?;
     let ctx = req
         .state
         .exec
-        .get_port_session_context("telegram", &session_id)
+        .get_port_session_context(&req.state.port_name, &session_id)
         .await?;
     Ok(TelegramPort::format_participants_message(
         ctx.as_ref(),
@@ -83,7 +83,7 @@ async fn command_participants(req: CommandRequest<TelegramCommandState>) -> Resu
 }
 
 async fn command_context(req: CommandRequest<TelegramCommandState>) -> Result<String> {
-    let session_id = req.state.session_id()?;
+    let session_id = req.state.session_id().await?;
     let context = req
         .state
         .exec
@@ -94,12 +94,12 @@ async fn command_context(req: CommandRequest<TelegramCommandState>) -> Result<St
 }
 
 async fn command_reset(req: CommandRequest<TelegramCommandState>) -> Result<String> {
-    let session_id = req.state.session_id()?;
+    let session_id = req.state.session_id().await?;
     let deleted_messages = req.state.exec.clear_session_history(&session_id).await?;
     let _ = req
         .state
         .exec
-        .clear_port_session_context("telegram", &session_id)
+        .clear_port_session_context(&req.state.port_name, &session_id)
         .await?;
     Ok(format!(
         "Reset complete. Cleared {} message(s) and Telegram session context.",
@@ -108,12 +108,22 @@ async fn command_reset(req: CommandRequest<TelegramCommandState>) -> Result<Stri
 }
 
 impl TelegramCommandState {
-    fn session_id(&self) -> Result<Uri> {
-        Uri::from_parts(
-            "borg",
-            "session",
-            Some(&format!("telegram_{}", self.message.chat.id.0)),
-        )
+    async fn session_id(&self) -> Result<Uri> {
+        let conversation_key = self.conversation_key()?;
+        self.exec
+            .resolve_port_session_id(&self.port_name, &conversation_key)
+            .await
+    }
+
+    fn conversation_key(&self) -> Result<Uri> {
+        let chat_id = self.message.chat.id.0;
+        let user_id = self
+            .message
+            .from
+            .as_ref()
+            .map(|user| user.id.0)
+            .unwrap_or(chat_id as u64);
+        Uri::from_parts("telegram", "user", Some(&user_id.to_string()))
     }
 }
 

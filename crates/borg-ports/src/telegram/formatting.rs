@@ -55,7 +55,7 @@ impl TelegramPort {
         chunks
     }
 
-    pub(super) fn port_info(message: &Message) -> String {
+    pub(super) fn port_info(port_name: &str, message: &Message) -> String {
         let chat_id = message.chat.id.0;
         let chat_type = if message.chat.is_private() {
             "private"
@@ -68,8 +68,7 @@ impl TelegramPort {
         } else {
             "unknown"
         };
-        let session_uri = format!("borg:session:telegram_{chat_id}");
-        format!("Port: telegram\nChat: {chat_type}\nSession: {session_uri}")
+        format!("Port: {port_name}\nChat: {chat_type}\nChat ID: {chat_id}")
     }
 
     pub(super) fn format_participants_message(

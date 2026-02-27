@@ -28,6 +28,76 @@ export type SessionResponse = {
   session?: SessionRecord;
 };
 
+export type AgentSpecRecord = {
+  agent_id: string;
+  model: string;
+  system_prompt: string;
+  tools: unknown;
+  updated_at: string;
+};
+
+export type AgentSpecsResponse = {
+  agent_specs?: AgentSpecRecord[];
+};
+
+export type AgentSpecResponse = {
+  agent_spec?: AgentSpecRecord;
+};
+
+export type UserRecord = {
+  user_key: string;
+  profile: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UsersResponse = {
+  users?: UserRecord[];
+};
+
+export type UserResponse = {
+  user?: UserRecord;
+};
+
+export type SessionMessagesResponse = {
+  messages?: Record<string, unknown>[];
+};
+
+export type PortSetting = {
+  key: string;
+  value: string;
+};
+
+export type PortRecord = {
+  provider: string;
+  port: string;
+  enabled: boolean;
+  active_sessions: number;
+  updated_at?: string | null;
+};
+
+export type PortsResponse = {
+  ports?: PortRecord[];
+};
+
+export type PortSettingsResponse = {
+  settings?: PortSetting[];
+};
+
+export type PortSettingResponse = {
+  value?: string;
+};
+
+export type PortBinding = {
+  conversation_key: string;
+  session_id: string;
+  agent_id?: string | null;
+};
+
+export type PortBindingsResponse = {
+  bindings?: PortBinding[];
+};
+
 export type MemoryEntity = {
   entity_id: string;
   entity_type: string;
@@ -52,6 +122,25 @@ export type MemoryExplorerEdge = {
 export type MemoryExplorerResponse = {
   entities?: MemoryEntity[];
   edges?: MemoryExplorerEdge[];
+};
+
+export type LlmCallRecord = {
+  call_id: string;
+  provider: string;
+  capability: string;
+  model: string;
+  success: boolean;
+  status_code?: number | null;
+  status_reason?: string | null;
+  http_reason?: string | null;
+  error?: string | null;
+  latency_ms?: number | null;
+  sent_at: string;
+  received_at?: string | null;
+};
+
+export type LlmCallsResponse = {
+  llm_calls?: LlmCallRecord[];
 };
 
 export class BorgApiError extends Error {
@@ -183,6 +272,236 @@ export class BorgApiClient {
     }
   }
 
+  async listSessionMessages(
+    sessionId: string,
+    params: { from?: number; limit?: number } = {}
+  ): Promise<Record<string, unknown>[]> {
+    const searchParams = new URLSearchParams({
+      from: String(params.from ?? 0),
+      limit: String(params.limit ?? 200),
+    });
+    const data = await this.requestJson<SessionMessagesResponse>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/messages?${searchParams.toString()}`
+    );
+    return Array.isArray(data.messages) ? data.messages : [];
+  }
+
+  async listAgentSpecs(limit = 100): Promise<AgentSpecRecord[]> {
+    const data = await this.requestJson<AgentSpecsResponse>(
+      `/api/agents/specs?limit=${limit}`
+    );
+    return Array.isArray(data.agent_specs) ? data.agent_specs : [];
+  }
+
+  async getAgentSpec(agentId: string): Promise<AgentSpecRecord | null> {
+    try {
+      const data = await this.requestJson<AgentSpecResponse>(
+        `/api/agents/specs/${encodeURIComponent(agentId)}`
+      );
+      return data.agent_spec ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async upsertAgentSpec(payload: {
+    agentId: string;
+    model: string;
+    systemPrompt: string;
+    tools: unknown;
+  }): Promise<void> {
+    await this.request(
+      `/api/agents/specs/${encodeURIComponent(payload.agentId)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: payload.model,
+          system_prompt: payload.systemPrompt,
+          tools: payload.tools,
+        }),
+      }
+    );
+  }
+
+  async deleteAgentSpec(
+    agentId: string,
+    options: { ignoreNotFound?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.request(`/api/agents/specs/${encodeURIComponent(agentId)}`, {
+        method: "DELETE",
+      });
+    } catch (error) {
+      if (
+        options.ignoreNotFound &&
+        error instanceof BorgApiError &&
+        error.status === 404
+      ) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async listUsers(limit = 100): Promise<UserRecord[]> {
+    const data = await this.requestJson<UsersResponse>(
+      `/api/users?limit=${limit}`
+    );
+    return Array.isArray(data.users) ? data.users : [];
+  }
+
+  async getUser(userKey: string): Promise<UserRecord | null> {
+    try {
+      const data = await this.requestJson<UserResponse>(
+        `/api/users/${encodeURIComponent(userKey)}`
+      );
+      return data.user ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async upsertUser(
+    userKey: string,
+    profile: Record<string, unknown>
+  ): Promise<void> {
+    await this.request(`/api/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ user_key: userKey, profile }),
+    });
+  }
+
+  async patchUser(
+    userKey: string,
+    profile: Record<string, unknown>
+  ): Promise<void> {
+    await this.request(`/api/users/${encodeURIComponent(userKey)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profile }),
+    });
+  }
+
+  async deleteUser(
+    userKey: string,
+    options: { ignoreNotFound?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.request(`/api/users/${encodeURIComponent(userKey)}`, {
+        method: "DELETE",
+      });
+    } catch (error) {
+      if (
+        options.ignoreNotFound &&
+        error instanceof BorgApiError &&
+        error.status === 404
+      ) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async listPortSettings(port: string, limit = 200): Promise<PortSetting[]> {
+    const data = await this.requestJson<PortSettingsResponse>(
+      `/api/ports/${encodeURIComponent(port)}/settings?limit=${limit}`
+    );
+    return Array.isArray(data.settings) ? data.settings : [];
+  }
+
+  async listPorts(limit = 200): Promise<PortRecord[]> {
+    const data = await this.requestJson<PortsResponse>(
+      `/api/ports?limit=${limit}`
+    );
+    return Array.isArray(data.ports) ? data.ports : [];
+  }
+
+  async deletePort(
+    port: string,
+    options: { ignoreNotFound?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.request(`/api/ports/${encodeURIComponent(port)}`, {
+        method: "DELETE",
+      });
+    } catch (error) {
+      if (
+        options.ignoreNotFound &&
+        error instanceof BorgApiError &&
+        error.status === 404
+      ) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async getPortSetting(port: string, key: string): Promise<string | null> {
+    try {
+      const data = await this.requestJson<PortSettingResponse>(
+        `/api/ports/${encodeURIComponent(port)}/settings/${encodeURIComponent(key)}`
+      );
+      return typeof data.value === "string" ? data.value : null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async upsertPortSetting(
+    port: string,
+    key: string,
+    value: string
+  ): Promise<void> {
+    await this.request(
+      `/api/ports/${encodeURIComponent(port)}/settings/${encodeURIComponent(key)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ value }),
+      }
+    );
+  }
+
+  async deletePortSetting(
+    port: string,
+    key: string,
+    options: { ignoreNotFound?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.request(
+        `/api/ports/${encodeURIComponent(port)}/settings/${encodeURIComponent(key)}`,
+        { method: "DELETE" }
+      );
+    } catch (error) {
+      if (
+        options.ignoreNotFound &&
+        error instanceof BorgApiError &&
+        error.status === 404
+      ) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async listPortBindings(port: string, limit = 200): Promise<PortBinding[]> {
+    const data = await this.requestJson<PortBindingsResponse>(
+      `/api/ports/${encodeURIComponent(port)}/bindings?limit=${limit}`
+    );
+    return Array.isArray(data.bindings) ? data.bindings : [];
+  }
+
   async upsertProviderApiKey(provider: string, apiKey: string): Promise<void> {
     await this.request(`/api/providers/${provider}`, {
       method: "PUT",
@@ -264,6 +583,13 @@ export class BorgApiClient {
       entities: Array.isArray(data.entities) ? data.entities : [],
       edges: Array.isArray(data.edges) ? data.edges : [],
     };
+  }
+
+  async listLlmCalls(limit = 500): Promise<LlmCallRecord[]> {
+    const data = await this.requestJson<LlmCallsResponse>(
+      `/api/observability/llm-calls?limit=${limit}`
+    );
+    return Array.isArray(data.llm_calls) ? data.llm_calls : [];
   }
 }
 

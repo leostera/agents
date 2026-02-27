@@ -11,13 +11,12 @@ use axum::{
 use borg_db::BorgDb;
 use borg_exec::ExecEngine;
 use borg_ltm::MemoryStore;
-use borg_ports::{HttpPort, TelegramPort, init_http_port};
+use borg_ports::{BorgPortsSupervisor, HttpPort, init_http_port};
 use tokio::net::TcpListener;
-use tokio::task::JoinHandle;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
-use tracing::{error, info};
+use tracing::info;
 
 use crate::controllers::db::DbController;
 use crate::controllers::system::SystemController;
@@ -30,12 +29,12 @@ pub(crate) struct AppState {
     pub(crate) db: BorgDb,
     pub(crate) http_port: HttpPort,
     pub(crate) memory: MemoryStore,
+    pub(crate) ports_supervisor: BorgPortsSupervisor,
 }
 
 pub struct BorgApiServer {
     bind: String,
     state: AppState,
-    exec: ExecEngine,
 }
 
 impl BorgApiServer {
@@ -43,16 +42,17 @@ impl BorgApiServer {
         Self {
             bind,
             state: AppState {
-                db,
+                db: db.clone(),
                 http_port: init_http_port(exec.clone()).expect("failed to initialize http port"),
                 memory,
+                ports_supervisor: BorgPortsSupervisor::new(db, exec.clone()),
             },
-            exec,
         }
     }
 
     pub async fn run(self) -> Result<()> {
-        let telegram_task = start_telegram_port(self.state.db.clone(), self.exec.clone()).await?;
+        let ports_supervisor = self.state.ports_supervisor.clone();
+        let ports_task = ports_supervisor.clone().start();
         let router = app_router(self.state);
 
         let addr: SocketAddr = self.bind.parse()?;
@@ -69,10 +69,8 @@ impl BorgApiServer {
         axum::serve(listener, router)
             .with_graceful_shutdown(shutdown)
             .await?;
-
-        if let Some(task) = telegram_task {
-            task.abort();
-        }
+        ports_task.abort();
+        ports_supervisor.shutdown().await;
 
         Ok(())
     }
@@ -96,6 +94,10 @@ fn app_router(state: AppState) -> Router {
         .route(
             "/memory/entities/:id",
             get(SystemController::get_memory_entity),
+        )
+        .route(
+            "/api/observability/llm-calls",
+            get(DbController::list_llm_calls),
         )
         .route("/api/providers", get(DbController::list_providers))
         .route(
@@ -163,6 +165,11 @@ fn app_router(state: AppState) -> Router {
                 .patch(DbController::patch_session_message)
                 .delete(DbController::delete_session_message),
         )
+        .route(
+            "/api/ports/:port",
+            axum::routing::delete(DbController::delete_port),
+        )
+        .route("/api/ports", get(DbController::list_ports))
         .route(
             "/api/ports/:port/settings",
             get(DbController::list_port_settings),
@@ -248,33 +255,11 @@ fn is_allowed_localhost_origin(origin: &str) -> bool {
         || origin.starts_with(&format!("{LOOPBACK_HTTPS}:"))
 }
 
-async fn start_telegram_port(db: BorgDb, exec: ExecEngine) -> Result<Option<JoinHandle<()>>> {
-    let token = db.get_port_setting("telegram", "bot_token").await?;
-    let Some(token) = token else {
-        info!(target: "borg_api", "telegram port disabled (no token configured)");
-        return Ok(None);
-    };
-
-    let token = token.trim().to_string();
-    if token.is_empty() {
-        info!(target: "borg_api", "telegram port disabled (empty token)");
-        return Ok(None);
-    }
-
-    let telegram_port = TelegramPort::new(exec, token)?;
-    let task = tokio::spawn(async move {
-        if let Err(err) = telegram_port.run().await {
-            error!(target: "borg_api", error = %err, "telegram port terminated");
-        }
-    });
-
-    info!(target: "borg_api", "telegram port enabled");
-    Ok(Some(task))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{AppState, HttpPortRequest, app_router, validate_port_request};
+    use super::{
+        AppState, BorgPortsSupervisor, HttpPortRequest, app_router, validate_port_request,
+    };
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode, header};
     use borg_core::Uri;
@@ -319,11 +304,12 @@ mod tests {
             CodeModeRuntime::default(),
             Uri::parse("borg:worker:test").expect("worker uri"),
         );
-        let http_port = init_http_port(exec).expect("init http port");
+        let http_port = init_http_port(exec.clone()).expect("init http port");
         let state = AppState {
-            db,
+            db: db.clone(),
             http_port,
             memory,
+            ports_supervisor: BorgPortsSupervisor::disabled(db, exec),
         };
         app_router(state)
     }
@@ -630,12 +616,26 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(body["settings"].as_array().is_some_and(|v| !v.is_empty()));
 
+        let (status, body) = request_no_body(&app, Method::GET, "/api/ports?limit=100").await;
+        assert_eq!(status, StatusCode::OK);
+        let ports = body["ports"].as_array().expect("ports array");
+        let telegram = ports
+            .iter()
+            .find(|port| port["port"] == "telegram")
+            .expect("telegram port row");
+        assert_eq!(telegram["provider"], "telegram");
+        assert!(telegram["enabled"].is_boolean());
+        assert!(telegram["active_sessions"].is_number());
+
         let (status, _) = request_no_body(
             &app,
             Method::DELETE,
             "/api/ports/telegram/settings/bot_token",
         )
         .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (status, _) = request_no_body(&app, Method::DELETE, "/api/ports/telegram").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
     }
 

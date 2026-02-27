@@ -1,12 +1,10 @@
 import { BorgApiError, createBorgApiClient } from "@borg/api";
-import { createI18n } from "@borg/i18n";
-import { Button, SidebarInset, SidebarProvider } from "@borg/ui";
+import { SidebarInset, SidebarProvider } from "@borg/ui";
 import {
   Bell,
   Bot,
   LayoutDashboard,
   Map,
-  Plus,
   Route,
   ScanSearch,
   Settings2,
@@ -17,8 +15,14 @@ import {
 import React, { useEffect, useMemo, useState } from "react";
 import { AppSidebar } from "./AppSidebar";
 import { CommandK, type CommandSectionGroup } from "./CommandK";
+import { AgentsPage } from "./pages/control/agents";
+import { AgentDetailsPage } from "./pages/control/agents/id";
+import { PortsPage } from "./pages/control/ports";
+import { PortDetailsPage } from "./pages/control/ports/id";
 import { SessionPage } from "./pages/control/sessions";
 import { SessionDetailsPage } from "./pages/control/sessions/id";
+import { UsersPage } from "./pages/control/users";
+import { UserDetailsPage } from "./pages/control/users/id";
 import { MemoryEntityPage } from "./pages/memory/entity";
 import { MemoryExplorerPage } from "./pages/memory/explorer";
 import { MemoryGraphPage } from "./pages/memory/graph";
@@ -43,6 +47,7 @@ type ResolvedDashboardRoute = {
   entityUri: string | null;
   explorerUri: string | null;
   sessionId: string | null;
+  portName: string | null;
 };
 
 const SECTION_GROUPS: DashboardRouteGroup[] = [
@@ -79,6 +84,12 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
         title: "Users",
         icon: Users,
         path: "/control/users",
+      },
+      {
+        id: "control-ports",
+        title: "Ports",
+        icon: Route,
+        path: "/control/ports",
       },
       {
         id: "control-policies",
@@ -166,6 +177,9 @@ const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
 const MEMORY_ENTITY_PREFIX = "/memory/entity/";
 const MEMORY_EXPLORER_PREFIX = "/memory/explorer/";
 const CONTROL_SESSION_PREFIX = "/control/sessions/";
+const CONTROL_AGENT_PREFIX = "/control/agents/";
+const CONTROL_USER_PREFIX = "/control/users/";
+const CONTROL_PORT_PREFIX = "/control/ports/";
 const borgApi = createBorgApiClient();
 
 function ControlPlaceholder({ title }: { title: string }) {
@@ -193,6 +207,7 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
         entityUri: decodeURIComponent(encodedUri),
         explorerUri: null,
         sessionId: null,
+        portName: null,
       };
     } catch {
       return {
@@ -200,6 +215,7 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
         entityUri: encodedUri,
         explorerUri: null,
         sessionId: null,
+        portName: null,
       };
     }
   }
@@ -214,6 +230,7 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
         entityUri: null,
         explorerUri: decodeURIComponent(encodedUri),
         sessionId: null,
+        portName: null,
       };
     } catch {
       return {
@@ -221,6 +238,7 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
         entityUri: null,
         explorerUri: encodedUri,
         sessionId: null,
+        portName: null,
       };
     }
   }
@@ -237,6 +255,7 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
         entityUri: null,
         explorerUri: null,
         sessionId: decodeURIComponent(encodedSessionId),
+        portName: null,
       };
     } catch {
       return {
@@ -244,6 +263,78 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
         entityUri: null,
         explorerUri: null,
         sessionId: encodedSessionId,
+        portName: null,
+      };
+    }
+  }
+  if (
+    normalizedPathname.startsWith(CONTROL_AGENT_PREFIX) &&
+    normalizedPathname.length > CONTROL_AGENT_PREFIX.length
+  ) {
+    const encodedAgentId = normalizedPathname.slice(
+      CONTROL_AGENT_PREFIX.length
+    );
+    try {
+      return {
+        id: "control-agent",
+        entityUri: decodeURIComponent(encodedAgentId),
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    } catch {
+      return {
+        id: "control-agent",
+        entityUri: encodedAgentId,
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    }
+  }
+  if (
+    normalizedPathname.startsWith(CONTROL_PORT_PREFIX) &&
+    normalizedPathname.length > CONTROL_PORT_PREFIX.length
+  ) {
+    const encodedPort = normalizedPathname.slice(CONTROL_PORT_PREFIX.length);
+    try {
+      return {
+        id: "control-port",
+        entityUri: null,
+        explorerUri: null,
+        sessionId: null,
+        portName: decodeURIComponent(encodedPort),
+      };
+    } catch {
+      return {
+        id: "control-port",
+        entityUri: null,
+        explorerUri: null,
+        sessionId: null,
+        portName: encodedPort,
+      };
+    }
+  }
+  if (
+    normalizedPathname.startsWith(CONTROL_USER_PREFIX) &&
+    normalizedPathname.length > CONTROL_USER_PREFIX.length
+  ) {
+    const encodedUserKey = normalizedPathname.slice(CONTROL_USER_PREFIX.length);
+    try {
+      return {
+        id: "control-user",
+        entityUri: null,
+        explorerUri: decodeURIComponent(encodedUserKey),
+        sessionId: null,
+        portName: null,
+      };
+    } catch {
+      return {
+        id: "control-user",
+        entityUri: null,
+        explorerUri: encodedUserKey,
+        sessionId: null,
+        portName: null,
       };
     }
   }
@@ -257,6 +348,7 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
     entityUri: null,
     explorerUri: null,
     sessionId: null,
+    portName: null,
   };
 }
 
@@ -287,13 +379,13 @@ export function DashboardApp() {
         entityUri: null,
         explorerUri: null,
         sessionId: null,
+        portName: null,
       };
     return resolveRouteFromPath(window.location.pathname);
   });
   const activeId = route.id;
   const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
-  const i18n = useMemo(() => createI18n("en"), []);
   const username = useMemo(resolveUsername, []);
   const initials = useMemo(() => initialsFromUsername(username), [username]);
 
@@ -304,8 +396,16 @@ export function DashboardApp() {
       "control-session": () => (
         <SessionDetailsPage sessionId={route.sessionId ?? ""} />
       ),
-      "control-agents": () => <ControlPlaceholder title="Agents" />,
-      "control-users": () => <ControlPlaceholder title="Users" />,
+      "control-agents": () => <AgentsPage />,
+      "control-agent": () => (
+        <AgentDetailsPage agentId={route.entityUri ?? ""} />
+      ),
+      "control-users": () => <UsersPage />,
+      "control-user": () => (
+        <UserDetailsPage userKey={route.explorerUri ?? ""} />
+      ),
+      "control-ports": () => <PortsPage />,
+      "control-port": () => <PortDetailsPage port={route.portName ?? ""} />,
       "control-policies": () => <ControlPlaceholder title="Policies" />,
       "observability-overview": () => <ObservabilityOverviewPage />,
       "observability-alerts": () => <ObservabilityAlertsPage />,
@@ -320,27 +420,13 @@ export function DashboardApp() {
       "settings-providers": () => <ProvidersPage />,
     };
     return sectionById[activeId] ?? sectionById["overview-home"];
-  }, [activeId, route.entityUri, route.explorerUri, route.sessionId]);
-
-  const activeTitle = useMemo(() => {
-    if (activeId === "memory-entity") return "Entity";
-    if (activeId === "control-session") return "Session";
-    const section = ALL_SECTIONS.find((item) => item.id === activeId);
-    return section?.title ?? "Overview";
-  }, [activeId]);
-
-  const activeSubtitle = useMemo(() => {
-    if (activeId === "settings-providers") {
-      return i18n.t("dashboard.subtitle.settings.providers");
-    }
-    if (activeId === "memory-entity") {
-      return route.entityUri ?? i18n.t("dashboard.subtitle.default");
-    }
-    if (activeId === "control-session") {
-      return route.sessionId ?? i18n.t("dashboard.subtitle.default");
-    }
-    return i18n.t("dashboard.subtitle.default");
-  }, [activeId, i18n, route.entityUri, route.sessionId]);
+  }, [
+    activeId,
+    route.entityUri,
+    route.explorerUri,
+    route.portName,
+    route.sessionId,
+  ]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -401,29 +487,13 @@ export function DashboardApp() {
       entityUri: null,
       explorerUri: null,
       sessionId: null,
+      portName: null,
     });
     if (section && window.location.pathname !== section.path) {
       window.history.pushState(null, "", section.path);
     }
     setIsCommandMenuOpen(false);
   };
-
-  const headlineActions = useMemo(() => {
-    if (activeId === "settings-providers") {
-      return (
-        <Button
-          variant="outline"
-          onClick={() =>
-            window.dispatchEvent(new CustomEvent("providers:open-connect"))
-          }
-        >
-          <Plus className="size-4" />
-          Connect Provider
-        </Button>
-      );
-    }
-    return null;
-  }, [activeId]);
 
   const isExplorerImmersive = activeId === "memory-graph";
   const isHeadlineHidden =

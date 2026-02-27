@@ -285,6 +285,14 @@ impl BorgExecutor {
         self.db.list_port_session_ids(port).await
     }
 
+    pub async fn resolve_port_session_id(&self, port: &str, conversation_key: &Uri) -> Result<Uri> {
+        let (session_id, _agent_id) = self
+            .db
+            .resolve_port_session(port, conversation_key, None, None)
+            .await?;
+        Ok(session_id)
+    }
+
     pub async fn merge_port_message_metadata(
         &self,
         port: &str,

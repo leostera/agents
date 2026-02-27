@@ -1,5 +1,6 @@
 mod agents;
 mod core;
+mod llm_calls;
 mod migrations;
 mod policies;
 mod ports;
@@ -176,6 +177,15 @@ pub struct ProviderRecord {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PortRecord {
+    pub provider: String,
+    pub port: String,
+    pub enabled: bool,
+    pub active_sessions: u64,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PolicyRecord {
     pub policy_id: Uri,
     pub policy: Value,
@@ -188,4 +198,20 @@ pub struct PolicyUseRecord {
     pub policy_id: Uri,
     pub entity_id: Uri,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LlmCallRecord {
+    pub call_id: String,
+    pub provider: String,
+    pub capability: String,
+    pub model: String,
+    pub success: bool,
+    pub status_code: Option<u16>,
+    pub status_reason: Option<String>,
+    pub http_reason: Option<String>,
+    pub error: Option<String>,
+    pub latency_ms: Option<u64>,
+    pub sent_at: DateTime<Utc>,
+    pub received_at: Option<DateTime<Utc>>,
 }

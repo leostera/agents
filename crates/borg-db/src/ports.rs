@@ -3,9 +3,150 @@ use borg_core::{Uri, uri};
 use chrono::Utc;
 use serde_json::Value;
 
-use crate::BorgDb;
+use crate::{BorgDb, PortRecord};
 
 impl BorgDb {
+    pub async fn list_ports(&self, limit: usize) -> Result<Vec<PortRecord>> {
+        let limit = i64::try_from(limit).unwrap_or(200);
+        let mut rows = self
+            .conn
+            .query(
+                r#"
+                WITH discovered_ports AS (
+                    SELECT DISTINCT port FROM port_settings
+                    UNION
+                    SELECT DISTINCT port FROM port_bindings
+                    UNION
+                    SELECT DISTINCT port FROM port_session_ctx
+                )
+                SELECT
+                    COALESCE(kind.value, '') AS provider,
+                    dp.port,
+                    COALESCE(enabled.value, '') AS enabled,
+                    COALESCE(sess.active_sessions, 0) AS active_sessions,
+                    MAX(
+                        COALESCE(ps.updated_at, ''),
+                        COALESCE(pb.updated_at, ''),
+                        COALESCE(sess.updated_at, ''),
+                        COALESCE(ctx.updated_at, '')
+                    ) AS updated_at
+                FROM discovered_ports dp
+                LEFT JOIN (
+                    SELECT
+                        port,
+                        COUNT(*) AS setting_count,
+                        MAX(updated_at) AS updated_at
+                    FROM port_settings
+                    GROUP BY port
+                ) ps ON ps.port = dp.port
+                LEFT JOIN (
+                    SELECT
+                        port,
+                        COUNT(*) AS binding_count,
+                        MAX(updated_at) AS updated_at
+                    FROM port_bindings
+                    GROUP BY port
+                ) pb ON pb.port = dp.port
+                LEFT JOIN (
+                    SELECT
+                        port,
+                        COUNT(*) AS active_sessions,
+                        MAX(updated_at) AS updated_at
+                    FROM sessions
+                    GROUP BY port
+                ) sess ON sess.port = dp.port
+                LEFT JOIN (
+                    SELECT
+                        port,
+                        MAX(updated_at) AS updated_at
+                    FROM port_session_ctx
+                    GROUP BY port
+                ) ctx ON ctx.port = dp.port
+                LEFT JOIN (
+                    SELECT
+                        port,
+                        value
+                    FROM port_settings
+                    WHERE key = 'kind'
+                ) kind ON kind.port = dp.port
+                LEFT JOIN (
+                    SELECT
+                        port,
+                        value
+                    FROM port_settings
+                    WHERE key = 'enabled'
+                ) enabled ON enabled.port = dp.port
+                ORDER BY updated_at DESC, dp.port ASC
+                LIMIT ?1
+                "#,
+                (limit,),
+            )
+            .await
+            .context("failed to list ports")?;
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let provider_raw: String = row.get(0)?;
+            let port: String = row.get(1)?;
+            let enabled_raw: String = row.get(2)?;
+            let active_sessions: i64 = row.get(3)?;
+            let updated_at_raw: String = row.get(4)?;
+            let updated_at = if updated_at_raw.trim().is_empty() {
+                None
+            } else {
+                Some(
+                    chrono::DateTime::parse_from_rfc3339(&updated_at_raw)
+                        .context("invalid RFC3339 timestamp in ports.updated_at")?
+                        .with_timezone(&Utc),
+                )
+            };
+            let provider = if provider_raw.trim().is_empty() {
+                if port == "telegram" {
+                    "telegram".to_string()
+                } else {
+                    "custom".to_string()
+                }
+            } else {
+                provider_raw.trim().to_string()
+            };
+            let enabled = enabled_raw.trim().is_empty() || parse_port_enabled(&enabled_raw);
+
+            out.push(PortRecord {
+                provider,
+                port,
+                enabled,
+                active_sessions: active_sessions.max(0) as u64,
+                updated_at,
+            });
+        }
+        Ok(out)
+    }
+
+    pub async fn delete_port(&self, port: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM port_settings WHERE port = ?1",
+                (port.to_string(),),
+            )
+            .await
+            .context("failed deleting port settings")?;
+        self.conn
+            .execute(
+                "DELETE FROM port_bindings WHERE port = ?1",
+                (port.to_string(),),
+            )
+            .await
+            .context("failed deleting port bindings")?;
+        self.conn
+            .execute(
+                "DELETE FROM port_session_ctx WHERE port = ?1",
+                (port.to_string(),),
+            )
+            .await
+            .context("failed deleting port session context")?;
+        Ok(())
+    }
+
     pub async fn upsert_port_setting(&self, port: &str, key: &str, value: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         self.conn
@@ -342,4 +483,9 @@ impl BorgDb {
             .context("failed to clear port session context")?;
         Ok(deleted)
     }
+}
+
+fn parse_port_enabled(raw: &str) -> bool {
+    let normalized = raw.trim().to_ascii_lowercase();
+    !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
 }
