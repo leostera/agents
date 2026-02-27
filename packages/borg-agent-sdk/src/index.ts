@@ -65,14 +65,18 @@ interface BorgSdk {
   fetch(url: string, init?: BorgFetchInit): Promise<BorgFetchResponse>;
 }
 
-const ffiCall = (globalThis as { ffi?: (opName: string, args: unknown[]) => unknown }).ffi;
+const ffiCall = (
+  globalThis as { ffi?: (opName: string, args: unknown[]) => unknown }
+).ffi;
 
 if (typeof ffiCall !== "function") {
   throw new Error("borg-agent-sdk requires global ffi(opName, args)");
 }
 
 function sdkFetch(...args: unknown[]): Promise<BorgFetchResponse> {
-  const nativeFetch = (globalThis as { fetch?: (...fetchArgs: unknown[]) => unknown }).fetch;
+  const nativeFetch = (
+    globalThis as { fetch?: (...fetchArgs: unknown[]) => unknown }
+  ).fetch;
   if (typeof nativeFetch === "function") {
     return Promise.resolve(nativeFetch(...args) as Promise<BorgFetchResponse>);
   }

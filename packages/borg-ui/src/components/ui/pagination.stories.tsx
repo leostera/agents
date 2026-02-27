@@ -1,5 +1,5 @@
-import type { Meta, StoryObj } from '@storybook/react'
-import { useMemo, useState } from 'react'
+import type { Meta, StoryObj } from "@storybook/react";
+import { useMemo, useState } from "react";
 
 import {
   Pagination,
@@ -9,47 +9,48 @@ import {
   PaginationLink,
   PaginationNext,
   PaginationPrevious,
-} from './pagination'
+} from "./pagination";
 
 const meta: Meta<typeof Pagination> = {
-  title: 'UI/Pagination',
+  title: "UI/Pagination",
   component: Pagination,
-}
+};
 
-export default meta
-type Story = StoryObj<typeof Pagination>
+export default meta;
+type Story = StoryObj<typeof Pagination>;
 
 export const Default: Story = {
   render: () => {
-    const totalPages = 9
-    const [page, setPage] = useState(4)
+    const totalPages = 9;
+    const [page, setPage] = useState(4);
 
     const visiblePages = useMemo(() => {
-      if (page <= 2) return [1, 2, 3]
-      if (page >= totalPages - 1) return [totalPages - 2, totalPages - 1, totalPages]
-      return [page - 1, page, page + 1]
-    }, [page, totalPages])
+      if (page <= 2) return [1, 2, 3];
+      if (page >= totalPages - 1)
+        return [totalPages - 2, totalPages - 1, totalPages];
+      return [page - 1, page, page + 1];
+    }, [page, totalPages]);
 
     return (
       <Pagination>
         <PaginationContent>
           <PaginationItem>
             <PaginationPrevious
-              href='#'
+              href="#"
               onClick={(event) => {
-                event.preventDefault()
-                setPage((current) => Math.max(1, current - 1))
+                event.preventDefault();
+                setPage((current) => Math.max(1, current - 1));
               }}
             />
           </PaginationItem>
 
           <PaginationItem>
             <PaginationLink
-              href='#'
+              href="#"
               isActive={page === 1}
               onClick={(event) => {
-                event.preventDefault()
-                setPage(1)
+                event.preventDefault();
+                setPage(1);
               }}
             >
               1
@@ -67,11 +68,11 @@ export const Default: Story = {
             .map((value) => (
               <PaginationItem key={value}>
                 <PaginationLink
-                  href='#'
+                  href="#"
                   isActive={page === value}
                   onClick={(event) => {
-                    event.preventDefault()
-                    setPage(value)
+                    event.preventDefault();
+                    setPage(value);
                   }}
                 >
                   {value}
@@ -87,11 +88,11 @@ export const Default: Story = {
 
           <PaginationItem>
             <PaginationLink
-              href='#'
+              href="#"
               isActive={page === totalPages}
               onClick={(event) => {
-                event.preventDefault()
-                setPage(totalPages)
+                event.preventDefault();
+                setPage(totalPages);
               }}
             >
               {totalPages}
@@ -100,15 +101,15 @@ export const Default: Story = {
 
           <PaginationItem>
             <PaginationNext
-              href='#'
+              href="#"
               onClick={(event) => {
-                event.preventDefault()
-                setPage((current) => Math.min(totalPages, current + 1))
+                event.preventDefault();
+                setPage((current) => Math.min(totalPages, current + 1));
               }}
             />
           </PaginationItem>
         </PaginationContent>
       </Pagination>
-    )
+    );
   },
-}
+};

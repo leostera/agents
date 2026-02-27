@@ -1,7 +1,5 @@
-import type { Meta, StoryObj } from '@storybook/react'
-import { TrashIcon } from '@phosphor-icons/react'
-
-import { Button } from './button'
+import { TrashIcon } from "@phosphor-icons/react";
+import type { Meta, StoryObj } from "@storybook/react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,21 +11,22 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from './alert-dialog'
+} from "./alert-dialog";
+import { Button } from "./button";
 
 const meta: Meta<typeof AlertDialog> = {
-  title: 'UI/Alert Dialog',
+  title: "UI/Alert Dialog",
   component: AlertDialog,
-}
+};
 
-export default meta
-type Story = StoryObj<typeof AlertDialog>
+export default meta;
+type Story = StoryObj<typeof AlertDialog>;
 
 export const Default: Story = {
   render: () => (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant='destructive'>Delete session</Button>
+        <Button variant="destructive">Delete session</Button>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -41,20 +40,20 @@ export const Default: Story = {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant='destructive'>Delete</AlertDialogAction>
+          <AlertDialogAction variant="destructive">Delete</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   ),
-}
+};
 
 export const Compact: Story = {
   render: () => (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant='outline'>Disconnect provider</Button>
+        <Button variant="outline">Disconnect provider</Button>
       </AlertDialogTrigger>
-      <AlertDialogContent size='sm'>
+      <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogTitle>Disconnect provider?</AlertDialogTitle>
           <AlertDialogDescription>
@@ -68,4 +67,4 @@ export const Compact: Story = {
       </AlertDialogContent>
     </AlertDialog>
   ),
-}
+};

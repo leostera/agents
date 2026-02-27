@@ -1,4 +1,4 @@
-import type { Meta, StoryObj } from '@storybook/react'
+import type { Meta, StoryObj } from "@storybook/react";
 
 import {
   Table,
@@ -9,15 +9,15 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from './table'
+} from "./table";
 
 const meta: Meta<typeof Table> = {
-  title: 'UI/Table',
+  title: "UI/Table",
   component: Table,
-}
+};
 
-export default meta
-type Story = StoryObj<typeof Table>
+export default meta;
+type Story = StoryObj<typeof Table>;
 
 export const Default: Story = {
   render: () => (
@@ -28,7 +28,7 @@ export const Default: Story = {
           <TableHead>Provider</TableHead>
           <TableHead>Status</TableHead>
           <TableHead>Duration</TableHead>
-          <TableHead className='text-right'>Cost</TableHead>
+          <TableHead className="text-right">Cost</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -36,27 +36,27 @@ export const Default: Story = {
           <TableCell>OpenAI</TableCell>
           <TableCell>Success</TableCell>
           <TableCell>3m 21s</TableCell>
-          <TableCell className='text-right'>$0.42</TableCell>
+          <TableCell className="text-right">$0.42</TableCell>
         </TableRow>
-        <TableRow data-state='selected'>
+        <TableRow data-state="selected">
           <TableCell>Anthropic</TableCell>
           <TableCell>Running</TableCell>
           <TableCell>1m 08s</TableCell>
-          <TableCell className='text-right'>$0.09</TableCell>
+          <TableCell className="text-right">$0.09</TableCell>
         </TableRow>
         <TableRow>
           <TableCell>Gemini</TableCell>
           <TableCell>Failed</TableCell>
           <TableCell>14s</TableCell>
-          <TableCell className='text-right'>$0.01</TableCell>
+          <TableCell className="text-right">$0.01</TableCell>
         </TableRow>
       </TableBody>
       <TableFooter>
         <TableRow>
           <TableCell colSpan={3}>Total</TableCell>
-          <TableCell className='text-right'>$0.52</TableCell>
+          <TableCell className="text-right">$0.52</TableCell>
         </TableRow>
       </TableFooter>
     </Table>
   ),
-}
+};

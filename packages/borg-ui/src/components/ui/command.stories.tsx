@@ -1,7 +1,12 @@
-import type { Meta, StoryObj } from '@storybook/react'
-import { useState } from 'react'
-
-import { FileIcon, GearIcon, KeyboardIcon, MoonIcon, UserIcon } from '@phosphor-icons/react'
+import {
+  FileIcon,
+  GearIcon,
+  KeyboardIcon,
+  MoonIcon,
+  UserIcon,
+} from "@phosphor-icons/react";
+import type { Meta, StoryObj } from "@storybook/react";
+import { useState } from "react";
 
 import {
   Command,
@@ -13,40 +18,40 @@ import {
   CommandList,
   CommandSeparator,
   CommandShortcut,
-} from './command'
+} from "./command";
 
 const meta: Meta<typeof Command> = {
-  title: 'UI/Command',
+  title: "UI/Command",
   component: Command,
-}
+};
 
-export default meta
-type Story = StoryObj<typeof Command>
+export default meta;
+type Story = StoryObj<typeof Command>;
 
 export const InlinePalette: Story = {
   render: () => {
-    const [selected, setSelected] = useState('profile')
+    const [selected, setSelected] = useState("profile");
 
     return (
-      <div className='w-full max-w-md rounded-xl border'>
+      <div className="w-full max-w-md rounded-xl border">
         <Command>
-          <CommandInput placeholder='Search commands...' />
+          <CommandInput placeholder="Search commands..." />
           <CommandList>
             <CommandEmpty>No results found.</CommandEmpty>
-            <CommandGroup heading='Quick Actions'>
+            <CommandGroup heading="Quick Actions">
               <CommandItem
-                value='profile'
-                data-checked={selected === 'profile'}
-                onSelect={() => setSelected('profile')}
+                value="profile"
+                data-checked={selected === "profile"}
+                onSelect={() => setSelected("profile")}
               >
                 <UserIcon />
                 Open Profile
                 <CommandShortcut>⌘P</CommandShortcut>
               </CommandItem>
               <CommandItem
-                value='preferences'
-                data-checked={selected === 'preferences'}
-                onSelect={() => setSelected('preferences')}
+                value="preferences"
+                data-checked={selected === "preferences"}
+                onSelect={() => setSelected("preferences")}
               >
                 <GearIcon />
                 Preferences
@@ -54,16 +59,16 @@ export const InlinePalette: Story = {
               </CommandItem>
             </CommandGroup>
             <CommandSeparator />
-            <CommandGroup heading='Workspace'>
-              <CommandItem value='new-file'>
+            <CommandGroup heading="Workspace">
+              <CommandItem value="new-file">
                 <FileIcon />
                 New File
               </CommandItem>
-              <CommandItem value='shortcuts'>
+              <CommandItem value="shortcuts">
                 <KeyboardIcon />
                 Keyboard Shortcuts
               </CommandItem>
-              <CommandItem value='theme'>
+              <CommandItem value="theme">
                 <MoonIcon />
                 Switch Theme
               </CommandItem>
@@ -71,22 +76,22 @@ export const InlinePalette: Story = {
           </CommandList>
         </Command>
       </div>
-    )
+    );
   },
-}
+};
 
 export const InsideDialog: Story = {
   render: () => (
-    <div className='min-h-[420px] rounded-xl border bg-muted/20'>
+    <div className="min-h-[420px] rounded-xl border bg-muted/20">
       <CommandDialog open onOpenChange={() => {}}>
-        <CommandInput placeholder='Search commands...' />
+        <CommandInput placeholder="Search commands..." />
         <CommandList>
-          <CommandGroup heading='General'>
-            <CommandItem value='dashboard'>Open Dashboard</CommandItem>
-            <CommandItem value='billing'>Open Billing</CommandItem>
+          <CommandGroup heading="General">
+            <CommandItem value="dashboard">Open Dashboard</CommandItem>
+            <CommandItem value="billing">Open Billing</CommandItem>
           </CommandGroup>
         </CommandList>
       </CommandDialog>
     </div>
   ),
-}
+};

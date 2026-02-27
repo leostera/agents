@@ -1,47 +1,55 @@
-import React from 'react'
-import { useMemo } from 'react'
+import { createI18n } from "@borg/i18n";
+import { Card } from "@borg/ui";
+import React, { useMemo } from "react";
+import { DashboardApp } from "./DashboardApp";
 
-import { createI18n } from '@borg/i18n'
-import { Card } from '@borg/ui'
-import { DashboardApp } from './DashboardApp'
-
-const ONBOARD_PATH = '/onboard'
-const DASHBOARD_PATH = '/dashboard'
-const DASHBOARD_TYPO_PATH = '/dashbaord'
-const DASHBOARD_PREFIXES = ['/observability', '/memory', '/settings']
+const ONBOARD_PATH = "/onboard";
+const DASHBOARD_PATH = "/dashboard";
+const DASHBOARD_TYPO_PATH = "/dashbaord";
+const DASHBOARD_PREFIXES = [
+  "/control",
+  "/observability",
+  "/memory",
+  "/settings",
+  "/overview",
+];
 
 export function App() {
-  const i18n = useMemo(() => createI18n('en'), [])
-  const rawPathname = window.location.pathname
+  const i18n = useMemo(() => createI18n("en"), []);
+  const rawPathname = window.location.pathname;
   const pathname =
-    rawPathname.length > 1 && rawPathname.endsWith('/')
+    rawPathname.length > 1 && rawPathname.endsWith("/")
       ? rawPathname.slice(0, -1)
-      : rawPathname
+      : rawPathname;
 
   if (pathname === ONBOARD_PATH) {
     return (
-      <section className='p-6'>
-        <Card title='Onboarding'>
-          <p className='text-sm text-muted-foreground'>Onboarding is being rebuilt in `borg-app`.</p>
+      <section className="p-6">
+        <Card title="Onboarding">
+          <p className="text-sm text-muted-foreground">
+            Onboarding is being rebuilt in `borg-app`.
+          </p>
         </Card>
       </section>
-    )
+    );
   }
 
   if (
-    pathname === '/' ||
+    pathname === "/" ||
     pathname === DASHBOARD_PATH ||
     pathname === DASHBOARD_TYPO_PATH ||
-    DASHBOARD_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
+    DASHBOARD_PREFIXES.some(
+      (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
+    )
   ) {
-    return <DashboardApp />
+    return <DashboardApp />;
   }
 
   return (
-    <section className='card'>
-      <p className='notice-error'>
-        {i18n.t('web.unknown_route')}: {pathname}
+    <section className="card">
+      <p className="notice-error">
+        {i18n.t("web.unknown_route")}: {pathname}
       </p>
     </section>
-  )
+  );
 }

@@ -1,5 +1,5 @@
-import type { Meta, StoryObj } from '@storybook/react'
-import { useState } from 'react'
+import type { Meta, StoryObj } from "@storybook/react";
+import { useState } from "react";
 
 import {
   Menubar,
@@ -15,20 +15,20 @@ import {
   MenubarSubContent,
   MenubarSubTrigger,
   MenubarTrigger,
-} from './menubar'
+} from "./menubar";
 
 const meta: Meta<typeof Menubar> = {
-  title: 'UI/Menubar',
+  title: "UI/Menubar",
   component: Menubar,
-}
+};
 
-export default meta
-type Story = StoryObj<typeof Menubar>
+export default meta;
+type Story = StoryObj<typeof Menubar>;
 
 export const AppMenubar: Story = {
   render: () => {
-    const [autosave, setAutosave] = useState(true)
-    const [theme, setTheme] = useState('system')
+    const [autosave, setAutosave] = useState(true);
+    const [theme, setTheme] = useState("system");
 
     return (
       <Menubar>
@@ -44,7 +44,7 @@ export const AppMenubar: Story = {
               <MenubarShortcut>⌘S</MenubarShortcut>
             </MenubarItem>
             <MenubarSeparator />
-            <MenubarItem variant='destructive'>Delete Project</MenubarItem>
+            <MenubarItem variant="destructive">Delete Project</MenubarItem>
           </MenubarContent>
         </MenubarMenu>
 
@@ -61,15 +61,15 @@ export const AppMenubar: Story = {
               <MenubarSubTrigger>Theme</MenubarSubTrigger>
               <MenubarSubContent>
                 <MenubarRadioGroup value={theme} onValueChange={setTheme}>
-                  <MenubarRadioItem value='light'>Light</MenubarRadioItem>
-                  <MenubarRadioItem value='dark'>Dark</MenubarRadioItem>
-                  <MenubarRadioItem value='system'>System</MenubarRadioItem>
+                  <MenubarRadioItem value="light">Light</MenubarRadioItem>
+                  <MenubarRadioItem value="dark">Dark</MenubarRadioItem>
+                  <MenubarRadioItem value="system">System</MenubarRadioItem>
                 </MenubarRadioGroup>
               </MenubarSubContent>
             </MenubarSub>
           </MenubarContent>
         </MenubarMenu>
       </Menubar>
-    )
+    );
   },
-}
+};

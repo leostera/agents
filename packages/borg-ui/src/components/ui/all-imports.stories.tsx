@@ -1,15 +1,17 @@
-import React from 'react'
-import type { Meta, StoryObj } from '@storybook/react-vite'
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import React from "react";
 
-const modules = import.meta.glob(['./*.tsx', '!./*.stories.tsx'], { eager: true })
+const modules = import.meta.glob(["./*.tsx", "!./*.stories.tsx"], {
+  eager: true,
+});
 
 const meta: Meta = {
-  title: 'UI/All Imports Smoke',
-}
+  title: "UI/All Imports Smoke",
+};
 
-export default meta
-type Story = StoryObj<typeof meta>
+export default meta;
+type Story = StoryObj<typeof meta>;
 
 export const ImportsEveryUiModule: Story = {
   render: () => <div>Imported {Object.keys(modules).length} UI modules</div>,
-}
+};

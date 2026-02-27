@@ -1,5 +1,5 @@
-import type { Meta, StoryObj } from '@storybook/react-vite'
-import { useState } from 'react'
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useState } from "react";
 
 import {
   Select,
@@ -8,44 +8,44 @@ import {
   SelectTrigger,
   SelectValue,
   UiSelect,
-} from './select'
+} from "./select";
 
 const meta: Meta<typeof UiSelect> = {
-  title: 'UI/Select',
+  title: "UI/Select",
   component: UiSelect,
   args: {
-    value: 'telegram',
+    value: "telegram",
     options: [
-      { label: 'telegram', value: 'telegram' },
-      { label: 'http', value: 'http' },
+      { label: "telegram", value: "telegram" },
+      { label: "http", value: "http" },
     ],
   },
-}
+};
 
-export default meta
-type Story = StoryObj<typeof UiSelect>
+export default meta;
+type Story = StoryObj<typeof UiSelect>;
 
 export const Default: Story = {
   render: (args) => {
-    const [value, setValue] = useState(args.value)
-    return <UiSelect {...args} value={value} onValueChange={setValue} />
+    const [value, setValue] = useState(args.value);
+    return <UiSelect {...args} value={value} onValueChange={setValue} />;
   },
-}
+};
 
 export const Primitive: Story = {
   render: () => {
-    const [value, setValue] = useState('telegram')
+    const [value, setValue] = useState("telegram");
     return (
       <Select value={value} onValueChange={setValue}>
         <SelectTrigger>
-          <SelectValue placeholder='Choose a port' />
+          <SelectValue placeholder="Choose a port" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value='telegram'>telegram</SelectItem>
-          <SelectItem value='http'>http</SelectItem>
-          <SelectItem value='cli'>cli</SelectItem>
+          <SelectItem value="telegram">telegram</SelectItem>
+          <SelectItem value="http">http</SelectItem>
+          <SelectItem value="cli">cli</SelectItem>
         </SelectContent>
       </Select>
-    )
+    );
   },
-}
+};

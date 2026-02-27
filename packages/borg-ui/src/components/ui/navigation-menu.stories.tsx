@@ -1,4 +1,4 @@
-import type { Meta, StoryObj } from '@storybook/react'
+import type { Meta, StoryObj } from "@storybook/react";
 
 import {
   NavigationMenu,
@@ -9,15 +9,15 @@ import {
   NavigationMenuList,
   NavigationMenuTrigger,
   navigationMenuTriggerStyle,
-} from './navigation-menu'
+} from "./navigation-menu";
 
 const meta: Meta<typeof NavigationMenu> = {
-  title: 'UI/Navigation Menu',
+  title: "UI/Navigation Menu",
   component: NavigationMenu,
-}
+};
 
-export default meta
-type Story = StoryObj<typeof NavigationMenu>
+export default meta;
+type Story = StoryObj<typeof NavigationMenu>;
 
 export const ProductNavigation: Story = {
   render: () => (
@@ -26,19 +26,19 @@ export const ProductNavigation: Story = {
         <NavigationMenuItem>
           <NavigationMenuTrigger>Product</NavigationMenuTrigger>
           <NavigationMenuContent>
-            <ul className='grid w-[420px] gap-1'>
+            <ul className="grid w-[420px] gap-1">
               <li>
-                <NavigationMenuLink href='#'>
-                  <span className='font-medium'>Sessions</span>
-                  <span className='text-muted-foreground'>
+                <NavigationMenuLink href="#">
+                  <span className="font-medium">Sessions</span>
+                  <span className="text-muted-foreground">
                     Manage long-running agent sessions.
                   </span>
                 </NavigationMenuLink>
               </li>
               <li>
-                <NavigationMenuLink href='#'>
-                  <span className='font-medium'>Tasks</span>
-                  <span className='text-muted-foreground'>
+                <NavigationMenuLink href="#">
+                  <span className="font-medium">Tasks</span>
+                  <span className="text-muted-foreground">
                     Queue and track background automations.
                   </span>
                 </NavigationMenuLink>
@@ -50,22 +50,22 @@ export const ProductNavigation: Story = {
         <NavigationMenuItem>
           <NavigationMenuTrigger>Resources</NavigationMenuTrigger>
           <NavigationMenuContent>
-            <ul className='grid w-[320px] gap-1'>
+            <ul className="grid w-[320px] gap-1">
               <li>
-                <NavigationMenuLink href='#'>Documentation</NavigationMenuLink>
+                <NavigationMenuLink href="#">Documentation</NavigationMenuLink>
               </li>
               <li>
-                <NavigationMenuLink href='#'>API Reference</NavigationMenuLink>
+                <NavigationMenuLink href="#">API Reference</NavigationMenuLink>
               </li>
               <li>
-                <NavigationMenuLink href='#'>Changelog</NavigationMenuLink>
+                <NavigationMenuLink href="#">Changelog</NavigationMenuLink>
               </li>
             </ul>
           </NavigationMenuContent>
         </NavigationMenuItem>
 
         <NavigationMenuItem>
-          <NavigationMenuLink className={navigationMenuTriggerStyle()} href='#'>
+          <NavigationMenuLink className={navigationMenuTriggerStyle()} href="#">
             Pricing
           </NavigationMenuLink>
         </NavigationMenuItem>
@@ -73,7 +73,7 @@ export const ProductNavigation: Story = {
       <NavigationMenuIndicator />
     </NavigationMenu>
   ),
-}
+};
 
 export const WithoutViewport: Story = {
   render: () => (
@@ -82,12 +82,14 @@ export const WithoutViewport: Story = {
         <NavigationMenuItem>
           <NavigationMenuTrigger>Docs</NavigationMenuTrigger>
           <NavigationMenuContent>
-            <ul className='grid w-56 gap-1'>
+            <ul className="grid w-56 gap-1">
               <li>
-                <NavigationMenuLink href='#'>Getting Started</NavigationMenuLink>
+                <NavigationMenuLink href="#">
+                  Getting Started
+                </NavigationMenuLink>
               </li>
               <li>
-                <NavigationMenuLink href='#'>Deployments</NavigationMenuLink>
+                <NavigationMenuLink href="#">Deployments</NavigationMenuLink>
               </li>
             </ul>
           </NavigationMenuContent>
@@ -95,4 +97,4 @@ export const WithoutViewport: Story = {
       </NavigationMenuList>
     </NavigationMenu>
   ),
-}
+};

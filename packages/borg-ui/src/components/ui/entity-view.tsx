@@ -1,54 +1,58 @@
-import * as React from "react"
+import * as React from "react";
 
-import { cn } from "../../lib/utils"
-import { Link } from "./link"
+import { cn } from "../../lib/utils";
+import { Link } from "./link";
 
 type EntityViewProps = React.ComponentProps<"section"> & {
-  uri: string
-  kind?: string
-  fields?: Record<string, unknown>
-}
+  uri: string;
+  kind?: string;
+  fields?: Record<string, unknown>;
+};
 
-const URI_RE = /^[a-z][a-z0-9+.-]*:[^:\s]+:[^:\s]+$/i
-const TX_URI_RE = /^borg:tx:/i
+const URI_RE = /^[a-z][a-z0-9+.-]*:[^:\s]+:[^:\s]+$/i;
+const TX_URI_RE = /^borg:tx:/i;
 
 function formatEntityValue(value: unknown): string {
-  if (value === null) return "null"
-  if (value === undefined) return "—"
-  if (typeof value === "string") return value
-  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  if (value === null) return "null";
+  if (value === undefined) return "—";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
   try {
-    return JSON.stringify(value)
+    return JSON.stringify(value);
   } catch {
-    return String(value)
+    return String(value);
   }
 }
 
 function entityHref(uri: string): string {
-  return `/memory/entity/${uri}`
+  return `/memory/entity/${uri}`;
 }
 
 function isEntityLinkableUri(uri: string): boolean {
-  return URI_RE.test(uri) && !TX_URI_RE.test(uri)
+  return URI_RE.test(uri) && !TX_URI_RE.test(uri);
 }
 
 function formatKind(kind?: string): string {
-  const trimmed = kind?.trim()
-  if (!trimmed) return "unknown"
-  if (trimmed.includes(":")) return trimmed
-  return `borg:kind:${trimmed}`
+  const trimmed = kind?.trim();
+  if (!trimmed) return "unknown";
+  if (trimmed.includes(":")) return trimmed;
+  return `borg:kind:${trimmed}`;
 }
 
 function renderEntityValue(value: unknown): React.ReactNode {
   if (typeof value === "string") {
     if (isEntityLinkableUri(value)) {
       return (
-        <Link href={entityHref(value)} className="text-primary underline underline-offset-2">
+        <Link
+          href={entityHref(value)}
+          className="text-primary underline underline-offset-2"
+        >
           {value}
         </Link>
-      )
+      );
     }
-    return value
+    return value;
   }
 
   if (Array.isArray(value)) {
@@ -60,7 +64,7 @@ function renderEntityValue(value: unknown): React.ReactNode {
           </div>
         ))}
       </div>
-    )
+    );
   }
 
   if (value && typeof value === "object") {
@@ -71,24 +75,34 @@ function renderEntityValue(value: unknown): React.ReactNode {
           .map(([nestedKey, nestedValue]) => (
             <div key={nestedKey}>
               <p className="text-muted-foreground text-xs">{nestedKey}</p>
-              <div className="break-words">{renderEntityValue(nestedValue)}</div>
+              <div className="break-words">
+                {renderEntityValue(nestedValue)}
+              </div>
             </div>
           ))}
       </div>
-    )
+    );
   }
 
-  return formatEntityValue(value)
+  return formatEntityValue(value);
 }
 
-export function EntityView({ uri, kind, fields, className, ...props }: EntityViewProps) {
+export function EntityView({
+  uri,
+  kind,
+  fields,
+  className,
+  ...props
+}: EntityViewProps) {
   const orderedFields = React.useMemo(
     () =>
       Object.entries(fields ?? {})
-        .filter(([key]) => !["uri", "kind", "namespace"].includes(key.toLowerCase()))
+        .filter(
+          ([key]) => !["uri", "kind", "namespace"].includes(key.toLowerCase())
+        )
         .sort(([a], [b]) => a.localeCompare(b)),
     [fields]
-  )
+  );
 
   return (
     <section className={cn("space-y-3 text-sm", className)} {...props}>
@@ -96,7 +110,10 @@ export function EntityView({ uri, kind, fields, className, ...props }: EntityVie
         <p className="text-muted-foreground text-xs">URI</p>
         <p className="font-mono text-xs break-all">
           {isEntityLinkableUri(uri) ? (
-            <Link href={entityHref(uri)} className="text-primary underline underline-offset-2">
+            <Link
+              href={entityHref(uri)}
+              className="text-primary underline underline-offset-2"
+            >
               {uri}
             </Link>
           ) : (
@@ -115,5 +132,5 @@ export function EntityView({ uri, kind, fields, className, ...props }: EntityVie
         </div>
       ))}
     </section>
-  )
+  );
 }

@@ -1,8 +1,13 @@
-import type { Meta, StoryObj } from '@storybook/react'
-import { DatabaseIcon, KeyIcon, LinkIcon, RobotIcon } from '@phosphor-icons/react'
+import {
+  DatabaseIcon,
+  KeyIcon,
+  LinkIcon,
+  RobotIcon,
+} from "@phosphor-icons/react";
+import type { Meta, StoryObj } from "@storybook/react";
 
-import { Badge } from './badge'
-import { Button } from './button'
+import { Badge } from "./badge";
+import { Button } from "./button";
 import {
   Item,
   ItemActions,
@@ -14,40 +19,46 @@ import {
   ItemMedia,
   ItemSeparator,
   ItemTitle,
-} from './item'
+} from "./item";
 
 const meta: Meta<typeof Item> = {
-  title: 'UI/Item',
+  title: "UI/Item",
   component: Item,
-}
+};
 
-export default meta
-type Story = StoryObj<typeof Item>
+export default meta;
+type Story = StoryObj<typeof Item>;
 
 export const ProviderList: Story = {
   render: () => (
-    <ItemGroup className='max-w-xl'>
-      <Item variant='outline'>
-        <ItemMedia variant='icon'>
+    <ItemGroup className="max-w-xl">
+      <Item variant="outline">
+        <ItemMedia variant="icon">
           <RobotIcon />
         </ItemMedia>
         <ItemContent>
           <ItemHeader>
             <ItemTitle>OpenAI</ItemTitle>
-            <Badge variant='secondary'>Connected</Badge>
+            <Badge variant="secondary">Connected</Badge>
           </ItemHeader>
-          <ItemDescription>Primary inference provider for production sessions.</ItemDescription>
+          <ItemDescription>
+            Primary inference provider for production sessions.
+          </ItemDescription>
           <ItemFooter>
-            <span className='text-muted-foreground text-xs'>Updated 2h ago</span>
+            <span className="text-muted-foreground text-xs">
+              Updated 2h ago
+            </span>
             <ItemActions>
-              <Button size='sm' variant='outline'>Rotate key</Button>
+              <Button size="sm" variant="outline">
+                Rotate key
+              </Button>
             </ItemActions>
           </ItemFooter>
         </ItemContent>
       </Item>
       <ItemSeparator />
-      <Item variant='muted'>
-        <ItemMedia variant='icon'>
+      <Item variant="muted">
+        <ItemMedia variant="icon">
           <LinkIcon />
         </ItemMedia>
         <ItemContent>
@@ -57,18 +68,18 @@ export const ProviderList: Story = {
           </ItemDescription>
         </ItemContent>
         <ItemActions>
-          <Button size='sm'>Connect</Button>
+          <Button size="sm">Connect</Button>
         </ItemActions>
       </Item>
     </ItemGroup>
   ),
-}
+};
 
 export const CompactRows: Story = {
   render: () => (
-    <ItemGroup className='max-w-lg'>
-      <Item size='xs'>
-        <ItemMedia variant='icon'>
+    <ItemGroup className="max-w-lg">
+      <Item size="xs">
+        <ItemMedia variant="icon">
           <KeyIcon />
         </ItemMedia>
         <ItemContent>
@@ -76,8 +87,8 @@ export const CompactRows: Story = {
           <ItemDescription>Stored in secure vault storage.</ItemDescription>
         </ItemContent>
       </Item>
-      <Item size='xs'>
-        <ItemMedia variant='icon'>
+      <Item size="xs">
+        <ItemMedia variant="icon">
           <DatabaseIcon />
         </ItemMedia>
         <ItemContent>
@@ -87,4 +98,4 @@ export const CompactRows: Story = {
       </Item>
     </ItemGroup>
   ),
-}
+};

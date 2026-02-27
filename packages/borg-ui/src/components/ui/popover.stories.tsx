@@ -1,6 +1,6 @@
-import type { Meta, StoryObj } from '@storybook/react'
+import type { Meta, StoryObj } from "@storybook/react";
 
-import { Button } from './button'
+import { Button } from "./button";
 import {
   Popover,
   PopoverContent,
@@ -8,21 +8,21 @@ import {
   PopoverHeader,
   PopoverTitle,
   PopoverTrigger,
-} from './popover'
+} from "./popover";
 
 const meta: Meta<typeof Popover> = {
-  title: 'UI/Popover',
+  title: "UI/Popover",
   component: Popover,
-}
+};
 
-export default meta
-type Story = StoryObj<typeof Popover>
+export default meta;
+type Story = StoryObj<typeof Popover>;
 
 export const Default: Story = {
   render: () => (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant='outline'>Session details</Button>
+        <Button variant="outline">Session details</Button>
       </PopoverTrigger>
       <PopoverContent>
         <PopoverHeader>
@@ -34,4 +34,4 @@ export const Default: Story = {
       </PopoverContent>
     </Popover>
   ),
-}
+};

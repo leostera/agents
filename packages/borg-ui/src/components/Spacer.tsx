@@ -1,11 +1,16 @@
-import React from 'react'
+import React from "react";
 
 type SpacerProps = {
-  size?: number
-}
+  size?: number;
+};
 
-const DEFAULT_SPACER_SIZE = 10
+const DEFAULT_SPACER_SIZE = 10;
 
 export function Spacer(props: SpacerProps) {
-  return <div style={{ height: props.size ?? DEFAULT_SPACER_SIZE }} aria-hidden='true' />
+  return (
+    <div
+      style={{ height: props.size ?? DEFAULT_SPACER_SIZE }}
+      aria-hidden="true"
+    />
+  );
 }

@@ -1,6 +1,6 @@
-import type { Meta, StoryObj } from '@storybook/react'
+import type { Meta, StoryObj } from "@storybook/react";
 
-import { Button } from './button'
+import { Button } from "./button";
 import {
   Dialog,
   DialogContent,
@@ -9,23 +9,23 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from './dialog'
-import { Input } from './input'
-import { Label } from './label'
+} from "./dialog";
+import { Input } from "./input";
+import { Label } from "./label";
 
 const meta: Meta<typeof Dialog> = {
-  title: 'UI/Dialog',
+  title: "UI/Dialog",
   component: Dialog,
-}
+};
 
-export default meta
-type Story = StoryObj<typeof Dialog>
+export default meta;
+type Story = StoryObj<typeof Dialog>;
 
 export const ProfileSettings: Story = {
   render: () => (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant='outline'>Edit profile</Button>
+        <Button variant="outline">Edit profile</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -34,14 +34,14 @@ export const ProfileSettings: Story = {
             Update your display name and notification email.
           </DialogDescription>
         </DialogHeader>
-        <div className='grid gap-3'>
-          <div className='grid gap-1.5'>
-            <Label htmlFor='profile-name'>Display name</Label>
-            <Input id='profile-name' defaultValue='Ada Lovelace' />
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="profile-name">Display name</Label>
+            <Input id="profile-name" defaultValue="Ada Lovelace" />
           </div>
-          <div className='grid gap-1.5'>
-            <Label htmlFor='profile-email'>Email</Label>
-            <Input id='profile-email' defaultValue='ada@analytical.engine' />
+          <div className="grid gap-1.5">
+            <Label htmlFor="profile-email">Email</Label>
+            <Input id="profile-email" defaultValue="ada@analytical.engine" />
           </div>
         </div>
         <DialogFooter showCloseButton>
@@ -50,13 +50,13 @@ export const ProfileSettings: Story = {
       </DialogContent>
     </Dialog>
   ),
-}
+};
 
 export const ConfirmDisconnect: Story = {
   render: () => (
     <Dialog>
       <DialogTrigger asChild>
-        <Button variant='destructive'>Disconnect provider</Button>
+        <Button variant="destructive">Disconnect provider</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -66,9 +66,9 @@ export const ConfirmDisconnect: Story = {
           </DialogDescription>
         </DialogHeader>
         <DialogFooter showCloseButton>
-          <Button variant='destructive'>Disconnect</Button>
+          <Button variant="destructive">Disconnect</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   ),
-}
+};
