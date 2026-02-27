@@ -7,7 +7,6 @@ use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
 use borg_exec::ExecEngine;
 use borg_ltm::{FactInput, MemoryStore, SearchQuery};
-use borg_onboard::OnboardServer;
 use borg_rt::CodeModeRuntime;
 use clap::{Parser, Subcommand};
 use reqwest::Client;
@@ -166,16 +165,7 @@ impl BorgCliApp {
     async fn init(&self, onboard_port: u16) -> Result<()> {
         info!(target: "borg_cli", onboard_port, "initializing borg runtime");
         self.initialize_storage().await?;
-
-        let url = format!("http://localhost:{}/onboard", onboard_port);
-        self.open_browser(&url);
-
-        info!(target: "borg_cli", url, "borg init completed, onboarding server starting");
-        println!("borg initialized. onboarding: {}", url);
-
-        OnboardServer::new(onboard_port, self.borg_dir.config_db().to_path_buf())
-            .run()
-            .await
+        Ok(())
     }
 
     async fn start(&self, bind: String) -> Result<()> {
@@ -596,7 +586,7 @@ struct CreateTaskResponse {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| {
-            "info,borg_cli=debug,borg_api=debug,borg_ports=debug,borg_db=debug,borg_exec=debug,borg_ltm=debug,borg_rt=debug,borg_onboard=debug"
+            "info,borg_cli=debug,borg_api=debug,borg_ports=debug,borg_db=debug,borg_exec=debug,borg_ltm=debug,borg_rt=debug"
                 .to_string()
         }))
         .init();

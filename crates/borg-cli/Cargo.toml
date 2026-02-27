@@ -14,7 +14,6 @@ borg-core = { path = "../borg-core" }
 borg-db = { path = "../borg-db" }
 borg-exec = { path = "../borg-exec" }
 borg-ltm = { path = "../borg-ltm" }
-borg-onboard = { path = "../borg-onboard" }
 borg-rt = { path = "../borg-rt" }
 clap.workspace = true
 tokio.workspace = true
