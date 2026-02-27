@@ -12,7 +12,6 @@ use crate::{
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
 const OPENAI_COMPLETIONS_URL: &str = "https://api.openai.com/v1/completions";
 const OPENAI_AUDIO_TRANSCRIPTIONS_URL: &str = "https://api.openai.com/v1/audio/transcriptions";
-const DEFAULT_TRANSCRIPTION_MODEL: &str = "gpt-4o-mini-transcribe";
 
 #[derive(Clone, Copy, Debug)]
 pub enum OpenAiApiMode {
@@ -28,9 +27,15 @@ pub struct OpenAiProvider {
     chat_completions_url: String,
     completions_url: String,
     audio_transcriptions_url: String,
+    default_chat_completions_model: Option<String>,
+    default_audio_transcriptions_model: Option<String>,
 }
 
 impl OpenAiProvider {
+    pub fn build() -> OpenAiProviderBuilder {
+        OpenAiProviderBuilder::new()
+    }
+
     pub fn new(api_key: impl Into<String>) -> Self {
         Self::new_with_mode(api_key, OpenAiApiMode::ChatCompletions)
     }
@@ -43,6 +48,8 @@ impl OpenAiProvider {
             chat_completions_url: OPENAI_CHAT_COMPLETIONS_URL.to_string(),
             completions_url: OPENAI_COMPLETIONS_URL.to_string(),
             audio_transcriptions_url: OPENAI_AUDIO_TRANSCRIPTIONS_URL.to_string(),
+            default_chat_completions_model: None,
+            default_audio_transcriptions_model: None,
         }
     }
 
@@ -63,12 +70,86 @@ impl OpenAiProvider {
             chat_completions_url: format!("{}/v1/chat/completions", base),
             completions_url: format!("{}/v1/completions", base),
             audio_transcriptions_url: format!("{}/v1/audio/transcriptions", base),
+            default_chat_completions_model: None,
+            default_audio_transcriptions_model: None,
         }
+    }
+}
+
+pub struct OpenAiProviderBuilder {
+    api_key: Option<String>,
+    api_mode: OpenAiApiMode,
+    base_url: Option<String>,
+    chat_completions_model: Option<String>,
+    audio_transcriptions_model: Option<String>,
+}
+
+impl OpenAiProviderBuilder {
+    pub fn new() -> Self {
+        Self {
+            api_key: None,
+            api_mode: OpenAiApiMode::ChatCompletions,
+            base_url: None,
+            chat_completions_model: None,
+            audio_transcriptions_model: None,
+        }
+    }
+
+    pub fn api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.api_key = Some(api_key.into());
+        self
+    }
+
+    pub fn api_mode(mut self, api_mode: OpenAiApiMode) -> Self {
+        self.api_mode = api_mode;
+        self
+    }
+
+    pub fn base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = Some(base_url.into());
+        self
+    }
+
+    pub fn chat_completions_model(mut self, model: impl Into<String>) -> Self {
+        self.chat_completions_model = Some(model.into());
+        self
+    }
+
+    pub fn audio_transcriptions_model(mut self, model: impl Into<String>) -> Self {
+        self.audio_transcriptions_model = Some(model.into());
+        self
+    }
+
+    pub fn build(self) -> Result<OpenAiProvider> {
+        let api_key = self
+            .api_key
+            .map(|key| key.trim().to_string())
+            .filter(|key| !key.is_empty())
+            .ok_or_else(|| anyhow!("OpenAI api_key is required"))?;
+        let mut provider = if let Some(base_url) = self.base_url {
+            OpenAiProvider::new_with_base_url_and_mode(api_key, base_url, self.api_mode)
+        } else {
+            OpenAiProvider::new_with_mode(api_key, self.api_mode)
+        };
+        provider.default_chat_completions_model = normalize_optional(self.chat_completions_model);
+        provider.default_audio_transcriptions_model =
+            normalize_optional(self.audio_transcriptions_model);
+        Ok(provider)
+    }
+}
+
+impl Default for OpenAiProviderBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[async_trait]
 impl Provider for OpenAiProvider {
+    fn provider_name(&self) -> &'static str {
+        "openai"
+    }
+
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
         match self.api_mode {
             OpenAiApiMode::ChatCompletions => self.chat_via_chat_completions(req).await,
@@ -79,9 +160,21 @@ impl Provider for OpenAiProvider {
     async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String> {
         let model = req
             .model
-            .as_deref()
-            .unwrap_or(DEFAULT_TRANSCRIPTION_MODEL)
-            .to_string();
+            .as_ref()
+            .and_then(|model| {
+                let model = model.trim();
+                if model.is_empty() {
+                    None
+                } else {
+                    Some(model.to_string())
+                }
+            })
+            .or_else(|| self.default_audio_transcriptions_model.clone())
+            .ok_or_else(|| {
+                anyhow!(
+                    "audio transcription model is required (set request.model or configure audio_transcriptions_model on OpenAiProvider::build())"
+                )
+            })?;
         info!(
             target: "borg_llm",
             model = model.as_str(),
@@ -97,7 +190,11 @@ impl Provider for OpenAiProvider {
         let mut form = reqwest::multipart::Form::new()
             .part("file", part)
             .text("model", model);
-        if let Some(language) = req.language.as_ref().filter(|value| !value.trim().is_empty()) {
+        if let Some(language) = req
+            .language
+            .as_ref()
+            .filter(|value| !value.trim().is_empty())
+        {
             form = form.text("language", language.clone());
         }
         if let Some(prompt) = req.prompt.as_ref().filter(|value| !value.trim().is_empty()) {
@@ -139,15 +236,16 @@ impl Provider for OpenAiProvider {
 
 impl OpenAiProvider {
     async fn chat_via_chat_completions(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        let model = self.resolve_chat_model(req)?;
         info!(
             target: "borg_llm",
-            model = req.model.as_str(),
+            model = model.as_str(),
             message_count = req.messages.len(),
             tool_count = req.tools.len(),
             "sending chat completion request"
         );
         let body = json!({
-            "model": req.model,
+            "model": model,
             "messages": to_openai_messages(&req.messages),
             "tools": to_openai_tools(&req.tools),
             "tool_choice": "auto",
@@ -195,15 +293,16 @@ impl OpenAiProvider {
     }
 
     async fn chat_via_completions(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        let model = self.resolve_chat_model(req)?;
         info!(
             target: "borg_llm",
-            model = req.model.as_str(),
+            model = model.as_str(),
             message_count = req.messages.len(),
             tool_count = req.tools.len(),
             "sending completions request"
         );
         let body = json!({
-            "model": req.model,
+            "model": model,
             "prompt": to_openai_completions_prompt(&req.messages, &req.tools),
             "temperature": req.temperature,
             "max_tokens": req.max_tokens,
@@ -257,6 +356,26 @@ impl OpenAiProvider {
             error_message: None,
         })
     }
+}
+
+impl OpenAiProvider {
+    fn resolve_chat_model(&self, req: &LlmRequest) -> Result<String> {
+        if !req.model.trim().is_empty() {
+            return Ok(req.model.clone());
+        }
+        if let Some(default_model) = &self.default_chat_completions_model {
+            return Ok(default_model.clone());
+        }
+        Err(anyhow!(
+            "chat completion model is required (set request.model or configure chat_completions_model on OpenAiProvider::build())"
+        ))
+    }
+}
+
+fn normalize_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
 }
 
 fn transcription_filename_for_mime(mime: &str) -> String {
@@ -504,8 +623,8 @@ fn parse_openai_assistant_message(payload: &Value) -> Result<LlmAssistantMessage
 mod tests {
     use serde_json::json;
 
-    use super::to_openai_messages;
-    use crate::{ProviderBlock, ProviderMessage};
+    use super::{OpenAiApiMode, OpenAiProvider, to_openai_messages};
+    use crate::{LlmRequest, ProviderBlock, ProviderMessage, Provider, TranscriptionRequest};
 
     #[test]
     fn assistant_tool_call_serializes_to_tool_calls_field() {
@@ -534,5 +653,81 @@ mod tests {
             encoded[1].get("role").and_then(|v| v.as_str()),
             Some("tool")
         );
+    }
+
+    #[test]
+    fn builder_requires_api_key() {
+        let error = match OpenAiProvider::build().build() {
+            Ok(_) => panic!("builder should fail"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("OpenAI api_key is required"));
+    }
+
+    #[test]
+    fn builder_sets_default_models() {
+        let provider = OpenAiProvider::build()
+            .api_key("sk-test")
+            .api_mode(OpenAiApiMode::Completions)
+            .chat_completions_model("gpt-5.3-codex")
+            .audio_transcriptions_model("gpt-4o-mini-transcribe")
+            .build()
+            .expect("provider");
+
+        let request = LlmRequest {
+            model: "".to_string(),
+            messages: vec![],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+            api_key: None,
+        };
+        let resolved = provider.resolve_chat_model(&request).expect("chat model");
+        assert_eq!(resolved, "gpt-5.3-codex");
+
+        let transcribe_request = TranscriptionRequest {
+            audio: vec![],
+            mime_type: "audio/ogg".to_string(),
+            model: None,
+            language: None,
+            prompt: None,
+        };
+        let model = transcribe_request
+            .model
+            .as_ref()
+            .and_then(|model| {
+                let model = model.trim();
+                if model.is_empty() {
+                    None
+                } else {
+                    Some(model.to_string())
+                }
+            })
+            .or_else(|| provider.default_audio_transcriptions_model.clone())
+            .expect("transcription model");
+        assert_eq!(model, "gpt-4o-mini-transcribe");
+    }
+
+    #[test]
+    fn provider_name_is_openai() {
+        let provider = OpenAiProvider::new("sk-test");
+        assert_eq!(Provider::provider_name(&provider), "openai");
+    }
+
+    #[tokio::test]
+    async fn transcribe_requires_explicit_model_configuration() {
+        let provider = OpenAiProvider::new("sk-test");
+        let request = TranscriptionRequest {
+            audio: vec![0x00, 0x01],
+            mime_type: "audio/ogg".to_string(),
+            model: None,
+            language: None,
+            prompt: None,
+        };
+
+        let error = provider.transcribe(&request).await.expect_err("missing model");
+        assert!(error
+            .to_string()
+            .contains("audio transcription model is required"));
     }
 }

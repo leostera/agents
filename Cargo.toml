@@ -2,14 +2,13 @@
 members = [
   "crates/borg-agent",
   "crates/borg-api",
-  "crates/borg-cmd",
   "crates/borg-cli",
+  "crates/borg-cmd",
   "crates/borg-core",
   "crates/borg-db",
   "crates/borg-exec",
   "crates/borg-llm",
   "crates/borg-ltm",
-  "crates/borg-onboard",
   "crates/borg-ports",
   "crates/borg-rt",
 ]
@@ -18,6 +17,7 @@ resolver = "2"
 [workspace.dependencies]
 anyhow = "1"
 axum = { version = "0.7", features = ["json"] }
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

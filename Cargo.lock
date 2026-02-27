@@ -568,7 +568,6 @@ dependencies = [
  "borg-db",
  "borg-exec",
  "borg-ltm",
- "borg-onboard",
  "borg-rt",
  "clap",
  "reqwest",
@@ -642,6 +641,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "reqwest",
  "serde",
  "serde_json",
@@ -668,19 +668,6 @@ dependencies = [
  "turso",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "borg-onboard"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum 0.7.9",
- "borg-db",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
 ]
 
 [[package]]

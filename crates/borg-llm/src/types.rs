@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StopReason {
@@ -85,6 +86,44 @@ pub struct TranscriptionRequest {
 
 #[async_trait]
 pub trait Provider: Send + Sync {
+    fn provider_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
+    fn supports_chat_completion(&self) -> bool {
+        true
+    }
+
+    fn supports_audio_transcription(&self) -> bool {
+        true
+    }
+
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage>;
     async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String>;
+}
+
+#[async_trait]
+impl<T> Provider for Arc<T>
+where
+    T: Provider + ?Sized,
+{
+    fn provider_name(&self) -> &'static str {
+        self.as_ref().provider_name()
+    }
+
+    fn supports_chat_completion(&self) -> bool {
+        self.as_ref().supports_chat_completion()
+    }
+
+    fn supports_audio_transcription(&self) -> bool {
+        self.as_ref().supports_audio_transcription()
+    }
+
+    async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        self.as_ref().chat(req).await
+    }
+
+    async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String> {
+        self.as_ref().transcribe(req).await
+    }
 }

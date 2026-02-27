@@ -207,6 +207,7 @@ mod tests {
 
     #[test]
     fn from_settings_selects_openrouter_when_preferred() {
+        let _guard = env_lock();
         let provider = ConfiguredProvider::from_settings(ProviderSettings {
             openrouter_api_key: Some("or-key".to_string()),
             preferred_provider: Some("openrouter".to_string()),
@@ -232,6 +233,7 @@ mod tests {
 
     #[tokio::test]
     async fn openrouter_transcribe_without_openai_key_returns_clear_error() {
+        let _guard = env_lock();
         let provider = ConfiguredProvider::from_settings(ProviderSettings {
             openrouter_api_key: Some("or-key".to_string()),
             preferred_provider: Some("openrouter".to_string()),
