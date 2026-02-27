@@ -526,5 +526,4 @@ mod tests {
         );
         assert!(mime_to_input_audio_format("application/octet-stream").is_err());
     }
-
 }

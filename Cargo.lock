@@ -551,10 +551,12 @@ dependencies = [
  "borg-ltm",
  "borg-ports",
  "borg-rt",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
  "tower",
+ "tower-http",
  "tracing",
 ]
 
@@ -4450,6 +4452,7 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]

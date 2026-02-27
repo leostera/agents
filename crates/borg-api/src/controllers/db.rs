@@ -119,7 +119,7 @@ impl DbController {
             Ok(providers) => {
                 (StatusCode::OK, Json(json!({ "providers": providers }))).into_response()
             }
-            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
         }
     }
 
@@ -130,7 +130,7 @@ impl DbController {
         match state.db.get_provider(&provider).await {
             Ok(Some(found)) => (StatusCode::OK, Json(json!({ "provider": found }))).into_response(),
             Ok(None) => api_error(StatusCode::NOT_FOUND, "provider not found".to_string()),
-            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
         }
     }
 

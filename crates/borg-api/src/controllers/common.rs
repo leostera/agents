@@ -1,6 +1,7 @@
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use borg_core::Uri;
 use serde::Serialize;
+use tracing::{error, warn};
 
 #[derive(Serialize)]
 pub(crate) struct ApiError {
@@ -20,6 +21,11 @@ pub(crate) struct ApiFieldError {
 }
 
 pub(crate) fn api_error(status: StatusCode, error: String) -> axum::response::Response {
+    if status.is_server_error() {
+        error!(target: "borg_api", status = %status, error = error.as_str(), "api_error");
+    } else {
+        warn!(target: "borg_api", status = %status, error = error.as_str(), "api_error");
+    }
     (status, Json(ApiError { error })).into_response()
 }
 
