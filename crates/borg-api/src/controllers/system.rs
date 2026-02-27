@@ -90,10 +90,10 @@ impl SystemController {
                     })),
                 )
                     .into_response();
-                if let Some(session_id) = message.session_id {
-                    if let Ok(value) = session_id.to_string().parse() {
-                        response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
-                    }
+                if let Some(session_id) = message.session_id
+                    && let Ok(value) = session_id.to_string().parse()
+                {
+                    response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
                 }
                 response
             }

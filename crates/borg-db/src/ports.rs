@@ -46,7 +46,11 @@ impl BorgDb {
         Ok(Some(row.get(0)?))
     }
 
-    pub async fn list_port_settings(&self, port: &str, limit: usize) -> Result<Vec<(String, String)>> {
+    pub async fn list_port_settings(
+        &self,
+        port: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>> {
         let limit = i64::try_from(limit).unwrap_or(200);
         let mut rows = self
             .conn

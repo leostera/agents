@@ -106,7 +106,11 @@ impl BorgDb {
         Ok(())
     }
 
-    pub async fn list_policy_uses(&self, policy_id: &Uri, limit: usize) -> Result<Vec<PolicyUseRecord>> {
+    pub async fn list_policy_uses(
+        &self,
+        policy_id: &Uri,
+        limit: usize,
+    ) -> Result<Vec<PolicyUseRecord>> {
         let limit = i64::try_from(limit).unwrap_or(200);
         let mut rows = self
             .conn

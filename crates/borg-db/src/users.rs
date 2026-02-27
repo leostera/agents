@@ -4,8 +4,8 @@ use serde_json::Value;
 
 use borg_core::Uri;
 
-use crate::{BorgDb, UserRecord};
 use crate::utils::parse_ts;
+use crate::{BorgDb, UserRecord};
 
 impl BorgDb {
     pub async fn upsert_user(&self, user_key: &Uri, profile: &Value) -> Result<()> {
@@ -19,12 +19,7 @@ impl BorgDb {
                   profile_json = excluded.profile_json,
                   updated_at = excluded.updated_at
                 "#,
-                (
-                    user_key.to_string(),
-                    profile.to_string(),
-                    now.clone(),
-                    now,
-                ),
+                (user_key.to_string(), profile.to_string(), now.clone(), now),
             )
             .await
             .context("failed to upsert user")?;
@@ -83,7 +78,10 @@ impl BorgDb {
     pub async fn delete_user(&self, user_key: &Uri) -> Result<u64> {
         let deleted = self
             .conn
-            .execute("DELETE FROM users WHERE user_key = ?1", (user_key.to_string(),))
+            .execute(
+                "DELETE FROM users WHERE user_key = ?1",
+                (user_key.to_string(),),
+            )
             .await
             .context("failed to delete user")?;
         Ok(deleted)

@@ -1,8 +1,4 @@
-use axum::{
-    Json,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{Json, http::StatusCode, response::IntoResponse};
 use borg_core::Uri;
 use serde::Serialize;
 

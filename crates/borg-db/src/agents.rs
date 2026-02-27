@@ -80,8 +80,7 @@ impl BorgDb {
                 agent_id: Uri::parse(&row.get::<String>(0)?)?,
                 model: row.get(1)?,
                 system_prompt: row.get(2)?,
-                tools: serde_json::from_str(&row.get::<String>(3)?)
-                    .unwrap_or(Value::Array(vec![])),
+                tools: serde_json::from_str(&row.get::<String>(3)?).unwrap_or(Value::Array(vec![])),
                 updated_at: parse_ts(&updated_at_raw)?,
             });
         }

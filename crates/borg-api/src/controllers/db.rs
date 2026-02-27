@@ -126,9 +126,7 @@ impl DbController {
         AxumPath(provider): AxumPath<String>,
     ) -> impl IntoResponse {
         match state.db.get_provider(&provider).await {
-            Ok(Some(found)) => {
-                (StatusCode::OK, Json(json!({ "provider": found }))).into_response()
-            }
+            Ok(Some(found)) => (StatusCode::OK, Json(json!({ "provider": found }))).into_response(),
             Ok(None) => api_error(StatusCode::NOT_FOUND, "provider not found".to_string()),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
@@ -254,7 +252,11 @@ impl DbController {
             Ok(None) => return api_error(StatusCode::NOT_FOUND, "policy not found".to_string()),
             Err(err) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
-        match state.db.attach_policy_to_entity(&policy_id, &entity_id).await {
+        match state
+            .db
+            .attach_policy_to_entity(&policy_id, &entity_id)
+            .await
+        {
             Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
@@ -277,7 +279,10 @@ impl DbController {
             .detach_policy_from_entity(&policy_id, &entity_id)
             .await
         {
-            Ok(0) => api_error(StatusCode::NOT_FOUND, "policy association not found".to_string()),
+            Ok(0) => api_error(
+                StatusCode::NOT_FOUND,
+                "policy association not found".to_string(),
+            ),
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
@@ -556,10 +561,16 @@ impl DbController {
             Ok(v) => v,
             Err(err) => return err,
         };
-        match state.db.append_session_message(&session_id, &payload.payload).await {
-            Ok(message_index) => {
-                (StatusCode::OK, Json(json!({ "message_index": message_index }))).into_response()
-            }
+        match state
+            .db
+            .append_session_message(&session_id, &payload.payload)
+            .await
+        {
+            Ok(message_index) => (
+                StatusCode::OK,
+                Json(json!({ "message_index": message_index })),
+            )
+                .into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
@@ -575,7 +586,11 @@ impl DbController {
         };
         let from = query.from.unwrap_or(0);
         let limit = query.limit.unwrap_or(100);
-        match state.db.list_session_messages(&session_id, from, limit).await {
+        match state
+            .db
+            .list_session_messages(&session_id, from, limit)
+            .await
+        {
             Ok(messages) => (StatusCode::OK, Json(json!({ "messages": messages }))).into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
@@ -589,11 +604,18 @@ impl DbController {
             Ok(v) => v,
             Err(err) => return err,
         };
-        match state.db.get_session_message(&session_id, message_index).await {
+        match state
+            .db
+            .get_session_message(&session_id, message_index)
+            .await
+        {
             Ok(Some(message)) => {
                 (StatusCode::OK, Json(json!({ "message": message }))).into_response()
             }
-            Ok(None) => api_error(StatusCode::NOT_FOUND, "session message not found".to_string()),
+            Ok(None) => api_error(
+                StatusCode::NOT_FOUND,
+                "session message not found".to_string(),
+            ),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
@@ -612,7 +634,10 @@ impl DbController {
             .update_session_message(&session_id, message_index, &payload.payload)
             .await
         {
-            Ok(0) => api_error(StatusCode::NOT_FOUND, "session message not found".to_string()),
+            Ok(0) => api_error(
+                StatusCode::NOT_FOUND,
+                "session message not found".to_string(),
+            ),
             Ok(_) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
@@ -626,8 +651,15 @@ impl DbController {
             Ok(v) => v,
             Err(err) => return err,
         };
-        match state.db.delete_session_message(&session_id, message_index).await {
-            Ok(0) => api_error(StatusCode::NOT_FOUND, "session message not found".to_string()),
+        match state
+            .db
+            .delete_session_message(&session_id, message_index)
+            .await
+        {
+            Ok(0) => api_error(
+                StatusCode::NOT_FOUND,
+                "session message not found".to_string(),
+            ),
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
@@ -670,10 +702,11 @@ impl DbController {
         AxumPath((port, key)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
         match state.db.get_port_setting(&port, &key).await {
-            Ok(Some(value)) => {
-                (StatusCode::OK, Json(json!({ "port": port, "key": key, "value": value })))
-                    .into_response()
-            }
+            Ok(Some(value)) => (
+                StatusCode::OK,
+                Json(json!({ "port": port, "key": key, "value": value })),
+            )
+                .into_response(),
             Ok(None) => api_error(StatusCode::NOT_FOUND, "port setting not found".to_string()),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
@@ -684,7 +717,11 @@ impl DbController {
         AxumPath((port, key)): AxumPath<(String, String)>,
         Json(payload): Json<UpsertPortSettingRequest>,
     ) -> impl IntoResponse {
-        match state.db.upsert_port_setting(&port, &key, &payload.value).await {
+        match state
+            .db
+            .upsert_port_setting(&port, &key, &payload.value)
+            .await
+        {
             Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
@@ -809,14 +846,15 @@ impl DbController {
             Err(err) => return err,
         };
         match state.db.get_port_session_context(&port, &session_id).await {
-            Ok(Some(ctx)) => {
-                (
-                    StatusCode::OK,
-                    Json(json!({ "port": port, "session_id": session_id, "ctx": ctx })),
-                )
-                    .into_response()
-            }
-            Ok(None) => api_error(StatusCode::NOT_FOUND, "port session context not found".to_string()),
+            Ok(Some(ctx)) => (
+                StatusCode::OK,
+                Json(json!({ "port": port, "session_id": session_id, "ctx": ctx })),
+            )
+                .into_response(),
+            Ok(None) => api_error(
+                StatusCode::NOT_FOUND,
+                "port session context not found".to_string(),
+            ),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
@@ -848,8 +886,15 @@ impl DbController {
             Ok(v) => v,
             Err(err) => return err,
         };
-        match state.db.clear_port_session_context(&port, &session_id).await {
-            Ok(0) => api_error(StatusCode::NOT_FOUND, "port session context not found".to_string()),
+        match state
+            .db
+            .clear_port_session_context(&port, &session_id)
+            .await
+        {
+            Ok(0) => api_error(
+                StatusCode::NOT_FOUND,
+                "port session context not found".to_string(),
+            ),
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
@@ -864,14 +909,15 @@ impl DbController {
             Err(err) => return err,
         };
         match state.db.get_any_port_session_context(&session_id).await {
-            Ok(Some((port, ctx))) => {
-                (
-                    StatusCode::OK,
-                    Json(json!({ "port": port, "session_id": session_id, "ctx": ctx })),
-                )
-                    .into_response()
-            }
-            Ok(None) => api_error(StatusCode::NOT_FOUND, "session context not found".to_string()),
+            Ok(Some((port, ctx))) => (
+                StatusCode::OK,
+                Json(json!({ "port": port, "session_id": session_id, "ctx": ctx })),
+            )
+                .into_response(),
+            Ok(None) => api_error(
+                StatusCode::NOT_FOUND,
+                "session context not found".to_string(),
+            ),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }

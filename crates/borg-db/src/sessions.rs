@@ -235,7 +235,11 @@ impl BorgDb {
         Ok(updated)
     }
 
-    pub async fn delete_session_message(&self, session_id: &Uri, message_index: i64) -> Result<u64> {
+    pub async fn delete_session_message(
+        &self,
+        session_id: &Uri,
+        message_index: i64,
+    ) -> Result<u64> {
         let deleted = self
             .conn
             .execute(
