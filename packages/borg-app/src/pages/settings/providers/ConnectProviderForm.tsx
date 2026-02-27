@@ -9,6 +9,7 @@ import {
   Input,
   Label,
 } from "@borg/ui";
+import { Icon } from "@iconify/react";
 import { KeyRound, LoaderCircle } from "lucide-react";
 import React from "react";
 
@@ -16,10 +17,14 @@ type ConnectProviderFormProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   isStartingOpenAi: boolean;
+  isSavingOpenAi: boolean;
   isSavingOpenRouter: boolean;
+  openAiApiKey: string;
   openRouterApiKey: string;
+  onOpenAiApiKeyChange: (value: string) => void;
   onOpenRouterApiKeyChange: (value: string) => void;
   onStartOpenAiSignIn: () => void;
+  onSaveOpenAi: (event: React.FormEvent<HTMLFormElement>) => void;
   onSaveOpenRouter: (event: React.FormEvent<HTMLFormElement>) => void;
 };
 
@@ -27,20 +32,53 @@ export function ConnectProviderForm({
   open,
   onOpenChange,
   isStartingOpenAi,
+  isSavingOpenAi,
   isSavingOpenRouter,
+  openAiApiKey,
   openRouterApiKey,
+  onOpenAiApiKeyChange,
   onOpenRouterApiKeyChange,
   onStartOpenAiSignIn,
+  onSaveOpenAi,
   onSaveOpenRouter,
 }: ConnectProviderFormProps) {
-  const [showOpenRouterApiKeyForm, setShowOpenRouterApiKeyForm] =
-    React.useState(false);
+  const [dialogStep, setDialogStep] = React.useState<"provider" | "method">(
+    "provider"
+  );
+  const [selectedProvider, setSelectedProvider] = React.useState<
+    "openai" | "openrouter"
+  >("openai");
 
   React.useEffect(() => {
     if (!open) {
-      setShowOpenRouterApiKeyForm(false);
+      setDialogStep("provider");
+      setSelectedProvider("openai");
     }
   }, [open]);
+
+  const showOpenAiApiKeyForm =
+    dialogStep === "method" && selectedProvider === "openai";
+  const showOpenRouterApiKeyForm =
+    dialogStep === "method" && selectedProvider === "openrouter";
+
+  const ProviderLogo = ({
+    provider,
+    className,
+  }: {
+    provider: "openai" | "openrouter";
+    className?: string;
+  }) =>
+    provider === "openai" ? (
+      <Icon
+        icon="streamline-logos:openai-logo-solid"
+        className={`size-6 shrink-0 ${className ?? ""}`}
+      />
+    ) : (
+      <Icon
+        icon="simple-icons:openrouter"
+        className={`size-6 shrink-0 ${className ?? ""}`}
+      />
+    );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -52,69 +90,131 @@ export function ConnectProviderForm({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="rounded-lg border px-4 py-3">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">OpenAI</p>
-                <p className="text-muted-foreground text-xs">
-                  Use Codex device-code authentication.
-                </p>
-              </div>
+        {dialogStep === "provider" ? (
+          <div className="space-y-2">
+            <Label>Provider</Label>
+            <div className="grid grid-cols-2 gap-2">
               <Button
+                type="button"
                 variant="outline"
-                onClick={onStartOpenAiSignIn}
-                disabled={isStartingOpenAi}
+                className="h-16 items-center justify-start gap-3"
+                onClick={() => {
+                  setSelectedProvider("openai");
+                  setDialogStep("method");
+                }}
               >
-                {isStartingOpenAi ? (
-                  <LoaderCircle className="size-4 animate-spin" />
-                ) : (
-                  <KeyRound className="size-4" />
-                )}
-                Sign in with OpenAI
+                <ProviderLogo provider="openai" />
+                <span className="text-sm font-medium">OpenAI</span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-16 items-center justify-start gap-3"
+                onClick={() => {
+                  setSelectedProvider("openrouter");
+                  setDialogStep("method");
+                }}
+              >
+                <ProviderLogo provider="openrouter" />
+                <span className="text-sm font-medium">OpenRouter</span>
               </Button>
             </div>
           </div>
-
-          <div className="rounded-lg border px-4 py-3">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">OpenRouter</p>
-                <p className="text-muted-foreground text-xs">
-                  Set an API key directly for OpenRouter requests.
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                onClick={() => setShowOpenRouterApiKeyForm((v) => !v)}
-              >
-                Use API Key
-              </Button>
+        ) : (
+          <form
+            className="space-y-3"
+            onSubmit={
+              selectedProvider === "openai" ? onSaveOpenAi : onSaveOpenRouter
+            }
+          >
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <ProviderLogo provider={selectedProvider} />
+                {selectedProvider === "openai" ? "OpenAI" : "OpenRouter"}
+              </Label>
+              {selectedProvider === "openai" ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onStartOpenAiSignIn}
+                  disabled={isStartingOpenAi}
+                >
+                  {isStartingOpenAi ? (
+                    <LoaderCircle className="size-4 animate-spin" />
+                  ) : (
+                    <KeyRound className="size-4" />
+                  )}
+                  Sign in with OpenAI
+                </Button>
+              ) : null}
             </div>
-            {showOpenRouterApiKeyForm ? (
-              <form className="space-y-2" onSubmit={onSaveOpenRouter}>
-                <Label htmlFor="openrouter-api-key">OpenRouter API Key</Label>
+
+            {showOpenAiApiKeyForm || showOpenRouterApiKeyForm ? (
+              <div className="space-y-2">
+                <Label
+                  htmlFor={
+                    selectedProvider === "openai"
+                      ? "openai-api-key"
+                      : "openrouter-api-key"
+                  }
+                >
+                  API Key
+                </Label>
                 <Input
-                  id="openrouter-api-key"
+                  id={
+                    selectedProvider === "openai"
+                      ? "openai-api-key"
+                      : "openrouter-api-key"
+                  }
                   type="password"
                   autoComplete="off"
-                  value={openRouterApiKey}
-                  onChange={(event) =>
-                    onOpenRouterApiKeyChange(event.currentTarget.value)
+                  value={
+                    selectedProvider === "openai"
+                      ? openAiApiKey
+                      : openRouterApiKey
                   }
-                  placeholder="sk-or-v1-..."
+                  onChange={(event) => {
+                    if (selectedProvider === "openai") {
+                      onOpenAiApiKeyChange(event.currentTarget.value);
+                      return;
+                    }
+                    onOpenRouterApiKeyChange(event.currentTarget.value);
+                  }}
+                  placeholder={
+                    selectedProvider === "openai" ? "sk-..." : "sk-or-v1-..."
+                  }
                 />
-                <Button type="submit" disabled={isSavingOpenRouter}>
-                  {isSavingOpenRouter ? (
-                    <LoaderCircle className="size-4 animate-spin" />
-                  ) : null}
-                  Save API Key
-                </Button>
-              </form>
+              </div>
             ) : null}
-          </div>
-        </div>
 
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDialogStep("provider")}
+              >
+                Back
+              </Button>
+              <Button
+                type="submit"
+                disabled={
+                  selectedProvider === "openai"
+                    ? isSavingOpenAi
+                    : isSavingOpenRouter
+                }
+              >
+                {(
+                  selectedProvider === "openai"
+                    ? isSavingOpenAi
+                    : isSavingOpenRouter
+                ) ? (
+                  <LoaderCircle className="size-4 animate-spin" />
+                ) : null}
+                Save API Key
+              </Button>
+            </div>
+          </form>
+        )}
         <DialogFooter showCloseButton />
       </DialogContent>
     </Dialog>

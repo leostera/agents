@@ -14,6 +14,7 @@
     "dev": "bun run vite",
     "fix": "biome check --formatter-enabled=true --linter-enabled=true --write ./packages",
     "format": "biome format --write ./packages",
+    "format:check": "biome check --formatter-enabled=true --linter-enabled=false ./packages",
     "lint": "biome lint --diagnostic-level=error ./packages",
     "prepare": "husky",
     "storybook": "storybook dev -p 6006 -c packages/borg-ui/.storybook",

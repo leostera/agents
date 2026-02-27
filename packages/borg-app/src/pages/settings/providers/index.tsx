@@ -86,7 +86,9 @@ export function ProvidersPage() {
   >({});
   const [isLoading, setIsLoading] = React.useState(true);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
+  const [openAiApiKey, setOpenAiApiKey] = React.useState("");
   const [openRouterApiKey, setOpenRouterApiKey] = React.useState("");
+  const [isSavingOpenAi, setIsSavingOpenAi] = React.useState(false);
   const [isSavingOpenRouter, setIsSavingOpenRouter] = React.useState(false);
   const [isStartingOpenAi, setIsStartingOpenAi] = React.useState(false);
   const [statusMessage, setStatusMessage] = React.useState<string | null>(null);
@@ -139,12 +141,39 @@ export function ProvidersPage() {
       setOpenRouterApiKey("");
       setStatusMessage("OpenRouter API key saved");
       await loadProviders();
+      setIsDialogOpen(false);
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Unable to save OpenRouter key"
       );
     } finally {
       setIsSavingOpenRouter(false);
+    }
+  };
+
+  const handleSaveOpenAi = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const apiKey = openAiApiKey.trim();
+    if (apiKey.length === 0) {
+      setErrorMessage("OpenAI API key is required");
+      return;
+    }
+
+    setIsSavingOpenAi(true);
+    setErrorMessage(null);
+    setStatusMessage(null);
+    try {
+      await borgApi.upsertProviderApiKey("openai", apiKey);
+      setOpenAiApiKey("");
+      setStatusMessage("OpenAI API key saved");
+      await loadProviders();
+      setIsDialogOpen(false);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Unable to save OpenAI key"
+      );
+    } finally {
+      setIsSavingOpenAi(false);
     }
   };
 
@@ -158,6 +187,7 @@ export function ProvidersPage() {
         "OpenAI device-code sign-in started. Continue in your Codex auth flow."
       );
       await loadProviders();
+      setIsDialogOpen(false);
     } catch (error) {
       if (error instanceof BorgApiError && error.status === 404) {
         setErrorMessage("OpenAI device-code flow is not wired in the API yet");
@@ -204,6 +234,12 @@ export function ProvidersPage() {
 
   return (
     <section className="space-y-4">
+      <section className="flex items-center justify-end">
+        <Button variant="outline" onClick={() => setIsDialogOpen(true)}>
+          + Connect Provider
+        </Button>
+      </section>
+
       {statusMessage ? (
         <div className="flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-600/10 px-3 py-2 text-xs text-emerald-700">
           <CheckCircle2 className="size-3.5" />
@@ -336,10 +372,14 @@ export function ProvidersPage() {
         open={isDialogOpen}
         onOpenChange={setIsDialogOpen}
         isStartingOpenAi={isStartingOpenAi}
+        isSavingOpenAi={isSavingOpenAi}
         isSavingOpenRouter={isSavingOpenRouter}
+        openAiApiKey={openAiApiKey}
         openRouterApiKey={openRouterApiKey}
+        onOpenAiApiKeyChange={setOpenAiApiKey}
         onOpenRouterApiKeyChange={setOpenRouterApiKey}
         onStartOpenAiSignIn={() => void handleStartOpenAiSignIn()}
+        onSaveOpenAi={handleSaveOpenAi}
         onSaveOpenRouter={handleSaveOpenRouter}
       />
     </section>
