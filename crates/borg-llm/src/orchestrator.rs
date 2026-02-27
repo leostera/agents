@@ -5,7 +5,6 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
 
 use crate::{LlmAssistantMessage, LlmRequest, Provider, TranscriptionRequest};
 
@@ -24,21 +23,11 @@ pub struct UsageKey {
     pub model: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UsageState {
     pub used_tokens: u64,
     pub remaining_tokens: Option<u64>,
     pub reset_at: Option<SystemTime>,
-}
-
-impl Default for UsageState {
-    fn default() -> Self {
-        Self {
-            used_tokens: 0,
-            remaining_tokens: None,
-            reset_at: None,
-        }
-    }
 }
 
 pub trait UsageManager: Send + Sync {
@@ -80,12 +69,7 @@ impl UsageManager for InMemoryUsageManager {
             .unwrap_or_default()
     }
 
-    fn can_execute(
-        &self,
-        key: &UsageKey,
-        now: SystemTime,
-        estimated_tokens: Option<u64>,
-    ) -> bool {
+    fn can_execute(&self, key: &UsageKey, now: SystemTime, estimated_tokens: Option<u64>) -> bool {
         let state = self.snapshot(key);
         if let Some(reset_at) = state.reset_at
             && now >= reset_at
@@ -272,10 +256,8 @@ impl BorgLLM {
                     return Ok(message);
                 }
                 Err(error) if is_quota_error(&error) => {
-                    self.usage_manager.mark_exhausted(
-                        &key,
-                        now.checked_add(self.quota_reset_window),
-                    );
+                    self.usage_manager
+                        .mark_exhausted(&key, now.checked_add(self.quota_reset_window));
                     last_error = Some(error);
                 }
                 Err(error) => {
@@ -284,9 +266,8 @@ impl BorgLLM {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| {
-            anyhow!("no configured provider could satisfy chat completion")
-        }))
+        Err(last_error
+            .unwrap_or_else(|| anyhow!("no configured provider could satisfy chat completion")))
     }
 
     pub async fn audio_transcription(&self, req: &TranscriptionRequest) -> Result<String> {
@@ -320,10 +301,8 @@ impl BorgLLM {
                     return Ok(text);
                 }
                 Err(error) if is_quota_error(&error) => {
-                    self.usage_manager.mark_exhausted(
-                        &key,
-                        now.checked_add(self.quota_reset_window),
-                    );
+                    self.usage_manager
+                        .mark_exhausted(&key, now.checked_add(self.quota_reset_window));
                     last_error = Some(error);
                 }
                 Err(error) => {
@@ -332,9 +311,8 @@ impl BorgLLM {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| {
-            anyhow!("no configured provider could satisfy audio transcription")
-        }))
+        Err(last_error
+            .unwrap_or_else(|| anyhow!("no configured provider could satisfy audio transcription")))
     }
 }
 
@@ -409,6 +387,7 @@ fn is_quota_error(error: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use serde_json::json;
     use std::collections::VecDeque;
     use std::sync::Mutex;
@@ -549,7 +528,10 @@ mod tests {
             usage,
         );
 
-        let message = llm.chat_completion(&chat_request()).await.expect("chat result");
+        let message = llm
+            .chat_completion(&chat_request())
+            .await
+            .expect("chat result");
         assert_eq!(first_text(&message), "first");
     }
 
@@ -559,9 +541,11 @@ mod tests {
             Ok(_) => panic!("builder should fail with no providers"),
             Err(error) => error,
         };
-        assert!(error
-            .to_string()
-            .contains("at least one provider must be configured"));
+        assert!(
+            error
+                .to_string()
+                .contains("at least one provider must be configured")
+        );
     }
 
     #[tokio::test]
@@ -581,10 +565,15 @@ mod tests {
             .build()
             .expect("build llm");
 
-        let error = llm.chat_completion(&chat_request()).await.expect_err("should fail");
-        assert!(error
-            .to_string()
-            .contains("no configured provider could satisfy chat completion"));
+        let error = llm
+            .chat_completion(&chat_request())
+            .await
+            .expect_err("should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("no configured provider could satisfy chat completion")
+        );
     }
 
     #[tokio::test]
@@ -628,7 +617,10 @@ mod tests {
             usage,
         );
 
-        let message = llm.chat_completion(&chat_request()).await.expect("chat result");
+        let message = llm
+            .chat_completion(&chat_request())
+            .await
+            .expect("chat result");
         assert_eq!(first_text(&message), "second");
     }
 
@@ -661,7 +653,10 @@ mod tests {
             usage.clone(),
         );
 
-        let message = llm.chat_completion(&chat_request()).await.expect("chat result");
+        let message = llm
+            .chat_completion(&chat_request())
+            .await
+            .expect("chat result");
         assert_eq!(first_text(&message), "second");
 
         let state = usage.snapshot(&UsageKey {
@@ -739,7 +734,10 @@ mod tests {
             usage,
         );
 
-        let chat = llm.chat_completion(&chat_request()).await.expect("chat result");
+        let chat = llm
+            .chat_completion(&chat_request())
+            .await
+            .expect("chat result");
         assert_eq!(first_text(&chat), "chat-ok");
 
         let text = llm
@@ -823,7 +821,10 @@ mod tests {
             usage,
         );
 
-        let chat = llm.chat_completion(&chat_request()).await.expect("chat result");
+        let chat = llm
+            .chat_completion(&chat_request())
+            .await
+            .expect("chat result");
         assert_eq!(first_text(&chat), "fallback-chat");
     }
 
@@ -848,9 +849,11 @@ mod tests {
             .audio_transcription(&transcription_request("audio/ogg"))
             .await
             .expect_err("should fail");
-        assert!(error
-            .to_string()
-            .contains("no configured provider could satisfy audio transcription"));
+        assert!(
+            error
+                .to_string()
+                .contains("no configured provider could satisfy audio transcription")
+        );
     }
 
     #[tokio::test]
@@ -870,7 +873,9 @@ mod tests {
             usage.clone(),
         );
 
-        llm.chat_completion(&chat_request()).await.expect("chat result");
+        llm.chat_completion(&chat_request())
+            .await
+            .expect("chat result");
         let state = usage.snapshot(&UsageKey {
             provider: "p1".to_string(),
             capability: Capability::ChatCompletion,
@@ -950,6 +955,8 @@ mod tests {
         assert!(is_quota_error(&anyhow!("429 Too Many Requests")));
         assert!(is_quota_error(&anyhow!("rate limit exceeded")));
         assert!(is_quota_error(&anyhow!("insufficient credits")));
-        assert!(!is_quota_error(&anyhow!(json!({"error":"bad request"}).to_string())));
+        assert!(!is_quota_error(&anyhow!(
+            json!({"error":"bad request"}).to_string()
+        )));
     }
 }

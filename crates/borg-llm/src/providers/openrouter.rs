@@ -502,20 +502,29 @@ mod tests {
             language: None,
             prompt: None,
         };
-        let error = provider.transcribe(&request).await.expect_err("missing model");
-        assert!(error
-            .to_string()
-            .contains("audio transcription model is required"));
+        let error = provider
+            .transcribe(&request)
+            .await
+            .expect_err("missing model");
+        assert!(
+            error
+                .to_string()
+                .contains("audio transcription model is required")
+        );
     }
 
     #[test]
     fn mime_mappings_cover_telegram_inputs() {
         assert_eq!(mime_to_input_audio_format("audio/ogg").expect("ogg"), "mp3");
-        assert_eq!(mime_to_input_audio_format("audio/opus").expect("opus"), "mp3");
+        assert_eq!(
+            mime_to_input_audio_format("audio/opus").expect("opus"),
+            "mp3"
+        );
         assert_eq!(
             mime_to_input_audio_format("audio/mpeg").expect("mpeg"),
             "mp3"
         );
         assert!(mime_to_input_audio_format("application/octet-stream").is_err());
     }
+
 }

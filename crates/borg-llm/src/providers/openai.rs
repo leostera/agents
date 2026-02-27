@@ -563,10 +563,10 @@ fn parse_openai_assistant_message(payload: &Value) -> Result<LlmAssistantMessage
         .ok_or_else(|| anyhow!("missing choices[0].message in openai response"))?;
 
     let mut blocks = Vec::new();
-    if let Some(content) = message.get("content").and_then(Value::as_str) {
-        if !content.trim().is_empty() {
-            blocks.push(ProviderBlock::Text(content.to_string()));
-        }
+    if let Some(content) = message.get("content").and_then(Value::as_str)
+        && !content.trim().is_empty()
+    {
+        blocks.push(ProviderBlock::Text(content.to_string()));
     }
 
     if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
@@ -624,7 +624,7 @@ mod tests {
     use serde_json::json;
 
     use super::{OpenAiApiMode, OpenAiProvider, to_openai_messages};
-    use crate::{LlmRequest, ProviderBlock, ProviderMessage, Provider, TranscriptionRequest};
+    use crate::{LlmRequest, Provider, ProviderBlock, ProviderMessage, TranscriptionRequest};
 
     #[test]
     fn assistant_tool_call_serializes_to_tool_calls_field() {
@@ -725,9 +725,14 @@ mod tests {
             prompt: None,
         };
 
-        let error = provider.transcribe(&request).await.expect_err("missing model");
-        assert!(error
-            .to_string()
-            .contains("audio transcription model is required"));
+        let error = provider
+            .transcribe(&request)
+            .await
+            .expect_err("missing model");
+        assert!(
+            error
+                .to_string()
+                .contains("audio transcription model is required")
+        );
     }
 }
