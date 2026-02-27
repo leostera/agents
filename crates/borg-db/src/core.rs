@@ -11,14 +11,9 @@ impl BorgDb {
     pub async fn open_local(path: &str) -> Result<Self> {
         let db = Builder::new_local(path).build().await?;
         let conn = db.connect()?;
-        conn.execute_batch(
-            r#"
-            PRAGMA journal_mode = WAL;
-            PRAGMA busy_timeout = 5000;
-            "#,
-        )
-        .await
-        .context("failed to configure sqlite pragmas")?;
+        conn.execute("PRAGMA busy_timeout = 5000", ())
+            .await
+            .context("failed to configure sqlite busy_timeout")?;
         Ok(Self::new(conn))
     }
 }

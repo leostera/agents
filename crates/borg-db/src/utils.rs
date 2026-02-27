@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use turso::Row;
 
@@ -33,19 +33,7 @@ pub(crate) fn row_to_task(row: &Row) -> Result<Task> {
 }
 
 pub(crate) fn parse_ts(ts: &str) -> Result<DateTime<Utc>> {
-    if let Ok(parsed) = DateTime::parse_from_rfc3339(ts) {
-        return Ok(parsed.with_timezone(&Utc));
-    }
-
-    if let Ok(parsed) = NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S") {
-        return Ok(DateTime::<Utc>::from_naive_utc_and_offset(parsed, Utc));
-    }
-
-    if let Ok(epoch) = ts.parse::<i64>()
-        && let Some(parsed) = DateTime::<Utc>::from_timestamp(epoch, 0)
-    {
-        return Ok(parsed);
-    }
-
-    Err(anyhow!("invalid timestamp `{}`", ts))
+    Ok(DateTime::parse_from_rfc3339(ts)
+        .map_err(|_| anyhow!("invalid RFC3339 timestamp"))?
+        .with_timezone(&Utc))
 }
