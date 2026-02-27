@@ -26,6 +26,8 @@ fi
 
 if is_web_change; then
   echo "pre-commit: running web checks"
+  bun run lint
   bun run check
+  bun run format:check
   bun run test
 fi
