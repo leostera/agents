@@ -468,6 +468,7 @@ mod tests {
             content: vec![ProviderBlock::Text(text.to_string())],
             stop_reason: StopReason::EndOfTurn,
             error_message: None,
+            usage_tokens: None,
         }
     }
 

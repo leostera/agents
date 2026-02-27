@@ -73,6 +73,8 @@ pub struct LlmAssistantMessage {
     pub content: Vec<ProviderBlock>,
     pub stop_reason: StopReason,
     pub error_message: Option<String>,
+    #[serde(default)]
+    pub usage_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,6 +5,7 @@ use borg_llm::{LlmRequest, Provider, ProviderBlock, StopReason};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::info;
+use tracing::{Instrument, info_span, warn};
 
 use crate::{
     AgentTools, Session, SessionOutput, SessionResult, ToolCallRecord, ToolResultData, ToolSpec,
@@ -132,6 +133,18 @@ impl Agent {
         }
 
         let mut pending = session.pop_steering_messages();
+        let user_key = match session.user_key().await {
+            Ok(value) => Some(value),
+            Err(err) => {
+                warn!(
+                    target: "borg_agent",
+                    session_id = %session.session_id,
+                    error = %err,
+                    "failed to resolve user_key for provider call context"
+                );
+                None
+            }
+        };
         let mut has_tool_calls = match session.has_unprocessed_messages().await {
             Ok(value) => value,
             Err(err) => {
@@ -195,7 +208,15 @@ impl Agent {
                     max_tokens: None,
                     api_key: None,
                 };
-                let assistant_message = match provider.chat(&req).await {
+                let call_id = uri!("borg", "call").to_string();
+                let llm_call_span = info_span!(
+                    "llm_provider_call",
+                    call_id = %call_id,
+                    session_id = %session.session_id,
+                    user_id = ?user_key.as_ref().map(Uri::to_string),
+                    model = req.model.as_str()
+                );
+                let assistant_message = match provider.chat(&req).instrument(llm_call_span).await {
                     Ok(message) => message,
                     Err(err) => {
                         return finish_session(
@@ -205,6 +226,21 @@ impl Agent {
                         .await;
                     }
                 };
+                if let Err(err) = session
+                    .record_provider_usage(
+                        provider.provider_name(),
+                        assistant_message.usage_tokens.unwrap_or(0),
+                    )
+                    .await
+                {
+                    warn!(
+                        target: "borg_agent",
+                        session_id = %session.session_id,
+                        provider = provider.provider_name(),
+                        error = %err,
+                        "failed to update provider usage summary"
+                    );
+                }
                 info!(target: "borg_agent", session_id = %session.session_id, "turn_end");
 
                 let tool_calls: Vec<(String, String, Value)> = assistant_message

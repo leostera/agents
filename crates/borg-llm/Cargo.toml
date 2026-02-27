@@ -13,6 +13,7 @@ serde.workspace = true
 testcontainers.workspace = true
 tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

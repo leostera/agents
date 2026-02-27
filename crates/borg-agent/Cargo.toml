@@ -14,8 +14,8 @@ borg-core = { path = "../borg-core" }
 async-trait.workspace = true
 tokio.workspace = true
 chrono.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
-uuid.workspace = true
 tracing-subscriber.workspace = true
 serial_test.workspace = true

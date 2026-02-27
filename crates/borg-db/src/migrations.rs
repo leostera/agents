@@ -64,8 +64,15 @@ impl BorgDb {
                 CREATE TABLE IF NOT EXISTS providers (
                     provider TEXT PRIMARY KEY,
                     api_key TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
                     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
                     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS provider_usage_summaries (
+                    provider TEXT PRIMARY KEY,
+                    tokens_used INTEGER NOT NULL DEFAULT 0,
+                    last_used TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS port_settings (
@@ -182,6 +189,28 @@ impl BorgDb {
                        strftime('%Y-%m-%dT%H:%M:%SZ', datetime(updated_at)) IS NULL
                        AND strftime('%Y-%m-%dT%H:%M:%SZ', datetime(updated_at, 'unixepoch')) IS NULL
                    );
+                UPDATE providers
+                SET enabled = CASE WHEN enabled IS NULL OR enabled = 0 THEN 0 ELSE 1 END;
+                UPDATE provider_usage_summaries
+                SET last_used = NULL
+                WHERE trim(coalesce(last_used, '')) = '';
+                UPDATE provider_usage_summaries
+                SET last_used = strftime('%Y-%m-%dT%H:%M:%SZ', datetime(last_used))
+                WHERE last_used IS NOT NULL
+                  AND trim(last_used) != ''
+                  AND strftime('%Y-%m-%dT%H:%M:%SZ', datetime(last_used)) IS NOT NULL;
+                UPDATE provider_usage_summaries
+                SET last_used = strftime('%Y-%m-%dT%H:%M:%SZ', datetime(last_used, 'unixepoch'))
+                WHERE last_used IS NOT NULL
+                  AND trim(last_used) != ''
+                  AND strftime('%Y-%m-%dT%H:%M:%SZ', datetime(last_used)) IS NULL
+                  AND strftime('%Y-%m-%dT%H:%M:%SZ', datetime(last_used, 'unixepoch')) IS NOT NULL;
+                UPDATE provider_usage_summaries
+                SET last_used = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                WHERE last_used IS NOT NULL
+                  AND trim(last_used) != ''
+                  AND strftime('%Y-%m-%dT%H:%M:%SZ', datetime(last_used)) IS NULL
+                  AND strftime('%Y-%m-%dT%H:%M:%SZ', datetime(last_used, 'unixepoch')) IS NULL;
                 UPDATE port_settings
                 SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
                 WHERE trim(coalesce(created_at, '')) = ''
@@ -272,7 +301,39 @@ impl BorgDb {
             .await
             .context("failed to run db migrations")?;
 
+        self.ensure_providers_enabled_column().await?;
+
         info!(target: "borg_db", "control-plane/task migrations completed");
+        Ok(())
+    }
+
+    async fn ensure_providers_enabled_column(&self) -> Result<()> {
+        let mut rows = self
+            .conn
+            .query("PRAGMA table_info(providers)", ())
+            .await
+            .context("failed to inspect providers table")?;
+        let mut has_enabled = false;
+        while let Some(row) = rows
+            .next()
+            .await
+            .context("failed reading providers table info row")?
+        {
+            let name: String = row.get(1)?;
+            if name == "enabled" {
+                has_enabled = true;
+                break;
+            }
+        }
+        if !has_enabled {
+            self.conn
+                .execute(
+                    "ALTER TABLE providers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+                    (),
+                )
+                .await
+                .context("failed to add providers.enabled column")?;
+        }
         Ok(())
     }
 }

@@ -1,9 +1,11 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use reqwest::Client;
 use serde_json::{Value, json};
 use tracing::{debug, error, info, trace};
 
+use crate::providers::call_trace::ProviderCallTrace;
 use crate::{
     AuthProvider, DeviceCodeAuthConfig, LlmAssistantMessage, LlmRequest, Provider, ProviderBlock,
     ProviderMessage, StopReason, ToolDescriptor, TranscriptionRequest, UserBlock,
@@ -208,6 +210,19 @@ impl Provider for OpenAiProvider {
             bytes = req.audio.len(),
             "sending audio transcription request"
         );
+        let call = ProviderCallTrace::sent(
+            "openai",
+            "audio_transcription",
+            model.clone(),
+            json!({
+                "endpoint": self.audio_transcriptions_url.as_str(),
+                "mime_type": req.mime_type.as_str(),
+                "language": req.language.clone(),
+                "prompt": req.prompt.clone(),
+                "model": model,
+                "audio_base64": STANDARD.encode(&req.audio),
+            }),
+        );
 
         let file_name = transcription_filename_for_mime(&req.mime_type);
         let part = reqwest::multipart::Part::bytes(req.audio.clone())
@@ -238,16 +253,19 @@ impl Provider for OpenAiProvider {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            let error_message = format!("openai audio transcriptions returned {}", status);
+            call.failed(Some(status), None, Some(body.as_str()), &error_message);
             error!(
                 target: "borg_llm",
                 status = %status,
                 response_body = body.as_str(),
                 "audio transcription request failed"
             );
-            return Err(anyhow!("openai audio transcriptions returned {}", status));
+            return Err(anyhow!(error_message));
         }
 
         let payload: Value = response.json().await?;
+        call.succeeded(status, &payload);
         let text = payload
             .get("text")
             .and_then(Value::as_str)
@@ -287,6 +305,8 @@ impl OpenAiProvider {
             "temperature": req.temperature,
             "max_tokens": req.max_tokens,
         });
+        let call =
+            ProviderCallTrace::sent("openai", "chat_completion", model.clone(), body.clone());
         trace!(
             target: "borg_llm",
             has_temperature = req.temperature.is_some(),
@@ -312,17 +332,20 @@ impl OpenAiProvider {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            let error_message = format!("openai chat completions returned {}", status);
+            call.failed(Some(status), None, Some(body.as_str()), &error_message);
             error!(
                 target: "borg_llm",
                 status = %status,
                 response_body = body.as_str(),
                 "chat completion request failed"
             );
-            return Err(anyhow!("openai chat completions returned {}", status));
+            return Err(anyhow!(error_message));
         }
 
         debug!(target: "borg_llm", status = %status, "chat completion request succeeded");
         let payload: Value = response.json().await?;
+        call.succeeded(status, &payload);
         trace!(target: "borg_llm", payload = ?payload, "raw chat completion payload");
         parse_openai_assistant_message(&payload)
     }
@@ -342,6 +365,7 @@ impl OpenAiProvider {
             "temperature": req.temperature,
             "max_tokens": req.max_tokens,
         });
+        let call = ProviderCallTrace::sent("openai", "completions", model.clone(), body.clone());
 
         let api_key = req.api_key.as_deref().unwrap_or(&self.api_key);
         let response = self
@@ -355,16 +379,19 @@ impl OpenAiProvider {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            let error_message = format!("openai completions returned {}", status);
+            call.failed(Some(status), None, Some(body.as_str()), &error_message);
             error!(
                 target: "borg_llm",
                 status = %status,
                 response_body = body.as_str(),
                 "completions request failed"
             );
-            return Err(anyhow!("openai completions returned {}", status));
+            return Err(anyhow!(error_message));
         }
 
         let payload: Value = response.json().await?;
+        call.succeeded(status, &payload);
         trace!(target: "borg_llm", payload = ?payload, "raw completions payload");
         let text = payload
             .get("choices")
@@ -389,6 +416,7 @@ impl OpenAiProvider {
             content: vec![ProviderBlock::Text(text)],
             stop_reason,
             error_message: None,
+            usage_tokens: payload_usage_tokens(&payload),
         })
     }
 }
@@ -644,6 +672,7 @@ fn parse_openai_assistant_message(payload: &Value) -> Result<LlmAssistantMessage
         content: blocks,
         stop_reason,
         error_message: None,
+        usage_tokens: payload_usage_tokens(payload),
     };
     info!(
         target: "borg_llm",
@@ -652,6 +681,13 @@ fn parse_openai_assistant_message(payload: &Value) -> Result<LlmAssistantMessage
         "parsed assistant message from provider response"
     );
     Ok(message)
+}
+
+fn payload_usage_tokens(payload: &Value) -> Option<u64> {
+    payload
+        .get("usage")
+        .and_then(|usage| usage.get("total_tokens"))
+        .and_then(Value::as_u64)
 }
 
 #[cfg(test)]

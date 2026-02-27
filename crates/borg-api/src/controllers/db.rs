@@ -37,6 +37,8 @@ pub(crate) struct PortBindingsQuery {
 #[derive(Deserialize)]
 pub(crate) struct UpsertProviderRequest {
     api_key: String,
+    #[serde(default)]
+    enabled: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -141,7 +143,7 @@ impl DbController {
     ) -> impl IntoResponse {
         match state
             .db
-            .upsert_provider_api_key(&provider, &payload.api_key)
+            .upsert_provider(&provider, &payload.api_key, payload.enabled)
             .await
         {
             Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),

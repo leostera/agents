@@ -117,6 +117,7 @@ fn assistant_text(text: &str) -> LlmAssistantMessage {
         content: vec![ProviderBlock::Text(text.to_string())],
         stop_reason: StopReason::EndOfTurn,
         error_message: None,
+        usage_tokens: None,
     }
 }
 
@@ -132,6 +133,7 @@ fn assistant_tool_calls(calls: Vec<(&str, &str, Value)>) -> LlmAssistantMessage 
             .collect(),
         stop_reason: StopReason::ToolCall,
         error_message: None,
+        usage_tokens: None,
     }
 }
 

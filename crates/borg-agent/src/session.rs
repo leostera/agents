@@ -157,4 +157,17 @@ impl Session {
             .build_context(&self.agent, &messages)
             .await
     }
+
+    pub async fn user_key(&self) -> Result<Uri> {
+        let record = self
+            .db
+            .get_session(&self.session_id)
+            .await?
+            .ok_or_else(|| anyhow!("session not found: {}", self.session_id))?;
+        Ok(record.user_key)
+    }
+
+    pub async fn record_provider_usage(&self, provider: &str, tokens_used: u64) -> Result<()> {
+        self.db.record_provider_usage(provider, tokens_used).await
+    }
 }

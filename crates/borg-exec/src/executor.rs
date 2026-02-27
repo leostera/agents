@@ -209,7 +209,7 @@ impl BorgExecutor {
         mime_type: impl Into<String>,
     ) -> Result<String> {
         let provider = self.configured_provider().await?;
-        provider
+        let transcript = provider
             .transcribe(&TranscriptionRequest {
                 audio,
                 mime_type: mime_type.into(),
@@ -217,7 +217,11 @@ impl BorgExecutor {
                 language: None,
                 prompt: None,
             })
-            .await
+            .await?;
+        self.db
+            .record_provider_usage(provider.provider_name(), 0)
+            .await?;
+        Ok(transcript)
     }
 
     pub async fn context_window_for_session(&self, session_id: &Uri) -> Result<ContextWindow> {

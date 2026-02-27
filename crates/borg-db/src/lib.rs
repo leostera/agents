@@ -68,6 +68,9 @@ pub struct UserRecord {
 pub struct ProviderRecord {
     pub provider: String,
     pub api_key: String,
+    pub enabled: bool,
+    pub tokens_used: u64,
+    pub last_used: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

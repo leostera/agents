@@ -121,6 +121,13 @@ impl ConfiguredProvider {
 
 #[async_trait]
 impl Provider for ConfiguredProvider {
+    fn provider_name(&self) -> &'static str {
+        match self {
+            Self::OpenAi(_) => OPENAI_PROVIDER,
+            Self::OpenRouter { .. } => OPENROUTER_PROVIDER,
+        }
+    }
+
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
         match self {
             Self::OpenAi(provider) => provider.chat(req).await,

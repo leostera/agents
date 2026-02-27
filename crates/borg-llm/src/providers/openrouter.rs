@@ -5,6 +5,7 @@ use reqwest::Client;
 use serde_json::{Value, json};
 use tracing::{debug, error, info, trace};
 
+use crate::providers::call_trace::ProviderCallTrace;
 use crate::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
     ToolDescriptor, TranscriptionRequest, UserBlock,
@@ -163,6 +164,8 @@ impl Provider for OpenRouterProvider {
             "temperature": req.temperature,
             "max_tokens": req.max_tokens,
         });
+        let call =
+            ProviderCallTrace::sent("openrouter", "chat_completion", model.clone(), body.clone());
         let api_key = req.api_key.as_deref().unwrap_or(&self.api_key);
         let response = self
             .http
@@ -175,13 +178,15 @@ impl Provider for OpenRouterProvider {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            let error_message = format!("openrouter chat completions returned {}", status);
+            call.failed(Some(status), None, Some(body.as_str()), &error_message);
             error!(
                 target: "borg_llm",
                 status = %status,
                 response_body = body.as_str(),
                 "openrouter chat completion request failed"
             );
-            return Err(anyhow!("openrouter chat completions returned {}", status));
+            return Err(anyhow!(error_message));
         }
 
         debug!(
@@ -190,6 +195,7 @@ impl Provider for OpenRouterProvider {
             "openrouter chat completion request succeeded"
         );
         let payload: Value = response.json().await?;
+        call.succeeded(status, &payload);
         trace!(target: "borg_llm", payload = ?payload, "raw openrouter chat payload");
         parse_assistant_message(&payload)
     }
@@ -224,6 +230,12 @@ impl Provider for OpenRouterProvider {
                 }
             ]
         });
+        let call = ProviderCallTrace::sent(
+            "openrouter",
+            "audio_transcription",
+            model.clone(),
+            body.clone(),
+        );
 
         let response = self
             .http
@@ -236,16 +248,19 @@ impl Provider for OpenRouterProvider {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            let error_message = format!("openrouter transcriptions returned {}", status);
+            call.failed(Some(status), None, Some(body.as_str()), &error_message);
             error!(
                 target: "borg_llm",
                 status = %status,
                 response_body = body.as_str(),
                 "openrouter transcription request failed"
             );
-            return Err(anyhow!("openrouter transcriptions returned {}", status));
+            return Err(anyhow!(error_message));
         }
 
         let payload: Value = response.json().await?;
+        call.succeeded(status, &payload);
         extract_text_from_chat_payload(&payload)
             .ok_or_else(|| anyhow!("missing text in openrouter transcription response"))
     }
@@ -449,7 +464,15 @@ fn parse_assistant_message(payload: &Value) -> Result<LlmAssistantMessage> {
         content: blocks,
         stop_reason,
         error_message: None,
+        usage_tokens: payload_usage_tokens(payload),
     })
+}
+
+fn payload_usage_tokens(payload: &Value) -> Option<u64> {
+    payload
+        .get("usage")
+        .and_then(|usage| usage.get("total_tokens"))
+        .and_then(Value::as_u64)
 }
 
 #[cfg(test)]
