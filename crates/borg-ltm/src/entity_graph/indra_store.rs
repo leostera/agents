@@ -180,10 +180,10 @@ impl IndraEntityGraph {
                 continue;
             };
 
-            if let Some(expected_type) = entity_type {
-                if entity.entity_type.as_str() != expected_type {
-                    continue;
-                }
+            if let Some(expected_type) = entity_type
+                && entity.entity_type.as_str() != expected_type
+            {
+                continue;
             }
 
             let haystack = format!(
@@ -235,10 +235,10 @@ impl IndraEntityGraph {
             .as_ref()
             .map(|entity| entity.label.clone())
             .unwrap_or_else(|| fact.entity.to_string());
-        if fact.field.as_str() == "borg:fields:name" {
-            if let FactValue::Text(name) = &fact.value {
-                label = name.clone();
-            }
+        if fact.field.as_str() == "borg:fields:name"
+            && let FactValue::Text(name) = &fact.value
+        {
+            label = name.clone();
         }
 
         self.upsert_entity(&entity_type, &label, &props, Some(&natural_key))

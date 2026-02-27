@@ -104,9 +104,7 @@ pub fn build_code_mode_toolchain_with_context(
                         .ok_or_else(|| anyhow!("executeCode tool requires code"))?;
                     let code = code.to_string();
                     let result = tokio::task::spawn_blocking(move || {
-                        catch_unwind(AssertUnwindSafe(|| {
-                            runtime.execute(&code, context)
-                        }))
+                        catch_unwind(AssertUnwindSafe(|| runtime.execute(&code, context)))
                     })
                     .await
                     .map_err(|err| anyhow!("executeCode tool worker join error: {}", err))?

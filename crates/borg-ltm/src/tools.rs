@@ -347,22 +347,26 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
     let memory_for_search = memory;
 
     Toolchain::builder()
-        .add_tool(Tool::new(new_entity_spec, None, move |request| async move {
-            let ns = request
-                .arguments
-                .get("ns")
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| anyhow!("newEntity tool requires ns"))?;
-            let kind = request
-                .arguments
-                .get("kind")
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| anyhow!("newEntity tool requires kind"))?;
-            let entity = Uri::from_parts(ns, kind, Some(&uuid::Uuid::now_v7().to_string()))?;
-            Ok(ToolResponse {
-                content: ToolResultData::Text(entity.to_string()),
-            })
-        }))?
+        .add_tool(Tool::new(
+            new_entity_spec,
+            None,
+            move |request| async move {
+                let ns = request
+                    .arguments
+                    .get("ns")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| anyhow!("newEntity tool requires ns"))?;
+                let kind = request
+                    .arguments
+                    .get("kind")
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| anyhow!("newEntity tool requires kind"))?;
+                let entity = Uri::from_parts(ns, kind, Some(&uuid::Uuid::now_v7().to_string()))?;
+                Ok(ToolResponse {
+                    content: ToolResultData::Text(entity.to_string()),
+                })
+            },
+        ))?
         .add_tool(Tool::new(save_facts_spec, None, move |request| {
             let memory = memory_for_save.clone();
             async move {

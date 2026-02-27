@@ -12,9 +12,9 @@ mod search_index;
 mod tools;
 
 use entity_graph::IndraEntityGraph;
+pub use fact_store::FactArity;
 use fact_store::TursoFactStore;
 pub use fact_store::{FactInput, FactRecord, FactValue, StateFactsResult, Uri};
-pub use fact_store::FactArity;
 use search_index::TantivySearchIndex;
 pub use tools::{build_memory_toolchain, default_tool_specs as default_memory_tool_specs};
 
@@ -223,10 +223,10 @@ pub struct SearchQuery {
 
 impl SearchQuery {
     pub(crate) fn text(&self) -> Option<&str> {
-        if let Some(name) = &self.name {
-            if !name.like.trim().is_empty() {
-                return Some(name.like.as_str());
-            }
+        if let Some(name) = &self.name
+            && !name.like.trim().is_empty()
+        {
+            return Some(name.like.as_str());
         }
         self.query_text
             .as_deref()

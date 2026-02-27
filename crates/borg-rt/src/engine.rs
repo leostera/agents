@@ -5,8 +5,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
-use borg_core::Uri;
 use borg_core::ExecutionResult;
+use borg_core::Uri;
 use deno_core::{JsRuntime, RuntimeOptions, serde_v8, v8};
 use serde_json::Value;
 use tracing::{debug, info, trace};
@@ -218,10 +218,7 @@ impl CodeModeRuntime {
     }
 }
 
-fn parse_uri_field(
-    obj: &serde_json::Map<String, Value>,
-    field: &str,
-) -> Result<Option<Uri>> {
+fn parse_uri_field(obj: &serde_json::Map<String, Value>, field: &str) -> Result<Option<Uri>> {
     let Some(raw) = obj.get(field) else {
         return Ok(None);
     };
