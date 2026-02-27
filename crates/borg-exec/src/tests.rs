@@ -22,6 +22,9 @@ use crate::tool_runner::build_exec_toolchain;
 use crate::{BorgExecutor, UserMessage};
 
 const OPENAI_PROVIDER: &str = "openai";
+const OPENROUTER_PROVIDER: &str = "openrouter";
+const RUNTIME_SETTINGS_PORT: &str = "runtime";
+const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 
 fn temp_db_path() -> PathBuf {
     std::env::temp_dir().join(format!("borg-exec-test-{}.db", uuid::Uuid::now_v7()))
@@ -58,7 +61,30 @@ async fn failing_openai_exec(db: BorgDb, worker: &str) -> BorgExecutor {
         CodeModeRuntime::default(),
         Uri::parse(worker).unwrap(),
     )
-        .with_openai_base_url(Some("http://127.0.0.1:1".to_string()))
+    .with_openai_base_url(Some("http://127.0.0.1:1".to_string()))
+}
+
+async fn openrouter_exec_without_openai_transcription_fallback(
+    db: BorgDb,
+    worker: &str,
+) -> BorgExecutor {
+    db.upsert_provider_api_key(OPENROUTER_PROVIDER, "test-openrouter-key")
+        .await
+        .unwrap();
+    db.upsert_port_setting(
+        RUNTIME_SETTINGS_PORT,
+        RUNTIME_PREFERRED_PROVIDER_KEY,
+        OPENROUTER_PROVIDER,
+    )
+    .await
+    .unwrap();
+    let memory = open_test_memory().await;
+    BorgExecutor::new(
+        db,
+        memory,
+        CodeModeRuntime::default(),
+        Uri::parse(worker).unwrap(),
+    )
 }
 
 fn init_test_tracing() {
@@ -322,6 +348,24 @@ async fn task_event_order_is_deterministic_for_failed_run() {
 }
 
 #[tokio::test]
+async fn openrouter_transcription_requires_openai_fallback_key() {
+    let db = open_test_db().await;
+    let exec =
+        openrouter_exec_without_openai_transcription_fallback(db, "borg:worker:openrouter").await;
+
+    let err = exec
+        .transcribe_audio(vec![0x01, 0x02], "audio/ogg")
+        .await
+        .expect_err("transcription should fail without openai fallback");
+    assert!(
+        err.to_string()
+            .contains("OpenAI provider key is required for transcription"),
+        "unexpected error: {}",
+        err
+    );
+}
+
+#[tokio::test]
 async fn recover_running_task_is_requeued_and_processed() {
     let db = open_test_db().await;
     let payload = json!(UserMessage {
@@ -460,7 +504,8 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
         )),
     ]);
 
-    let toolchain = build_exec_toolchain(CodeModeRuntime::default(), open_test_memory().await).unwrap();
+    let toolchain =
+        build_exec_toolchain(CodeModeRuntime::default(), open_test_memory().await).unwrap();
     let tools = AgentTools {
         tool_runner: &toolchain,
     };
@@ -474,14 +519,14 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
 
     let messages = session.read_messages(0, 256).await.unwrap();
     assert!(
-        messages
-            .iter()
-            .any(|message| matches!(message, Message::ToolCall { name, .. } if name == "searchApis"))
+        messages.iter().any(
+            |message| matches!(message, Message::ToolCall { name, .. } if name == "searchApis")
+        )
     );
     assert!(
-        messages
-            .iter()
-            .any(|message| matches!(message, Message::ToolCall { name, .. } if name == "executeCode"))
+        messages.iter().any(
+            |message| matches!(message, Message::ToolCall { name, .. } if name == "executeCode")
+        )
     );
     assert!(messages.iter().any(|message| {
         matches!(
@@ -544,7 +589,8 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
         Ok(assistant_text("Saw tool failure and handled it.")),
     ]);
 
-    let toolchain = build_exec_toolchain(CodeModeRuntime::default(), open_test_memory().await).unwrap();
+    let toolchain =
+        build_exec_toolchain(CodeModeRuntime::default(), open_test_memory().await).unwrap();
     let tools = AgentTools {
         tool_runner: &toolchain,
     };

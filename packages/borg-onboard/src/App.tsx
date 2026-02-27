@@ -6,10 +6,22 @@ import { createI18n } from '@borg/i18n'
 import { Session, type SessionMessage } from '@borg/ui'
 
 const OPENAI_PROVIDER = 'openai'
+const OPENROUTER_PROVIDER = 'openrouter'
 const PROVIDER_MESSAGE_ID = 'u-provider'
-const OPENAI_API_KEY_MESSAGE_ID = 'i-openai-key'
+const PROVIDER_API_KEY_MESSAGE_ID = 'i-provider-key'
 const CONNECT_ACTION_ID = 'connect'
 const PROVIDER_RESPONSE_DELAY_MS = 350
+
+type ProviderOption = {
+  labelKey: 'onboard.provider.openai' | 'onboard.provider.openrouter'
+  value: string
+  icon: 'openai' | 'openrouter'
+}
+
+const PROVIDER_OPTIONS: Array<ProviderOption> = [
+  { labelKey: 'onboard.provider.openai', value: OPENAI_PROVIDER, icon: 'openai' },
+  { labelKey: 'onboard.provider.openrouter', value: OPENROUTER_PROVIDER, icon: 'openrouter' },
+]
 
 type SessionState = {
   choices: Record<string, string>
@@ -24,10 +36,14 @@ function getUsername() {
   return 'friend'
 }
 
-function saveProvider(apiKey: string, saveFailedMessage: string) {
+function isProviderSupported(value: string) {
+  return PROVIDER_OPTIONS.some((option) => option.value === value)
+}
+
+function saveProvider(provider: string, apiKey: string, saveFailedMessage: string) {
   return pipe(
     Effect.tryPromise(() =>
-      fetch('/api/providers/openai', {
+      fetch(`/api/providers/${encodeURIComponent(provider)}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ api_key: apiKey }),
@@ -61,14 +77,12 @@ export function OnboardApp() {
 
   const selectedProvider = state.choices[PROVIDER_MESSAGE_ID] ?? ''
   const selectedProviderLabel = useMemo(() => {
-    if (selectedProvider === OPENAI_PROVIDER) {
-      return i18n.t('onboard.provider.openai')
-    }
-    return ''
+    const selectedOption = PROVIDER_OPTIONS.find((option) => option.value === selectedProvider)
+    return selectedOption ? i18n.t(selectedOption.labelKey) : ''
   }, [i18n, selectedProvider])
 
   useEffect(() => {
-    if (selectedProvider !== OPENAI_PROVIDER) {
+    if (!isProviderSupported(selectedProvider)) {
       setProviderResponseReady(false)
       return
     }
@@ -101,9 +115,11 @@ export function OnboardApp() {
           selectedProvider.length === 0
             ? {
                 name: i18n.t('onboard.choice.provider_name'),
-                options: [
-                  { label: i18n.t('onboard.provider.openai'), value: OPENAI_PROVIDER, icon: 'openai' },
-                ],
+                options: PROVIDER_OPTIONS.map((option) => ({
+                  label: i18n.t(option.labelKey),
+                  value: option.value,
+                  icon: option.icon,
+                })),
               }
             : undefined,
       },
@@ -116,7 +132,7 @@ export function OnboardApp() {
       return baseMessages.filter((message) => message.id === 'm-welcome')
     }
 
-    if (selectedProvider !== OPENAI_PROVIDER || !providerResponseReady) return baseMessages
+    if (!isProviderSupported(selectedProvider) || !providerResponseReady) return baseMessages
 
     const withInput: Array<SessionMessage> = [
       ...baseMessages,
@@ -124,7 +140,7 @@ export function OnboardApp() {
         id: 'm-key',
         type: 'message',
         author: 'agent',
-        content: i18n.t('onboard.agent.openai_key_prompt'),
+        content: i18n.t('onboard.agent.provider_key_prompt', { provider: selectedProviderLabel }),
         timestamp: formatTimestamp(new Date(startedAt.getTime() + 60_000)),
       },
       ...(!animatedCompleted['m-key']
@@ -137,7 +153,7 @@ export function OnboardApp() {
               content: '',
               timestamp: formatTimestamp(new Date(startedAt.getTime() + 90_000)),
               input: {
-                id: OPENAI_API_KEY_MESSAGE_ID,
+                id: PROVIDER_API_KEY_MESSAGE_ID,
                 inputType: 'text' as const,
                 name: i18n.t('onboard.field.api_key'),
                 placeholder: 'sk-...',
@@ -189,6 +205,7 @@ export function OnboardApp() {
     i18n,
     providerResponseReady,
     selectedProvider,
+    selectedProviderLabel,
     startedAt,
     state.error,
     state.saved,
@@ -199,7 +216,7 @@ export function OnboardApp() {
     const ids: Array<string> = []
     if (!animatedCompleted['m-welcome']) {
       ids.push('m-welcome')
-    } else if (selectedProvider === OPENAI_PROVIDER && !animatedCompleted['m-key']) {
+    } else if (isProviderSupported(selectedProvider) && !animatedCompleted['m-key']) {
       ids.push('m-key')
     }
     return ids
@@ -232,17 +249,20 @@ export function OnboardApp() {
         }}
         onAction={(_, actionId) => {
           if (actionId !== CONNECT_ACTION_ID) return
+          if (!isProviderSupported(selectedProvider)) return
 
-          const apiKey = state.choices[OPENAI_API_KEY_MESSAGE_ID] ?? ''
+          const apiKey = state.choices[PROVIDER_API_KEY_MESSAGE_ID] ?? ''
+          const saveFailedMessage = i18n.t('onboard.error.save_failed', {
+            provider: selectedProviderLabel || selectedProvider,
+          })
           setState((prev) => ({ ...prev, saving: true, error: '', saved: false }))
 
-          Effect.runPromise(saveProvider(apiKey.trim(), i18n.t('onboard.error.save_failed')))
+          Effect.runPromise(saveProvider(selectedProvider, apiKey.trim(), saveFailedMessage))
             .then(() => {
               setState((prev) => ({ ...prev, saving: false, saved: true }))
             })
             .catch((error: unknown) => {
-              const message =
-                error instanceof Error ? error.message : i18n.t('onboard.error.save_failed')
+              const message = error instanceof Error ? error.message : saveFailedMessage
               setState((prev) => ({ ...prev, saving: false, error: message }))
             })
         }}

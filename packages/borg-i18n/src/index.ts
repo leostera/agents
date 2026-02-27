@@ -4,9 +4,10 @@ export type MessageKey =
   | 'onboard.agent.welcome'
   | 'onboard.agent.choose_provider'
   | 'onboard.provider.openai'
+  | 'onboard.provider.openrouter'
   | 'onboard.title'
   | 'onboard.tagline'
-  | 'onboard.agent.openai_key_prompt'
+  | 'onboard.agent.provider_key_prompt'
   | 'onboard.choice.provider_name'
   | 'onboard.choice.provider_placeholder'
   | 'onboard.user_turn'
@@ -31,16 +32,17 @@ const messages: Record<Locale, Record<MessageKey, string>> = {
     'onboard.tagline': 'A guided chat setup for your first Borg run.',
     'onboard.agent.choose_provider': 'Choose an LLM provider.',
     'onboard.provider.openai': 'OpenAI API Key',
-    'onboard.agent.openai_key_prompt':
-      'Great choice. Please paste your OpenAI API key below and click Save. It will be stored in ~/.borg/config.db under providers.',
+    'onboard.provider.openrouter': 'OpenRouter API Key',
+    'onboard.agent.provider_key_prompt':
+      'Great choice. Please paste your {provider} below and click Save. It will be stored in ~/.borg/config.db under providers.',
     'onboard.choice.provider_name': 'provider',
     'onboard.choice.provider_placeholder': 'Select an LLM provider',
     'onboard.user_turn': 'YOUR TURN',
-    'onboard.field.api_key': 'OpenAI API Key',
+    'onboard.field.api_key': 'API Key',
     'onboard.action.save_api_key': 'Save API Key',
     'onboard.action.saving': 'Saving...',
     'onboard.notice.saved': 'Saved. You can now run borg start.',
-    'onboard.error.save_failed': 'Failed to save OpenAI API key',
+    'onboard.error.save_failed': 'Failed to save {provider} API key',
     'onboard.choice.default_placeholder': 'Select an option',
     'dashboard.title': 'Borg Dashboard',
     'dashboard.tagline': 'Dashboard UI package is ready for the next step.',

@@ -102,6 +102,7 @@ flowchart TD
 
 - `~/.borg/config.db`
   - providers
+  - runtime defaults in `port_settings` (for example `runtime/preferred_provider`)
   - port settings
   - port bindings (`port + conversation_key -> session_id`)
   - port session context snapshots (`port + session_id -> ctx_json`)
@@ -124,6 +125,8 @@ Current relevant endpoints:
 - `GET /tasks/:id/output`
 - `GET /memory/search`
 - `GET /memory/entities/:id`
+- `GET /api/providers`
+- `GET|PUT|DELETE /api/providers/:provider`
 
 ## 9. Observability
 Tracing is initialized before app logic and spans:

@@ -6,20 +6,23 @@ use borg_core::{
 };
 use borg_db::{BorgDb, NewTask};
 use borg_llm::Provider;
-use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
 use borg_llm::TranscriptionRequest;
+use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
 use borg_ltm::MemoryStore;
 use borg_rt::{CodeModeContext, CodeModeRuntime};
 use serde_json::{Value, json};
 use tracing::{debug, error, info, trace, warn};
 
+use crate::port_context::{PortContext, TelegramSessionContext};
 use crate::session_manager::SessionManager;
 use crate::task_queue::TaskQueue;
 use crate::tool_runner::build_exec_toolchain_with_context;
 use crate::types::{SessionTurnOutput, ToolCallSummary, UserMessage};
-use crate::port_context::{PortContext, TelegramSessionContext};
 
 const OPENAI_PROVIDER: &str = "openai";
+const OPENROUTER_PROVIDER: &str = "openrouter";
+const RUNTIME_SETTINGS_PORT: &str = "runtime";
+const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 const QUEUED_RETRY_DELAY_MILLIS: u64 = 100;
 const DEFAULT_AGENT_MODEL: &str = "gpt-4o-mini";
 const STARTUP_REQUEUE_MAX_RETRIES: u8 = 5;
@@ -68,11 +71,19 @@ impl BorgExecutor {
     }
 
     async fn configured_provider(&self) -> Result<ConfiguredProvider> {
+        let preferred_provider = self
+            .db
+            .get_port_setting(RUNTIME_SETTINGS_PORT, RUNTIME_PREFERRED_PROVIDER_KEY)
+            .await?
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         let settings = ProviderSettings {
             openai_api_key: self.db.get_provider_api_key(OPENAI_PROVIDER).await?,
             openai_base_url: self.openai_base_url.clone(),
             openai_api_mode: None,
-            preferred_provider: None,
+            openrouter_api_key: self.db.get_provider_api_key(OPENROUTER_PROVIDER).await?,
+            openrouter_base_url: None,
+            preferred_provider,
         };
         ConfiguredProvider::from_settings(settings)
     }
@@ -143,8 +154,9 @@ impl BorgExecutor {
                         .map(|call| ToolCallSummary {
                             tool_name: call.tool_name.clone(),
                             arguments: call.arguments.clone(),
-                            output: serde_json::to_value(&call.output)
-                                .unwrap_or_else(|err| json!({ "Error": { "message": err.to_string() } })),
+                            output: serde_json::to_value(&call.output).unwrap_or_else(
+                                |err| json!({ "Error": { "message": err.to_string() } }),
+                            ),
                         })
                         .collect()
                 })
@@ -216,7 +228,10 @@ impl BorgExecutor {
             agent_id: None,
             metadata: json!({}),
         };
-        let session = self.session_manager.session_for_task(&synthetic_msg).await?;
+        let session = self
+            .session_manager
+            .session_for_task(&synthetic_msg)
+            .await?;
         let context = session.build_context().await?;
         Ok(context)
     }
@@ -229,7 +244,10 @@ impl BorgExecutor {
             agent_id: None,
             metadata: json!({}),
         };
-        let session = self.session_manager.session_for_task(&synthetic_msg).await?;
+        let session = self
+            .session_manager
+            .session_for_task(&synthetic_msg)
+            .await?;
         Ok((session.agent.agent_id.clone(), session.agent.model.clone()))
     }
 
@@ -247,7 +265,9 @@ impl BorgExecutor {
         session_id: &Uri,
         ctx: &Value,
     ) -> Result<()> {
-        self.db.upsert_port_session_context(port, session_id, ctx).await
+        self.db
+            .upsert_port_session_context(port, session_id, ctx)
+            .await
     }
 
     pub async fn list_port_session_ids(&self, port: &str) -> Result<Vec<Uri>> {
@@ -647,7 +667,9 @@ impl BorgExecutor {
                 Some(&format!("telegram_{chat}_{message}")),
             )
             .ok(),
-            (_, Some(message)) => Uri::from_parts("borg", "message", Some(&message.to_string())).ok(),
+            (_, Some(message)) => {
+                Uri::from_parts("borg", "message", Some(&message.to_string())).ok()
+            }
             _ => None,
         };
 
@@ -659,11 +681,19 @@ impl BorgExecutor {
         }
     }
 
-    async fn merge_port_context(&self, port: &str, session_id: &Uri, metadata: &Value) -> Result<()> {
+    async fn merge_port_context(
+        &self,
+        port: &str,
+        session_id: &Uri,
+        metadata: &Value,
+    ) -> Result<()> {
         if port != "telegram" {
             return Ok(());
         }
-        let maybe_existing = self.db.get_port_session_context("telegram", session_id).await?;
+        let maybe_existing = self
+            .db
+            .get_port_session_context("telegram", session_id)
+            .await?;
         let mut ctx = match maybe_existing {
             Some(value) => TelegramSessionContext::from_json(value)?,
             None => TelegramSessionContext::default(),

@@ -11,8 +11,8 @@ use borg_onboard::OnboardServer;
 use borg_rt::CodeModeRuntime;
 use clap::{Parser, Subcommand};
 use reqwest::Client;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::fs;
 use tracing::{error, info, warn};
@@ -21,6 +21,10 @@ use uuid::Uuid;
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_ONBOARD_PORT: u16 = 3777;
 const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
+const OPENAI_PROVIDER: &str = "openai";
+const OPENROUTER_PROVIDER: &str = "openrouter";
+const RUNTIME_SETTINGS_PORT: &str = "runtime";
+const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -115,7 +119,7 @@ enum TaskCommand {
 enum ConfigCommand {
     /// Persist one config key/value pair.
     Set {
-        /// Config key (for example providers.openai or ports.telegram).
+        /// Config key (for example providers.openai, providers.default, or ports.telegram).
         key: String,
         /// Config value to persist.
         value: String,
@@ -232,7 +236,33 @@ impl BorgCliApp {
 
         match key.as_str() {
             "providers.openai" => {
-                db.upsert_provider_api_key("openai", value.trim()).await?;
+                db.upsert_provider_api_key(OPENAI_PROVIDER, value.trim())
+                    .await?;
+                info!(target: "borg_cli", key, "config value updated");
+                println!("ok");
+                Ok(())
+            }
+            "providers.openrouter" => {
+                db.upsert_provider_api_key(OPENROUTER_PROVIDER, value.trim())
+                    .await?;
+                info!(target: "borg_cli", key, "config value updated");
+                println!("ok");
+                Ok(())
+            }
+            "providers.default" => {
+                let provider = value.trim().to_ascii_lowercase();
+                if provider != OPENAI_PROVIDER && provider != OPENROUTER_PROVIDER {
+                    anyhow::bail!(
+                        "unsupported providers.default `{}` (expected `openai` or `openrouter`)",
+                        provider
+                    );
+                }
+                db.upsert_port_setting(
+                    RUNTIME_SETTINGS_PORT,
+                    RUNTIME_PREFERRED_PROVIDER_KEY,
+                    provider.as_str(),
+                )
+                .await?;
                 info!(target: "borg_cli", key, "config value updated");
                 println!("ok");
                 Ok(())

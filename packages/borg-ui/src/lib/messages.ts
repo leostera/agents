@@ -1,5 +1,5 @@
 export type MessageAuthor = 'system' | 'agent' | 'user'
-export type MessageChoiceIcon = 'openai'
+export type MessageChoiceIcon = 'openai' | 'openrouter'
 export type MessageChoiceOption = { label: string; value: string; icon?: MessageChoiceIcon }
 export type MessageAction = {
   id: string

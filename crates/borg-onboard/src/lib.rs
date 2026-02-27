@@ -3,7 +3,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use anyhow::{Result, anyhow};
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Path, State},
     http::{StatusCode, header},
     response::{Html, IntoResponse},
     routing::{get, post},
@@ -17,6 +17,9 @@ use tracing::info;
 const LOOPBACK_ADDR: [u8; 4] = [127, 0, 0, 1];
 const HEALTH_STATUS_OK: &str = "ok";
 const OPENAI_PROVIDER: &str = "openai";
+const OPENROUTER_PROVIDER: &str = "openrouter";
+const RUNTIME_SETTINGS_PORT: &str = "runtime";
+const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 
 const ONBOARD_DIST_DIR: &str = "packages/borg-app/dist";
 const ONBOARD_HTML_FILE: &str = "index.html";
@@ -36,7 +39,7 @@ struct OnboardState {
 }
 
 #[derive(Debug, Deserialize)]
-struct OpenAiKeyPayload {
+struct ProviderKeyPayload {
     api_key: String,
 }
 
@@ -124,7 +127,7 @@ impl OnboardServer {
             .route("/dashboard", get(onboard_page))
             .route("/assets/app.css", get(onboard_app_css))
             .route("/assets/app.js", get(onboard_app_js))
-            .route("/api/providers/openai", post(save_openai_key))
+            .route("/api/providers/:provider", post(save_provider_key))
             .with_state(state);
 
         let listener = TcpListener::bind(self.addr).await?;
@@ -156,10 +159,19 @@ async fn onboard_app_css(State(state): State<OnboardState>) -> impl IntoResponse
     )
 }
 
-async fn save_openai_key(
+async fn save_provider_key(
     State(state): State<OnboardState>,
-    Json(payload): Json<OpenAiKeyPayload>,
+    Path(provider): Path<String>,
+    Json(payload): Json<ProviderKeyPayload>,
 ) -> impl IntoResponse {
+    let Some(provider) = supported_provider(provider.as_str()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "unsupported provider" })),
+        )
+            .into_response();
+    };
+
     if payload.api_key.trim().is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -170,14 +182,29 @@ async fn save_openai_key(
 
     match state
         .db
-        .upsert_provider_api_key(OPENAI_PROVIDER, payload.api_key.trim())
+        .upsert_provider_api_key(provider, payload.api_key.trim())
         .await
     {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(json!({ "ok": true, "provider": OPENAI_PROVIDER })),
-        )
-            .into_response(),
+        Ok(()) => match state
+            .db
+            .upsert_port_setting(
+                RUNTIME_SETTINGS_PORT,
+                RUNTIME_PREFERRED_PROVIDER_KEY,
+                provider,
+            )
+            .await
+        {
+            Ok(()) => (
+                StatusCode::OK,
+                Json(json!({ "ok": true, "provider": provider })),
+            )
+                .into_response(),
+            Err(err) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": err.to_string() })),
+            )
+                .into_response(),
+        },
         Err(err) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": err.to_string() })),
@@ -191,5 +218,31 @@ fn workspace_root() -> Result<PathBuf> {
     match crate_root.parent().and_then(|p| p.parent()) {
         Some(path) => Ok(path.to_path_buf()),
         None => Err(anyhow!("failed to resolve workspace root")),
+    }
+}
+
+fn supported_provider(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        OPENAI_PROVIDER => Some(OPENAI_PROVIDER),
+        OPENROUTER_PROVIDER => Some(OPENROUTER_PROVIDER),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::supported_provider;
+
+    #[test]
+    fn supported_provider_accepts_expected_values() {
+        assert_eq!(supported_provider("openai"), Some("openai"));
+        assert_eq!(supported_provider("openrouter"), Some("openrouter"));
+        assert_eq!(supported_provider("  OPENROUTER  "), Some("openrouter"));
+    }
+
+    #[test]
+    fn supported_provider_rejects_unknown_values() {
+        assert_eq!(supported_provider(""), None);
+        assert_eq!(supported_provider("anthropic"), None);
     }
 }

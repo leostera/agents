@@ -69,7 +69,7 @@ export function Session(props: SessionProps) {
                 onClick={() => props.onChoice(message.id, option.value)}
               >
                 <span className='borg-inline-choice__content'>
-                  {option.icon === 'openai' ? <OpenAiLogo /> : null}
+                  <ChoiceIcon icon={option.icon} />
                   <span>{option.label}</span>
                 </span>
               </button>
@@ -132,7 +132,7 @@ export function Session(props: SessionProps) {
                 onClick={() => props.onChoice(message.id, option.value)}
               >
                 <span className='borg-inline-choice__content'>
-                  {option.icon === 'openai' ? <OpenAiLogo /> : null}
+                  <ChoiceIcon icon={option.icon} />
                   <span>{option.label}</span>
                 </span>
               </button>
@@ -255,6 +255,12 @@ export function Session(props: SessionProps) {
   )
 }
 
+function ChoiceIcon({ icon }: { icon?: 'openai' | 'openrouter' }) {
+  if (icon === 'openai') return <OpenAiLogo />
+  if (icon === 'openrouter') return <OpenRouterLogo />
+  return null
+}
+
 function OpenAiLogo() {
   return (
     <Icon
@@ -263,5 +269,11 @@ function OpenAiLogo() {
       width={16}
       height={16}
     />
+  )
+}
+
+function OpenRouterLogo() {
+  return (
+    <Icon icon='simple-icons:openrouter' className='borg-inline-choice__icon' width={16} height={16} />
   )
 }

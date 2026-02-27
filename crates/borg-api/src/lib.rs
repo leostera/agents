@@ -3,11 +3,14 @@ mod controllers;
 use std::net::SocketAddr;
 
 use anyhow::Result;
-use axum::{Router, routing::{get, post, put}};
+use axum::{
+    Router,
+    routing::{get, post, put},
+};
 use borg_db::BorgDb;
 use borg_exec::ExecEngine;
 use borg_ltm::MemoryStore;
-use borg_ports::{HttpPort, init_http_port, TelegramPort};
+use borg_ports::{HttpPort, TelegramPort, init_http_port};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tracing::{error, info};
@@ -82,7 +85,10 @@ fn app_router(state: AppState) -> Router {
         .route("/tasks/:id/events", get(SystemController::get_task_events))
         .route("/tasks/:id/output", get(SystemController::get_task_output))
         .route("/memory/search", get(SystemController::memory_search))
-        .route("/memory/entities/:id", get(SystemController::get_memory_entity))
+        .route(
+            "/memory/entities/:id",
+            get(SystemController::get_memory_entity),
+        )
         .route("/api/providers", get(DbController::list_providers))
         .route(
             "/api/providers/:provider",
@@ -97,10 +103,14 @@ fn app_router(state: AppState) -> Router {
                 .put(DbController::upsert_policy)
                 .delete(DbController::delete_policy),
         )
-        .route("/api/policies/:policy_id/uses", get(DbController::list_policy_uses))
+        .route(
+            "/api/policies/:policy_id/uses",
+            get(DbController::list_policy_uses),
+        )
         .route(
             "/api/policies/:policy_id/uses/:entity_id",
-            put(DbController::attach_policy_to_entity).delete(DbController::detach_policy_from_entity),
+            put(DbController::attach_policy_to_entity)
+                .delete(DbController::detach_policy_from_entity),
         )
         .route("/api/agents/specs", get(DbController::list_agent_specs))
         .route(
@@ -109,14 +119,20 @@ fn app_router(state: AppState) -> Router {
                 .put(DbController::upsert_agent_spec)
                 .delete(DbController::delete_agent_spec),
         )
-        .route("/api/users", get(DbController::list_users).post(DbController::upsert_user))
+        .route(
+            "/api/users",
+            get(DbController::list_users).post(DbController::upsert_user),
+        )
         .route(
             "/api/users/:user_key",
             get(DbController::get_user)
                 .patch(DbController::patch_user)
                 .delete(DbController::delete_user),
         )
-        .route("/api/sessions", get(DbController::list_sessions).post(DbController::upsert_session))
+        .route(
+            "/api/sessions",
+            get(DbController::list_sessions).post(DbController::upsert_session),
+        )
         .route(
             "/api/sessions/:session_id",
             get(DbController::get_session)
@@ -135,14 +151,20 @@ fn app_router(state: AppState) -> Router {
                 .patch(DbController::patch_session_message)
                 .delete(DbController::delete_session_message),
         )
-        .route("/api/ports/:port/settings", get(DbController::list_port_settings))
+        .route(
+            "/api/ports/:port/settings",
+            get(DbController::list_port_settings),
+        )
         .route(
             "/api/ports/:port/settings/:key",
             get(DbController::get_port_setting)
                 .put(DbController::upsert_port_setting)
                 .delete(DbController::delete_port_setting),
         )
-        .route("/api/ports/:port/bindings", get(DbController::list_port_bindings))
+        .route(
+            "/api/ports/:port/bindings",
+            get(DbController::list_port_bindings),
+        )
         .route(
             "/api/ports/:port/bindings/:conversation_key",
             get(DbController::get_port_binding)
@@ -155,7 +177,10 @@ fn app_router(state: AppState) -> Router {
                 .put(DbController::upsert_port_session_context)
                 .delete(DbController::delete_port_session_context),
         )
-        .route("/api/sessions/:session_id/context", get(DbController::get_any_port_session_context))
+        .route(
+            "/api/sessions/:session_id/context",
+            get(DbController::get_any_port_session_context),
+        )
         .with_state(state)
 }
 
@@ -269,7 +294,11 @@ mod tests {
         (status, parsed)
     }
 
-    async fn request_no_body(app: &axum::Router, method: Method, path: &str) -> (StatusCode, Value) {
+    async fn request_no_body(
+        app: &axum::Router,
+        method: Method,
+        path: &str,
+    ) -> (StatusCode, Value) {
         let response = app
             .clone()
             .oneshot(
@@ -331,10 +360,21 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/providers/openrouter",
+            json!({"api_key":"or-test"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
 
         let (status, body) = request_no_body(&app, Method::GET, "/api/providers/openai").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["provider"]["provider"], "openai");
+        let (status, body) = request_no_body(&app, Method::GET, "/api/providers/openrouter").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["provider"]["provider"], "openrouter");
 
         let (status, body) = request_no_body(&app, Method::GET, "/api/providers").await;
         assert_eq!(status, StatusCode::OK);
@@ -390,8 +430,12 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
 
-        let (status, _) =
-            request_no_body(&app, Method::DELETE, "/api/policies/borg:policy:session-read").await;
+        let (status, _) = request_no_body(
+            &app,
+            Method::DELETE,
+            "/api/policies/borg:policy:session-read",
+        )
+        .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
     }
 
@@ -418,7 +462,11 @@ mod tests {
 
         let (status, body) = request_no_body(&app, Method::GET, "/api/agents/specs").await;
         assert_eq!(status, StatusCode::OK);
-        assert!(body["agent_specs"].as_array().is_some_and(|v| !v.is_empty()));
+        assert!(
+            body["agent_specs"]
+                .as_array()
+                .is_some_and(|v| !v.is_empty())
+        );
 
         let (status, _) =
             request_no_body(&app, Method::DELETE, "/api/agents/specs/borg:agent:default").await;
@@ -470,12 +518,8 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
 
-        let (status, body) = request_no_body(
-            &app,
-            Method::GET,
-            "/api/ports/telegram/settings/bot_token",
-        )
-        .await;
+        let (status, body) =
+            request_no_body(&app, Method::GET, "/api/ports/telegram/settings/bot_token").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["value"], "123:abc");
 
@@ -580,7 +624,8 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
 
-        let (status, body) = request_no_body(&app, Method::GET, "/api/sessions/borg:session:test").await;
+        let (status, body) =
+            request_no_body(&app, Method::GET, "/api/sessions/borg:session:test").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["session"]["port"], "http");
 
@@ -731,20 +776,12 @@ mod tests {
     #[tokio::test]
     async fn ports_negative_paths() {
         let app = test_app("ports-negative").await;
-        let (status, _) = request_no_body(
-            &app,
-            Method::GET,
-            "/api/ports/telegram/settings/missing",
-        )
-        .await;
+        let (status, _) =
+            request_no_body(&app, Method::GET, "/api/ports/telegram/settings/missing").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
 
-        let (status, _) = request_no_body(
-            &app,
-            Method::GET,
-            "/api/ports/telegram/bindings/not-a-uri",
-        )
-        .await;
+        let (status, _) =
+            request_no_body(&app, Method::GET, "/api/ports/telegram/bindings/not-a-uri").await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
 
         let (status, _) = request_no_body(

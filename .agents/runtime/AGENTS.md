@@ -27,11 +27,14 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - Avoid scattering path constants; use `BorgDir` accessors.
 
 ## DB Notes
-- `providers` table stores provider credentials (`openai` currently).
+- `providers` table stores provider credentials (`openai`, `openrouter`).
+- `port_settings` stores runtime defaults under `port=runtime` (for example `preferred_provider`).
 - `port_bindings` stores `port + conversation_key -> session_id (+ optional agent_id)`.
 - `port_session_ctx` stores port-owned per-session context snapshots (`port + session_id -> ctx_json`).
 - Telegram port refreshes known session context snapshots on startup (best-effort chat/admin hydration).
-- Onboarding persists provider key via `POST /api/providers/openai`.
+- Onboarding persists provider key via `POST /api/providers/:provider` and updates runtime preferred provider.
+- Provider precedence is env-first: `BORG_LLM_PROVIDER` overrides persisted `runtime/preferred_provider`.
+- When preferred provider is `openrouter`, transcription falls back to OpenAI credentials (or returns a clear missing-key error).
 
 ## API/Port Expectations
 - `POST /ports/http` should return resolved `session_id` and `reply` (task ID optional).
