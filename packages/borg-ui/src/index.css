@@ -2,6 +2,9 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/noto-sans";
+@source "../**/*.{ts,tsx}";
+@source "../../borg-app/src/**/*.{ts,tsx}";
+@source "../../borg-explorer/src/**/*.{ts,tsx}";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -120,6 +123,11 @@
   * {
     @apply border-border outline-ring/50;
     }
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  a[href] {
+    cursor: pointer;
+    }
   body {
     @apply font-sans bg-background text-foreground;
     }
@@ -127,4 +135,3 @@
     @apply font-sans;
     }
 }
-

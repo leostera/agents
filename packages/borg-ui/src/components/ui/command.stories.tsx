@@ -77,8 +77,8 @@ export const InlinePalette: Story = {
 
 export const InsideDialog: Story = {
   render: () => (
-    <CommandDialog open onOpenChange={() => {}}>
-      <Command>
+    <div className='min-h-[420px] rounded-xl border bg-muted/20'>
+      <CommandDialog open onOpenChange={() => {}}>
         <CommandInput placeholder='Search commands...' />
         <CommandList>
           <CommandGroup heading='General'>
@@ -86,7 +86,7 @@ export const InsideDialog: Story = {
             <CommandItem value='billing'>Open Billing</CommandItem>
           </CommandGroup>
         </CommandList>
-      </Command>
-    </CommandDialog>
+      </CommandDialog>
+    </div>
   ),
 }
