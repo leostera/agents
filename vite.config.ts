@@ -33,6 +33,9 @@ export default defineConfig({
       find: '@borg/ui',
       replacement: path.resolve(dirname, 'packages/borg-ui/src/index.ts')
     }, {
+      find: '@borg/api',
+      replacement: path.resolve(dirname, 'packages/borg-api/src/index.ts')
+    }, {
       find: '@borg/explorer',
       replacement: path.resolve(dirname, 'packages/borg-explorer/src/index.tsx')
     }, {

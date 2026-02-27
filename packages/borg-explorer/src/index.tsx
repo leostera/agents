@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react'
+import { createBorgApiClient } from '@borg/api'
 import './styles.css'
 
 type JsonMap = Record<string, unknown>
@@ -30,6 +31,7 @@ type MemoryExplorerProps = {
 }
 
 const URI_RE = /^[a-z][a-z0-9+.-]*:[^:\s]+:[^:\s]+$/i
+const borgApi = createBorgApiClient()
 
 function extractUriRefs(value: unknown, into: Set<string>) {
   if (typeof value === 'string') {
@@ -84,18 +86,7 @@ function buildGraph(entities: MemoryEntity[]): { nodes: GraphNode[]; edges: Grap
 }
 
 async function fetchEntities(query: string, type: string, limit = 50): Promise<MemoryEntity[]> {
-  const params = new URLSearchParams({ q: query, limit: String(limit) })
-  if (type.trim()) params.set('type', type.trim())
-
-  const response = await fetch(`/memory/search?${params.toString()}`, {
-    headers: { accept: 'application/json' },
-  })
-  if (!response.ok) {
-    throw new Error(`Memory search failed (${response.status})`)
-  }
-
-  const payload = (await response.json()) as { entities?: MemoryEntity[] }
-  return Array.isArray(payload.entities) ? payload.entities : []
+  return (await borgApi.searchMemory({ q: query, type, limit })) as MemoryEntity[]
 }
 
 export function MemoryExplorer({ className, initialQuery = 'borg', initialType = '' }: MemoryExplorerProps) {

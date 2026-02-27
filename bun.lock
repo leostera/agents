@@ -62,36 +62,28 @@
         "vite": "^7.3.1",
       },
     },
+    "packages/borg-api": {
+      "name": "@borg/api",
+      "version": "0.1.0",
+    },
     "packages/borg-app": {
       "name": "@borg/app",
       "version": "0.1.0",
       "dependencies": {
-        "@borg/dashboard": "workspace:*",
-        "@borg/i18n": "workspace:*",
-        "@borg/onboard": "workspace:*",
-        "@iconify/react": "^5.2.1",
-        "react": "^18.3.1",
-        "react-dom": "^18.3.1",
-      },
-    },
-    "packages/borg-dashboard": {
-      "name": "@borg/dashboard",
-      "version": "0.1.0",
-      "dependencies": {
+        "@borg/api": "workspace:*",
         "@borg/explorer": "workspace:*",
         "@borg/i18n": "workspace:*",
         "@borg/ui": "workspace:*",
+        "@iconify/react": "^5.2.1",
         "react": "^18.3.1",
-      },
-      "peerDependencies": {
-        "react": "^18.0.0",
-        "react-dom": "^18.0.0",
+        "react-dom": "^18.3.1",
       },
     },
     "packages/borg-explorer": {
       "name": "@borg/explorer",
       "version": "0.1.0",
       "dependencies": {
+        "@borg/api": "workspace:*",
         "react": "^18.3.1",
       },
       "peerDependencies": {
@@ -102,20 +94,6 @@
     "packages/borg-i18n": {
       "name": "@borg/i18n",
       "version": "0.1.0",
-    },
-    "packages/borg-onboard": {
-      "name": "@borg/onboard",
-      "version": "0.1.0",
-      "dependencies": {
-        "@borg/i18n": "workspace:*",
-        "@borg/ui": "workspace:*",
-        "effect": "^3.13.5",
-        "react": "^18.3.1",
-      },
-      "peerDependencies": {
-        "react": "^18.0.0",
-        "react-dom": "^18.0.0",
-      },
     },
     "packages/borg-ui": {
       "name": "@borg/ui",
@@ -206,15 +184,13 @@
 
     "@borg/agent-sdk": ["@borg/agent-sdk@workspace:packages/borg-agent-sdk"],
 
-    "@borg/app": ["@borg/app@workspace:packages/borg-app"],
+    "@borg/api": ["@borg/api@workspace:packages/borg-api"],
 
-    "@borg/dashboard": ["@borg/dashboard@workspace:packages/borg-dashboard"],
+    "@borg/app": ["@borg/app@workspace:packages/borg-app"],
 
     "@borg/explorer": ["@borg/explorer@workspace:packages/borg-explorer"],
 
     "@borg/i18n": ["@borg/i18n@workspace:packages/borg-i18n"],
-
-    "@borg/onboard": ["@borg/onboard@workspace:packages/borg-onboard"],
 
     "@borg/ui": ["@borg/ui@workspace:packages/borg-ui"],
 

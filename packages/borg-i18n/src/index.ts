@@ -20,6 +20,8 @@ export type MessageKey =
   | 'dashboard.title'
   | 'dashboard.tagline'
   | 'dashboard.step'
+  | 'dashboard.subtitle.default'
+  | 'dashboard.subtitle.settings.providers'
   | 'web.unknown_route'
 
 type Vars = Record<string, string | number>
@@ -47,6 +49,8 @@ const messages: Record<Locale, Record<MessageKey, string>> = {
     'dashboard.title': 'Borg Dashboard',
     'dashboard.tagline': 'Dashboard UI package is ready for the next step.',
     'dashboard.step': 'Dashboard',
+    'dashboard.subtitle.default': 'Platform and session intelligence',
+    'dashboard.subtitle.settings.providers': 'Configure AI Providers, limits, models, and fallback policies',
     'web.unknown_route': 'Unknown route',
   },
 }

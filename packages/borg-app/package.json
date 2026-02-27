@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@iconify/react": "^5.2.1",
+    "@borg/api": "workspace:*",
     "@borg/explorer": "workspace:*",
     "@borg/i18n": "workspace:*",
     "@borg/ui": "workspace:*",

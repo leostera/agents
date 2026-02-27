@@ -8,6 +8,7 @@ import { DashboardApp } from './DashboardApp'
 const ONBOARD_PATH = '/onboard'
 const DASHBOARD_PATH = '/dashboard'
 const DASHBOARD_TYPO_PATH = '/dashbaord'
+const DASHBOARD_PREFIXES = ['/observability', '/memory', '/settings']
 
 export function App() {
   const i18n = useMemo(() => createI18n('en'), [])
@@ -27,7 +28,12 @@ export function App() {
     )
   }
 
-  if (pathname === '/' || pathname === DASHBOARD_PATH || pathname === DASHBOARD_TYPO_PATH) {
+  if (
+    pathname === '/' ||
+    pathname === DASHBOARD_PATH ||
+    pathname === DASHBOARD_TYPO_PATH ||
+    DASHBOARD_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
+  ) {
     return <DashboardApp />
   }
 

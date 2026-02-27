@@ -20,16 +20,30 @@
 }
 
 .borg-dashboard-content {
-  max-width: 1500px;
-  margin: 0 auto;
+  width: 100%;
 }
 
 .borg-dashboard-headline {
   margin-bottom: 1rem;
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 1rem;
+}
+
+.borg-dashboard-headline-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.borg-dashboard-headline-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-height: 2rem;
 }
 
 .borg-dashboard-headline h2 {
