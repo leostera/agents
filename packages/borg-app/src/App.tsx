@@ -1,22 +1,33 @@
 import React from 'react'
 import { useMemo } from 'react'
 
-import { DashboardApp } from '@borg/dashboard'
 import { createI18n } from '@borg/i18n'
-import { OnboardApp } from '@borg/onboard'
+import { Card } from '@borg/ui'
+import { DashboardApp } from './DashboardApp'
 
 const ONBOARD_PATH = '/onboard'
 const DASHBOARD_PATH = '/dashboard'
+const DASHBOARD_TYPO_PATH = '/dashbaord'
 
 export function App() {
   const i18n = useMemo(() => createI18n('en'), [])
-  const pathname = window.location.pathname
+  const rawPathname = window.location.pathname
+  const pathname =
+    rawPathname.length > 1 && rawPathname.endsWith('/')
+      ? rawPathname.slice(0, -1)
+      : rawPathname
 
-  if (pathname === ONBOARD_PATH || pathname === '/') {
-    return <OnboardApp />
+  if (pathname === ONBOARD_PATH) {
+    return (
+      <section className='p-6'>
+        <Card title='Onboarding'>
+          <p className='text-sm text-muted-foreground'>Onboarding is being rebuilt in `borg-app`.</p>
+        </Card>
+      </section>
+    )
   }
 
-  if (pathname === DASHBOARD_PATH) {
+  if (pathname === '/' || pathname === DASHBOARD_PATH || pathname === DASHBOARD_TYPO_PATH) {
     return <DashboardApp />
   }
 
