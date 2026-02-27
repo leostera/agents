@@ -89,6 +89,7 @@ fn app_router(state: AppState) -> Router {
         .route("/tasks/:id/events", get(SystemController::get_task_events))
         .route("/tasks/:id/output", get(SystemController::get_task_output))
         .route("/memory/search", get(SystemController::memory_search))
+        .route("/api/memory/explorer", get(SystemController::memory_explorer))
         .route(
             "/memory/entities/:id",
             get(SystemController::get_memory_entity),

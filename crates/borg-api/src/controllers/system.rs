@@ -31,6 +31,13 @@ pub(crate) struct MemorySearchQuery {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct MemoryExplorerQuery {
+    query: String,
+    limit: Option<usize>,
+    max_nodes: Option<usize>,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct HttpPortRequest {
     pub(crate) user_key: String,
     pub(crate) text: String,
@@ -217,6 +224,35 @@ impl SystemController {
         match state.memory.get_entity(&entity_id).await {
             Ok(Some(entity)) => (StatusCode::OK, Json(json!({ "entity": entity }))).into_response(),
             Ok(None) => api_error(StatusCode::NOT_FOUND, "entity not found".to_string()),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    }
+
+    pub(crate) async fn memory_explorer(
+        State(state): State<AppState>,
+        Query(query): Query<MemoryExplorerQuery>,
+    ) -> impl IntoResponse {
+        let search_query = query.query.trim().to_string();
+        if search_query.is_empty() {
+            return api_error(StatusCode::BAD_REQUEST, "query is required".to_string());
+        }
+
+        let limit = query.limit.unwrap_or(25);
+        let max_nodes = query.max_nodes.unwrap_or(300);
+        debug!(
+            target: "borg_api",
+            query = search_query,
+            limit,
+            max_nodes,
+            "memory explorer endpoint"
+        );
+
+        match state.memory.explore(&search_query, limit, max_nodes).await {
+            Ok(result) => (
+                StatusCode::OK,
+                Json(json!({ "entities": result.entities, "edges": result.edges })),
+            )
+                .into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }

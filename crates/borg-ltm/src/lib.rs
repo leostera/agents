@@ -22,6 +22,8 @@ const CONSOLIDATION_BATCH_SIZE: usize = 128;
 const COMMAND_BUFFER: usize = 1024;
 const CONSOLIDATION_BUFFER: usize = 4096;
 const DEFAULT_SEARCH_LIMIT: usize = 25;
+const DEFAULT_EXPLORER_SEED_LIMIT: usize = 25;
+const DEFAULT_EXPLORER_MAX_NODES: usize = 300;
 
 #[macro_export]
 macro_rules! uri {
@@ -94,6 +96,12 @@ impl MemoryStore {
 
     pub async fn search_query(&self, query: SearchQuery) -> Result<SearchResults> {
         let limit = query.limit.unwrap_or(DEFAULT_SEARCH_LIMIT).max(1);
+        if let Some(exact_entity) = self.try_exact_uri_match(&query).await? {
+            return Ok(SearchResults {
+                entities: vec![exact_entity],
+            });
+        }
+
         let index_hits = self.search_index.search(&query, limit).await?;
 
         let mut entities = Vec::new();
@@ -107,7 +115,7 @@ impl MemoryStore {
         }
 
         if entities.is_empty() {
-            let fallback_text = query.text().unwrap_or_default();
+            let fallback_text = query.text().unwrap_or_default().trim();
             if !fallback_text.is_empty() {
                 entities = self
                     .entity_graph
@@ -126,6 +134,21 @@ impl MemoryStore {
         }
 
         Ok(SearchResults { entities })
+    }
+
+    async fn try_exact_uri_match(&self, query: &SearchQuery) -> Result<Option<Entity>> {
+        let text = query.text().unwrap_or_default().trim();
+        if text.is_empty() || Uri::parse(text).is_err() {
+            return Ok(None);
+        }
+
+        let Some(entity) = self.entity_graph.get_entity(text).await? else {
+            return Ok(None);
+        };
+        if !entity_matches_filters(&entity, query) {
+            return Ok(None);
+        }
+        Ok(Some(entity))
     }
 
     pub async fn upsert_entity(
@@ -174,6 +197,57 @@ impl MemoryStore {
         Ok(self.search_query(query).await?.entities)
     }
 
+    pub async fn explore(
+        &self,
+        text: &str,
+        seed_limit: usize,
+        max_nodes: usize,
+    ) -> Result<ExplorerResults> {
+        let seed_limit = if seed_limit == 0 {
+            DEFAULT_EXPLORER_SEED_LIMIT
+        } else {
+            seed_limit
+        };
+        let max_nodes = if max_nodes == 0 {
+            DEFAULT_EXPLORER_MAX_NODES
+        } else {
+            max_nodes
+        };
+
+        let seeds = self
+            .search(text, None, seed_limit)
+            .await?;
+        if seeds.is_empty() {
+            return Ok(ExplorerResults {
+                entities: Vec::new(),
+                edges: Vec::new(),
+            });
+        }
+
+        let seed_entity_ids: Vec<String> = seeds
+            .iter()
+            .map(|entity| entity.entity_id.to_string())
+            .collect();
+
+        let traversal = self
+            .entity_graph
+            .expand_subgraph(&seed_entity_ids, max_nodes)
+            .await?;
+
+        Ok(ExplorerResults {
+            entities: traversal.entities,
+            edges: traversal
+                .edges
+                .into_iter()
+                .map(|edge| ExplorerEdge {
+                    source: edge.source_entity_id,
+                    target: edge.target_entity_id,
+                    relation: edge.relation,
+                })
+                .collect(),
+        })
+    }
+
     fn start_consolidator(&self, mut rx: mpsc::Receiver<FactRecord>) {
         let graph = self.entity_graph.clone();
         let index = self.search_index.clone();
@@ -204,6 +278,32 @@ impl MemoryStore {
         }
         Ok(())
     }
+}
+
+fn entity_matches_filters(entity: &Entity, query: &SearchQuery) -> bool {
+    if let Some(ns) = &query.ns {
+        let namespace = entity
+            .props
+            .get("namespace")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if namespace != ns {
+            return false;
+        }
+    }
+
+    if let Some(kind) = &query.kind {
+        let entity_kind = entity
+            .props
+            .get("kind")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if entity_kind != kind {
+            return false;
+        }
+    }
+
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -237,6 +337,19 @@ impl SearchQuery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResults {
     pub entities: Vec<Entity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplorerEdge {
+    pub source: String,
+    pub target: String,
+    pub relation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplorerResults {
+    pub entities: Vec<Entity>,
+    pub edges: Vec<ExplorerEdge>,
 }
 
 pub struct BorgLtmServer {
@@ -635,6 +748,43 @@ mod tests {
                 .unwrap_or_default()
                 == "movies"
         }));
+    }
+
+    #[tokio::test]
+    async fn search_query_by_exact_uri_returns_entity() {
+        let (root, search) = temp_paths("borg-ltm-exact-uri");
+        let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
+        tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
+
+        let entity = uri!("borg", "user", "leandro").unwrap();
+        ltm.state_facts(vec![make_fact(
+            entity.clone(),
+            "borg:fields:name",
+            FactValue::Text("Leandro".to_string()),
+        )])
+        .await
+        .unwrap();
+
+        let _ = wait_until_entity(&ltm, entity.clone()).await;
+        let results = ltm
+            .search(SearchQuery {
+                ns: None,
+                kind: None,
+                name: None,
+                query_text: Some(entity.as_str().to_string()),
+                limit: Some(10),
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            results
+                .entities
+                .iter()
+                .any(|candidate| candidate.entity_id.as_str() == entity.as_str())
+        );
     }
 
     #[tokio::test]

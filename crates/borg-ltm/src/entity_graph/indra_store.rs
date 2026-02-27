@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet, VecDeque},
     path::Path,
     sync::{Arc, Mutex},
 };
@@ -24,6 +24,26 @@ const ENTITY_ID_NAMESPACE: &str = "borg";
 #[derive(Clone)]
 pub(crate) struct IndraEntityGraph {
     db: Arc<Mutex<Database<RocksdbDatastore>>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TraversalEdge {
+    pub(crate) source_entity_id: String,
+    pub(crate) target_entity_id: String,
+    pub(crate) relation: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TraversalResult {
+    pub(crate) entities: Vec<Entity>,
+    pub(crate) edges: Vec<TraversalEdge>,
+}
+
+#[derive(Debug, Clone)]
+struct RawTraversalEdge {
+    source_vertex_id: Uuid,
+    target_vertex_id: Uuid,
+    relation: String,
 }
 
 impl IndraEntityGraph {
@@ -200,6 +220,97 @@ impl IndraEntityGraph {
         }
 
         Ok(out)
+    }
+
+    pub(crate) async fn expand_subgraph(
+        &self,
+        seed_entity_ids: &[String],
+        max_vertices: usize,
+    ) -> Result<TraversalResult> {
+        let db = self.db.lock().map_err(|_| anyhow!("ltm lock poisoned"))?;
+        let max_vertices = max_vertices.max(1);
+
+        let mut queue: VecDeque<Uuid> = VecDeque::new();
+        let mut visited: HashSet<Uuid> = HashSet::new();
+
+        for seed_entity_id in seed_entity_ids {
+            if visited.len() >= max_vertices {
+                break;
+            }
+            let Some(vertex_id) = self.find_vertex_by_property(
+                &db,
+                "entity_id",
+                &Value::String(seed_entity_id.clone()),
+            )?
+            else {
+                continue;
+            };
+            if visited.insert(vertex_id) {
+                queue.push_back(vertex_id);
+            }
+        }
+
+        let mut edge_set: HashSet<(Uuid, String, Uuid)> = HashSet::new();
+        let mut edges: Vec<RawTraversalEdge> = Vec::new();
+
+        while let Some(current_vertex_id) = queue.pop_front() {
+            let outbound_edges =
+                util::extract_edges(db.get(SpecificVertexQuery::single(current_vertex_id).outbound()?)?)
+                    .unwrap_or_default();
+            let inbound_edges =
+                util::extract_edges(db.get(SpecificVertexQuery::single(current_vertex_id).inbound()?)?)
+                    .unwrap_or_default();
+
+            for edge in outbound_edges.into_iter().chain(inbound_edges) {
+                let relation = edge.t.to_string();
+                let source = edge.outbound_id;
+                let target = edge.inbound_id;
+                let edge_key = (source, relation.clone(), target);
+                if edge_set.insert(edge_key) {
+                    edges.push(RawTraversalEdge {
+                        source_vertex_id: source,
+                        target_vertex_id: target,
+                        relation,
+                    });
+                }
+
+                for neighbor in [source, target] {
+                    if visited.len() >= max_vertices {
+                        break;
+                    }
+                    if visited.insert(neighbor) {
+                        queue.push_back(neighbor);
+                    }
+                }
+            }
+        }
+
+        let mut entities = Vec::new();
+        let mut vertex_to_entity_id = HashMap::new();
+        for vertex_id in visited {
+            if let Some(entity) = self.fetch_entity_by_vertex_id(&db, vertex_id)? {
+                vertex_to_entity_id.insert(vertex_id, entity.entity_id.to_string());
+                entities.push(entity);
+            }
+        }
+
+        let converted_edges = edges
+            .into_iter()
+            .filter_map(|edge| {
+                let source_entity_id = vertex_to_entity_id.get(&edge.source_vertex_id)?;
+                let target_entity_id = vertex_to_entity_id.get(&edge.target_vertex_id)?;
+                Some(TraversalEdge {
+                    source_entity_id: source_entity_id.clone(),
+                    target_entity_id: target_entity_id.clone(),
+                    relation: edge.relation,
+                })
+            })
+            .collect();
+
+        Ok(TraversalResult {
+            entities,
+            edges: converted_edges,
+        })
     }
 
     pub(crate) async fn apply_fact(&self, fact: &FactRecord) -> Result<()> {
