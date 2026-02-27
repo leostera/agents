@@ -197,6 +197,12 @@ pub struct ToolchainBuilder {
     toolchain: Toolchain,
 }
 
+impl Default for ToolchainBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolchainBuilder {
     pub fn new() -> Self {
         Self {
@@ -244,10 +250,10 @@ fn validate_schema(value: &Value, schema: &Value, path: &str) -> Result<()> {
 
             if let Some(required) = schema.get("required").and_then(Value::as_array) {
                 for key in required {
-                    if let Some(key) = key.as_str() {
-                        if !object.contains_key(key) {
-                            return Err(anyhow!("{} missing required property `{}`", path, key));
-                        }
+                    if let Some(key) = key.as_str()
+                        && !object.contains_key(key)
+                    {
+                        return Err(anyhow!("{} missing required property `{}`", path, key));
                     }
                 }
             }

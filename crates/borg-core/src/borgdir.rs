@@ -13,6 +13,12 @@ pub struct BorgDir {
     search_db: PathBuf,
 }
 
+impl Default for BorgDir {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BorgDir {
     pub fn new() -> Self {
         Self::from_home(None)

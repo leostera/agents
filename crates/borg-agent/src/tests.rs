@@ -8,7 +8,9 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_core::uri;
 use borg_db::BorgDb;
-use borg_llm::{LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, StopReason, TranscriptionRequest};
+use borg_llm::{
+    LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, StopReason, TranscriptionRequest,
+};
 use serde_json::{Value, json};
 use std::sync::Once;
 use tokio::sync::{Mutex, mpsc};
