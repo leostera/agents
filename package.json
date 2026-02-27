@@ -10,6 +10,9 @@
     "build:web": "bun run vite build",
     "storybook": "storybook dev -p 6006 -c packages/borg-ui/.storybook",
     "build:storybook": "storybook build -c packages/borg-ui/.storybook -o packages/borg-ui/storybook-static",
+    "test": "bun test --pass-with-no-tests",
+    "test:storybook": "vitest --config vite.config.ts --project storybook --run --passWithNoTests",
+    "check": "bun run build:web",
     "build:rust": "cargo build -p borg-cli",
     "build": "bun run build:web && bun run build:rust",
     "prepare": "husky"

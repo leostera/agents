@@ -20,7 +20,7 @@ fn init_test_tracing() {
 }
 
 #[tokio::test]
-async fn openai_provider_chat_against_vllm_container() {
+async fn e2e_openai_provider_chat_against_vllm_container() {
     init_test_tracing();
     info!(target: "borg_llm_it", "starting openai compatibility integration test");
     let llm = LlmContainer::start_ollama().await.unwrap();

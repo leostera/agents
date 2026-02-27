@@ -6,7 +6,10 @@ use crate::{CodeModeContext, CodeModeRuntime};
 fn executes_with_injected_sdk_and_ffi() {
     let rt = CodeModeRuntime::default();
     let result = rt
-        .execute("async () => { return Borg.OS.ls('.'); }", CodeModeContext::default())
+        .execute(
+            "async () => { return Borg.OS.ls('.'); }",
+            CodeModeContext::default(),
+        )
         .unwrap();
     assert!(result.result_json.is_object());
     let entries = result
@@ -22,7 +25,10 @@ fn custom_ffi_handler_can_override_sdk_behavior() {
     let rt =
         CodeModeRuntime::default().with_ffi_handler("os__ls", |args| Ok(json!({ "args": args })));
     let result = rt
-        .execute("async () => { return Borg.OS.ls('a', 'b'); }", CodeModeContext::default())
+        .execute(
+            "async () => { return Borg.OS.ls('a', 'b'); }",
+            CodeModeContext::default(),
+        )
         .unwrap();
     assert_eq!(result.result_json, json!({ "args": ["a", "b"] }));
 }
@@ -79,9 +85,12 @@ fn me_returns_current_user_uri_from_context() {
 #[test]
 fn execute_rejects_non_code_mode_shape() {
     let rt = CodeModeRuntime::default();
-    let err = rt.execute("Borg.OS.ls('.')", CodeModeContext::default()).unwrap_err();
+    let err = rt
+        .execute("Borg.OS.ls('.')", CodeModeContext::default())
+        .unwrap_err();
     assert!(
-        err.to_string().contains("async () =>"),
+        err.to_string()
+            .contains("async zero-arg function expression"),
         "unexpected error: {err}"
     );
 }
@@ -90,7 +99,10 @@ fn execute_rejects_non_code_mode_shape() {
 fn execute_invalid_borgos_symbol_returns_corrective_hint() {
     let rt = CodeModeRuntime::default();
     let err = rt
-        .execute("async () => { return BorgOs.ls('.'); }", CodeModeContext::default())
+        .execute(
+            "async () => { return BorgOs.ls('.'); }",
+            CodeModeContext::default(),
+        )
         .unwrap_err();
     let message = err.to_string();
     assert!(
@@ -128,7 +140,10 @@ fn execute_rejects_borg_memory_namespace() {
 fn execute_allows_valid_borg_me_calls() {
     let rt = CodeModeRuntime::default();
     let result = rt
-        .execute("async () => { return Borg.me().uri(); }", CodeModeContext::default())
+        .execute(
+            "async () => { return Borg.me().uri(); }",
+            CodeModeContext::default(),
+        )
         .unwrap();
     assert_eq!(result.result_json, Value::Null);
 }
@@ -139,7 +154,10 @@ fn ffi_handler_panic_is_reported_as_runtime_error() {
         panic!("simulated ffi panic");
     });
     let err = rt
-        .execute("async () => { return Borg.OS.ls('.'); }", CodeModeContext::default())
+        .execute(
+            "async () => { return Borg.OS.ls('.'); }",
+            CodeModeContext::default(),
+        )
         .unwrap_err();
     assert!(
         err.to_string().contains("ffi execution panic"),

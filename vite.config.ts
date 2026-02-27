@@ -23,6 +23,18 @@ export default defineConfig({
     }, {
       find: '@/',
       replacement: `${path.resolve(dirname, 'packages/borg-ui/src')}/`
+    }, {
+      find: '@borg/ui/index.css',
+      replacement: path.resolve(dirname, 'packages/borg-ui/src/index.css')
+    }, {
+      find: '@borg/ui/styles.css',
+      replacement: path.resolve(dirname, 'packages/borg-ui/src/styles.css')
+    }, {
+      find: '@borg/ui',
+      replacement: path.resolve(dirname, 'packages/borg-ui/src/index.ts')
+    }, {
+      find: '@borg/i18n',
+      replacement: path.resolve(dirname, 'packages/borg-i18n/src/index.ts')
     }]
   },
   build: {
@@ -46,7 +58,7 @@ export default defineConfig({
       // The plugin will run tests for the stories defined in your Storybook config
       // See options at: https://storybook.js.org/docs/next/writing-tests/integrations/vitest-addon#storybooktest
       storybookTest({
-        configDir: path.join(dirname, '.storybook')
+        configDir: path.join(dirname, 'packages/borg-ui/.storybook')
       })],
       test: {
         name: 'storybook',
@@ -58,7 +70,7 @@ export default defineConfig({
             browser: 'chromium'
           }]
         },
-        setupFiles: ['packages/borg-ui/.storybook/vitest.setup.js']
+        setupFiles: ['.storybook/vitest.setup.js']
       }
     }]
   }
