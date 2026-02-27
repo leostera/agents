@@ -2,7 +2,10 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tracing::info;
 
-use crate::{LlmAssistantMessage, LlmRequest, Provider, TranscriptionRequest};
+use crate::{
+    AuthProvider, DeviceCodeAuthConfig, LlmAssistantMessage, LlmRequest, Provider,
+    TranscriptionRequest,
+};
 
 use super::openai::{OpenAiApiMode, OpenAiProvider};
 
@@ -133,6 +136,15 @@ impl Provider for ConfiguredProvider {
                 ..
             } => fallback.transcribe(req).await,
             Self::OpenRouter { .. } => Err(anyhow!(OPENROUTER_TRANSCRIPTION_FALLBACK_ERROR)),
+        }
+    }
+}
+
+impl AuthProvider for ConfiguredProvider {
+    fn device_code_auth_config(&self) -> Option<DeviceCodeAuthConfig> {
+        match self {
+            Self::OpenAi(provider) => provider.device_code_auth_config(),
+            Self::OpenRouter { .. } => None,
         }
     }
 }

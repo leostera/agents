@@ -5,13 +5,15 @@ use serde_json::{Value, json};
 use tracing::{debug, error, info, trace};
 
 use crate::{
-    LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
-    ToolDescriptor, TranscriptionRequest, UserBlock,
+    AuthProvider, DeviceCodeAuthConfig, LlmAssistantMessage, LlmRequest, Provider, ProviderBlock,
+    ProviderMessage, StopReason, ToolDescriptor, TranscriptionRequest, UserBlock,
 };
 
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
 const OPENAI_COMPLETIONS_URL: &str = "https://api.openai.com/v1/completions";
 const OPENAI_AUDIO_TRANSCRIPTIONS_URL: &str = "https://api.openai.com/v1/audio/transcriptions";
+const OPENAI_DEVICE_CODE_URL: &str = "https://auth.openai.com/oauth/device/code";
+const OPENAI_DEVICE_CODE_SCOPE: &str = "openid profile email offline_access";
 
 #[derive(Clone, Copy, Debug)]
 pub enum OpenAiApiMode {
@@ -27,6 +29,8 @@ pub struct OpenAiProvider {
     chat_completions_url: String,
     completions_url: String,
     audio_transcriptions_url: String,
+    device_code_url: String,
+    device_code_scope: String,
     default_chat_completions_model: Option<String>,
     default_audio_transcriptions_model: Option<String>,
 }
@@ -48,6 +52,8 @@ impl OpenAiProvider {
             chat_completions_url: OPENAI_CHAT_COMPLETIONS_URL.to_string(),
             completions_url: OPENAI_COMPLETIONS_URL.to_string(),
             audio_transcriptions_url: OPENAI_AUDIO_TRANSCRIPTIONS_URL.to_string(),
+            device_code_url: OPENAI_DEVICE_CODE_URL.to_string(),
+            device_code_scope: OPENAI_DEVICE_CODE_SCOPE.to_string(),
             default_chat_completions_model: None,
             default_audio_transcriptions_model: None,
         }
@@ -70,6 +76,8 @@ impl OpenAiProvider {
             chat_completions_url: format!("{}/v1/chat/completions", base),
             completions_url: format!("{}/v1/completions", base),
             audio_transcriptions_url: format!("{}/v1/audio/transcriptions", base),
+            device_code_url: OPENAI_DEVICE_CODE_URL.to_string(),
+            device_code_scope: OPENAI_DEVICE_CODE_SCOPE.to_string(),
             default_chat_completions_model: None,
             default_audio_transcriptions_model: None,
         }
@@ -80,6 +88,8 @@ pub struct OpenAiProviderBuilder {
     api_key: Option<String>,
     api_mode: OpenAiApiMode,
     base_url: Option<String>,
+    device_code_url: Option<String>,
+    device_code_scope: Option<String>,
     chat_completions_model: Option<String>,
     audio_transcriptions_model: Option<String>,
 }
@@ -90,6 +100,8 @@ impl OpenAiProviderBuilder {
             api_key: None,
             api_mode: OpenAiApiMode::ChatCompletions,
             base_url: None,
+            device_code_url: None,
+            device_code_scope: None,
             chat_completions_model: None,
             audio_transcriptions_model: None,
         }
@@ -115,6 +127,16 @@ impl OpenAiProviderBuilder {
         self
     }
 
+    pub fn device_code_url(mut self, url: impl Into<String>) -> Self {
+        self.device_code_url = Some(url.into());
+        self
+    }
+
+    pub fn device_code_scope(mut self, scope: impl Into<String>) -> Self {
+        self.device_code_scope = Some(scope.into());
+        self
+    }
+
     pub fn audio_transcriptions_model(mut self, model: impl Into<String>) -> Self {
         self.audio_transcriptions_model = Some(model.into());
         self
@@ -131,6 +153,10 @@ impl OpenAiProviderBuilder {
         } else {
             OpenAiProvider::new_with_mode(api_key, self.api_mode)
         };
+        provider.device_code_url = normalize_optional(self.device_code_url)
+            .unwrap_or_else(|| OPENAI_DEVICE_CODE_URL.to_string());
+        provider.device_code_scope = normalize_optional(self.device_code_scope)
+            .unwrap_or_else(|| OPENAI_DEVICE_CODE_SCOPE.to_string());
         provider.default_chat_completions_model = normalize_optional(self.chat_completions_model);
         provider.default_audio_transcriptions_model =
             normalize_optional(self.audio_transcriptions_model);
@@ -231,6 +257,15 @@ impl Provider for OpenAiProvider {
             .to_string();
         debug!(target: "borg_llm", chars = text.len(), "audio transcription request succeeded");
         Ok(text)
+    }
+}
+
+impl AuthProvider for OpenAiProvider {
+    fn device_code_auth_config(&self) -> Option<DeviceCodeAuthConfig> {
+        Some(DeviceCodeAuthConfig {
+            url: self.device_code_url.clone(),
+            scope: Some(self.device_code_scope.clone()),
+        })
     }
 }
 
@@ -624,7 +659,9 @@ mod tests {
     use serde_json::json;
 
     use super::{OpenAiApiMode, OpenAiProvider, to_openai_messages};
-    use crate::{LlmRequest, Provider, ProviderBlock, ProviderMessage, TranscriptionRequest};
+    use crate::{
+        AuthProvider, LlmRequest, Provider, ProviderBlock, ProviderMessage, TranscriptionRequest,
+    };
 
     #[test]
     fn assistant_tool_call_serializes_to_tool_calls_field() {
@@ -712,6 +749,21 @@ mod tests {
     fn provider_name_is_openai() {
         let provider = OpenAiProvider::new("sk-test");
         assert_eq!(Provider::provider_name(&provider), "openai");
+    }
+
+    #[test]
+    fn auth_provider_exposes_device_code_config() {
+        let provider = OpenAiProvider::build()
+            .api_key("sk-test")
+            .device_code_url("https://example.com/device")
+            .device_code_scope("openid profile")
+            .build()
+            .expect("provider");
+        let config = provider
+            .device_code_auth_config()
+            .expect("device code config");
+        assert_eq!(config.url, "https://example.com/device");
+        assert_eq!(config.scope.as_deref(), Some("openid profile"));
     }
 
     #[tokio::test]

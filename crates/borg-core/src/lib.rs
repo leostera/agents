@@ -1,10 +1,12 @@
 pub mod borgdir;
+pub mod config;
 mod entity;
 mod event;
 mod execution;
 mod task;
 mod uri;
 
+pub use config::Config;
 pub use entity::Entity;
 pub use event::{Event, SessionContextSnapshot, SessionToolSchema};
 pub use execution::ExecutionResult;

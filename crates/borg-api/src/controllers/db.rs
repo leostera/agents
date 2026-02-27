@@ -4,6 +4,8 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use borg_core::Config;
+use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -156,6 +158,58 @@ impl DbController {
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
+    }
+
+    pub(crate) async fn start_openai_device_code() -> impl IntoResponse {
+        let config = Config::default();
+        let Some(client_id) = config.openai_oauth_client_id else {
+            return api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "openai_oauth_client_id is not configured in borg-core Config".to_string(),
+            );
+        };
+
+        let response = match Client::new()
+            .post(&config.openai_device_code_url)
+            .form(&[
+                ("client_id", client_id.as_str()),
+                ("scope", config.openai_device_code_scope.as_str()),
+            ])
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                return api_error(
+                    StatusCode::BAD_GATEWAY,
+                    format!("failed to reach OpenAI device-code endpoint: {err}"),
+                );
+            }
+        };
+
+        let status = response.status();
+        let payload = match response.json::<Value>().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                return api_error(
+                    StatusCode::BAD_GATEWAY,
+                    format!("invalid JSON from OpenAI device-code endpoint: {err}"),
+                );
+            }
+        };
+
+        if !status.is_success() {
+            return api_error(
+                StatusCode::BAD_GATEWAY,
+                format!("OpenAI device-code start failed: status={status} body={payload}"),
+            );
+        }
+
+        (
+            StatusCode::OK,
+            Json(json!({ "ok": true, "device_code": payload })),
+        )
+            .into_response()
     }
 
     pub(crate) async fn list_policies(

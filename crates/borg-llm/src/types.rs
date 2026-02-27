@@ -84,6 +84,18 @@ pub struct TranscriptionRequest {
     pub prompt: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceCodeAuthConfig {
+    pub url: String,
+    pub scope: Option<String>,
+}
+
+pub trait AuthProvider: Send + Sync {
+    fn device_code_auth_config(&self) -> Option<DeviceCodeAuthConfig> {
+        None
+    }
+}
+
 #[async_trait]
 pub trait Provider: Send + Sync {
     fn provider_name(&self) -> &'static str {
@@ -100,6 +112,15 @@ pub trait Provider: Send + Sync {
 
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage>;
     async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String>;
+}
+
+impl<T> AuthProvider for Arc<T>
+where
+    T: AuthProvider + ?Sized,
+{
+    fn device_code_auth_config(&self) -> Option<DeviceCodeAuthConfig> {
+        self.as_ref().device_code_auth_config()
+    }
 }
 
 #[async_trait]

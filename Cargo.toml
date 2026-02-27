@@ -34,6 +34,7 @@ url = { version = "2", features = ["serde"] }
 teloxide = "0.17"
 serial_test = "3"
 tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 testcontainers = "0.27.1"
 indradb = { package = "indradb-lib", version = "5.0.0", features = ["rocksdb-datastore"] }
 tantivy = "0.22"

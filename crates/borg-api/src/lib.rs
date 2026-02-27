@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use anyhow::Result;
 use axum::{
     Router,
+    http::{HeaderValue, Method},
     routing::{get, post, put},
 };
 use borg_db::BorgDb;
@@ -13,6 +14,9 @@ use borg_ltm::MemoryStore;
 use borg_ports::{HttpPort, TelegramPort, init_http_port};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tracing::Level;
 use tracing::{error, info};
 
 use crate::controllers::db::DbController;
@@ -95,6 +99,10 @@ fn app_router(state: AppState) -> Router {
             get(DbController::get_provider)
                 .put(DbController::upsert_provider)
                 .delete(DbController::delete_provider),
+        )
+        .route(
+            "/api/providers/openai/device-code/start",
+            post(DbController::start_openai_device_code),
         )
         .route("/api/policies", get(DbController::list_policies))
         .route(
@@ -181,7 +189,59 @@ fn app_router(state: AppState) -> Router {
             "/api/sessions/:session_id/context",
             get(DbController::get_any_port_session_context),
         )
+        .layer(http_trace_layer())
+        .layer(cors_layer())
         .with_state(state)
+}
+
+fn cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(
+            |origin: &HeaderValue, _request_head| {
+                origin
+                    .to_str()
+                    .ok()
+                    .is_some_and(is_allowed_localhost_origin)
+            },
+        ))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers(Any)
+}
+
+fn http_trace_layer()
+-> TraceLayer<tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>>
+{
+    TraceLayer::new_for_http()
+        .make_span_with(
+            DefaultMakeSpan::new()
+                .level(Level::INFO)
+                .include_headers(false),
+        )
+        .on_request(DefaultOnRequest::new().level(Level::INFO))
+        .on_response(DefaultOnResponse::new().level(Level::INFO))
+}
+
+fn is_allowed_localhost_origin(origin: &str) -> bool {
+    const LOCALHOST_HTTP: &str = "http://localhost";
+    const LOCALHOST_HTTPS: &str = "https://localhost";
+    const LOOPBACK_HTTP: &str = "http://127.0.0.1";
+    const LOOPBACK_HTTPS: &str = "https://127.0.0.1";
+
+    origin == LOCALHOST_HTTP
+        || origin == LOCALHOST_HTTPS
+        || origin == LOOPBACK_HTTP
+        || origin == LOOPBACK_HTTPS
+        || origin.starts_with(&format!("{LOCALHOST_HTTP}:"))
+        || origin.starts_with(&format!("{LOCALHOST_HTTPS}:"))
+        || origin.starts_with(&format!("{LOOPBACK_HTTP}:"))
+        || origin.starts_with(&format!("{LOOPBACK_HTTPS}:"))
 }
 
 async fn start_telegram_port(db: BorgDb, exec: ExecEngine) -> Result<Option<JoinHandle<()>>> {
@@ -212,7 +272,7 @@ async fn start_telegram_port(db: BorgDb, exec: ExecEngine) -> Result<Option<Join
 mod tests {
     use super::{AppState, HttpPortRequest, app_router, validate_port_request};
     use axum::body::{Body, to_bytes};
-    use axum::http::{Method, Request, StatusCode};
+    use axum::http::{Method, Request, StatusCode, header};
     use borg_core::Uri;
     use borg_db::BorgDb;
     use borg_exec::ExecEngine;
@@ -382,6 +442,44 @@ mod tests {
 
         let (status, _) = request_no_body(&app, Method::DELETE, "/api/providers/openai").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn openai_device_code_start_endpoint_is_wired() {
+        let app = test_app("providers-device-code").await;
+        let (status, _) = request_no_body(
+            &app,
+            Method::POST,
+            "/api/providers/openai/device-code/start",
+        )
+        .await;
+        assert_ne!(status, StatusCode::NOT_FOUND);
+        assert_ne!(status, StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn cors_allows_localhost_origins() {
+        let app = test_app("cors-localhost").await;
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/api/providers")
+                    .header(header::ORIGIN, "http://localhost:5173")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let allow_origin = response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .and_then(|value| value.to_str().ok());
+        assert_eq!(allow_origin, Some("http://localhost:5173"));
     }
 
     #[tokio::test]
