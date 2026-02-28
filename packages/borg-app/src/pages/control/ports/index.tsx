@@ -21,7 +21,7 @@ function normalize(value: string): string {
 
 function matchesTerm(port: PortRecord, term: string): boolean {
   if (!term) return true;
-  return [port.port, port.provider].join(" ").toLowerCase().includes(term);
+  return [port.port_name, port.provider].join(" ").toLowerCase().includes(term);
 }
 
 function formatUpdatedAt(value?: string | null): string {
@@ -40,7 +40,7 @@ function formatProviderName(provider?: string): string {
   if (normalized === "sms") return "SMS";
   if (normalized === "http") return "HTTP";
   if (normalized === "custom") return "Custom";
-  return provider;
+  return provider ?? "Custom";
 }
 
 export function PortsPage() {
@@ -107,21 +107,17 @@ export function PortsPage() {
       setIsSaving(true);
       setError(null);
       try {
-        const updates: Promise<void>[] = [
-          borgApi.upsertPortSetting(port, "kind", input.portKind),
-          borgApi.upsertPortSetting(port, "enabled", "true"),
-        ];
+        const settings: Record<string, unknown> = {};
         if (input.portKind === "telegram") {
-          updates.push(
-            borgApi.upsertPortSetting(
-              port,
-              "bot_token",
-              (input.telegramBotToken ?? "").trim()
-            )
-          );
+          settings.bot_token = (input.telegramBotToken ?? "").trim();
+          settings.allowed_external_user_ids = [];
         }
-
-        await Promise.all(updates);
+        await borgApi.upsertPort(`borg:port:${port}`, {
+          provider: input.portKind,
+          enabled: true,
+          allows_guests: true,
+          settings,
+        });
         setIsDialogOpen(false);
         await reload();
       } catch (saveError) {
@@ -142,7 +138,7 @@ export function PortsPage() {
       setError(null);
       try {
         await borgApi.upsertPortSetting(
-          port.port,
+          port.port_id,
           "enabled",
           port.enabled ? "false" : "true"
         );
@@ -161,13 +157,13 @@ export function PortsPage() {
   const handleDeletePort = React.useCallback(
     async (port: PortRecord) => {
       const shouldDelete = window.confirm(
-        `Delete port \"${port.port}\"? This removes its settings and bindings.`
+        `Delete port \"${port.port_name}\"? This removes its settings and bindings.`
       );
       if (!shouldDelete) return;
 
       setError(null);
       try {
-        await borgApi.deletePort(port.port, { ignoreNotFound: true });
+        await borgApi.deletePort(port.port_id, { ignoreNotFound: true });
         await reload();
       } catch (deleteError) {
         setError(
@@ -229,13 +225,13 @@ export function PortsPage() {
             ) : (
               filteredPorts.map((port) => (
                 <TableRow
-                  key={port.port}
+                  key={port.port_id}
                   className="cursor-pointer"
                   onClick={() => {
                     window.history.pushState(
                       null,
                       "",
-                      `/control/ports/${encodeURIComponent(port.port)}`
+                      `/control/ports/${encodeURIComponent(port.port_id)}`
                     );
                     window.dispatchEvent(new PopStateEvent("popstate"));
                   }}
@@ -243,10 +239,10 @@ export function PortsPage() {
                   <TableCell>{formatProviderName(port.provider)}</TableCell>
                   <TableCell className="font-mono text-[11px]">
                     <Link
-                      href={`/control/ports/${encodeURIComponent(port.port)}`}
+                      href={`/control/ports/${encodeURIComponent(port.port_id)}`}
                       onClick={(event) => event.stopPropagation()}
                     >
-                      {port.port}
+                      {port.port_name}
                     </Link>
                   </TableCell>
                   <TableCell>{port.active_sessions}</TableCell>
@@ -270,7 +266,7 @@ export function PortsPage() {
                         window.history.pushState(
                           null,
                           "",
-                          `/control/ports/${encodeURIComponent(port.port)}`
+                          `/control/ports/${encodeURIComponent(port.port_id)}`
                         );
                         window.dispatchEvent(new PopStateEvent("popstate"));
                       }}

@@ -69,6 +69,11 @@ impl SessionManager {
             }
         }
 
+        let specs = self.db.list_agent_specs(1).await?;
+        if let Some(first) = specs.into_iter().next() {
+            return Ok(first.agent_id);
+        }
+
         Ok(uri!("borg", "agent", "default"))
     }
 }

@@ -463,9 +463,7 @@ fn parse_assistant_message(payload: &Value) -> Result<LlmAssistantMessage> {
         _ => StopReason::EndOfTurn,
     };
     let error_message = match finish_reason {
-        Some("length") => {
-            Some("openrouter chat completion stopped due to token limit".to_string())
-        }
+        Some("length") => Some("openrouter chat completion stopped due to token limit".to_string()),
         Some("content_filter") => {
             Some("openrouter chat completion blocked by content filter".to_string())
         }

@@ -3,6 +3,8 @@ import { SidebarInset, SidebarProvider } from "@borg/ui";
 import {
   Bell,
   Bot,
+  Brain,
+  Hammer,
   LayoutDashboard,
   Map,
   Route,
@@ -84,18 +86,20 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
         title: "Agents",
         icon: Bot,
         path: "/control/agents",
+        children: [
+          {
+            id: "control-agents-skills",
+            title: "Skills",
+            icon: Brain,
+            path: "/control/agents/skills",
+          },
+        ],
       },
       {
-        id: "control-agents-skills",
-        title: "Skills",
-        icon: Bot,
-        path: "/control/agents/skills",
-      },
-      {
-        id: "control-agents-tools",
+        id: "control-tools",
         title: "Tools",
-        icon: Bot,
-        path: "/control/agents/tools",
+        icon: Hammer,
+        path: "/control/tools",
       },
       {
         id: "control-users",
@@ -203,6 +207,7 @@ const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
   "/dashboard": SECTION_BY_ID["overview-home"],
   "/dashbaord": SECTION_BY_ID["overview-home"],
   "/control": SECTION_BY_ID["control-sessions"],
+  "/control/agents/tools": SECTION_BY_ID["control-tools"],
   "/settings": SECTION_BY_ID["settings-providers"],
   "/observability/overview": SECTION_BY_ID["observability-overview"],
   "/observability/traces": SECTION_BY_ID["observability-tracing"],
@@ -479,7 +484,7 @@ export function DashboardApp() {
       ),
       "control-agents": () => <AgentsPage />,
       "control-agents-skills": () => <AgentSkillsPage />,
-      "control-agents-tools": () => <AgentToolsPage />,
+      "control-tools": () => <AgentToolsPage />,
       "control-agent": () => (
         <AgentDetailsPage agentId={route.entityUri ?? ""} />
       ),

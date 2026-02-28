@@ -193,9 +193,15 @@ async fn session_resumes_same_agent_id_when_message_omits_agent() {
 
     let session_id = uri!("borg", "session");
     let custom_agent = uri!("borg", "agent", "support");
-    db.upsert_agent_spec(&custom_agent, "gpt-4o-mini", "You are support.", &json!([]))
-        .await
-        .unwrap();
+    db.upsert_agent_spec(
+        &custom_agent,
+        "Support Agent",
+        "gpt-4o-mini",
+        "You are support.",
+        &json!([]),
+    )
+    .await
+    .unwrap();
 
     let first = UserMessage {
         user_key: uri!("borg", "user", "u4"),
@@ -383,6 +389,7 @@ async fn set_model_for_session_updates_existing_agent_spec_and_preserves_fields(
     }]);
     db.upsert_agent_spec(
         &default_agent_id,
+        "Default Agent",
         "gpt-4o-mini",
         "Keep this system prompt.",
         &existing_tools,
@@ -402,7 +409,12 @@ async fn set_model_for_session_updates_existing_agent_spec_and_preserves_fields(
     let updated = db.get_agent_spec(&default_agent_id).await.unwrap().unwrap();
     assert_eq!(updated.model, "openai/gpt-4.1-mini");
     assert_eq!(updated.system_prompt, "Keep this system prompt.");
-    assert_eq!(updated.tools, existing_tools);
+    assert!(
+        updated
+            .tools
+            .as_array()
+            .is_some_and(|tools| tools.iter().any(|tool| tool["name"] == "tool-a"))
+    );
 }
 
 #[tokio::test]

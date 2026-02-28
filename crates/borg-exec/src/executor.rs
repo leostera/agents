@@ -8,8 +8,8 @@ use borg_db::{BorgDb, NewTask};
 use borg_llm::Provider;
 use borg_llm::TranscriptionRequest;
 use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
-use borg_ltm::MemoryStore;
-use borg_rt::{CodeModeContext, CodeModeRuntime};
+use borg_ltm::{MemoryStore, default_memory_tool_specs};
+use borg_rt::{CodeModeContext, CodeModeRuntime, default_tool_specs};
 use serde_json::{Value, json};
 use tracing::{debug, error, info, trace, warn};
 
@@ -301,11 +301,16 @@ impl BorgExecutor {
         let session = self.session_for_session_id(session_id).await?;
         let agent_id = session.agent.agent_id.clone();
         let (system_prompt, tools) = if let Some(spec) = self.db.get_agent_spec(&agent_id).await? {
-            (spec.system_prompt, spec.tools)
+            let merged_tools = match serde_json::from_value::<Vec<ToolSpec>>(spec.tools.clone()) {
+                Ok(existing_tools) => serde_json::to_value(merge_default_tools(existing_tools))?,
+                Err(_) => spec.tools.clone(),
+            };
+            (spec.system_prompt, merged_tools)
         } else {
+            let merged_tools = merge_default_tools(session.agent.tools.clone());
             (
                 session.agent.system_prompt.clone(),
-                serde_json::to_value(&session.agent.tools)?,
+                serde_json::to_value(&merged_tools)?,
             )
         };
 
@@ -912,6 +917,20 @@ impl BorgExecutor {
             })
             .await
     }
+}
+
+fn merge_default_tools(existing: Vec<ToolSpec>) -> Vec<ToolSpec> {
+    let mut by_name: std::collections::BTreeMap<String, ToolSpec> = existing
+        .into_iter()
+        .map(|tool| (tool.name.clone(), tool))
+        .collect();
+    for tool in default_tool_specs()
+        .into_iter()
+        .chain(default_memory_tool_specs().into_iter())
+    {
+        by_name.insert(tool.name.clone(), tool);
+    }
+    by_name.into_values().collect()
 }
 
 fn to_session_tool_schema(tool: &ToolSpec) -> SessionToolSchema {

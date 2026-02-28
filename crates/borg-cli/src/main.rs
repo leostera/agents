@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 use reqwest::Client;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::fs;
 use tracing::{error, info};
 use uuid::Uuid;
@@ -260,8 +260,36 @@ impl BorgCliApp {
                 Ok(())
             }
             "ports.telegram" => {
-                db.upsert_port_setting("telegram", "bot_token", value.trim())
-                    .await?;
+                let existing = db.get_port("telegram").await?;
+                let mut settings = existing
+                    .as_ref()
+                    .map(|port| port.settings.clone())
+                    .unwrap_or_else(|| json!({}));
+                if let Some(map) = settings.as_object_mut() {
+                    map.insert(
+                        "bot_token".to_string(),
+                        Value::String(value.trim().to_string()),
+                    );
+                } else {
+                    settings = json!({ "bot_token": value.trim() });
+                }
+                let enabled = existing.as_ref().map(|port| port.enabled).unwrap_or(true);
+                let allows_guests = existing
+                    .as_ref()
+                    .map(|port| port.allows_guests)
+                    .unwrap_or(true);
+                let default_agent_id = existing
+                    .as_ref()
+                    .and_then(|port| port.default_agent_id.as_ref());
+                db.upsert_port(
+                    "telegram",
+                    "telegram",
+                    enabled,
+                    allows_guests,
+                    default_agent_id,
+                    &settings,
+                )
+                .await?;
                 info!(target: "borg_cli", key, "config value updated");
                 println!("ok");
                 Ok(())

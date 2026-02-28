@@ -102,10 +102,7 @@ impl BorgDb {
         {
             Ok(rows) => rows,
             Err(err) => {
-                if err
-                    .to_string()
-                    .contains("no such column: request_json")
-                {
+                if err.to_string().contains("no such column: request_json") {
                     let mut fallback = self
                         .conn
                         .query(

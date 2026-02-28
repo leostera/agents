@@ -677,7 +677,9 @@ fn parse_openai_assistant_message(payload: &Value) -> Result<LlmAssistantMessage
     };
     let error_message = match finish_reason {
         Some("length") => Some("openai chat completion stopped due to token limit".to_string()),
-        Some("content_filter") => Some("openai chat completion blocked by content filter".to_string()),
+        Some("content_filter") => {
+            Some("openai chat completion blocked by content filter".to_string())
+        }
         _ => None,
     };
 

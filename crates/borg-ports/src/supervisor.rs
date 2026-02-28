@@ -10,8 +10,6 @@ use crate::TelegramPort;
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(3);
 const PORT_KIND_TELEGRAM: &str = "telegram";
-const PORT_KIND_KEY: &str = "kind";
-const PORT_ENABLED_KEY: &str = "enabled";
 const TELEGRAM_BOT_TOKEN_KEY: &str = "bot_token";
 const PORT_SCAN_LIMIT: usize = 1_000;
 
@@ -95,7 +93,7 @@ impl BorgPortsSupervisor {
         }
         if matches!(
             key,
-            PORT_KIND_KEY | PORT_ENABLED_KEY | TELEGRAM_BOT_TOKEN_KEY
+            "provider" | "kind" | "enabled" | TELEGRAM_BOT_TOKEN_KEY
         ) {
             self.reconcile_telegram_ports().await?;
         }
@@ -168,27 +166,14 @@ impl BorgPortsSupervisor {
         let ports = self.db.list_ports(PORT_SCAN_LIMIT).await?;
 
         for port_record in ports {
-            let port = port_record.port;
-            let kind = self
-                .db
-                .get_port_setting(&port, PORT_KIND_KEY)
-                .await?
-                .map(|value| value.trim().to_ascii_lowercase());
-
-            let is_telegram_kind = kind
-                .as_deref()
-                .is_some_and(|value| value == PORT_KIND_TELEGRAM)
-                || (kind.is_none() && port == PORT_KIND_TELEGRAM);
+            let port = port_record.port_name;
+            let kind = port_record.provider.trim().to_ascii_lowercase();
+            let is_telegram_kind = kind == PORT_KIND_TELEGRAM;
             if !is_telegram_kind {
                 continue;
             }
 
-            let enabled = self
-                .db
-                .get_port_setting(&port, PORT_ENABLED_KEY)
-                .await?
-                .is_none_or(|raw| parse_enabled(&raw));
-            if !enabled {
+            if !port_record.enabled {
                 continue;
             }
 
@@ -205,9 +190,4 @@ impl BorgPortsSupervisor {
 
         Ok(desired)
     }
-}
-
-fn parse_enabled(raw: &str) -> bool {
-    let normalized = raw.trim().to_ascii_lowercase();
-    !matches!(normalized.as_str(), "0" | "false" | "no" | "off")
 }

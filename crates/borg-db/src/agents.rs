@@ -11,6 +11,7 @@ impl BorgDb {
     pub async fn upsert_agent_spec(
         &self,
         agent_id: &Uri,
+        name: &str,
         model: &str,
         system_prompt: &str,
         tools: &Value,
@@ -19,9 +20,10 @@ impl BorgDb {
         self.conn
             .execute(
                 r#"
-                INSERT INTO agent_specs(agent_id, model, system_prompt, tools_json, created_at, updated_at)
-                VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+                INSERT INTO agent_specs(agent_id, name, model, system_prompt, tools_json, created_at, updated_at)
+                VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
                 ON CONFLICT(agent_id) DO UPDATE SET
+                  name = excluded.name,
                   model = excluded.model,
                   system_prompt = excluded.system_prompt,
                   tools_json = excluded.tools_json,
@@ -29,6 +31,7 @@ impl BorgDb {
                 "#,
                 (
                     agent_id.to_string(),
+                    name.to_string(),
                     model.to_string(),
                     system_prompt.to_string(),
                     tools.to_string(),
@@ -44,7 +47,7 @@ impl BorgDb {
         let mut rows = self
             .conn
             .query(
-                "SELECT agent_id, model, system_prompt, tools_json, updated_at FROM agent_specs WHERE agent_id = ?1 LIMIT 1",
+                "SELECT agent_id, name, model, system_prompt, tools_json, updated_at FROM agent_specs WHERE agent_id = ?1 LIMIT 1",
                 (agent_id.to_string(),),
             )
             .await?;
@@ -53,12 +56,13 @@ impl BorgDb {
             return Ok(None);
         };
 
-        let updated_at_raw: String = row.get(4)?;
+        let updated_at_raw: String = row.get(5)?;
         Ok(Some(AgentSpecRecord {
             agent_id: Uri::parse(&row.get::<String>(0)?)?,
-            model: row.get(1)?,
-            system_prompt: row.get(2)?,
-            tools: serde_json::from_str(&row.get::<String>(3)?).unwrap_or(Value::Array(vec![])),
+            name: row.get(1)?,
+            model: row.get(2)?,
+            system_prompt: row.get(3)?,
+            tools: serde_json::from_str(&row.get::<String>(4)?).unwrap_or(Value::Array(vec![])),
             updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at_raw)?.with_timezone(&Utc),
         }))
     }
@@ -68,19 +72,20 @@ impl BorgDb {
         let mut rows = self
             .conn
             .query(
-                "SELECT agent_id, model, system_prompt, tools_json, updated_at FROM agent_specs ORDER BY updated_at DESC LIMIT ?1",
+                "SELECT agent_id, name, model, system_prompt, tools_json, updated_at FROM agent_specs ORDER BY updated_at DESC LIMIT ?1",
                 (limit,),
             )
             .await?;
 
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
-            let updated_at_raw: String = row.get(4)?;
+            let updated_at_raw: String = row.get(5)?;
             out.push(AgentSpecRecord {
                 agent_id: Uri::parse(&row.get::<String>(0)?)?,
-                model: row.get(1)?,
-                system_prompt: row.get(2)?,
-                tools: serde_json::from_str(&row.get::<String>(3)?).unwrap_or(Value::Array(vec![])),
+                name: row.get(1)?,
+                model: row.get(2)?,
+                system_prompt: row.get(3)?,
+                tools: serde_json::from_str(&row.get::<String>(4)?).unwrap_or(Value::Array(vec![])),
                 updated_at: parse_ts(&updated_at_raw)?,
             });
         }

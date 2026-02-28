@@ -1,23 +1,5 @@
 # Borg TODO
 
-## 1) Finish `borg init` onboarding flow (highest priority)
-- Complete end-to-end `/onboard` web flow so `borg init` reliably reaches a usable runtime state.
-- Persist LLM provider config through `borg-db` (provider key + model/provider defaults).
-- Add onboarding step to configure the first port (Telegram only for now):
-  - bot token
-  - initial port binding defaults
-- Ensure onboarding writes all required DB records for first-run success.
-- Add a final onboarding completion check so we can fail loudly if setup is incomplete.
-
-## 2) Make `borg start` serve a usable local dashboard
-- Finish dashboard build and integrate into local runtime serving path.
-- Ensure dashboard assets are available and loaded from the expected dist path.
-- Verify `borg start` gives an immediately usable local control surface:
-  - health/status
-  - session visibility
-  - task visibility (when explicit tasks exist)
-  - memory search visibility
-
 ## 3) Third-party integrations
 - Define integration framework (auth/config + health checks + capability registration).
 - Add at least one concrete integration path beyond Telegram as a reference pattern.
@@ -37,5 +19,46 @@
   - dependency enforcement
   - resumability after restart
 
-## 5) Coordination item
-- Schedule a design sync/call to walk through the intended task-graph reintegration model and edge cases before implementing the full subsystem.
+## 5) Session search endpoint for Control > Sessions
+- Add backend endpoint for searching sessions/messages by free text (not just list/filter).
+- Start with SQL-based search on `sessions` + `session_messages` tables to unblock UI.
+- Follow up with dedicated `search.db` powered by Tantivy for scalable fuzzy search across sessions/messages.
+
+## 6) Dashboard + Control data coverage
+- Providers table should be fully API-backed with real metrics:
+  - tokens used
+  - token rate
+  - models in use
+  - cost
+  - last used timestamp
+  - last session URI
+- Add provider-level usage aggregation endpoints instead of deriving from static/placeholder UI data.
+- Add session detail enrichment for Control > Sessions:
+  - users (already present)
+  - providers used (plural)
+  - agent ids used
+  - message counts / last activity summary
+
+## 7) Memory explorer follow-ups
+- Keep `/memory/explorer` search API-driven for large datasets (no client-side entity loading).
+- Add explicit explorer query limits/pagination semantics in API responses (for very large graphs).
+- Add graph traversal controls in API (depth / edge filters / relationship type filters).
+
+## 8) Observability feature completion
+- Implement backend APIs and storage for Observability > Alerts.
+- Implement backend APIs for Observability > Tracing (session/task/agent execution traces).
+- Define alert/tracing schemas and retention policy.
+
+## 9) Tomorrow
+- Reset `sessions` table and ensure all session IDs are valid URIs.
+- Continue Agents model migration:
+  - make `skills` a dedicated table
+  - let agents attach multiple skills/tools
+  - for tools, defer final model details until `docs/rfds/RFD0004-connected-accounts-declarative-tools-and-codemode-package-mcp.md` is settled
+- Ports UI:
+  - show all expected fields
+  - make Add Port form support expected fields (including `allows_guests` and `allowed_external_ids`)
+- Providers UI:
+  - remove placeholder/fake table data
+  - clarify provider column naming
+  - render real database-backed values directly

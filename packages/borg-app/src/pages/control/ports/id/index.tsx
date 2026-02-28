@@ -20,10 +20,10 @@ import React from "react";
 const borgApi = createBorgApiClient();
 
 type PortDetailsPageProps = {
-  port: string;
+  portUri: string;
 };
 
-export function PortDetailsPage({ port }: PortDetailsPageProps) {
+export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
   const [settings, setSettings] = React.useState<PortSetting[]>([]);
   const [bindings, setBindings] = React.useState<PortBinding[]>([]);
   const [sessions, setSessions] = React.useState<SessionRecord[]>([]);
@@ -34,8 +34,8 @@ export function PortDetailsPage({ port }: PortDetailsPageProps) {
   const [isSaving, setIsSaving] = React.useState(false);
 
   const load = React.useCallback(async () => {
-    const normalizedPort = port.trim();
-    if (!normalizedPort) {
+    const normalizedPortUri = portUri.trim();
+    if (!normalizedPortUri) {
       setError("Missing port name");
       setSettings([]);
       setBindings([]);
@@ -49,14 +49,14 @@ export function PortDetailsPage({ port }: PortDetailsPageProps) {
     try {
       const [loadedSettings, loadedBindings, loadedSessions] =
         await Promise.all([
-          borgApi.listPortSettings(normalizedPort, 1000),
-          borgApi.listPortBindings(normalizedPort, 1000),
+          borgApi.listPortSettings(normalizedPortUri, 1000),
+          borgApi.listPortBindings(normalizedPortUri, 1000),
           borgApi.listSessions(10000),
         ]);
       setSettings(loadedSettings);
       setBindings(loadedBindings);
       setSessions(
-        loadedSessions.filter((session) => session.port === normalizedPort)
+        loadedSessions.filter((session) => session.port === normalizedPortUri)
       );
     } catch (loadError) {
       setSettings([]);
@@ -70,7 +70,7 @@ export function PortDetailsPage({ port }: PortDetailsPageProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [port]);
+  }, [portUri]);
 
   React.useEffect(() => {
     void load();
@@ -79,9 +79,9 @@ export function PortDetailsPage({ port }: PortDetailsPageProps) {
   const handleSaveSetting = React.useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      const normalizedPort = port.trim();
+      const normalizedPortUri = portUri.trim();
       const key = keyInput.trim();
-      if (!normalizedPort || !key) {
+      if (!normalizedPortUri || !key) {
         setError("Port and key are required.");
         return;
       }
@@ -89,7 +89,7 @@ export function PortDetailsPage({ port }: PortDetailsPageProps) {
       setIsSaving(true);
       setError(null);
       try {
-        await borgApi.upsertPortSetting(normalizedPort, key, valueInput);
+        await borgApi.upsertPortSetting(normalizedPortUri, key, valueInput);
         setKeyInput("");
         setValueInput("");
         await load();
@@ -103,7 +103,7 @@ export function PortDetailsPage({ port }: PortDetailsPageProps) {
         setIsSaving(false);
       }
     },
-    [keyInput, load, port, valueInput]
+    [keyInput, load, portUri, valueInput]
   );
 
   const handleEditSetting = React.useCallback((setting: PortSetting) => {
@@ -115,7 +115,7 @@ export function PortDetailsPage({ port }: PortDetailsPageProps) {
     async (key: string) => {
       setError(null);
       try {
-        await borgApi.deletePortSetting(port, key, { ignoreNotFound: true });
+        await borgApi.deletePortSetting(portUri, key, { ignoreNotFound: true });
         await load();
       } catch (deleteError) {
         setError(
@@ -125,7 +125,7 @@ export function PortDetailsPage({ port }: PortDetailsPageProps) {
         );
       }
     },
-    [load, port]
+    [load, portUri]
   );
 
   if (isLoading) {
@@ -141,7 +141,7 @@ export function PortDetailsPage({ port }: PortDetailsPageProps) {
       <section className="grid gap-3 md:grid-cols-3">
         <div>
           <p className="text-muted-foreground text-xs">Port</p>
-          <p className="font-mono text-xs break-all">{port}</p>
+          <p className="font-mono text-xs break-all">{portUri}</p>
         </div>
         <div>
           <p className="text-muted-foreground text-xs">Settings</p>

@@ -628,9 +628,12 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
 
-        let (status, body) =
-            request_no_body(&app, Method::GET, "/api/ports/borg:port:telegram/settings/bot_token")
-                .await;
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/ports/borg:port:telegram/settings/bot_token",
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["value"], "123:abc");
 
@@ -658,8 +661,8 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
 
-        let (status, _) = request_no_body(&app, Method::DELETE, "/api/ports/borg:port:telegram")
-            .await;
+        let (status, _) =
+            request_no_body(&app, Method::DELETE, "/api/ports/borg:port:telegram").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
     }
 
@@ -901,22 +904,20 @@ mod tests {
     #[tokio::test]
     async fn ports_negative_paths() {
         let app = test_app("ports-negative").await;
-        let (status, _) =
-            request_no_body(
-                &app,
-                Method::GET,
-                "/api/ports/borg:port:telegram/settings/missing",
-            )
-            .await;
+        let (status, _) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/ports/borg:port:telegram/settings/missing",
+        )
+        .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
 
-        let (status, _) =
-            request_no_body(
-                &app,
-                Method::GET,
-                "/api/ports/borg:port:telegram/bindings/not-a-uri",
-            )
-            .await;
+        let (status, _) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/ports/borg:port:telegram/bindings/not-a-uri",
+        )
+        .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
 
         let (status, _) = request_no_body(

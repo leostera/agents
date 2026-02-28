@@ -91,9 +91,7 @@ impl ProviderCallTrace {
         let response_body_opt = response_body;
         let normalized_response_json = response_json
             .cloned()
-            .or_else(|| {
-                response_body_opt.and_then(|body| serde_json::from_str::<Value>(body).ok())
-            })
+            .or_else(|| response_body_opt.and_then(|body| serde_json::from_str::<Value>(body).ok()))
             .unwrap_or_else(|| Value::Object(Default::default()));
         let response_body = response_body_opt.unwrap_or("").to_string();
         let error_message = error_message.to_string();

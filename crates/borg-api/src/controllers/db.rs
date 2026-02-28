@@ -1181,7 +1181,11 @@ impl DbController {
             Ok(v) => v,
             Err(err) => return err,
         };
-        match state.db.get_port_session_context(&port_name, &session_id).await {
+        match state
+            .db
+            .get_port_session_context(&port_name, &session_id)
+            .await
+        {
             Ok(Some(ctx)) => (
                 StatusCode::OK,
                 Json(json!({ "port": port_name, "session_id": session_id, "ctx": ctx })),
