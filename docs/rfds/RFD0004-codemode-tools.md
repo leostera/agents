@@ -8,81 +8,141 @@
 ## Summary
 [summary]: #summary
 
-This RFD proposes a product model where Apps represent external integrations and Capabilities represent user-facing actions. In this model, integrations such as uTorrent, SerpAPI, and Google Calendar are Apps, while actions like `Add Torrent`, `Search Google`, and `Create Calendar Event` are Capabilities. The term "tool" is reserved for runtime internals such as CodeMode, Shell, Task, Memory, and Cron, and is not used as a user-facing concept. Capability execution may happen through direct builtin handlers or through internal tool chains, with CodeMode as the primary dynamic path and Shell as a fallback. All internal execution steps are recorded in `tool_calls` to support replay, debugging, and later policy enforcement.
+We propose an tooling model to make Borg easily extensible while maintaing a
+small vetted core, introducing *Apps* to represent 3rdparty integrations, and
+**Capabilities** to describe things that apps can do.
 
-This keeps the UX simple (`App / Capability`) while preserving execution flexibility.
+We reserve the use of the _tool_ concept for internals tools provided by Borg,
+like the `CodeMode.executeCode` tool. This is closer to "MCP Tool".
 
 ## Problem statement
 
-Borg currently mixes two different meanings of "tool":
+In the current model for borg, tools are hardcoded and provied by crates like
+borg-ltm and borg-rt. Borg LTM gives us access to `stateFacts` and
+`searchMemory`, and Borg RT gives us tools like `executeCode`.
 
-1. user-facing actions ("send message", "create event", "download torrent"), and
-2. internal execution primitives (CodeMode, Shell, Task, Memory, Cron).
+This means that an agent cannot choose what tools it picks, it is given these
+tools and must make do with them.
 
-That ambiguity makes product design, docs, and runtime contracts harder to reason about. It also slows integration work because we do not have a stable surface for "what users can do" vs "how Borg executes it".
+For many use-cases this is fine, but we found it quite limiting when more
+complex interactions with external systems appeared: downloading torrents,
+accessing calendars, etc.
 
-We need a model that is understandable to end users and operators, precise enough for runtime execution and auditing, and extensible enough to support both first-class builtins and long-tail dynamic integrations.
+Suppose a user wanted to download a torrent. Today, this can only be done by
+letting the LLM hallucinate the right JavaScript code to do it, and hopefully it will
+succeed in making this code: 
 
-## Motivation
-[motivation]: #motivation
+1. find the torrent on a search engine, 
+2. parse results and acquire the magnet link, and
+3. building a small torrent reading engine to download it. 
 
-Borg needs a clear model that users and operators can reason about quickly.
+Another example is trying to list events in a private Google Calendar. To do
+this the LLM needs to create code that will:
 
-Today, the word "tool" is overloaded between product features and runtime machinery. Integration wiring also varies by provider because account linkage, secrets, and execution paths are not expressed under a single model. We also need better coverage for long-tail integrations without requiring every provider to become a hardcoded builtin immediately. Finally, we need complete execution traces now, before introducing a policy engine. This RFD addresses those gaps by separating product surface area (`Apps` and `Capabilities`) from runtime plumbing (internal tools).
+1. use Google Calendar's API over HTTP, including figuring out authorization
+2. finding the endpoint to fetch an iCal,
+3. fetch and parse the iCal, and
+4. extract the events 
 
-## Goals and non-goals
-
-### Goals
-
-The goal is to make user-facing concepts explicit and stable by treating Apps and Capabilities as the product language. Execution remains flexible by allowing capabilities to dispatch through `builtin`, `codemode`, or `shell` modes. The proposal also introduces durable invocation logging through `tool_calls` and supports discovery/execution workflows for integrations that are not yet first-class builtins.
-
-### Non-goals (for this RFD)
-
-This document does not define a full policy or authorization framework, does not introduce capability maturity tiers, and does not attempt to ship a full plugin SDK for third-party apps. It also does not attempt to settle every provider-specific contract; it defines the platform model those contracts should fit into.
-
-## Terms
-
-In this document, an **App** is the external integration boundary, and a **Capability** is a concrete operation exposed by that app. An **Internal Tool** is a Borg runtime primitive used to execute capability logic. **Execution mode** refers to how a capability dispatches (`builtin`, `codemode`, or `shell`). The `tool_calls` table stores execution traces for all internal tool invocations.
+This is most problematic, because today it relies on the LLM being able to
+hallucinate the right APIs, parsers for common formats, even entire protocol
+implementations.
 
 ## Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
 ### Mental model
 
-An App is an external system Borg can connect to, such as uTorrent, SerpAPI, or Google Calendar. Each App exposes one or more Capabilities, which are the actions users can invoke, such as `uTorrent / Add Torrent` or `SerpAPI / Search Google`. Internal tools like `CodeMode.runCode` and `Shell.execute` are execution machinery, not user-facing product objects. Users discover and invoke capabilities, and Borg decides how to execute them.
+An App is an external system Borg can connect to, like uTorrent, SerpAPI, or
+Google Calendar. Each App exposes one or more Capabilities, which are the
+actions users can invoke, such as `uTorrent / Add Torrent` or `SerpAPI / Search
+Google`. 
+
+Both Apps and Capabilities are _data_ in our system, backed by tables. Apps
+include information like what secrets they require, any docs about them. For
+example, the `uTorrent` app would look like this:
+
+```json
+{
+  id: "borg:app:<uuid>",
+  name: "uTorrent",
+  description: "Connect to uTorrent to download torrents",
+  secrets: [
+     { name: "UTORRENT_API" },
+     ...
+  ],
+  capabilities: [
+    {
+      name: "Add Torrent",
+      hint: "Use this tool to add torrents to an existing utorrent instance for downloading",
+      mode: "codemode" (could be "shell" or "built-in"),
+      secrets: ["UTORRENT_API"],
+      instructions: To call this API, use the `npm:@ctrl/utorrent` package.
+
+Example:
+
+<code>
+    import {Utorrent} from "npm:@ctrl/utorrent";
+    
+    async () => {
+        const client = new Utorrent({
+            baseUrl: Borg.env.get("UTORRENT_API"),
+            path: '/gui/',
+            password: 'admin',
+        });
+
+        const res = await client.addTorrentFromUrl("magnet-link");
+        console.log(res);
+    }
+</code>
+
+"
+    },
+    ...
+  ]
+}
+```
 
 ### Capability discovery and execution flow
 
-The user starts by expressing intent, for example by asking to find and download a legal indie movie torrent. The agent resolves that request into one or more matching capabilities, such as `SerpAPI / Search Web`, `uTorrent / Add Torrent`, and `uTorrent / Get Torrent Status`. Runtime then dispatches each capability according to its configured execution mode. Builtin capabilities call a dedicated internal handler, codemode capabilities execute generated JavaScript through `CodeMode.runCode`, and shell capabilities use command execution as a fallback path. After execution, runtime returns structured results to the agent and persists invocation records in `tool_calls`.
+To discover capabilities based on intent, the Agent can use a new MCP Tool:
+`findCapability(query) -> [ (App, Capability) ]`. Here's an example
+conversation, including tool calls:
 
-This creates a clear separation: product answers "what can Borg do?" via capabilities, while runtime answers "how does Borg do it?" via internal tools.
-
-### Torrent walkthrough
-
-The same flow in chat form looks like this:
 
 ```text
-> me: download a movie
-> agent: I can do that. First I need a legal torrent source.
-  < tool call(find capability): "i need to find a legal torrent for a movie"
-  > tool resp(find capability): [
+> me: download the latest minions movie please
+> agent: I can do that for you!
+  < tool call(findCapability): "i need to find a torrent for a movie"
+  > tool resp(findCapability): [
       "SerpAPI / Search Web",
-      "uTorrent / Add Torrent",
-      "uTorrent / Get Torrent Status"
     ]
 
-  < tool call(SerpAPI / Search Web): { query: "... legal torrent ..." }
+  < tool call(SerpAPI / Search Web): { query: "latest minions movie torrent" }
   > tool resp(SerpAPI / Search Web): { links: [ ... ] }
 
-> agent: I found a legal source. I will add it to uTorrent now.
+> agent: I found 3 links for "Minions: The Rise of Gru", which one should I get?
+> me: webrip please
+
+  < tool call(CodeMode): `fetch page, use DOMParser, extract magnet link`
+  > tool resp(CodeMode): <magnet link>
+
   < tool call(uTorrent / Add Torrent): { magnet_or_torrent_url: "...", save_path: "..." }
   > tool resp(uTorrent / Add Torrent): { hash: "...", accepted: true }
+  
+  < tool call(Memory.stateFacts): [
+     borg:torrent:<hash> magnetLink <magnet-link>;
+     borg:movie:<uuid> name "Minions: The Rise of Gru";
+     borg:movie:<uuid> downloadedFrom borg:torrent:<hash>
+    ]
 
+> agent: we are downloading Minions: The Rise of Gru!
+> me: excellent! what's the status?
+
+> agent:
   < tool call(uTorrent / Get Torrent Status): { hash: "..." }
   > tool resp(uTorrent / Get Torrent Status): { progress: 0.37, state: "downloading" }
 ```
-
-In this example, capability execution mode remains an implementation detail. `SerpAPI / Search Web` is usually implemented as a `codemode` capability that calls SerpAPI with `SERPAPI_API_KEY`, while `uTorrent` capabilities can be either builtins or `codemode` wrappers over the local `/gui` API.
 
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
