@@ -14,7 +14,7 @@ hardcoding package knowledge in source.
 
 The return shape is intentionally small and task-focused:
 
-`list<{ pkg, types, examples }>`
+`list<{ package, types, examples }>`
 
 This gives the agent enough signal to write working code quickly while avoiding
 hallucinated APIs and made-up package usage.
@@ -71,7 +71,7 @@ The response includes:
 
 We intentionally keep this as one tool for now. The goal is to unlock dynamic
 capability authoring quickly, not to design a full package-intelligence API
-surface yet. If we split this into many tools now, we add complexity before we
+surface. If we split this into many tools now, we add complexity before we
 know what the stable interface should be.
 
 ## Reference-level explanation
@@ -101,7 +101,7 @@ Output:
 
 ```ts
 type FindPackageResult = Array<{
-  pkg: {
+  package: {
     registry: "npm" | "jsr";
     name: string;
     version?: string;
