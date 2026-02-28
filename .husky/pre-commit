@@ -21,7 +21,7 @@ if is_rust_change; then
   cargo fmt --all --check
   cargo check
   cargo clippy
-  cargo test --workspace --lib --tests --bins -- --skip e2e
+  cargo nextest run --workspace --lib --tests --bins -E 'not test(/e2e/) and not test(/_long$/)'
 fi
 
 if is_web_change; then

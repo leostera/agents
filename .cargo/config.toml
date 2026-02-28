@@ -4,3 +4,6 @@ ROCKSDB_INCLUDE_DIR = "rocksdb/include"
 # Keep pkg-config inputs stable across login shells to avoid native crate
 # fingerprint churn (notably libz-sys/libgit2-sys).
 PKG_CONFIG_PATH = { value = "", force = true }
+
+[alias]
+nt = "nextest run"
