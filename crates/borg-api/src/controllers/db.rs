@@ -60,6 +60,10 @@ pub(crate) struct UpsertProviderRequest {
     api_key: String,
     #[serde(default)]
     enabled: Option<bool>,
+    #[serde(default)]
+    default_text_model: Option<String>,
+    #[serde(default)]
+    default_audio_model: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -180,7 +184,7 @@ impl DbController {
         }
     }
 
-    fn port_name_from_uri(port_uri: &str) -> Result<String, Response> {
+    async fn port_name_from_uri(state: &AppState, port_uri: &str) -> Result<String, Response> {
         let port_id = parse_uri_field("port_uri", port_uri)?;
         let raw = port_id.to_string();
         let mut parts = raw.splitn(3, ':');
@@ -193,6 +197,18 @@ impl DbController {
                 "port_uri must be in the format borg:port:<name>".to_string(),
             ));
         }
+
+        match state.db.get_port_by_id(&port_id).await {
+            Ok(Some(port)) => return Ok(port.port_name),
+            Ok(None) => {}
+            Err(err) => {
+                return Err(api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("{err:#}"),
+                ));
+            }
+        }
+
         Ok(id.to_string())
     }
 
@@ -475,7 +491,13 @@ impl DbController {
     ) -> impl IntoResponse {
         match state
             .db
-            .upsert_provider(&provider, &payload.api_key, payload.enabled)
+            .upsert_provider(
+                &provider,
+                &payload.api_key,
+                payload.enabled,
+                payload.default_text_model.as_deref(),
+                payload.default_audio_model.as_deref(),
+            )
             .await
         {
             Ok(()) => match state
@@ -1192,7 +1214,7 @@ impl DbController {
         AxumPath(port_uri): AxumPath<String>,
         Json(payload): Json<UpsertPortRequest>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1235,7 +1257,7 @@ impl DbController {
         AxumPath(port_uri): AxumPath<String>,
         Query(query): Query<PortSettingsQuery>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1256,7 +1278,7 @@ impl DbController {
         State(state): State<AppState>,
         AxumPath(port_uri): AxumPath<String>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1277,7 +1299,7 @@ impl DbController {
         State(state): State<AppState>,
         AxumPath((port_uri, key)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1297,7 +1319,7 @@ impl DbController {
         AxumPath((port_uri, key)): AxumPath<(String, String)>,
         Json(payload): Json<UpsertPortSettingRequest>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1337,7 +1359,7 @@ impl DbController {
         State(state): State<AppState>,
         AxumPath((port_uri, key)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1375,7 +1397,7 @@ impl DbController {
         AxumPath(port_uri): AxumPath<String>,
         Query(query): Query<PortBindingsQuery>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1402,7 +1424,7 @@ impl DbController {
         State(state): State<AppState>,
         AxumPath((port_uri, conversation_key)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1436,7 +1458,7 @@ impl DbController {
         AxumPath((port_uri, conversation_key)): AxumPath<(String, String)>,
         Json(payload): Json<UpsertPortBindingRequest>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1475,7 +1497,7 @@ impl DbController {
         State(state): State<AppState>,
         AxumPath((port_uri, conversation_key)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1498,7 +1520,7 @@ impl DbController {
         State(state): State<AppState>,
         AxumPath((port_uri, session_id)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1529,7 +1551,7 @@ impl DbController {
         AxumPath((port_uri, session_id)): AxumPath<(String, String)>,
         Json(payload): Json<UpsertPortSessionContextRequest>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
@@ -1551,7 +1573,7 @@ impl DbController {
         State(state): State<AppState>,
         AxumPath((port_uri, session_id)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
-        let port_name = match Self::port_name_from_uri(&port_uri) {
+        let port_name = match Self::port_name_from_uri(&state, &port_uri).await {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };

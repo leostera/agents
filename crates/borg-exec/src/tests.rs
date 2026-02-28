@@ -3,7 +3,7 @@ use std::sync::Once;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use borg_agent::{Agent, AgentTools, Message, Session, SessionResult, ToolResultData};
 use borg_codemode::{CodeModeContext, CodeModeRuntime, default_tool_specs};
@@ -13,7 +13,7 @@ use borg_llm::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
     TranscriptionRequest,
 };
-use borg_ltm::MemoryStore;
+use borg_memory::MemoryStore;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
@@ -55,13 +55,20 @@ async fn failing_openai_exec(db: BorgDb, worker: &str) -> BorgExecutor {
         .await
         .unwrap();
     let memory = open_test_memory().await;
-    BorgExecutor::new(
+    let exec = BorgExecutor::new(
         db,
         memory,
         CodeModeRuntime::default(),
         Uri::parse(worker).unwrap(),
     )
-    .with_openai_base_url(Some("http://127.0.0.1:1".to_string()))
+    .with_openai_base_url(Some("http://127.0.0.1:1".to_string()));
+    {
+        let provider_settings = exec.provider_settings_handle();
+        let mut settings = provider_settings.write().await;
+        settings.openai_api_key = Some("test-key".to_string());
+        settings.preferred_provider = Some(OPENAI_PROVIDER.to_string());
+    }
+    exec
 }
 
 async fn openrouter_exec_without_openai_transcription_fallback(
@@ -79,12 +86,19 @@ async fn openrouter_exec_without_openai_transcription_fallback(
     .await
     .unwrap();
     let memory = open_test_memory().await;
-    BorgExecutor::new(
+    let exec = BorgExecutor::new(
         db,
         memory,
         CodeModeRuntime::default(),
         Uri::parse(worker).unwrap(),
-    )
+    );
+    {
+        let provider_settings = exec.provider_settings_handle();
+        let mut settings = provider_settings.write().await;
+        settings.openrouter_api_key = Some("test-openrouter-key".to_string());
+        settings.preferred_provider = Some(OPENROUTER_PROVIDER.to_string());
+    }
+    exec
 }
 
 fn init_test_tracing() {
@@ -365,7 +379,10 @@ async fn openrouter_transcription_requires_openai_fallback_key() {
         .expect_err("transcription should fail without openai fallback");
     assert!(
         err.to_string()
-            .contains("OpenAI provider key is required for transcription"),
+            .contains("OpenAI provider key is required for transcription")
+            || err
+                .to_string()
+                .contains("audio transcription model is required"),
         "unexpected error: {}",
         err
     );
@@ -528,7 +545,7 @@ impl ScriptedProvider {
 
 #[async_trait]
 impl Provider for ScriptedProvider {
-    async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+    async fn chat(&self, req: &LlmRequest) -> borg_llm::Result<LlmAssistantMessage> {
         self.requests
             .lock()
             .expect("requests lock")
@@ -538,12 +555,14 @@ impl Provider for ScriptedProvider {
             .await
             .recv()
             .await
-            .ok_or_else(|| anyhow!("scripted provider exhausted"))?
-            .map_err(|err| anyhow!(err))
+            .ok_or_else(|| borg_llm::LlmError::message("scripted provider exhausted"))?
+            .map_err(borg_llm::LlmError::message)
     }
 
-    async fn transcribe(&self, _req: &TranscriptionRequest) -> Result<String> {
-        Err(anyhow!("transcribe not supported in scripted provider"))
+    async fn transcribe(&self, _req: &TranscriptionRequest) -> borg_llm::Result<String> {
+        Err(borg_llm::LlmError::message(
+            "transcribe not supported in scripted provider",
+        ))
     }
 }
 

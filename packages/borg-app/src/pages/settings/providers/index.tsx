@@ -7,6 +7,12 @@ import {
 import {
   Badge,
   Button,
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -21,11 +27,6 @@ import {
   EmptyTitle,
   Input,
   Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   Table,
   TableBody,
   TableCell,
@@ -47,7 +48,6 @@ import React from "react";
 import { ConnectProviderForm } from "./ConnectProviderForm";
 
 const borgApi = createBorgApiClient();
-const RUNTIME_PORT_URI = "borg:port:runtime";
 
 function formatProviderName(provider: string): string {
   if (provider === "openai") return "OpenAI";
@@ -61,19 +61,6 @@ type EditProviderState = {
   chatModel: string | null;
   audioModel: string | null;
 };
-
-type ProviderDefaults = {
-  chatModel: string | null;
-  audioModel: string | null;
-};
-
-function chatModelSettingKey(provider: string): string {
-  return `provider:${provider}:default_chat_model`;
-}
-
-function audioModelSettingKey(provider: string): string {
-  return `provider:${provider}:default_audio_model`;
-}
 
 export function ProvidersPage() {
   const [providersByName, setProvidersByName] = React.useState<
@@ -94,9 +81,6 @@ export function ProvidersPage() {
   const [providerModelsByName, setProviderModelsByName] = React.useState<
     Record<string, ProviderModelsResponse>
   >({});
-  const [providerDefaultsByName, setProviderDefaultsByName] = React.useState<
-    Record<string, ProviderDefaults>
-  >({});
 
   const loadProviders = React.useCallback(async () => {
     setIsLoading(true);
@@ -107,40 +91,6 @@ export function ProvidersPage() {
         providers.map((provider) => [provider.provider, provider])
       );
       setProvidersByName(byName);
-
-      const configEntries = await Promise.all(
-        providers.map(async (provider) => {
-          const providerName = provider.provider;
-          const [modelsResult, chatModel, audioModel] = await Promise.all([
-            borgApi.getProviderModels(providerName).catch(() => null),
-            borgApi
-              .getPortSetting(RUNTIME_PORT_URI, chatModelSettingKey(providerName))
-              .catch(() => null),
-            borgApi
-              .getPortSetting(RUNTIME_PORT_URI, audioModelSettingKey(providerName))
-              .catch(() => null),
-          ]);
-          return {
-            provider: providerName,
-            models: modelsResult ?? {},
-            defaults: {
-              chatModel,
-              audioModel,
-            },
-          };
-        })
-      );
-
-      setProviderModelsByName(
-        Object.fromEntries(
-          configEntries.map((entry) => [entry.provider, entry.models])
-        )
-      );
-      setProviderDefaultsByName(
-        Object.fromEntries(
-          configEntries.map((entry) => [entry.provider, entry.defaults])
-        )
-      );
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Unable to load providers"
@@ -160,6 +110,28 @@ export function ProvidersPage() {
     return () =>
       window.removeEventListener("providers:open-connect", handleOpenConnect);
   }, []);
+
+  const openEditProvider = async (provider: ProviderRecord) => {
+    setEditingProvider({
+      provider: provider.provider,
+      apiKey: provider.api_key,
+      chatModel: provider.default_text_model ?? null,
+      audioModel: provider.default_audio_model ?? null,
+    });
+    if (providerModelsByName[provider.provider]) return;
+    try {
+      const models = await borgApi.getProviderModels(provider.provider);
+      setProviderModelsByName((current) => ({
+        ...current,
+        [provider.provider]: models,
+      }));
+    } catch {
+      setProviderModelsByName((current) => ({
+        ...current,
+        [provider.provider]: { provider: provider.provider, models: [] },
+      }));
+    }
+  };
 
   const handleSaveOpenRouter = async (
     event: React.FormEvent<HTMLFormElement>
@@ -304,21 +276,9 @@ export function ProvidersPage() {
         provider: editingProvider.provider,
         apiKey,
         enabled: current.enabled,
+        defaultTextModel: editingProvider.chatModel,
+        defaultAudioModel: editingProvider.audioModel,
       });
-      if (editingProvider.chatModel && editingProvider.chatModel.length > 0) {
-        await borgApi.upsertPortSetting(
-          RUNTIME_PORT_URI,
-          chatModelSettingKey(editingProvider.provider),
-          editingProvider.chatModel
-        );
-      }
-      if (editingProvider.audioModel && editingProvider.audioModel.length > 0) {
-        await borgApi.upsertPortSetting(
-          RUNTIME_PORT_URI,
-          audioModelSettingKey(editingProvider.provider),
-          editingProvider.audioModel
-        );
-      }
       setEditingProvider(null);
       setStatusMessage(
         `${formatProviderName(editingProvider.provider)} updated`
@@ -336,6 +296,10 @@ export function ProvidersPage() {
   const providerRows = React.useMemo(
     () => Object.values(providersByName),
     [providersByName]
+  );
+  const editingProviderModels = React.useMemo(
+    () => providerModelsByName[editingProvider?.provider ?? ""]?.models ?? [],
+    [editingProvider?.provider, providerModelsByName]
   );
   const showEmptyState = !isLoading && providerRows.length === 0;
 
@@ -419,25 +383,18 @@ export function ProvidersPage() {
                   {new Date(provider.updated_at).toLocaleString()}
                 </TableCell>
                 <TableCell>
-                  {providerDefaultsByName[provider.provider]?.chatModel ??
-                  providerModelsByName[provider.provider]?.default_text_model ? (
+                  {provider.default_text_model ? (
                     <Badge variant="outline">
-                      {providerDefaultsByName[provider.provider]?.chatModel ??
-                        providerModelsByName[provider.provider]
-                          ?.default_text_model}
+                      {provider.default_text_model}
                     </Badge>
                   ) : (
                     "—"
                   )}
                 </TableCell>
                 <TableCell>
-                  {providerDefaultsByName[provider.provider]?.audioModel ??
-                  providerModelsByName[provider.provider]
-                    ?.default_audio_model ? (
+                  {provider.default_audio_model ? (
                     <Badge variant="outline">
-                      {providerDefaultsByName[provider.provider]?.audioModel ??
-                        providerModelsByName[provider.provider]
-                          ?.default_audio_model}
+                      {provider.default_audio_model}
                     </Badge>
                   ) : (
                     "—"
@@ -448,24 +405,7 @@ export function ProvidersPage() {
                     <Button
                       size="icon-sm"
                       variant="outline"
-                      onClick={() =>
-                        setEditingProvider({
-                          provider: provider.provider,
-                          apiKey: provider.api_key,
-                          chatModel:
-                            providerDefaultsByName[provider.provider]
-                              ?.chatModel ??
-                            providerModelsByName[provider.provider]
-                              ?.default_text_model ??
-                            null,
-                          audioModel:
-                            providerDefaultsByName[provider.provider]
-                              ?.audioModel ??
-                            providerModelsByName[provider.provider]
-                              ?.default_audio_model ??
-                            null,
-                        })
-                      }
+                      onClick={() => void openEditProvider(provider)}
                       aria-label={`Edit ${formatProviderName(provider.provider)}`}
                       title="Edit"
                     >
@@ -521,7 +461,9 @@ export function ProvidersPage() {
       <Dialog
         open={editingProvider !== null}
         onOpenChange={(open) => {
-          if (!open) setEditingProvider(null);
+          if (!open) {
+            setEditingProvider(null);
+          }
         }}
       >
         <DialogContent className="sm:max-w-md">
@@ -555,51 +497,51 @@ export function ProvidersPage() {
             </div>
             <div className="space-y-1">
               <Label>Default Chat Model</Label>
-              <Select
-                value={editingProvider?.chatModel ?? undefined}
-                onValueChange={(value) =>
+              <Combobox
+                items={editingProviderModels}
+                selectedValue={editingProvider?.chatModel ?? null}
+                onSelectedValueChange={(value) =>
                   setEditingProvider((current) =>
                     current ? { ...current, chatModel: value } : current
                   )
                 }
               >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select chat model" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(providerModelsByName[editingProvider?.provider ?? ""]?.models ?? []).map(
-                    (item) => (
-                      <SelectItem key={item} value={item}>
+                <ComboboxInput placeholder="Select chat model" showClear />
+                <ComboboxContent>
+                  <ComboboxEmpty>No models found.</ComboboxEmpty>
+                  <ComboboxList>
+                    {(item) => (
+                      <ComboboxItem key={item} value={item}>
                         {item}
-                      </SelectItem>
-                    )
-                  )}
-                </SelectContent>
-              </Select>
+                      </ComboboxItem>
+                    )}
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
             </div>
             <div className="space-y-1">
               <Label>Default Audio Model</Label>
-              <Select
-                value={editingProvider?.audioModel ?? undefined}
-                onValueChange={(value) =>
+              <Combobox
+                items={editingProviderModels}
+                selectedValue={editingProvider?.audioModel ?? null}
+                onSelectedValueChange={(value) =>
                   setEditingProvider((current) =>
                     current ? { ...current, audioModel: value } : current
                   )
                 }
               >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select audio model" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(providerModelsByName[editingProvider?.provider ?? ""]?.models ?? []).map(
-                    (item) => (
-                      <SelectItem key={item} value={item}>
+                <ComboboxInput placeholder="Select audio model" showClear />
+                <ComboboxContent>
+                  <ComboboxEmpty>No models found.</ComboboxEmpty>
+                  <ComboboxList>
+                    {(item) => (
+                      <ComboboxItem key={item} value={item}>
                         {item}
-                      </SelectItem>
-                    )
-                  )}
-                </SelectContent>
-              </Select>
+                      </ComboboxItem>
+                    )}
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
             </div>
             <DialogFooter>
               <Button type="submit" disabled={isSavingEdit}>

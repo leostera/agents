@@ -52,7 +52,7 @@ struct ScriptedProvider {
 
 #[async_trait]
 impl Provider for ScriptedProvider {
-    async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+    async fn chat(&self, req: &LlmRequest) -> borg_llm::Result<LlmAssistantMessage> {
         trace!(
             target: "borg_agent_test",
             model = req.model.as_str(),
@@ -61,18 +61,20 @@ impl Provider for ScriptedProvider {
         );
         self.requests_tx
             .send(req.clone())
-            .map_err(|e| anyhow!(e.to_string()))?;
+            .map_err(|e| borg_llm::LlmError::message(e.to_string()))?;
         self.responses_rx
             .lock()
             .await
             .recv()
             .await
-            .ok_or_else(|| anyhow!("missing scripted llm response"))?
-            .map_err(|e| anyhow!(e))
+            .ok_or_else(|| borg_llm::LlmError::message("missing scripted llm response"))?
+            .map_err(borg_llm::LlmError::message)
     }
 
-    async fn transcribe(&self, _req: &TranscriptionRequest) -> Result<String> {
-        Err(anyhow!("transcribe not supported in scripted provider"))
+    async fn transcribe(&self, _req: &TranscriptionRequest) -> borg_llm::Result<String> {
+        Err(borg_llm::LlmError::message(
+            "transcribe not supported in scripted provider",
+        ))
     }
 }
 

@@ -175,6 +175,8 @@ pub struct ProviderRecord {
     pub enabled: bool,
     pub tokens_used: u64,
     pub last_used: Option<DateTime<Utc>>,
+    pub default_text_model: Option<String>,
+    pub default_audio_model: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

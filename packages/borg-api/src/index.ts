@@ -4,6 +4,8 @@ export type ProviderRecord = {
   enabled: boolean;
   tokens_used: number;
   last_used?: string | null;
+  default_text_model?: string | null;
+  default_audio_model?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -371,7 +373,12 @@ export class BorgApiClient {
     const data = await this.requestJson<AppCapabilitiesResponse>(
       `/api/apps/${encodeURIComponent(appId)}/capabilities?limit=${limit}`
     );
-    return Array.isArray(data.capabilities) ? data.capabilities : [];
+    if (!Array.isArray(data.capabilities)) {
+      throw new BorgApiError(
+        "Invalid app capabilities response payload: expected `capabilities` array"
+      );
+    }
+    return data.capabilities;
   }
 
   async getAppCapability(
@@ -743,6 +750,8 @@ export class BorgApiClient {
     provider: string;
     apiKey: string;
     enabled?: boolean;
+    defaultTextModel?: string | null;
+    defaultAudioModel?: string | null;
   }): Promise<void> {
     await this.request(
       `/api/providers/${encodeURIComponent(payload.provider)}`,
@@ -752,6 +761,8 @@ export class BorgApiClient {
         body: JSON.stringify({
           api_key: payload.apiKey,
           enabled: payload.enabled,
+          default_text_model: payload.defaultTextModel,
+          default_audio_model: payload.defaultAudioModel,
         }),
       }
     );

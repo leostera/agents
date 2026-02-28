@@ -10,23 +10,37 @@ impl BorgDb {
         provider: &str,
         api_key: &str,
         enabled: Option<bool>,
+        default_text_model: Option<&str>,
+        default_audio_model: Option<&str>,
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         let enabled = enabled.map(|value| if value { 1_i64 } else { 0_i64 });
         self.conn
             .execute(
                 r#"
-                INSERT INTO providers(provider, api_key, enabled, created_at, updated_at)
-                VALUES(?1, ?2, COALESCE(?3, 1), ?4, ?5)
+                INSERT INTO providers(
+                    provider,
+                    api_key,
+                    enabled,
+                    default_text_model,
+                    default_audio_model,
+                    created_at,
+                    updated_at
+                )
+                VALUES(?1, ?2, COALESCE(?3, 1), ?4, ?5, ?6, ?7)
                 ON CONFLICT(provider) DO UPDATE SET
                   api_key = excluded.api_key,
                   enabled = COALESCE(?3, providers.enabled),
+                  default_text_model = COALESCE(?4, providers.default_text_model),
+                  default_audio_model = COALESCE(?5, providers.default_audio_model),
                   updated_at = excluded.updated_at
                 "#,
                 (
                     provider.to_string(),
                     api_key.to_string(),
                     enabled,
+                    default_text_model.map(ToString::to_string),
+                    default_audio_model.map(ToString::to_string),
                     now.clone(),
                     now,
                 ),
@@ -37,7 +51,8 @@ impl BorgDb {
     }
 
     pub async fn upsert_provider_api_key(&self, provider: &str, api_key: &str) -> Result<()> {
-        self.upsert_provider(provider, api_key, None).await
+        self.upsert_provider(provider, api_key, None, None, None)
+            .await
     }
 
     pub async fn get_provider_api_key(&self, provider: &str) -> Result<Option<String>> {
@@ -68,6 +83,8 @@ impl BorgDb {
                     p.enabled,
                     COALESCE(s.tokens_used, 0),
                     s.last_used,
+                    p.default_text_model,
+                    p.default_audio_model,
                     p.created_at,
                     p.updated_at
                 FROM providers p
@@ -85,14 +102,18 @@ impl BorgDb {
             let enabled_raw: i64 = row.get(2)?;
             let tokens_used_raw: i64 = row.get(3)?;
             let last_used_raw: Option<String> = row.get(4)?;
-            let created_at: String = row.get(5)?;
-            let updated_at: String = row.get(6)?;
+            let default_text_model: Option<String> = row.get(5)?;
+            let default_audio_model: Option<String> = row.get(6)?;
+            let created_at: String = row.get(7)?;
+            let updated_at: String = row.get(8)?;
             out.push(ProviderRecord {
                 provider: row.get(0)?,
                 api_key: row.get(1)?,
                 enabled: enabled_raw != 0,
                 tokens_used: u64::try_from(tokens_used_raw).unwrap_or(0),
                 last_used: last_used_raw.as_deref().map(parse_ts).transpose()?,
+                default_text_model,
+                default_audio_model,
                 created_at: parse_ts(&created_at)?,
                 updated_at: parse_ts(&updated_at)?,
             });
@@ -111,6 +132,8 @@ impl BorgDb {
                     p.enabled,
                     COALESCE(s.tokens_used, 0),
                     s.last_used,
+                    p.default_text_model,
+                    p.default_audio_model,
                     p.created_at,
                     p.updated_at
                 FROM providers p
@@ -130,14 +153,18 @@ impl BorgDb {
         let enabled_raw: i64 = row.get(2)?;
         let tokens_used_raw: i64 = row.get(3)?;
         let last_used_raw: Option<String> = row.get(4)?;
-        let created_at: String = row.get(5)?;
-        let updated_at: String = row.get(6)?;
+        let default_text_model: Option<String> = row.get(5)?;
+        let default_audio_model: Option<String> = row.get(6)?;
+        let created_at: String = row.get(7)?;
+        let updated_at: String = row.get(8)?;
         Ok(Some(ProviderRecord {
             provider: row.get(0)?,
             api_key: row.get(1)?,
             enabled: enabled_raw != 0,
             tokens_used: u64::try_from(tokens_used_raw).unwrap_or(0),
             last_used: last_used_raw.as_deref().map(parse_ts).transpose()?,
+            default_text_model,
+            default_audio_model,
             created_at: parse_ts(&created_at)?,
             updated_at: parse_ts(&updated_at)?,
         }))
