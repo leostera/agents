@@ -151,9 +151,11 @@ At runtime, this proposal introduces a capability registry and a dispatcher that
 
 ### Data model
 
-The model uses four core tables and keeps each one narrow in responsibility.
+The model uses five core tables and keeps each one narrow in responsibility.
 
 The `apps` table describes integration surfaces such as uTorrent, SerpAPI, and Google Calendar. It stores stable identity and display data (`app_id`, `name`, `slug`, `description`) plus lifecycle status and timestamps.
+
+The `app_secrets` table declares which secret references an app requires, and optionally which capability they are scoped to. This creates an explicit contract between integration definitions and secret material without storing sensitive values directly in app rows. A typical shape is `app_secret_id`, `app_id`, optional `capability_id`, `secret_name`, `required`, `description`, and timestamps.
 
 The `app_connections` table stores connection context for a specific app in user or workspace scope. This includes whether the connection uses OAuth, API keys, or local service endpoints, and where those credentials are referenced. This table intentionally stores references (`auth_ref_json`) rather than raw secret values so secret lifecycle remains in the secret subsystem.
 
