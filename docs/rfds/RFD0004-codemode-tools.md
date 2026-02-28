@@ -147,57 +147,65 @@ conversation, including tool calls:
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
+At runtime, this proposal introduces a capability registry and a dispatcher that binds each capability to one execution mode. The key point is that capability definitions are data, while execution remains in existing Borg runtime primitives. This means we can add new capability definitions quickly without adding new crates or binaries for each provider.
+
 ### Data model
 
-The data model is centered on four tables. The `apps` table stores integration definitions (`app_id`, `name`, `slug`, `description`, `status`, timestamps). The `app_connections` table stores connectivity and auth/config context for an app at user or workspace scope (`connection_id`, `app_id`, optional `user_id` and `workspace_id`, `auth_kind`, `auth_ref_json`, `config_json`, `status`, timestamps). The `capabilities` table stores user-facing operations exposed by apps (`capability_id`, `app_id`, `name`, `slug`, `description`, input/output JSON schemas, `execution_mode`, `execution_spec_json`, `enabled`, timestamps). The `execution_spec_json` payload differs by mode: builtin mode references a handler identifier and mapping config, codemode provides a prompt/spec template plus package and env hints, and shell mode provides command template and sandbox constraints. Finally, `tool_calls` is the execution audit table and captures internal invocation traces (`tool_call_id`, session/task/turn linkage, optional app/capability linkage, tool name, invocation mode, input/output payloads, status/error, timestamps, and duration).
+The model uses four core tables and keeps each one narrow in responsibility.
 
-### Internal tools (non-product)
+The `apps` table describes integration surfaces such as uTorrent, SerpAPI, and Google Calendar. It stores stable identity and display data (`app_id`, `name`, `slug`, `description`) plus lifecycle status and timestamps.
 
-Built-in runtime tools remain first-class for orchestration. In practice this includes the CodeMode family for package discovery, types/examples retrieval, and code execution, along with Shell, Cron, Task, and Memory primitives. These are implementation details that capabilities map to; they are not the product abstraction shown to users.
+The `app_connections` table stores connection context for a specific app in user or workspace scope. This includes whether the connection uses OAuth, API keys, or local service endpoints, and where those credentials are referenced. This table intentionally stores references (`auth_ref_json`) rather than raw secret values so secret lifecycle remains in the secret subsystem.
 
-### Capability execution contract
+The `capabilities` table stores the user-facing operations. Each row is bound to one app and defines its input/output contracts using JSON schema. The row also defines the execution mode (`builtin`, `codemode`, or `shell`) and carries an `execution_spec_json` payload that tells runtime how to execute that capability. In builtin mode, the spec points to a vetted internal handler. In codemode, it carries generation and runtime hints such as packages, required env names, and output expectations. In shell mode, it carries command template and sandbox constraints.
 
-Given `(app_id, capability_id, input)`, runtime validates input against `input_schema_json`, resolves connection and auth/config context from `app_connections` and secret/account references, dispatches according to `execution_mode`, and then validates output against `output_schema_json` (best-effort in the initial phase). Each internal execution step is persisted in `tool_calls`, and a normalized result is returned to the agent.
+The `tool_calls` table is the execution trace log. It captures every internal invocation that occurs while fulfilling a capability call, including tool name, normalized input/output payloads, timing, status, and optional app/capability linkage. This table is the observability backbone for debugging and replay, and it is designed to work before any policy engine exists.
 
-### CodeMode role
+### Dispatch and execution
 
-CodeMode is the primary path for long-tail integrations where no dedicated builtin exists.
+When a capability is invoked, runtime follows one deterministic sequence:
 
-For capability execution, CodeMode follows a predictable pattern: discover and select packages, inspect documentation/types/examples, synthesize code from capability spec and input schema, execute with scoped env/network/filesystem permissions, and return a structured JSON result.
+1. Validate request payload against capability input schema.
+2. Resolve app connection context and secret references.
+3. Dispatch to the configured execution mode.
+4. Validate or normalize the response against capability output schema.
+5. Persist trace events to `tool_calls`.
 
-## Drawbacks
+The execution mode defines where logic lives, not what the user sees. Builtin mode uses curated handlers in Borg code. Codemode uses generated JavaScript in the existing execution environment and is the primary path for long-tail provider work. Shell mode is an explicit fallback for CLI-oriented or host-local operations that do not fit the first two modes cleanly.
+
+### Internal tools as execution substrate
+
+Internal tools remain first-class runtime components. In practice, the substrate is `CodeMode.*` for package discovery, type/example retrieval, code generation, and code execution; `Shell.*` for bounded command execution; and `Task.*`, `Memory.*`, and `Cron.*` for stateful orchestration. Capabilities can call one or several of these tools, but the product abstraction stays at `App / Capability`.
+
+### CodeMode contract in this model
+
+CodeMode needs to reliably convert capability intent into executable code while preserving structure in outputs. In this model, codemode execution should consistently perform package selection, docs/type/example retrieval, snippet synthesis, constrained execution, and structured return payloads. This is exactly what allows Borg to add capabilities quickly without waiting on new hardcoded handlers.
+
+### Drawbacks
 [drawbacks]: #drawbacks
 
-- More control-plane entities (`apps`, `capabilities`, `connections`) than a single tool table.
-- Requires strong schema discipline for consistent capability behavior.
-- Dynamic CodeMode-backed capabilities can be less predictable than dedicated builtins.
+The tradeoff is operational complexity. A data-driven capability surface is more flexible, but it demands strict schema quality, clear spec conventions, and careful runtime diagnostics. CodeMode-backed capabilities are also less deterministic than builtin handlers, which means teams need strong traces and good failure reporting to keep behavior understandable.
 
 ## Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-### Alternative A: Keep "Tools" as user-facing concept
+Keeping user-facing "tools" as the primary abstraction was considered because it would be a lighter migration from current wording. We reject it because it keeps product and runtime concepts entangled, which is one of the things blocking fast extension work.
 
-This approach offers a simpler migration from current wording, but it preserves ambiguity between product concepts and runtime internals. It is rejected.
+A builtin-only approach was also considered because it provides the strongest control and predictability. We reject it because it slows capability delivery and forces core-code changes for every provider-specific workflow.
 
-### Alternative B: Only builtin integrations
-
-This approach offers maximal control and reliability, but it reduces extensibility and slows delivery of new providers. It is rejected.
-
-### Chosen approach
-
-The chosen direction is to keep `Apps expose Capabilities` as the product model, use internal tool orchestration (primarily CodeMode for long-tail providers) as the runtime model, and prioritize observability through `tool_calls`.
+The chosen direction keeps `Apps expose Capabilities` as the product model and uses internal tools as execution infrastructure. This gives Borg a small vetted core while still letting new capability definitions ship quickly.
 
 ## Prior art
 [prior-art]: #prior-art
 
-This proposal draws from integration platforms that expose provider-specific actions under connected apps, from workflow systems that model capability catalogs explicitly, and from model-driven execution loops that retrieve packages/docs/types before generating and running code.
+The model follows established integration platforms where providers expose action catalogs and operators connect accounts separately from execution. It also aligns with modern agent systems that use code execution loops with package/docs/type retrieval to implement long-tail integrations without hardcoding every operation.
 
 ## Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-Open questions remain around output schema strictness in v0 (`warn` versus `hard-fail`), scope rules for `app_connections` (user, workspace, or both), minimum redaction requirements for `tool_calls` payload fields, and ranking behavior when both builtin and CodeMode-backed capability implementations are available.
+The main open questions are about strictness and boundaries rather than direction. We still need to decide how strict output schema enforcement should be in v0, whether app connections should default to user scope or workspace scope, what minimum redaction rules apply to trace payloads in `tool_calls`, and how ranking should behave when both builtin and codemode implementations can satisfy the same capability.
 
 ## Future possibilities
 [future-possibilities]: #future-possibilities
 
-Future work can add a capability policy engine, capability composition graphs for reusable workflows, promotion pipelines that turn successful CodeMode executions into stable builtins, and user-installable app adapters that still satisfy the same capability contract.
+Once this model is running in production, we can layer policy controls, capability composition, and promotion pipelines on top of it. That includes allow/deny and quota rules, reusable multi-capability plans, and automated pathways that graduate stable codemode patterns into builtin handlers. The same contract can also be opened to user-installed adapters later without changing the core product language.
