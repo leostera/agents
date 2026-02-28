@@ -55,24 +55,34 @@ An App is an external system Borg can connect to, such as uTorrent, SerpAPI, or 
 
 The user starts by expressing intent, for example by asking to find and download a legal indie movie torrent. The agent resolves that request into one or more matching capabilities, such as `SerpAPI / Search Web`, `uTorrent / Add Torrent`, and `uTorrent / Get Torrent Status`. Runtime then dispatches each capability according to its configured execution mode. Builtin capabilities call a dedicated internal handler, codemode capabilities execute generated JavaScript through `CodeMode.runCode`, and shell capabilities use command execution as a fallback path. After execution, runtime returns structured results to the agent and persists invocation records in `tool_calls`.
 
-This creates a clear separation:
-
-- product answers "what can Borg do?" via capabilities,
-- runtime answers "how does Borg do it?" via internal tools.
+This creates a clear separation: product answers "what can Borg do?" via capabilities, while runtime answers "how does Borg do it?" via internal tools.
 
 ### Torrent walkthrough
 
-Example target behavior:
+The same flow in chat form looks like this:
 
-In a torrent example, the system first calls `SerpAPI / Search Web` to locate a legal `.torrent` or magnet source, then calls `uTorrent / Add Torrent` to register the download, and finally calls `uTorrent / Get Torrent Status` to monitor progress.
+```text
+> me: download a movie
+> agent: I can do that. First I need a legal torrent source.
+  < tool call(find capability): "i need to find a legal torrent for a movie"
+  > tool resp(find capability): [
+      "SerpAPI / Search Web",
+      "uTorrent / Add Torrent",
+      "uTorrent / Get Torrent Status"
+    ]
 
-Possible implementation mapping:
+  < tool call(SerpAPI / Search Web): { query: "... legal torrent ..." }
+  > tool resp(SerpAPI / Search Web): { links: [ ... ] }
 
-- `SerpAPI / Search Web`: `codemode` execution (`fetch`/SDK call with `SERPAPI_API_KEY`).
-- `uTorrent / Add Torrent`: either `builtin` HTTP handler or `codemode` calling local `/gui` endpoint.
-- `uTorrent / Get Torrent Status`: same backend choice as above.
+> agent: I found a legal source. I will add it to uTorrent now.
+  < tool call(uTorrent / Add Torrent): { magnet_or_torrent_url: "...", save_path: "..." }
+  > tool resp(uTorrent / Add Torrent): { hash: "...", accepted: true }
 
-User sees only capabilities; runtime may use one or more internal tools.
+  < tool call(uTorrent / Get Torrent Status): { hash: "..." }
+  > tool resp(uTorrent / Get Torrent Status): { progress: 0.37, state: "downloading" }
+```
+
+In this example, capability execution mode remains an implementation detail. `SerpAPI / Search Web` is usually implemented as a `codemode` capability that calls SerpAPI with `SERPAPI_API_KEY`, while `uTorrent` capabilities can be either builtins or `codemode` wrappers over the local `/gui` API.
 
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -86,8 +96,6 @@ The data model is centered on four tables. The `apps` table stores integration d
 Built-in runtime tools remain first-class for orchestration. In practice this includes the CodeMode family for package discovery, types/examples retrieval, and code execution, along with Shell, Cron, Task, and Memory primitives. These are implementation details that capabilities map to; they are not the product abstraction shown to users.
 
 ### Capability execution contract
-
-Given `(app_id, capability_id, input)`:
 
 Given `(app_id, capability_id, input)`, runtime validates input against `input_schema_json`, resolves connection and auth/config context from `app_connections` and secret/account references, dispatches according to `execution_mode`, and then validates output against `output_schema_json` (best-effort in the initial phase). Each internal execution step is persisted in `tool_calls`, and a normalized result is returned to the agent.
 
