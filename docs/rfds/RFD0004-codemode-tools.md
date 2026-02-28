@@ -200,7 +200,9 @@ The chosen direction keeps `Apps expose Capabilities` as the product model and u
 ## Prior art
 [prior-art]: #prior-art
 
-The model follows established integration platforms where providers expose action catalogs and operators connect accounts separately from execution. It also aligns with modern agent systems that use code execution loops with package/docs/type retrieval to implement long-tail integrations without hardcoding every operation. A relevant example is Cloudflare's Code Mode write-up, which demonstrates the same general pattern of using code execution as an extension path when built-in surfaces are too narrow.
+The model follows established integration platforms where providers expose action catalogs and operators connect accounts separately from execution. It also aligns with modern agent systems that use code execution loops with package/docs/type retrieval to implement long-tail integrations without hardcoding every operation.
+
+A close reference is Cloudflare's post, [Code Mode: give agents an entire API in 1,000 tokens](https://blog.cloudflare.com/code-mode-mcp/). The article describes a server-side codemode pattern where a large API surface is exposed through a minimal interface (`search()` and `execute()`), and the model writes code to discover operations and perform multi-step actions. It also shows concrete flows, including searching Cloudflare's OpenAPI for WAF/ruleset endpoints and then executing the resulting API sequence to protect an origin from DDoS attacks. That pattern maps directly to the Borg capability model here: compact capability discovery plus code execution over a large, evolving backend surface.
 
 ## Unresolved questions
 [unresolved-questions]: #unresolved-questions
