@@ -1,32 +1,109 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{AgentTools, ContextWindow, Message, Session, SessionResult, ToolSpec};
+use borg_codemode::{CodeModeContext, CodeModeRuntime, default_tool_specs};
 use borg_core::{
     Event, SessionContextSnapshot, SessionToolSchema, Task, TaskEvent, TaskKind, TaskStatus, Uri,
     uri,
 };
 use borg_db::{BorgDb, NewTask};
-use borg_llm::Provider;
+use borg_llm::BorgLLM;
 use borg_llm::TranscriptionRequest;
-use borg_llm::providers::configured::{ConfiguredProvider, ProviderSettings};
+use borg_llm::providers::openai::{OpenAiApiMode, OpenAiProvider};
+use borg_llm::providers::openrouter::OpenRouterProvider;
 use borg_ltm::{MemoryStore, default_memory_tool_specs};
-use borg_rt::{CodeModeContext, CodeModeRuntime, default_tool_specs};
 use serde_json::{Value, json};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::port_context::{PortContext, TelegramSessionContext};
+use crate::provider_config::ProviderConfigSnapshot;
 use crate::session_manager::SessionManager;
 use crate::task_queue::TaskQueue;
 use crate::tool_runner::build_exec_toolchain_with_context;
 use crate::types::{SessionTurnOutput, ToolCallSummary, UserMessage};
 
-const OPENAI_PROVIDER: &str = "openai";
-const OPENROUTER_PROVIDER: &str = "openrouter";
-const RUNTIME_SETTINGS_PORT: &str = "runtime";
-const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 const QUEUED_RETRY_DELAY_MILLIS: u64 = 100;
 const DEFAULT_AGENT_MODEL: &str = "gpt-4o-mini";
 const STARTUP_REQUEUE_MAX_RETRIES: u8 = 5;
 const CONTEXT_USAGE_CHAR_TO_TOKEN_RATIO: usize = 4;
+
+fn normalize_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+}
+
+fn parse_openai_mode(raw: Option<String>) -> Result<OpenAiApiMode> {
+    let mode = raw
+        .or_else(|| std::env::var("BORG_OPENAI_API_MODE").ok())
+        .unwrap_or_else(|| "completions".to_string())
+        .to_lowercase();
+    match mode.as_str() {
+        "chat" | "chat_completions" => Ok(OpenAiApiMode::ChatCompletions),
+        "completions" => Ok(OpenAiApiMode::Completions),
+        _ => Err(anyhow!(
+            "unsupported OpenAI API mode `{}` (expected `chat_completions` or `completions`)",
+            mode
+        )),
+    }
+}
+
+fn available_provider_names(settings: &ProviderConfigSnapshot) -> Vec<String> {
+    let mut available = Vec::new();
+    if normalize_optional(settings.openai_api_key.clone()).is_some() {
+        available.push("openai".to_string());
+    }
+    if normalize_optional(settings.openrouter_api_key.clone()).is_some() {
+        available.push("openrouter".to_string());
+    }
+    available
+}
+
+fn ordered_provider_names(preferred: &str, available: &[String]) -> Vec<String> {
+    let mut ordered = Vec::with_capacity(available.len());
+    if available.iter().any(|value| value == preferred) {
+        ordered.push(preferred.to_string());
+    }
+    for name in available {
+        if !ordered.iter().any(|value| value == name) {
+            ordered.push(name.clone());
+        }
+    }
+    ordered
+}
+
+fn build_openai_provider(settings: &ProviderConfigSnapshot) -> Result<Option<OpenAiProvider>> {
+    let Some(api_key) = normalize_optional(settings.openai_api_key.clone()) else {
+        return Ok(None);
+    };
+    let api_mode = parse_openai_mode(settings.openai_api_mode.clone())?;
+    let provider = if let Some(base_url) = normalize_optional(settings.openai_base_url.clone()) {
+        OpenAiProvider::new_with_base_url_and_mode(api_key, base_url, api_mode)
+    } else {
+        OpenAiProvider::new_with_mode(api_key, api_mode)
+    };
+    Ok(Some(provider))
+}
+
+fn build_openrouter_provider(
+    settings: &ProviderConfigSnapshot,
+) -> Result<Option<OpenRouterProvider>> {
+    let Some(api_key) = normalize_optional(settings.openrouter_api_key.clone()) else {
+        return Ok(None);
+    };
+    let provider = if let Some(base_url) = normalize_optional(settings.openrouter_base_url.clone())
+    {
+        OpenRouterProvider::new_with_base_url(api_key, base_url)
+    } else if let Some(base_url) =
+        normalize_optional(std::env::var("BORG_OPENROUTER_BASE_URL").ok())
+    {
+        OpenRouterProvider::new_with_base_url(api_key, base_url)
+    } else {
+        OpenRouterProvider::new(api_key)
+    };
+    Ok(Some(provider))
+}
 
 #[derive(Clone)]
 pub struct BorgExecutor {
@@ -38,6 +115,7 @@ pub struct BorgExecutor {
     session_manager: SessionManager,
     openai_base_url: Option<String>,
     agent_model: String,
+    provider_settings: Arc<RwLock<ProviderConfigSnapshot>>,
 }
 
 pub type ExecEngine = BorgExecutor;
@@ -56,6 +134,7 @@ impl BorgExecutor {
             session_manager,
             openai_base_url: None,
             agent_model,
+            provider_settings: Arc::new(RwLock::new(ProviderConfigSnapshot::default())),
         }
     }
 
@@ -70,22 +149,45 @@ impl BorgExecutor {
         self
     }
 
-    async fn configured_provider(&self) -> Result<ConfiguredProvider> {
-        let preferred_provider = self
-            .db
-            .get_port_setting(RUNTIME_SETTINGS_PORT, RUNTIME_PREFERRED_PROVIDER_KEY)
-            .await?
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty());
-        let settings = ProviderSettings {
-            openai_api_key: self.db.get_provider_api_key(OPENAI_PROVIDER).await?,
-            openai_base_url: self.openai_base_url.clone(),
-            openai_api_mode: None,
-            openrouter_api_key: self.db.get_provider_api_key(OPENROUTER_PROVIDER).await?,
-            openrouter_base_url: None,
-            preferred_provider,
-        };
-        ConfiguredProvider::from_settings(settings)
+    pub fn provider_settings_handle(&self) -> Arc<RwLock<ProviderConfigSnapshot>> {
+        self.provider_settings.clone()
+    }
+
+    async fn configured_llm(&self) -> Result<BorgLLM> {
+        let mut settings = self.provider_settings.read().await.clone();
+        if self.openai_base_url.is_some() {
+            settings.openai_base_url = self.openai_base_url.clone();
+        }
+        let available = available_provider_names(&settings);
+        if available.is_empty() {
+            return Err(anyhow!(
+                "no configured provider is available for chat completion"
+            ));
+        }
+
+        let preferred = settings
+            .preferred_provider
+            .clone()
+            .unwrap_or_else(|| "openai".to_string())
+            .to_lowercase();
+        let ordered = ordered_provider_names(&preferred, &available);
+        let mut builder = BorgLLM::build();
+        for name in ordered {
+            match name.as_str() {
+                "openai" => {
+                    if let Some(provider) = build_openai_provider(&settings)? {
+                        builder = builder.add_provider(provider);
+                    }
+                }
+                "openrouter" => {
+                    if let Some(provider) = build_openrouter_provider(&settings)? {
+                        builder = builder.add_provider(provider);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(builder.build()?)
     }
 
     pub async fn enqueue_user_message(
@@ -261,9 +363,9 @@ impl BorgExecutor {
         audio: Vec<u8>,
         mime_type: impl Into<String>,
     ) -> Result<String> {
-        let provider = self.configured_provider().await?;
-        let transcript = provider
-            .transcribe(&TranscriptionRequest {
+        let llm = self.configured_llm().await?;
+        let transcript = llm
+            .audio_transcription(&TranscriptionRequest {
                 audio,
                 mime_type: mime_type.into(),
                 model: None,
@@ -271,9 +373,7 @@ impl BorgExecutor {
                 prompt: None,
             })
             .await?;
-        self.db
-            .record_provider_usage(provider.provider_name(), 0)
-            .await?;
+        self.db.record_provider_usage("llm", 0).await?;
         Ok(transcript)
     }
 
@@ -625,14 +725,9 @@ impl BorgExecutor {
                 .await?;
         }
 
-        let provider = self.configured_provider().await?;
+        let llm = self.configured_llm().await?;
 
-        let output = match session
-            .agent
-            .clone()
-            .run(&mut session, &provider, &tools)
-            .await
-        {
+        let output = match session.agent.clone().run(&mut session, &llm, &tools).await {
             SessionResult::Completed(Ok(output)) => output,
             SessionResult::Completed(Err(err)) => {
                 error!(
@@ -690,6 +785,23 @@ impl BorgExecutor {
             );
         }
         let persisted_messages = session.read_messages(0, usize::MAX).await?;
+        for call in &output.tool_calls {
+            let (success, error, duration_ms) = tool_call_outcome(&call.output);
+            let task_id_string = task_id.map(Uri::to_string);
+            self.db
+                .insert_tool_call(
+                    &uri!("borg", "tool_call").to_string(),
+                    &session_id.to_string(),
+                    task_id_string.as_deref(),
+                    &call.tool_name,
+                    &call.arguments,
+                    &serde_json::to_value(&call.output)?,
+                    success,
+                    error.as_deref(),
+                    duration_ms,
+                )
+                .await?;
+        }
         if let Some(task_id) = task_id {
             self.log_session_messages(
                 task_id,
@@ -916,6 +1028,17 @@ impl BorgExecutor {
                 tool_count: context.tools.len(),
             })
             .await
+    }
+}
+
+fn tool_call_outcome(output: &borg_agent::ToolResultData) -> (bool, Option<String>, Option<u64>) {
+    match output {
+        borg_agent::ToolResultData::Error { message } => (false, Some(message.clone()), None),
+        borg_agent::ToolResultData::Execution { duration, .. } => {
+            let ms = duration.as_millis().min(u128::from(u64::MAX)) as u64;
+            (true, None, Some(ms))
+        }
+        _ => (true, None, None),
     }
 }
 

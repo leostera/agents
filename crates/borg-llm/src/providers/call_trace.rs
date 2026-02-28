@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 pub struct ProviderCallTrace {
     call_id: String,
-    provider: &'static str,
-    capability: &'static str,
+    provider: String,
+    capability: String,
     model: String,
     request_json: Value,
     sent_at: DateTime<Utc>,
@@ -20,13 +20,15 @@ pub struct ProviderCallTrace {
 
 impl ProviderCallTrace {
     pub fn sent(
-        provider: &'static str,
-        capability: &'static str,
+        provider: impl Into<String>,
+        capability: impl Into<String>,
         model: impl Into<String>,
         request_json: Value,
     ) -> Self {
         let sent_at = Utc::now();
         let call_id = format!("borg:llm_call:{}", Uuid::new_v4());
+        let provider = provider.into();
+        let capability = capability.into();
         let call = Self {
             call_id,
             provider,
@@ -39,8 +41,8 @@ impl ProviderCallTrace {
         info!(
             target: "borg_llm",
             call_id = call.call_id.as_str(),
-            provider = call.provider,
-            capability = call.capability,
+            provider = call.provider.as_str(),
+            capability = call.capability.as_str(),
             model = call.model.as_str(),
             sent_at = %call.sent_at.to_rfc3339(),
             "provider call sent"
@@ -66,8 +68,8 @@ impl ProviderCallTrace {
         info!(
             target: "borg_llm",
             call_id = self.call_id.as_str(),
-            provider = self.provider,
-            capability = self.capability,
+            provider = self.provider.as_str(),
+            capability = self.capability.as_str(),
             model = self.model.as_str(),
             sent_at = %self.sent_at.to_rfc3339(),
             received_at = %received_at.to_rfc3339(),
@@ -114,8 +116,8 @@ impl ProviderCallTrace {
         error!(
             target: "borg_llm",
             call_id = self.call_id.as_str(),
-            provider = self.provider,
-            capability = self.capability,
+            provider = self.provider.as_str(),
+            capability = self.capability.as_str(),
             model = self.model.as_str(),
             sent_at = %self.sent_at.to_rfc3339(),
             received_at = %received_at.to_rfc3339(),
@@ -212,8 +214,8 @@ impl ProviderCallTrace {
             "#,
         )
         .bind(self.call_id.as_str())
-        .bind(self.provider)
-        .bind(self.capability)
+        .bind(self.provider.as_str())
+        .bind(self.capability.as_str())
         .bind(self.model.as_str())
         .bind(if success { 1_i64 } else { 0_i64 })
         .bind(status.map(|value| i64::from(value.as_u16())))

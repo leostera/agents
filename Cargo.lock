@@ -527,12 +527,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
+ "borg-codemode",
  "borg-core",
  "borg-db",
  "borg-exec",
+ "borg-llm",
  "borg-ltm",
  "borg-ports",
- "borg-rt",
  "reqwest",
  "serde",
  "serde_json",
@@ -548,11 +549,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "borg-api",
+ "borg-codemode",
  "borg-core",
  "borg-db",
  "borg-exec",
  "borg-ltm",
- "borg-rt",
  "clap",
  "reqwest",
  "serde",
@@ -569,6 +570,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "tokio",
+]
+
+[[package]]
+name = "borg-codemode"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "borg-agent",
+ "borg-core",
+ "deno_core",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -606,11 +621,11 @@ dependencies = [
  "anyhow",
  "async-trait",
  "borg-agent",
+ "borg-codemode",
  "borg-core",
  "borg-db",
  "borg-llm",
  "borg-ltm",
- "borg-rt",
  "serde",
  "serde_json",
  "tokio",
@@ -623,7 +638,6 @@ dependencies = [
 name = "borg-llm"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "base64 0.22.1",
  "borg-core",
@@ -633,6 +647,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "testcontainers",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -673,20 +688,6 @@ dependencies = [
  "serde",
  "serde_json",
  "teloxide",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "borg-rt"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "borg-agent",
- "borg-core",
- "deno_core",
- "reqwest",
- "serde_json",
  "tokio",
  "tracing",
 ]

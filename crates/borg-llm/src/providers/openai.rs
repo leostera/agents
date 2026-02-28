@@ -1,4 +1,3 @@
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use reqwest::Client;
@@ -7,15 +6,18 @@ use tracing::{debug, error, info, trace};
 
 use crate::providers::call_trace::ProviderCallTrace;
 use crate::{
-    AuthProvider, DeviceCodeAuthConfig, LlmAssistantMessage, LlmRequest, Provider, ProviderBlock,
-    ProviderMessage, StopReason, ToolDescriptor, TranscriptionRequest, UserBlock,
+    AuthProvider, DeviceCodeAuthConfig, LlmAssistantMessage, LlmError, LlmRequest, Provider,
+    ProviderBlock, ProviderMessage, Result, StopReason, ToolDescriptor, TranscriptionRequest,
+    UserBlock,
 };
 
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
 const OPENAI_COMPLETIONS_URL: &str = "https://api.openai.com/v1/completions";
 const OPENAI_AUDIO_TRANSCRIPTIONS_URL: &str = "https://api.openai.com/v1/audio/transcriptions";
+const OPENAI_MODELS_URL: &str = "https://api.openai.com/v1/models";
 const OPENAI_DEVICE_CODE_URL: &str = "https://auth.openai.com/oauth/device/code";
 const OPENAI_DEVICE_CODE_SCOPE: &str = "openid profile email offline_access";
+const OPENAI_PROVIDER_NAME: &str = "openai";
 
 #[derive(Clone, Copy, Debug)]
 pub enum OpenAiApiMode {
@@ -31,6 +33,7 @@ pub struct OpenAiProvider {
     chat_completions_url: String,
     completions_url: String,
     audio_transcriptions_url: String,
+    models_url: String,
     device_code_url: String,
     device_code_scope: String,
     default_chat_completions_model: Option<String>,
@@ -54,6 +57,7 @@ impl OpenAiProvider {
             chat_completions_url: OPENAI_CHAT_COMPLETIONS_URL.to_string(),
             completions_url: OPENAI_COMPLETIONS_URL.to_string(),
             audio_transcriptions_url: OPENAI_AUDIO_TRANSCRIPTIONS_URL.to_string(),
+            models_url: OPENAI_MODELS_URL.to_string(),
             device_code_url: OPENAI_DEVICE_CODE_URL.to_string(),
             device_code_scope: OPENAI_DEVICE_CODE_SCOPE.to_string(),
             default_chat_completions_model: None,
@@ -78,6 +82,7 @@ impl OpenAiProvider {
             chat_completions_url: format!("{}/v1/chat/completions", base),
             completions_url: format!("{}/v1/completions", base),
             audio_transcriptions_url: format!("{}/v1/audio/transcriptions", base),
+            models_url: format!("{}/v1/models", base),
             device_code_url: OPENAI_DEVICE_CODE_URL.to_string(),
             device_code_scope: OPENAI_DEVICE_CODE_SCOPE.to_string(),
             default_chat_completions_model: None,
@@ -149,7 +154,7 @@ impl OpenAiProviderBuilder {
             .api_key
             .map(|key| key.trim().to_string())
             .filter(|key| !key.is_empty())
-            .ok_or_else(|| anyhow!("OpenAI api_key is required"))?;
+            .ok_or_else(|| LlmError::configuration("OpenAI api_key is required"))?;
         let mut provider = if let Some(base_url) = self.base_url {
             OpenAiProvider::new_with_base_url_and_mode(api_key, base_url, self.api_mode)
         } else {
@@ -175,7 +180,7 @@ impl Default for OpenAiProviderBuilder {
 #[async_trait]
 impl Provider for OpenAiProvider {
     fn provider_name(&self) -> &'static str {
-        "openai"
+        OPENAI_PROVIDER_NAME
     }
 
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
@@ -185,7 +190,41 @@ impl Provider for OpenAiProvider {
         }
     }
 
+    async fn available_models(&self) -> Result<Vec<String>> {
+        let provider = self.provider_name();
+        let response = self
+            .http
+            .get(&self.models_url)
+            .bearer_auth(&self.api_key)
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(LlmError::ProviderHttp {
+                provider,
+                capability: "available_models",
+                status: status.as_u16(),
+            });
+        }
+        let payload: Value = response.json().await?;
+        let mut models = payload
+            .get("data")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("id").and_then(Value::as_str))
+                    .map(ToOwned::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        models.sort();
+        models.dedup();
+        Ok(models)
+    }
+
     async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String> {
+        let provider = self.provider_name();
         let model = req
             .model
             .as_ref()
@@ -199,7 +238,7 @@ impl Provider for OpenAiProvider {
             })
             .or_else(|| self.default_audio_transcriptions_model.clone())
             .ok_or_else(|| {
-                anyhow!(
+                LlmError::configuration(
                     "audio transcription model is required (set request.model or configure audio_transcriptions_model on OpenAiProvider::build())"
                 )
             })?;
@@ -211,7 +250,7 @@ impl Provider for OpenAiProvider {
             "sending audio transcription request"
         );
         let call = ProviderCallTrace::sent(
-            "openai",
+            provider,
             "audio_transcription",
             model.clone(),
             json!({
@@ -262,7 +301,11 @@ impl Provider for OpenAiProvider {
                 response_body = body.as_str(),
                 "audio transcription request failed"
             );
-            return Err(anyhow!(error_message));
+            return Err(LlmError::ProviderHttp {
+                provider,
+                capability: "audio_transcription",
+                status: status.as_u16(),
+            });
         }
 
         let payload: Value = response.json().await?;
@@ -272,7 +315,7 @@ impl Provider for OpenAiProvider {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow!("missing text in openai transcription response"))?
+            .ok_or_else(|| LlmError::message("missing text in openai transcription response"))?
             .to_string();
         debug!(target: "borg_llm", chars = text.len(), "audio transcription request succeeded");
         Ok(text)
@@ -290,6 +333,7 @@ impl AuthProvider for OpenAiProvider {
 
 impl OpenAiProvider {
     async fn chat_via_chat_completions(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        let provider = self.provider_name();
         let model = self.resolve_chat_model(req)?;
         info!(
             target: "borg_llm",
@@ -307,7 +351,7 @@ impl OpenAiProvider {
             "max_tokens": req.max_tokens,
         });
         let call =
-            ProviderCallTrace::sent("openai", "chat_completion", model.clone(), body.clone());
+            ProviderCallTrace::sent(provider, "chat_completion", model.clone(), body.clone());
         trace!(
             target: "borg_llm",
             has_temperature = req.temperature.is_some(),
@@ -342,7 +386,11 @@ impl OpenAiProvider {
                 response_body = body.as_str(),
                 "chat completion request failed"
             );
-            return Err(anyhow!(error_message));
+            return Err(LlmError::ProviderHttp {
+                provider,
+                capability: "chat_completion",
+                status: status.as_u16(),
+            });
         }
 
         debug!(target: "borg_llm", status = %status, "chat completion request succeeded");
@@ -353,6 +401,7 @@ impl OpenAiProvider {
     }
 
     async fn chat_via_completions(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        let provider = self.provider_name();
         let model = self.resolve_chat_model(req)?;
         info!(
             target: "borg_llm",
@@ -367,7 +416,7 @@ impl OpenAiProvider {
             "temperature": req.temperature,
             "max_tokens": req.max_tokens,
         });
-        let call = ProviderCallTrace::sent("openai", "completions", model.clone(), body.clone());
+        let call = ProviderCallTrace::sent(provider, "completions", model.clone(), body.clone());
 
         let api_key = req.api_key.as_deref().unwrap_or(&self.api_key);
         let response = self
@@ -390,7 +439,11 @@ impl OpenAiProvider {
                 response_body = body.as_str(),
                 "completions request failed"
             );
-            return Err(anyhow!(error_message));
+            return Err(LlmError::ProviderHttp {
+                provider,
+                capability: "completions",
+                status: status.as_u16(),
+            });
         }
 
         let payload: Value = response.json().await?;
@@ -419,12 +472,15 @@ impl OpenAiProvider {
             Some("length") => Some("openai completion stopped due to token limit".to_string()),
             _ => None,
         };
-        Ok(LlmAssistantMessage {
-            content: vec![ProviderBlock::Text(text)],
-            stop_reason,
-            error_message,
-            usage_tokens: payload_usage_tokens(&payload),
-        })
+        assistant_message_or_error(
+            "completions",
+            LlmAssistantMessage {
+                content: vec![ProviderBlock::Text(text)],
+                stop_reason,
+                error_message,
+                usage_tokens: payload_usage_tokens(&payload),
+            },
+        )
     }
 }
 
@@ -436,8 +492,8 @@ impl OpenAiProvider {
         if let Some(default_model) = &self.default_chat_completions_model {
             return Ok(default_model.clone());
         }
-        Err(anyhow!(
-            "chat completion model is required (set request.model or configure chat_completions_model on OpenAiProvider::build())"
+        Err(LlmError::configuration(
+            "chat completion model is required (set request.model or configure chat_completions_model on OpenAiProvider::build())",
         ))
     }
 }
@@ -627,10 +683,10 @@ fn parse_openai_assistant_message(payload: &Value) -> Result<LlmAssistantMessage
         .get("choices")
         .and_then(Value::as_array)
         .and_then(|choices| choices.first())
-        .ok_or_else(|| anyhow!("missing choices[0] in openai response"))?;
+        .ok_or_else(|| LlmError::message("missing choices[0] in openai response"))?;
     let message = choice
         .get("message")
-        .ok_or_else(|| anyhow!("missing choices[0].message in openai response"))?;
+        .ok_or_else(|| LlmError::message("missing choices[0].message in openai response"))?;
 
     let mut blocks = Vec::new();
     if let Some(content) = message.get("content").and_then(Value::as_str)
@@ -644,15 +700,15 @@ fn parse_openai_assistant_message(payload: &Value) -> Result<LlmAssistantMessage
             let id = call
                 .get("id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("missing tool call id"))?
+                .ok_or_else(|| LlmError::message("missing tool call id"))?
                 .to_string();
             let function = call
                 .get("function")
-                .ok_or_else(|| anyhow!("missing tool call function"))?;
+                .ok_or_else(|| LlmError::message("missing tool call function"))?;
             let name = function
                 .get("name")
                 .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("missing tool call name"))?
+                .ok_or_else(|| LlmError::message("missing tool call name"))?
                 .to_string();
             let arguments_raw = function
                 .get("arguments")
@@ -695,6 +751,28 @@ fn parse_openai_assistant_message(payload: &Value) -> Result<LlmAssistantMessage
         stop_reason = ?message.stop_reason,
         "parsed assistant message from provider response"
     );
+    assistant_message_or_error("chat_completion", message)
+}
+
+fn assistant_message_or_error(
+    capability: &'static str,
+    message: LlmAssistantMessage,
+) -> Result<LlmAssistantMessage> {
+    let explicit_error = message
+        .error_message
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if matches!(message.stop_reason, StopReason::Error | StopReason::Aborted)
+        || explicit_error.is_some()
+    {
+        return Err(LlmError::ProviderResponse {
+            provider: OPENAI_PROVIDER_NAME,
+            capability,
+            reason: explicit_error
+                .unwrap_or_else(|| "assistant returned error stop reason".to_string()),
+        });
+    }
     Ok(message)
 }
 

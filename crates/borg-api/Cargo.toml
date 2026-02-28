@@ -9,6 +9,7 @@ axum.workspace = true
 borg-db = { path = "../borg-db" }
 borg-core = { path = "../borg-core" }
 borg-exec = { path = "../borg-exec" }
+borg-llm = { path = "../borg-llm" }
 borg-ltm = { path = "../borg-ltm" }
 borg-ports = { path = "../borg-ports" }
 serde.workspace = true
@@ -19,5 +20,5 @@ tower-http.workspace = true
 reqwest.workspace = true
 
 [dev-dependencies]
-borg-rt = { path = "../borg-rt" }
+borg-codemode = { path = "../borg-codemode" }
 tower.workspace = true

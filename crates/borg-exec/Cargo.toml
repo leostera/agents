@@ -10,7 +10,7 @@ borg-agent = { path = "../borg-agent" }
 borg-db = { path = "../borg-db" }
 borg-llm = { path = "../borg-llm" }
 borg-ltm = { path = "../borg-ltm" }
-borg-rt = { path = "../borg-rt" }
+borg-codemode = { path = "../borg-codemode" }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

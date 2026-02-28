@@ -1,11 +1,12 @@
 use std::{path::PathBuf, time::Duration};
 
-use anyhow::Result;
 use testcontainers::core::{IntoContainerPort, Mount};
 use testcontainers::runners::AsyncRunner;
 use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tokio::time::sleep;
 use tracing::{debug, error, info, trace};
+
+use crate::{LlmError, Result};
 
 const OLLAMA_IMAGE_NAME: &str = "ollama/ollama";
 const OLLAMA_IMAGE_TAG: &str = "latest";
@@ -57,10 +58,14 @@ impl LlmContainer {
             .with_exposed_port(OLLAMA_PORT.tcp())
             .with_mount(mount)
             .start()
-            .await?;
+            .await
+            .map_err(|err| LlmError::message(err.to_string()))?;
         info!(target: "borg_llm_test", "ollama container started");
 
-        let host_port = container.get_host_port_ipv4(OLLAMA_PORT.tcp()).await?;
+        let host_port = container
+            .get_host_port_ipv4(OLLAMA_PORT.tcp())
+            .await
+            .map_err(|err| LlmError::message(err.to_string()))?;
         let base_url = format!("http://127.0.0.1:{host_port}");
         info!(
             target: "borg_llm_test",
@@ -134,7 +139,10 @@ async fn wait_until_ready(base_url: &str) -> Result<()> {
         "ollama readiness timed out"
     );
 
-    anyhow::bail!("ollama container never became ready at {}", url);
+    Err(LlmError::message(format!(
+        "ollama container never became ready at {}",
+        url
+    )))
 }
 
 async fn pull_model(base_url: &str, model: &str) -> Result<()> {
@@ -192,5 +200,8 @@ async fn pull_model(base_url: &str, model: &str) -> Result<()> {
         "ollama model pull timed out"
     );
 
-    anyhow::bail!("ollama model pull never completed for {} at {}", model, url);
+    Err(LlmError::message(format!(
+        "ollama model pull never completed for {} at {}",
+        model, url
+    )))
 }

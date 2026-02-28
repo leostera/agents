@@ -1,9 +1,9 @@
 use anyhow::Result;
 use borg_agent::{Agent, Message, Session, SessionContextManager, SessionEventPayload, ToolSpec};
+use borg_codemode::default_tool_specs;
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 use borg_ltm::default_memory_tool_specs;
-use borg_rt::default_tool_specs;
 use std::sync::Arc;
 
 use crate::types::UserMessage;

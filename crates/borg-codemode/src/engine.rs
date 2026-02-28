@@ -117,8 +117,8 @@ impl CodeModeRuntime {
             .map_err(|_| anyhow!("code-mode runtime execution lock poisoned"))?;
 
         let execution = catch_unwind(AssertUnwindSafe(|| {
-            info!(target: "borg_rt", "executing JS in deno_core runtime");
-            debug!(target: "borg_rt", code, "js payload");
+            info!(target: "borg_codemode", "executing JS in deno_core runtime");
+            debug!(target: "borg_codemode", code, "js payload");
 
             let start = Instant::now();
             let mut runtime = JsRuntime::new(RuntimeOptions::default());
@@ -132,7 +132,7 @@ impl CodeModeRuntime {
                 runtime
                     .execute_script("borg_prelude.js", self.prelude.clone())
                     .map_err(|err| {
-                        info!(target: "borg_rt", error = %err, "code-mode prelude execution failure");
+                        info!(target: "borg_codemode", error = %err, "code-mode prelude execution failure");
                         anyhow!(normalize_runtime_error(format!(
                             "failed to execute prelude: {}",
                             err
@@ -142,7 +142,7 @@ impl CodeModeRuntime {
             runtime
                 .execute_script("borg_agent_sdk.js", self.sdk_bundle.clone())
                 .map_err(|err| {
-                    info!(target: "borg_rt", error = %err, "code-mode sdk execution failure");
+                    info!(target: "borg_codemode", error = %err, "code-mode sdk execution failure");
                     anyhow!(normalize_runtime_error(format!(
                         "failed to execute sdk bundle: {}",
                         err
@@ -152,7 +152,7 @@ impl CodeModeRuntime {
             let function = runtime
                 .execute_script("borg_exec_fn.js", format!("({})", code))
                 .map_err(|err| {
-                    info!(target: "borg_rt", error = %err, "code-mode function compile failure");
+                    info!(target: "borg_codemode", error = %err, "code-mode function compile failure");
                     anyhow!(normalize_runtime_error(format!(
                         "failed to compile code-mode function: {}",
                         err
@@ -174,7 +174,7 @@ impl CodeModeRuntime {
             #[allow(deprecated)]
             let value = deno_core::futures::executor::block_on(runtime.call_and_await(&function))
                 .map_err(|err| {
-                info!(target: "borg_rt", error = %err, "code-mode function execution failure");
+                info!(target: "borg_codemode", error = %err, "code-mode function execution failure");
                 anyhow!(normalize_runtime_error(format!(
                     "failed to execute code-mode function: {}",
                     err
@@ -187,10 +187,10 @@ impl CodeModeRuntime {
                 serde_v8::from_v8(scope, local).unwrap_or(Value::Null)
             };
 
-            trace!(target: "borg_rt", result = ?result_json, "js execution result");
+            trace!(target: "borg_codemode", result = ?result_json, "js execution result");
             let duration = start.elapsed();
             let duration_ms = duration.as_millis();
-            info!(target: "borg_rt", duration_ms, "JS execution finished");
+            info!(target: "borg_codemode", duration_ms, "JS execution finished");
 
             Ok(ExecutionResult {
                 stdout: String::new(),
@@ -205,7 +205,7 @@ impl CodeModeRuntime {
             Err(payload) => {
                 let panic_text = panic_payload_to_string(payload);
                 info!(
-                    target: "borg_rt",
+                    target: "borg_codemode",
                     panic = panic_text.as_str(),
                     "code-mode runtime panic caught"
                 );

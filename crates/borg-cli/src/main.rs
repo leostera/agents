@@ -2,11 +2,11 @@ use std::{io, io::Write};
 
 use anyhow::Result;
 use borg_api::BorgApiServer;
+use borg_codemode::CodeModeRuntime;
 use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
 use borg_exec::ExecEngine;
 use borg_ltm::{FactInput, MemoryStore, SearchQuery};
-use borg_rt::CodeModeRuntime;
 use clap::{Parser, Subcommand};
 use reqwest::Client;
 use serde::Deserialize;
@@ -584,7 +584,7 @@ struct CreateTaskResponse {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| {
-            "info,borg_cli=debug,borg_api=debug,borg_ports=debug,borg_db=debug,borg_exec=debug,borg_ltm=debug,borg_rt=debug"
+            "info,borg_cli=debug,borg_api=debug,borg_ports=debug,borg_db=debug,borg_exec=debug,borg_ltm=debug,borg_codemode=debug"
                 .to_string()
         }))
         .init();

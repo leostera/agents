@@ -10,7 +10,7 @@ members = [
   "crates/borg-llm",
   "crates/borg-ltm",
   "crates/borg-ports",
-  "crates/borg-rt",
+  "crates/borg-codemode",
 ]
 resolver = "2"
 
@@ -38,3 +38,4 @@ testcontainers = "0.27.1"
 indradb = { package = "indradb-lib", version = "5.0.0", features = ["rocksdb-datastore"] }
 tantivy = "0.22"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
+thiserror = "2"

@@ -1,8 +1,9 @@
-use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
+
+use crate::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StopReason {
@@ -112,6 +113,13 @@ pub trait Provider: Send + Sync {
         true
     }
 
+    async fn available_models(&self) -> Result<Vec<String>> {
+        Err(crate::LlmError::configuration(format!(
+            "provider `{}` does not support model discovery",
+            self.provider_name()
+        )))
+    }
+
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage>;
     async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String>;
 }
@@ -144,6 +152,10 @@ where
 
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
         self.as_ref().chat(req).await
+    }
+
+    async fn available_models(&self) -> Result<Vec<String>> {
+        self.as_ref().available_models().await
     }
 
     async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String> {

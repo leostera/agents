@@ -1,4 +1,3 @@
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use reqwest::Client;
@@ -7,17 +6,20 @@ use tracing::{debug, error, info, trace};
 
 use crate::providers::call_trace::ProviderCallTrace;
 use crate::{
-    LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
-    ToolDescriptor, TranscriptionRequest, UserBlock,
+    LlmAssistantMessage, LlmError, LlmRequest, Provider, ProviderBlock, ProviderMessage, Result,
+    StopReason, ToolDescriptor, TranscriptionRequest, UserBlock,
 };
 
 const OPENROUTER_CHAT_COMPLETIONS_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
+const OPENROUTER_PROVIDER_NAME: &str = "openrouter";
 
 #[derive(Clone)]
 pub struct OpenRouterProvider {
     http: Client,
     api_key: String,
     chat_completions_url: String,
+    models_url: String,
     default_chat_completions_model: Option<String>,
     default_audio_transcriptions_model: Option<String>,
 }
@@ -32,6 +34,7 @@ impl OpenRouterProvider {
             http: Client::new(),
             api_key: api_key.into(),
             chat_completions_url: OPENROUTER_CHAT_COMPLETIONS_URL.to_string(),
+            models_url: OPENROUTER_MODELS_URL.to_string(),
             default_chat_completions_model: None,
             default_audio_transcriptions_model: None,
         }
@@ -43,6 +46,7 @@ impl OpenRouterProvider {
             http: Client::new(),
             api_key: api_key.into(),
             chat_completions_url: format!("{}/v1/chat/completions", base),
+            models_url: format!("{}/v1/models", base),
             default_chat_completions_model: None,
             default_audio_transcriptions_model: None,
         }
@@ -55,8 +59,8 @@ impl OpenRouterProvider {
         if let Some(default_model) = &self.default_chat_completions_model {
             return Ok(default_model.clone());
         }
-        Err(anyhow!(
-            "chat completion model is required (set request.model or configure chat_completions_model on OpenRouterProvider::build())"
+        Err(LlmError::configuration(
+            "chat completion model is required (set request.model or configure chat_completions_model on OpenRouterProvider::build())",
         ))
     }
 
@@ -73,7 +77,7 @@ impl OpenRouterProvider {
             })
             .or_else(|| self.default_audio_transcriptions_model.clone())
             .ok_or_else(|| {
-                anyhow!(
+                LlmError::configuration(
                     "audio transcription model is required (set request.model or configure audio_transcriptions_model on OpenRouterProvider::build())"
                 )
             })
@@ -122,7 +126,7 @@ impl OpenRouterProviderBuilder {
             .api_key
             .map(|key| key.trim().to_string())
             .filter(|key| !key.is_empty())
-            .ok_or_else(|| anyhow!("OpenRouter api_key is required"))?;
+            .ok_or_else(|| LlmError::configuration("OpenRouter api_key is required"))?;
         let mut provider = if let Some(base_url) = self.base_url {
             OpenRouterProvider::new_with_base_url(api_key, base_url)
         } else {
@@ -144,10 +148,11 @@ impl Default for OpenRouterProviderBuilder {
 #[async_trait]
 impl Provider for OpenRouterProvider {
     fn provider_name(&self) -> &'static str {
-        "openrouter"
+        OPENROUTER_PROVIDER_NAME
     }
 
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        let provider = self.provider_name();
         let model = self.resolve_chat_model(req)?;
         info!(
             target: "borg_llm",
@@ -165,7 +170,7 @@ impl Provider for OpenRouterProvider {
             "max_tokens": req.max_tokens,
         });
         let call =
-            ProviderCallTrace::sent("openrouter", "chat_completion", model.clone(), body.clone());
+            ProviderCallTrace::sent(provider, "chat_completion", model.clone(), body.clone());
         let api_key = req.api_key.as_deref().unwrap_or(&self.api_key);
         let response = self
             .http
@@ -187,7 +192,11 @@ impl Provider for OpenRouterProvider {
                 response_body = body.as_str(),
                 "openrouter chat completion request failed"
             );
-            return Err(anyhow!(error_message));
+            return Err(LlmError::ProviderHttp {
+                provider,
+                capability: "chat_completion",
+                status: status.as_u16(),
+            });
         }
 
         debug!(
@@ -201,7 +210,41 @@ impl Provider for OpenRouterProvider {
         parse_assistant_message(&payload)
     }
 
+    async fn available_models(&self) -> Result<Vec<String>> {
+        let provider = self.provider_name();
+        let response = self
+            .http
+            .get(&self.models_url)
+            .bearer_auth(&self.api_key)
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(LlmError::ProviderHttp {
+                provider,
+                capability: "available_models",
+                status: status.as_u16(),
+            });
+        }
+        let payload: Value = response.json().await?;
+        let mut models = payload
+            .get("data")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.get("id").and_then(Value::as_str))
+                    .map(ToOwned::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        models.sort();
+        models.dedup();
+        Ok(models)
+    }
+
     async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String> {
+        let provider = self.provider_name();
         let model = self.resolve_transcription_model(req)?;
         let format = mime_to_input_audio_format(&req.mime_type)?;
         let audio_base64 = STANDARD.encode(&req.audio);
@@ -231,12 +274,8 @@ impl Provider for OpenRouterProvider {
                 }
             ]
         });
-        let call = ProviderCallTrace::sent(
-            "openrouter",
-            "audio_transcription",
-            model.clone(),
-            body.clone(),
-        );
+        let call =
+            ProviderCallTrace::sent(provider, "audio_transcription", model.clone(), body.clone());
 
         let response = self
             .http
@@ -258,13 +297,17 @@ impl Provider for OpenRouterProvider {
                 response_body = body.as_str(),
                 "openrouter transcription request failed"
             );
-            return Err(anyhow!(error_message));
+            return Err(LlmError::ProviderHttp {
+                provider,
+                capability: "audio_transcription",
+                status: status.as_u16(),
+            });
         }
 
         let payload: Value = response.json().await?;
         call.succeeded(status, &payload).await;
         extract_text_from_chat_payload(&payload)
-            .ok_or_else(|| anyhow!("missing text in openrouter transcription response"))
+            .ok_or_else(|| LlmError::message("missing text in openrouter transcription response"))
     }
 }
 
@@ -274,7 +317,10 @@ fn mime_to_input_audio_format(mime: &str) -> Result<&'static str> {
         "audio/mp3" | "audio/mpeg" => Ok("mp3"),
         // OpenRouter docs list wav/mp3. We still allow common telegram mime types by mapping to mp3.
         "audio/ogg" | "audio/opus" | "audio/webm" => Ok("mp3"),
-        _ => Err(anyhow!("unsupported audio mime type `{}`", mime)),
+        _ => Err(LlmError::configuration(format!(
+            "unsupported audio mime type `{}`",
+            mime
+        ))),
     }
 }
 
@@ -414,10 +460,10 @@ fn parse_assistant_message(payload: &Value) -> Result<LlmAssistantMessage> {
         .get("choices")
         .and_then(Value::as_array)
         .and_then(|choices| choices.first())
-        .ok_or_else(|| anyhow!("missing choices[0] in openrouter response"))?;
+        .ok_or_else(|| LlmError::message("missing choices[0] in openrouter response"))?;
     let message = choice
         .get("message")
-        .ok_or_else(|| anyhow!("missing choices[0].message in openrouter response"))?;
+        .ok_or_else(|| LlmError::message("missing choices[0].message in openrouter response"))?;
 
     let mut blocks = Vec::new();
     if let Some(content) = message.get("content").and_then(Value::as_str)
@@ -431,15 +477,15 @@ fn parse_assistant_message(payload: &Value) -> Result<LlmAssistantMessage> {
             let id = call
                 .get("id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("missing tool call id"))?
+                .ok_or_else(|| LlmError::message("missing tool call id"))?
                 .to_string();
             let function = call
                 .get("function")
-                .ok_or_else(|| anyhow!("missing tool call function"))?;
+                .ok_or_else(|| LlmError::message("missing tool call function"))?;
             let name = function
                 .get("name")
                 .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("missing tool call name"))?
+                .ok_or_else(|| LlmError::message("missing tool call name"))?
                 .to_string();
             let arguments_raw = function
                 .get("arguments")
@@ -470,12 +516,31 @@ fn parse_assistant_message(payload: &Value) -> Result<LlmAssistantMessage> {
         _ => None,
     };
 
-    Ok(LlmAssistantMessage {
+    assistant_message_or_error(LlmAssistantMessage {
         content: blocks,
         stop_reason,
         error_message,
         usage_tokens: payload_usage_tokens(payload),
     })
+}
+
+fn assistant_message_or_error(message: LlmAssistantMessage) -> Result<LlmAssistantMessage> {
+    let explicit_error = message
+        .error_message
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if matches!(message.stop_reason, StopReason::Error | StopReason::Aborted)
+        || explicit_error.is_some()
+    {
+        return Err(LlmError::ProviderResponse {
+            provider: OPENROUTER_PROVIDER_NAME,
+            capability: "chat_completion",
+            reason: explicit_error
+                .unwrap_or_else(|| "assistant returned error stop reason".to_string()),
+        });
+    }
+    Ok(message)
 }
 
 fn payload_usage_tokens(payload: &Value) -> Option<u64> {

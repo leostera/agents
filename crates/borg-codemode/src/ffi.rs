@@ -104,13 +104,13 @@ fn ffi_callback(
     };
 
     let Some(bridge) = scope.get_slot::<FfiBridge>().cloned() else {
-        info!(target: "borg_rt", "ffi failure: bridge not available");
+        info!(target: "borg_codemode", "ffi failure: bridge not available");
         throw(scope, "ffi bridge not available");
         return;
     };
 
     if args.length() < 1 || !args.get(0).is_string() {
-        info!(target: "borg_rt", "ffi failure: missing op name");
+        info!(target: "borg_codemode", "ffi failure: missing op name");
         throw(scope, "ffi requires op name as first argument");
         return;
     }
@@ -132,16 +132,16 @@ fn ffi_callback(
         Ok(Ok(value)) => match serde_v8::to_v8(scope, value) {
             Ok(result) => rv.set(result),
             Err(err) => {
-                info!(target: "borg_rt", error = %err, op_name, "ffi serialization failure");
+                info!(target: "borg_codemode", error = %err, op_name, "ffi serialization failure");
                 throw(scope, &format!("ffi serialization error: {}", err))
             }
         },
         Ok(Err(err)) => {
-            info!(target: "borg_rt", error = %err, op_name, "ffi execution failure");
+            info!(target: "borg_codemode", error = %err, op_name, "ffi execution failure");
             throw(scope, &format!("ffi execution error: {}", err))
         }
         Err(_) => {
-            info!(target: "borg_rt", op_name, "ffi execution panic");
+            info!(target: "borg_codemode", op_name, "ffi execution panic");
             throw(scope, "ffi execution panic")
         }
     }

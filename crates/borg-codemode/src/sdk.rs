@@ -55,7 +55,7 @@ fn parse_capabilities() -> Vec<ApiCapability> {
     let interfaces = parse_interfaces(SDK_TYPES);
     if interfaces.is_empty() {
         warn!(
-            target: "borg_rt",
+            target: "borg_codemode",
             "failed to parse any interfaces from borg-agent-sdk types"
         );
         return vec![];
@@ -74,7 +74,7 @@ fn parse_capabilities() -> Vec<ApiCapability> {
     );
 
     debug!(
-        target: "borg_rt",
+        target: "borg_codemode",
         capability_count = collected.len(),
         "parsed sdk capabilities from borg.d.ts"
     );
