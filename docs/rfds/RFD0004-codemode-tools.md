@@ -8,69 +8,63 @@
 ## Summary
 [summary]: #summary
 
-Adopt a product model where:
-
-1. **Apps** represent external integrations (uTorrent, SerpAPI, Google Calendar).
-2. **Capabilities** represent user-facing actions exposed by an App (`Add Torrent`, `Search Google`, `Create Calendar Event`).
-3. **Tools** are no longer user-facing product objects; they are internal runtime primitives (MCP/internal APIs like CodeMode, Shell, Task, Memory, Cron).
-4. Capability execution can be:
-   - **direct builtin handler**, or
-   - **indirect via internal tools** (primarily CodeMode, secondarily Shell).
-5. Every invocation is logged in a `tool_calls` table for replay, debugging, and future policy enforcement.
+This RFD proposes a product model where Apps represent external integrations and Capabilities represent user-facing actions. In this model, integrations such as uTorrent, SerpAPI, and Google Calendar are Apps, while actions like `Add Torrent`, `Search Google`, and `Create Calendar Event` are Capabilities. The term "tool" is reserved for runtime internals such as CodeMode, Shell, Task, Memory, and Cron, and is not used as a user-facing concept. Capability execution may happen through direct builtin handlers or through internal tool chains, with CodeMode as the primary dynamic path and Shell as a fallback. All internal execution steps are recorded in `tool_calls` to support replay, debugging, and later policy enforcement.
 
 This keeps the UX simple (`App / Capability`) while preserving execution flexibility.
+
+## Problem statement
+
+Borg currently mixes two different meanings of "tool":
+
+1. user-facing actions ("send message", "create event", "download torrent"), and
+2. internal execution primitives (CodeMode, Shell, Task, Memory, Cron).
+
+That ambiguity makes product design, docs, and runtime contracts harder to reason about. It also slows integration work because we do not have a stable surface for "what users can do" vs "how Borg executes it".
+
+We need a model that is understandable to end users and operators, precise enough for runtime execution and auditing, and extensible enough to support both first-class builtins and long-tail dynamic integrations.
 
 ## Motivation
 [motivation]: #motivation
 
 Borg needs a clear model that users and operators can reason about quickly.
 
-Current confusion points:
+Today, the word "tool" is overloaded between product features and runtime machinery. Integration wiring also varies by provider because account linkage, secrets, and execution paths are not expressed under a single model. We also need better coverage for long-tail integrations without requiring every provider to become a hardcoded builtin immediately. Finally, we need complete execution traces now, before introducing a policy engine. This RFD addresses those gaps by separating product surface area (`Apps` and `Capabilities`) from runtime plumbing (internal tools).
 
-- "Tool" means both product feature and runtime primitive.
-- Integrations need account + secret wiring, but execution paths vary.
-- We need dynamic coverage of long-tail integrations without building every provider as a first-class builtin.
-- We need full execution traces now, before introducing policy engines.
+## Goals and non-goals
 
-This RFD separates concepts:
+### Goals
 
-- Product surface: `Apps` + `Capabilities`
-- Runtime plumbing: internal `Tools`
+The goal is to make user-facing concepts explicit and stable by treating Apps and Capabilities as the product language. Execution remains flexible by allowing capabilities to dispatch through `builtin`, `codemode`, or `shell` modes. The proposal also introduces durable invocation logging through `tool_calls` and supports discovery/execution workflows for integrations that are not yet first-class builtins.
+
+### Non-goals (for this RFD)
+
+This document does not define a full policy or authorization framework, does not introduce capability maturity tiers, and does not attempt to ship a full plugin SDK for third-party apps. It also does not attempt to settle every provider-specific contract; it defines the platform model those contracts should fit into.
+
+## Terms
+
+In this document, an **App** is the external integration boundary, and a **Capability** is a concrete operation exposed by that app. An **Internal Tool** is a Borg runtime primitive used to execute capability logic. **Execution mode** refers to how a capability dispatches (`builtin`, `codemode`, or `shell`). The `tool_calls` table stores execution traces for all internal tool invocations.
 
 ## Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
 ### Mental model
 
-- **App**: External system Borg can connect to.
-  - Examples: `uTorrent`, `SerpAPI`, `Google Calendar`.
-- **Capability**: Action an App exposes.
-  - Examples: `uTorrent / Add Torrent`, `SerpAPI / Search Google`.
-- **Internal Tool**: Borg runtime primitive used to execute capability logic.
-  - Examples: `CodeMode.runCode`, `Shell.execute`, `Task.createTask`, `Memory.search`.
-
-Users discover and invoke **Capabilities**. Borg decides how to run them.
+An App is an external system Borg can connect to, such as uTorrent, SerpAPI, or Google Calendar. Each App exposes one or more Capabilities, which are the actions users can invoke, such as `uTorrent / Add Torrent` or `SerpAPI / Search Google`. Internal tools like `CodeMode.runCode` and `Shell.execute` are execution machinery, not user-facing product objects. Users discover and invoke capabilities, and Borg decides how to execute them.
 
 ### Capability discovery and execution flow
 
-1. User asks for intent.
-   - Example: "find a legal indie movie torrent and download it".
-2. Agent resolves best matching capability.
-   - Example result: `SerpAPI / Search Web`, `uTorrent / Add Torrent`, `uTorrent / Get Torrent Status`.
-3. Runtime checks capability execution mode.
-   - `builtin`: call built-in handler directly.
-   - `codemode`: execute generated JS through `CodeMode.runCode`.
-   - `shell`: fallback for CLI/system workflows.
-4. Runtime returns structured result to agent.
-5. Runtime writes invocation records to `tool_calls`.
+The user starts by expressing intent, for example by asking to find and download a legal indie movie torrent. The agent resolves that request into one or more matching capabilities, such as `SerpAPI / Search Web`, `uTorrent / Add Torrent`, and `uTorrent / Get Torrent Status`. Runtime then dispatches each capability according to its configured execution mode. Builtin capabilities call a dedicated internal handler, codemode capabilities execute generated JavaScript through `CodeMode.runCode`, and shell capabilities use command execution as a fallback path. After execution, runtime returns structured results to the agent and persists invocation records in `tool_calls`.
+
+This creates a clear separation:
+
+- product answers "what can Borg do?" via capabilities,
+- runtime answers "how does Borg do it?" via internal tools.
 
 ### Torrent walkthrough
 
 Example target behavior:
 
-1. Use `SerpAPI / Search Web` capability to find a legal `.torrent` or magnet source.
-2. Use `uTorrent / Add Torrent` capability to register it.
-3. Use `uTorrent / Get Torrent Status` capability to monitor progress.
+In a torrent example, the system first calls `SerpAPI / Search Web` to locate a legal `.torrent` or magnet source, then calls `uTorrent / Add Torrent` to register the download, and finally calls `uTorrent / Get Torrent Status` to monitor progress.
 
 Possible implementation mapping:
 
@@ -85,102 +79,23 @@ User sees only capabilities; runtime may use one or more internal tools.
 
 ### Data model
 
-#### `apps`
-
-- `app_id` (URI)
-- `name` (e.g. `uTorrent`, `SerpAPI`)
-- `slug` (stable identifier)
-- `description`
-- `status` (`active`, `disabled`)
-- `created_at`, `updated_at`
-
-#### `app_connections`
-
-Represents account/config connectivity for an app in a user/workspace context.
-
-- `connection_id` (URI)
-- `app_id` (FK -> `apps`)
-- `user_id` (nullable depending on app scope)
-- `workspace_id` (nullable depending on scope)
-- `auth_kind` (`oauth`, `api_key`, `local_service`, `none`)
-- `auth_ref_json` (secret names/account refs; no raw secret values)
-- `config_json` (host/port/default paths/flags)
-- `status` (`connected`, `disconnected`, `error`)
-- `created_at`, `updated_at`
-
-#### `capabilities`
-
-User-facing operations exposed by apps.
-
-- `capability_id` (URI)
-- `app_id` (FK -> `apps`)
-- `name` (e.g. `Add Torrent`)
-- `slug` (e.g. `add_torrent`)
-- `description`
-- `input_schema_json` (JSON Schema)
-- `output_schema_json` (JSON Schema)
-- `execution_mode` (`builtin`, `codemode`, `shell`)
-- `execution_spec_json`
-  - `builtin`: handler identifier + mapping config
-  - `codemode`: prompt/spec template + package hints + env requirements
-  - `shell`: command template + sandbox constraints
-- `enabled`
-- `created_at`, `updated_at`
-
-#### `tool_calls`
-
-Audit log for all internal tool invocations during capability execution.
-
-- `tool_call_id` (URI)
-- `session_id`
-- `task_id` (nullable)
-- `turn_id`
-- `app_id` (nullable)
-- `capability_id` (nullable)
-- `tool_name` (e.g. `CodeMode.runCode`, `uTorrent.addTorrentBuiltin`)
-- `invocation_mode` (`builtin`, `codemode`, `shell`)
-- `input_json`
-- `output_json`
-- `status` (`ok`, `error`, `timeout`)
-- `error_text` (nullable)
-- `started_at`
-- `finished_at`
-- `duration_ms`
+The data model is centered on four tables. The `apps` table stores integration definitions (`app_id`, `name`, `slug`, `description`, `status`, timestamps). The `app_connections` table stores connectivity and auth/config context for an app at user or workspace scope (`connection_id`, `app_id`, optional `user_id` and `workspace_id`, `auth_kind`, `auth_ref_json`, `config_json`, `status`, timestamps). The `capabilities` table stores user-facing operations exposed by apps (`capability_id`, `app_id`, `name`, `slug`, `description`, input/output JSON schemas, `execution_mode`, `execution_spec_json`, `enabled`, timestamps). The `execution_spec_json` payload differs by mode: builtin mode references a handler identifier and mapping config, codemode provides a prompt/spec template plus package and env hints, and shell mode provides command template and sandbox constraints. Finally, `tool_calls` is the execution audit table and captures internal invocation traces (`tool_call_id`, session/task/turn linkage, optional app/capability linkage, tool name, invocation mode, input/output payloads, status/error, timestamps, and duration).
 
 ### Internal tools (non-product)
 
-Built-in runtime tools remain first-class for orchestration:
-
-- `CodeMode.*` (package discovery, type/example retrieval, code execution)
-- `Shell.*`
-- `Cron.*`
-- `Task.*`
-- `Memory.*`
-
-They are implementation details that capabilities can map to.
+Built-in runtime tools remain first-class for orchestration. In practice this includes the CodeMode family for package discovery, types/examples retrieval, and code execution, along with Shell, Cron, Task, and Memory primitives. These are implementation details that capabilities map to; they are not the product abstraction shown to users.
 
 ### Capability execution contract
 
 Given `(app_id, capability_id, input)`:
 
-1. Validate input against `input_schema_json`.
-2. Resolve connection/auth/config from `app_connections` + secrets/account refs.
-3. Dispatch by `execution_mode`.
-4. Validate output against `output_schema_json` (best effort initial phase).
-5. Persist `tool_calls` rows for each internal execution step.
-6. Return normalized output to agent.
+Given `(app_id, capability_id, input)`, runtime validates input against `input_schema_json`, resolves connection and auth/config context from `app_connections` and secret/account references, dispatches according to `execution_mode`, and then validates output against `output_schema_json` (best-effort in the initial phase). Each internal execution step is persisted in `tool_calls`, and a normalized result is returned to the agent.
 
 ### CodeMode role
 
 CodeMode is the primary path for long-tail integrations where no dedicated builtin exists.
 
-Expected CodeMode sequence for capability execution:
-
-1. discover/select package(s)
-2. inspect docs/types/examples
-3. synthesize code from capability spec + input schema
-4. execute with scoped env/network/filesystem
-5. return structured JSON result
+For capability execution, CodeMode follows a predictable pattern: discover and select packages, inspect documentation/types/examples, synthesize code from capability spec and input schema, execute with scoped env/network/filesystem permissions, and return a structured JSON result.
 
 ## Drawbacks
 [drawbacks]: #drawbacks
@@ -194,50 +109,27 @@ Expected CodeMode sequence for capability execution:
 
 ### Alternative A: Keep "Tools" as user-facing concept
 
-Pros:
-- simpler migration from current wording
-
-Cons:
-- persistent ambiguity between product tool and runtime tool
-
-Decision: rejected.
+This approach offers a simpler migration from current wording, but it preserves ambiguity between product concepts and runtime internals. It is rejected.
 
 ### Alternative B: Only builtin integrations
 
-Pros:
-- highest control and reliability
-
-Cons:
-- low extensibility
-- slower shipping for new providers
-
-Decision: rejected.
+This approach offers maximal control and reliability, but it reduces extensibility and slows delivery of new providers. It is rejected.
 
 ### Chosen approach
 
-- Product: `Apps expose Capabilities`
-- Runtime: internal tool orchestration, mostly CodeMode for long-tail providers
-- Observability first via `tool_calls`
+The chosen direction is to keep `Apps expose Capabilities` as the product model, use internal tool orchestration (primarily CodeMode for long-tail providers) as the runtime model, and prioritize observability through `tool_calls`.
 
 ## Prior art
 [prior-art]: #prior-art
 
-- Integration platforms that expose provider-specific actions under connected apps.
-- Capability/action catalogs in workflow automation systems.
-- Model-driven code execution using package/docs/type retrieval before runtime execution.
+This proposal draws from integration platforms that expose provider-specific actions under connected apps, from workflow systems that model capability catalogs explicitly, and from model-driven execution loops that retrieve packages/docs/types before generating and running code.
 
 ## Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-- How strict should output schema validation be in v0 (`warn` vs `hard-fail`)?
-- Should `app_connections` be user-scoped, workspace-scoped, or both per app?
-- What is the minimum required redaction strategy for `input_json`/`output_json` in `tool_calls`?
-- How should capability discovery rank between builtin and CodeMode-backed options when both exist?
+Open questions remain around output schema strictness in v0 (`warn` versus `hard-fail`), scope rules for `app_connections` (user, workspace, or both), minimum redaction requirements for `tool_calls` payload fields, and ranking behavior when both builtin and CodeMode-backed capability implementations are available.
 
 ## Future possibilities
 [future-possibilities]: #future-possibilities
 
-- Capability policy engine (allow/deny/rate limits by user, app, capability).
-- Capability composition graphs (multi-capability plans as reusable workflows).
-- Promotion pipeline from successful CodeMode executions to stable builtins.
-- User-installable external app adapters with the same capability contract.
+Future work can add a capability policy engine, capability composition graphs for reusable workflows, promotion pipelines that turn successful CodeMode executions into stable builtins, and user-installable app adapters that still satisfy the same capability contract.
