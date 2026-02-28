@@ -1,13 +1,25 @@
-import { BorgApiError, createBorgApiClient } from "@borg/api";
+import {
+  BorgApiError,
+  createBorgApiClient,
+  type ProviderRecord,
+} from "@borg/api";
 import {
   Badge,
   Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Empty,
   EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
+  Input,
+  Label,
   Table,
   TableBody,
   TableCell,
@@ -20,56 +32,15 @@ import {
   Cpu,
   LoaderCircle,
   Pause,
+  Pencil,
   Play,
+  Trash2,
   TriangleAlert,
-  Unplug,
 } from "lucide-react";
 import React from "react";
 import { ConnectProviderForm } from "./ConnectProviderForm";
 
-type ProviderRecord = {
-  provider: string;
-  api_key: string;
-  created_at: string;
-  updated_at: string;
-};
-
-type ProviderMetrics = {
-  providerLabel: string;
-  tokensUsed: string;
-  tokenRate: string;
-  models: string[];
-  cost: string;
-  lastUsedOn: string;
-  lastSession: string;
-};
-
-const SUPPORTED_PROVIDERS = ["openai", "openrouter"] as const;
 const borgApi = createBorgApiClient();
-
-const PROVIDER_METRICS: Record<
-  (typeof SUPPORTED_PROVIDERS)[number],
-  ProviderMetrics
-> = {
-  openai: {
-    providerLabel: "chatgpt",
-    tokensUsed: "100000",
-    tokenRate: "100 / hour",
-    models: ["gpt-5.3-codex", "gpt-4o-mini"],
-    cost: "$33",
-    lastUsedOn: "33 seconds ago",
-    lastSession: "borg:session:dashboard_9f2d",
-  },
-  openrouter: {
-    providerLabel: "openrouter",
-    tokensUsed: "64000",
-    tokenRate: "42 / hour",
-    models: ["openai/gpt-4o-mini", "meta-llama/3.3-70b-instruct"],
-    cost: "$19.40",
-    lastUsedOn: "5 minutes ago",
-    lastSession: "borg:session:ops_14d2",
-  },
-};
 
 function formatProviderName(provider: string): string {
   if (provider === "openai") return "OpenAI";
@@ -77,12 +48,14 @@ function formatProviderName(provider: string): string {
   return provider;
 }
 
+type EditProviderState = {
+  provider: string;
+  apiKey: string;
+};
+
 export function ProvidersPage() {
   const [providersByName, setProvidersByName] = React.useState<
     Record<string, ProviderRecord>
-  >({});
-  const [pausedProviders, setPausedProviders] = React.useState<
-    Record<string, boolean>
   >({});
   const [isLoading, setIsLoading] = React.useState(true);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
@@ -93,6 +66,9 @@ export function ProvidersPage() {
   const [isStartingOpenAi, setIsStartingOpenAi] = React.useState(false);
   const [statusMessage, setStatusMessage] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
+  const [editingProvider, setEditingProvider] =
+    React.useState<EditProviderState | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = React.useState(false);
 
   const loadProviders = React.useCallback(async () => {
     setIsLoading(true);
@@ -203,27 +179,82 @@ export function ProvidersPage() {
     }
   };
 
-  const handleDisconnect = async (provider: string) => {
+  const handleDeleteProvider = async (provider: string) => {
     setErrorMessage(null);
     setStatusMessage(null);
     try {
       await borgApi.deleteProvider(provider, { ignoreNotFound: true });
-      setStatusMessage(`${formatProviderName(provider)} disconnected`);
+      setStatusMessage(`${formatProviderName(provider)} deleted`);
       await loadProviders();
     } catch (error) {
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : `Unable to disconnect ${formatProviderName(provider)}`
+          : `Unable to delete ${formatProviderName(provider)}`
       );
     }
   };
 
-  const handleTogglePause = (provider: string) => {
-    setPausedProviders((current) => ({
-      ...current,
-      [provider]: !current[provider],
-    }));
+  const handleToggleEnabled = async (provider: ProviderRecord) => {
+    setErrorMessage(null);
+    setStatusMessage(null);
+    try {
+      await borgApi.upsertProvider({
+        provider: provider.provider,
+        apiKey: provider.api_key,
+        enabled: !provider.enabled,
+      });
+      setStatusMessage(
+        `${formatProviderName(provider.provider)} ${provider.enabled ? "paused" : "resumed"}`
+      );
+      await loadProviders();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : `Unable to update ${formatProviderName(provider.provider)}`
+      );
+    }
+  };
+
+  const handleSaveEditProvider = async (
+    event: React.FormEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+    if (!editingProvider) return;
+    const apiKey = editingProvider.apiKey.trim();
+    if (!apiKey) {
+      setErrorMessage("API key is required");
+      return;
+    }
+
+    const current = providersByName[editingProvider.provider];
+    if (!current) {
+      setErrorMessage("Provider no longer exists");
+      return;
+    }
+
+    setIsSavingEdit(true);
+    setErrorMessage(null);
+    setStatusMessage(null);
+    try {
+      await borgApi.upsertProvider({
+        provider: editingProvider.provider,
+        apiKey,
+        enabled: current.enabled,
+      });
+      setEditingProvider(null);
+      setStatusMessage(
+        `${formatProviderName(editingProvider.provider)} updated`
+      );
+      await loadProviders();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Unable to update provider"
+      );
+    } finally {
+      setIsSavingEdit(false);
+    }
   };
 
   const providerRows = React.useMemo(
@@ -282,88 +313,77 @@ export function ProvidersPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Provider</TableHead>
+              <TableHead>Status</TableHead>
               <TableHead>Tokens Used</TableHead>
-              <TableHead>Token Rate</TableHead>
-              <TableHead>Models</TableHead>
-              <TableHead>Cost</TableHead>
-              <TableHead>Last Used On</TableHead>
-              <TableHead>Last Session</TableHead>
+              <TableHead>Last Used</TableHead>
+              <TableHead>Updated</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {providerRows.map((provider) => {
-              const providerKey = provider.provider;
-              const metrics = PROVIDER_METRICS[
-                providerKey as keyof typeof PROVIDER_METRICS
-              ] ?? {
-                providerLabel: formatProviderName(providerKey).toLowerCase(),
-                tokensUsed: "—",
-                tokenRate: "—",
-                models: [],
-                cost: "—",
-                lastUsedOn: "—",
-                lastSession: "—",
-              };
-              const isPaused = Boolean(pausedProviders[providerKey]);
-
-              return (
-                <TableRow key={providerKey}>
-                  <TableCell className="font-medium">
-                    <div className="flex items-center gap-2">
-                      <span>{metrics.providerLabel}</span>
-                      {isPaused ? (
-                        <Badge variant="outline">paused</Badge>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                  <TableCell>{metrics.tokensUsed}</TableCell>
-                  <TableCell>{metrics.tokenRate}</TableCell>
-                  <TableCell className="max-w-[280px]">
-                    <div className="flex flex-wrap gap-1">
-                      {metrics.models.length > 0
-                        ? metrics.models.map((model) => (
-                            <Badge key={model} variant="secondary">
-                              {model}
-                            </Badge>
-                          ))
-                        : "—"}
-                    </div>
-                  </TableCell>
-                  <TableCell>{metrics.cost}</TableCell>
-                  <TableCell>{metrics.lastUsedOn}</TableCell>
-                  <TableCell className="font-mono text-[11px]">
-                    {metrics.lastSession}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="icon-sm"
-                        variant="outline"
-                        onClick={() => void handleDisconnect(providerKey)}
-                        aria-label={`Disconnect ${metrics.providerLabel}`}
-                        title="Disconnect"
-                      >
-                        <Unplug className="size-3.5" />
-                      </Button>
-                      <Button
-                        size="icon-sm"
-                        variant="outline"
-                        onClick={() => handleTogglePause(providerKey)}
-                        aria-label={`${isPaused ? "Resume" : "Pause"} ${metrics.providerLabel}`}
-                        title={isPaused ? "Resume" : "Pause"}
-                      >
-                        {isPaused ? (
-                          <Play className="size-3.5" />
-                        ) : (
-                          <Pause className="size-3.5" />
-                        )}
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
+            {providerRows.map((provider) => (
+              <TableRow key={provider.provider}>
+                <TableCell className="font-medium">
+                  {formatProviderName(provider.provider)}
+                </TableCell>
+                <TableCell>
+                  <Badge variant={provider.enabled ? "secondary" : "outline"}>
+                    {provider.enabled ? "active" : "paused"}
+                  </Badge>
+                </TableCell>
+                <TableCell>{provider.tokens_used.toLocaleString()}</TableCell>
+                <TableCell>
+                  {provider.last_used
+                    ? new Date(provider.last_used).toLocaleString()
+                    : "—"}
+                </TableCell>
+                <TableCell>
+                  {new Date(provider.updated_at).toLocaleString()}
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="icon-sm"
+                      variant="outline"
+                      onClick={() =>
+                        setEditingProvider({
+                          provider: provider.provider,
+                          apiKey: provider.api_key,
+                        })
+                      }
+                      aria-label={`Edit ${formatProviderName(provider.provider)}`}
+                      title="Edit"
+                    >
+                      <Pencil className="size-3.5" />
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      variant="outline"
+                      onClick={() => void handleToggleEnabled(provider)}
+                      aria-label={`${provider.enabled ? "Pause" : "Resume"} ${formatProviderName(provider.provider)}`}
+                      title={provider.enabled ? "Pause" : "Resume"}
+                    >
+                      {provider.enabled ? (
+                        <Pause className="size-3.5" />
+                      ) : (
+                        <Play className="size-3.5" />
+                      )}
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      variant="outline"
+                      onClick={() =>
+                        void handleDeleteProvider(provider.provider)
+                      }
+                      aria-label={`Delete ${formatProviderName(provider.provider)}`}
+                      title="Delete"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
           </TableBody>
         </Table>
       )}
@@ -382,6 +402,53 @@ export function ProvidersPage() {
         onSaveOpenAi={handleSaveOpenAi}
         onSaveOpenRouter={handleSaveOpenRouter}
       />
+
+      <Dialog
+        open={editingProvider !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditingProvider(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Provider</DialogTitle>
+            <DialogDescription>
+              Update API key for{" "}
+              {editingProvider
+                ? formatProviderName(editingProvider.provider)
+                : "provider"}
+              .
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-3" onSubmit={handleSaveEditProvider}>
+            <div className="space-y-1">
+              <Label htmlFor="provider-api-key">API Key</Label>
+              <Input
+                id="provider-api-key"
+                type="password"
+                autoComplete="off"
+                value={editingProvider?.apiKey ?? ""}
+                onChange={(event) =>
+                  setEditingProvider((current) =>
+                    current
+                      ? { ...current, apiKey: event.currentTarget.value }
+                      : current
+                  )
+                }
+                placeholder="sk-..."
+              />
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={isSavingEdit}>
+                {isSavingEdit ? (
+                  <LoaderCircle className="size-4 animate-spin" />
+                ) : null}
+                Save Provider
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

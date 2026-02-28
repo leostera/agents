@@ -1,6 +1,9 @@
 export type ProviderRecord = {
   provider: string;
   api_key: string;
+  enabled: boolean;
+  tokens_used: number;
+  last_used?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -544,6 +547,24 @@ export class BorgApiClient {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ api_key: apiKey }),
     });
+  }
+
+  async upsertProvider(payload: {
+    provider: string;
+    apiKey: string;
+    enabled?: boolean;
+  }): Promise<void> {
+    await this.request(
+      `/api/providers/${encodeURIComponent(payload.provider)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          api_key: payload.apiKey,
+          enabled: payload.enabled,
+        }),
+      }
+    );
   }
 
   async listProviderModels(provider: string): Promise<string[]> {
