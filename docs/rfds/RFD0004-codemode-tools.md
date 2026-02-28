@@ -144,6 +144,12 @@ conversation, including tool calls:
   > tool resp(uTorrent / Get Torrent Status): { progress: 0.37, state: "downloading" }
 ```
 
+### Adding a new app without source access
+
+This model is explicitly designed so a Borg user can add integrations without touching Borg source code. The user flow is: create an App record, define its secrets, define one or more capabilities with clear instructions, connect the app in their workspace, and grant those capabilities to the target agent. After that, the agent discovers those capabilities through `findCapability(...)` and invokes them like any other capability.
+
+A practical example is adding an app called `MovieIndex` for legal torrent lookup. The operator creates the app, stores `MOVIEINDEX_API_KEY` in `app_secrets`, defines a capability such as `Search Legal Torrents` with `mode=codemode` and instructions that point to the provider SDK or API route, and then grants that capability to a specific agent. At runtime, when that agent receives a request like "download a movie", it can discover and invoke `MovieIndex / Search Legal Torrents` without any Borg rebuild.
+
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
@@ -161,7 +167,21 @@ The `app_connections` table stores connection context for a specific app in user
 
 The `capabilities` table stores the user-facing operations. Each row is bound to one app and defines its input/output contracts using JSON schema. The row also defines the execution mode (`builtin`, `codemode`, or `shell`) and carries an `execution_spec_json` payload that tells runtime how to execute that capability. Capability specs reference secrets by `secret_id`, not by raw key/value. In builtin mode, the spec points to a vetted internal handler. In codemode, it carries generation and runtime hints such as packages, required secret IDs and env names, and output expectations. In shell mode, it carries command template and sandbox constraints.
 
+The `agent_capability_grants` table binds capabilities to agents. A practical shape is `agent_id`, `capability_id`, `granted_by`, `created_at`, and optional scope fields. The runtime uses this table as the final filter for what an agent is allowed to discover and invoke.
+
 The `tool_calls` table is the execution trace log. It captures every internal invocation that occurs while fulfilling a capability call, including tool name, normalized input/output payloads, timing, status, and optional app/capability linkage. This table is the observability backbone for debugging and replay, and it is designed to work before any policy engine exists.
+
+### Control-plane creation order
+
+Creating a new integration without source changes should follow a fixed order so records are always valid and usable.
+
+1. Create `apps` row with identity and description.
+2. Create one or more `app_secrets` rows (`secret_id`, encrypted `value`, hint/key metadata).
+3. Create one or more `capabilities` rows bound to that app, with `execution_mode` and `execution_spec_json`.
+4. Create `app_connections` row for the target user/workspace, including non-secret config.
+5. Create `agent_capability_grants` row(s) for each agent that should use the capability.
+
+Once those rows exist, the capability is live for granted agents. No Borg source code or deploy is required for codemode/shell capabilities.
 
 ### Dispatch and execution
 
