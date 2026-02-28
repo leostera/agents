@@ -200,14 +200,14 @@ The chosen direction keeps `Apps expose Capabilities` as the product model and u
 ## Prior art
 [prior-art]: #prior-art
 
-The model follows established integration platforms where providers expose action catalogs and operators connect accounts separately from execution. It also aligns with modern agent systems that use code execution loops with package/docs/type retrieval to implement long-tail integrations without hardcoding every operation.
+The model follows established integration platforms where providers expose action catalogs and operators connect accounts separately from execution. It also aligns with modern agent systems that use code execution loops with package/docs/type retrieval to implement long-tail integrations without hardcoding every operation. A relevant example is Cloudflare's Code Mode write-up, which demonstrates the same general pattern of using code execution as an extension path when built-in surfaces are too narrow.
 
 ## Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-The main open questions are about strictness and boundaries rather than direction. We still need to decide how strict output schema enforcement should be in v0, whether app connections should default to user scope or workspace scope, what minimum redaction rules apply to trace payloads in `tool_calls`, and how ranking should behave when both builtin and codemode implementations can satisfy the same capability.
+The main open questions are about operational boundaries and lifecycle, not direction. We still need to decide how strict output schema enforcement should be in v0, whether app connections should default to user scope or workspace scope, what minimum redaction rules apply to trace payloads in `tool_calls`, and how ranking should behave when both builtin and codemode implementations can satisfy the same capability. We also need to settle capability versioning and compatibility rules, retry/timeout defaults per execution mode, and how secret resolution behaves when both app-level and connection-level values are present.
 
 ## Future possibilities
 [future-possibilities]: #future-possibilities
 
-Once this model is running in production, we can layer policy controls, capability composition, and promotion pipelines on top of it. That includes allow/deny and quota rules, reusable multi-capability plans, and automated pathways that graduate stable codemode patterns into builtin handlers. The same contract can also be opened to user-installed adapters later without changing the core product language.
+Once this model is running in production, we can layer capability grants for agents, policy controls, capability composition, and promotion pipelines on top of it. That includes explicit allowlists of which agents can invoke which capabilities, allow/deny and quota rules, reusable multi-capability plans, and automated pathways that graduate stable codemode patterns into builtin handlers. The same contract can also be opened to user-installed adapters later without changing the core product language.
