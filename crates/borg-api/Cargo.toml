@@ -10,7 +10,7 @@ borg-db = { path = "../borg-db" }
 borg-core = { path = "../borg-core" }
 borg-exec = { path = "../borg-exec" }
 borg-llm = { path = "../borg-llm" }
-borg-ltm = { path = "../borg-ltm" }
+borg-memory = { path = "../borg-memory" }
 borg-ports = { path = "../borg-ports" }
 serde.workspace = true
 serde_json.workspace = true

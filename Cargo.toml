@@ -2,13 +2,14 @@
 members = [
   "crates/borg-agent",
   "crates/borg-api",
+  "crates/borg-apps",
   "crates/borg-cli",
   "crates/borg-cmd",
   "crates/borg-core",
   "crates/borg-db",
   "crates/borg-exec",
   "crates/borg-llm",
-  "crates/borg-ltm",
+  "crates/borg-memory",
   "crates/borg-ports",
   "crates/borg-codemode",
 ]

@@ -112,7 +112,7 @@ fn execute_invalid_borgos_symbol_returns_corrective_hint() {
 }
 
 #[test]
-fn execute_surfaces_error_for_invalid_borg_ltm_namespace() {
+fn execute_surfaces_error_for_invalid_borg_memory_namespace() {
     let rt = CodeModeRuntime::default();
     let err = rt
         .execute(

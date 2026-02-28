@@ -74,7 +74,7 @@ impl IndraEntityGraph {
         })?;
 
         info!(
-            target: "borg_ltm",
+            target: "borg_memory",
             path = %graph_path.display(),
             "initialized indradb-backed entity graph"
         );
@@ -85,7 +85,7 @@ impl IndraEntityGraph {
     }
 
     pub(crate) async fn migrate(&self) -> Result<()> {
-        info!(target: "borg_ltm", "running entity-graph migrations");
+        info!(target: "borg_memory", "running entity-graph migrations");
         let db = self.db.lock().map_err(|_| anyhow!("ltm lock poisoned"))?;
 
         db.index_property(id("entity_id")?)?;
@@ -94,7 +94,7 @@ impl IndraEntityGraph {
         db.index_property(id("label")?)?;
         db.index_property(id("search_text")?)?;
 
-        info!(target: "borg_ltm", "entity-graph migrations completed");
+        info!(target: "borg_memory", "entity-graph migrations completed");
         Ok(())
     }
 
@@ -153,7 +153,7 @@ impl IndraEntityGraph {
             set_vertex_prop_string(&db, vertex_id, "natural_key", nk)?;
         }
 
-        debug!(target: "borg_ltm", entity_id, label, entity_type, "entity upsert committed");
+        debug!(target: "borg_memory", entity_id, label, entity_type, "entity upsert committed");
         Ok(entity_id)
     }
 
@@ -183,7 +183,7 @@ impl IndraEntityGraph {
             set_edge_prop_string(&db, &edge, "props_json", &props.to_string())?;
         }
 
-        info!(target: "borg_ltm", rel_id, rel_type, from = from_entity_id, to = to_entity_id, "relation linked");
+        info!(target: "borg_memory", rel_id, rel_type, from = from_entity_id, to = to_entity_id, "relation linked");
         Ok(rel_id)
     }
 
@@ -206,7 +206,7 @@ impl IndraEntityGraph {
     ) -> Result<Vec<Entity>> {
         let query = text.trim().to_lowercase();
         let limit = limit.max(1);
-        debug!(target: "borg_ltm", query, ?entity_type, limit, "running memory search");
+        debug!(target: "borg_memory", query, ?entity_type, limit, "running memory search");
 
         if query.is_empty() {
             return Ok(Vec::new());
@@ -590,6 +590,7 @@ fn fact_value_to_json(value: &FactValue) -> Value {
         FactValue::Boolean(v) => Value::Bool(*v),
         FactValue::Bytes(v) => Value::Array(v.iter().map(|b| Value::Number((*b).into())).collect()),
         FactValue::Ref(uri) => Value::String(uri.to_string()),
+        FactValue::Json(v) => v.clone(),
     }
 }
 

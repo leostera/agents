@@ -10,10 +10,11 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 borg-api = { path = "../borg-api" }
+borg-apps = { path = "../borg-apps" }
 borg-core = { path = "../borg-core" }
 borg-db = { path = "../borg-db" }
 borg-exec = { path = "../borg-exec" }
-borg-ltm = { path = "../borg-ltm" }
+borg-memory = { path = "../borg-memory" }
 borg-codemode = { path = "../borg-codemode" }
 clap.workspace = true
 tokio.workspace = true

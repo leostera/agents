@@ -2,11 +2,12 @@ use std::{io, io::Write};
 
 use anyhow::Result;
 use borg_api::BorgApiServer;
+use borg_apps::DefaultAppsCatalog;
 use borg_codemode::CodeModeRuntime;
 use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
 use borg_exec::ExecEngine;
-use borg_ltm::{FactInput, MemoryStore, SearchQuery};
+use borg_memory::{FactInput, MemoryStore, SearchQuery};
 use clap::{Parser, Subcommand};
 use reqwest::Client;
 use serde::Deserialize;
@@ -174,6 +175,13 @@ impl BorgCliApp {
         let db = self.open_config_db().await?;
         let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
         db.migrate().await?;
+        let app_seed_summary = DefaultAppsCatalog::new().install_missing(&db).await?;
+        info!(
+            target: "borg_cli",
+            apps_created = app_seed_summary.apps_created,
+            capabilities_created = app_seed_summary.capabilities_created,
+            "default apps reconciled"
+        );
         memory.migrate().await?;
 
         let memory_for_state_facts = memory.clone();
@@ -212,6 +220,13 @@ impl BorgCliApp {
         let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
 
         db.migrate().await?;
+        let app_seed_summary = DefaultAppsCatalog::new().install_missing(&db).await?;
+        info!(
+            target: "borg_cli",
+            apps_created = app_seed_summary.apps_created,
+            capabilities_created = app_seed_summary.capabilities_created,
+            "default apps reconciled"
+        );
         memory.migrate().await?;
         Ok(())
     }
@@ -584,7 +599,7 @@ struct CreateTaskResponse {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| {
-            "info,borg_cli=debug,borg_api=debug,borg_ports=debug,borg_db=debug,borg_exec=debug,borg_ltm=debug,borg_codemode=debug"
+            "info,borg_cli=debug,borg_api=debug,borg_ports=debug,borg_db=debug,borg_exec=debug,borg_memory=debug,borg_codemode=debug"
                 .to_string()
         }))
         .init();

@@ -41,7 +41,7 @@ pub struct MemoryStore {
     entity_graph: IndraEntityGraph,
     search_index: TantivySearchIndex,
     consolidate_tx: mpsc::Sender<FactRecord>,
-    shutdown_tx: watch::Sender<bool>,
+    shutdown_tx: std::sync::Arc<watch::Sender<bool>>,
 }
 
 impl MemoryStore {
@@ -56,6 +56,7 @@ impl MemoryStore {
         let search_index = TantivySearchIndex::new(&search_root)?;
         let (consolidate_tx, consolidate_rx) = mpsc::channel(CONSOLIDATION_BUFFER);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let shutdown_tx = std::sync::Arc::new(shutdown_tx);
 
         let store = Self {
             fact_store,
@@ -67,7 +68,7 @@ impl MemoryStore {
         store.start_consolidator(consolidate_rx, shutdown_rx);
 
         info!(
-            target: "borg_ltm",
+            target: "borg_memory",
             root = %root.display(),
             search_root = %search_root.display(),
             "initialized memory store with fact_store=sqlite entity_graph=indradb search_index=tantivy"
@@ -95,6 +96,26 @@ impl MemoryStore {
 
     pub async fn get_entity_uri(&self, entity_uri: &Uri) -> Result<Option<Entity>> {
         self.entity_graph.get_entity(entity_uri.as_str()).await
+    }
+
+    pub async fn get_fact(&self, fact_id: &str) -> Result<Option<FactRecord>> {
+        self.fact_store.load_fact(fact_id).await
+    }
+
+    pub async fn list_facts(
+        &self,
+        entity: Option<&Uri>,
+        field: Option<&Uri>,
+        include_retracted: bool,
+        limit: usize,
+    ) -> Result<Vec<FactRecord>> {
+        self.fact_store
+            .list_facts(entity, field, include_retracted, limit)
+            .await
+    }
+
+    pub async fn mark_facts_retracted(&self, fact_ids: &[String]) -> Result<u64> {
+        self.fact_store.mark_facts_retracted(fact_ids).await
     }
 
     pub async fn search_query(&self, query: SearchQuery) -> Result<SearchResults> {
@@ -273,7 +294,7 @@ impl MemoryStore {
                             break;
                         };
                         if let Err(err) = apply_projection(&graph, &index, &facts, fact).await {
-                            warn!(target: "borg_ltm", error = %err, "failed to project stated fact");
+                            warn!(target: "borg_memory", error = %err, "failed to project stated fact");
                         }
                     }
                 }
@@ -289,7 +310,7 @@ impl MemoryStore {
         if pending.is_empty() {
             return Ok(());
         }
-        debug!(target: "borg_ltm", pending = pending.len(), "replaying pending projection facts");
+        debug!(target: "borg_memory", pending = pending.len(), "replaying pending projection facts");
         for fact in pending {
             self.consolidate_tx
                 .send(fact)
@@ -302,7 +323,9 @@ impl MemoryStore {
 
 impl Drop for MemoryStore {
     fn drop(&mut self) {
-        let _ = self.shutdown_tx.send(true);
+        if std::sync::Arc::strong_count(&self.shutdown_tx) == 1 {
+            let _ = self.shutdown_tx.send(true);
+        }
     }
 }
 
@@ -397,7 +420,7 @@ impl BorgLtmServer {
 
     pub async fn run(mut self) -> Result<()> {
         self.store.migrate().await?;
-        info!(target: "borg_ltm", "ltm server started");
+        info!(target: "borg_memory", "ltm server started");
 
         while let Some(command) = self.command_rx.recv().await {
             match command {
@@ -416,7 +439,7 @@ impl BorgLtmServer {
             }
         }
 
-        info!(target: "borg_ltm", "ltm server stopped");
+        info!(target: "borg_memory", "ltm server stopped");
         Ok(())
     }
 }
@@ -552,7 +575,7 @@ mod tests {
 
     #[tokio::test]
     async fn state_facts_persists_and_can_query_entity() {
-        let (root, search) = temp_paths("borg-ltm-test");
+        let (root, search) = temp_paths("borg-memory-test");
         let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
         tokio::spawn(async move {
             server.run().await.unwrap();
@@ -587,7 +610,7 @@ mod tests {
 
     #[tokio::test]
     async fn server_exits_when_all_handles_are_dropped() {
-        let (root, search) = temp_paths("borg-ltm-server-exit");
+        let (root, search) = temp_paths("borg-memory-server-exit");
         let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
         let task = tokio::spawn(async move { server.run().await.unwrap() });
         drop(ltm);
@@ -599,7 +622,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_state_facts_are_processed() {
-        let (root, search) = temp_paths("borg-ltm-concurrent");
+        let (root, search) = temp_paths("borg-memory-concurrent");
         let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
         tokio::spawn(async move {
             server.run().await.unwrap();
@@ -641,7 +664,7 @@ mod tests {
 
     #[tokio::test]
     async fn merges_multiple_facts_into_single_entity_projection() {
-        let (root, search) = temp_paths("borg-ltm-merge");
+        let (root, search) = temp_paths("borg-memory-merge");
         let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
         tokio::spawn(async move {
             server.run().await.unwrap();
@@ -670,7 +693,7 @@ mod tests {
 
     #[tokio::test]
     async fn many_arity_accumulates_distinct_values_into_array() {
-        let (root, search) = temp_paths("borg-ltm-many-arity");
+        let (root, search) = temp_paths("borg-memory-many-arity");
         let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
         tokio::spawn(async move {
             server.run().await.unwrap();
@@ -723,7 +746,7 @@ mod tests {
 
     #[tokio::test]
     async fn replay_pending_projection_on_restart() {
-        let (root, search) = temp_paths("borg-ltm-replay");
+        let (root, search) = temp_paths("borg-memory-replay");
 
         let fact_store = super::fact_store::SqliteFactStore::new(&root).unwrap();
         fact_store.migrate().await.unwrap();
@@ -760,7 +783,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_filters_namespace_and_kind() {
-        let (root, search) = temp_paths("borg-ltm-filter");
+        let (root, search) = temp_paths("borg-memory-filter");
         let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
         tokio::spawn(async move {
             server.run().await.unwrap();
@@ -809,7 +832,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_query_by_exact_uri_returns_entity() {
-        let (root, search) = temp_paths("borg-ltm-exact-uri");
+        let (root, search) = temp_paths("borg-memory-exact-uri");
         let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
         tokio::spawn(async move {
             server.run().await.unwrap();
@@ -846,7 +869,7 @@ mod tests {
 
     #[tokio::test]
     async fn search_index_persists_across_server_restart() {
-        let (root, search) = temp_paths("borg-ltm-search-persist");
+        let (root, search) = temp_paths("borg-memory-search-persist");
 
         let (server_a, ltm_a) = BorgLtmServer::new(&root, &search).unwrap();
         let task_a = tokio::spawn(async move {

@@ -532,7 +532,7 @@ dependencies = [
  "borg-db",
  "borg-exec",
  "borg-llm",
- "borg-ltm",
+ "borg-memory",
  "borg-ports",
  "reqwest",
  "serde",
@@ -544,16 +544,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "borg-apps"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "borg-agent",
+ "borg-codemode",
+ "borg-core",
+ "borg-db",
+ "borg-memory",
+]
+
+[[package]]
 name = "borg-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "borg-api",
+ "borg-apps",
  "borg-codemode",
  "borg-core",
  "borg-db",
  "borg-exec",
- "borg-ltm",
+ "borg-memory",
  "clap",
  "reqwest",
  "serde",
@@ -625,7 +638,7 @@ dependencies = [
  "borg-core",
  "borg-db",
  "borg-llm",
- "borg-ltm",
+ "borg-memory",
  "serde",
  "serde_json",
  "tokio",
@@ -655,7 +668,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "borg-ltm"
+name = "borg-memory"
 version = "0.1.0"
 dependencies = [
  "anyhow",

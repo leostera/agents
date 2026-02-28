@@ -9,6 +9,7 @@ use std::{
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::query::Query;
 use sqlx::sqlite::{SqliteArguments, SqliteConnectOptions, SqliteRow};
 use sqlx::{Decode, Encode, Row, Sqlite, SqlitePool, Type};
@@ -122,7 +123,7 @@ impl_sql_bind_tuple!(A, B, C, D, E, F, G, H, I, J, K, L);
 impl_sql_bind_tuple!(A, B, C, D, E, F, G, H, I, J, K, L, M);
 impl_sql_bind_tuple!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Uri(Url);
 
 impl Uri {
@@ -159,7 +160,7 @@ impl Uri {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum FactValue {
     Text(String),
     Integer(i64),
@@ -167,6 +168,7 @@ pub enum FactValue {
     Boolean(bool),
     Bytes(Vec<u8>),
     Ref(Uri),
+    Json(Value),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -330,6 +332,64 @@ impl SqliteFactStore {
         Ok(None)
     }
 
+    pub(crate) async fn list_facts(
+        &self,
+        entity: Option<&Uri>,
+        field: Option<&Uri>,
+        include_retracted: bool,
+        limit: usize,
+    ) -> Result<Vec<FactRecord>> {
+        self.ensure_migrated().await?;
+        let conn = self.open_conn().await?;
+        let mut rows = conn
+            .query(
+                &format!(
+                    "SELECT fact_id, source, entity, field, arity, value_kind, value_text, value_int, value_float, value_bool, value_bytes, value_ref, tx_id, stated_at \
+                     FROM {} \
+                     WHERE (?1 IS NULL OR entity = ?1) \
+                       AND (?2 IS NULL OR field = ?2) \
+                       AND (?3 = 1 OR retracted_at IS NULL) \
+                     ORDER BY stated_at DESC \
+                     LIMIT ?4",
+                    FACTS_TABLE
+                ),
+                (
+                    entity.map(|value| value.to_string()),
+                    field.map(|value| value.to_string()),
+                    if include_retracted { 1_i64 } else { 0_i64 },
+                    i64::try_from(limit.max(1)).unwrap_or(1000),
+                ),
+            )
+            .await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            out.push(row_to_fact(&row)?);
+        }
+        Ok(out)
+    }
+
+    pub(crate) async fn mark_facts_retracted(&self, fact_ids: &[String]) -> Result<u64> {
+        self.ensure_migrated().await?;
+        if fact_ids.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open_conn().await?;
+        let now = Utc::now().to_rfc3339();
+        let mut affected = 0;
+        for fact_id in fact_ids {
+            affected += conn
+                .execute(
+                    &format!(
+                        "UPDATE {} SET retracted_at = ?1 WHERE fact_id = ?2 AND retracted_at IS NULL",
+                        FACTS_TABLE
+                    ),
+                    (now.clone(), fact_id.clone()),
+                )
+                .await?;
+        }
+        Ok(affected)
+    }
+
     pub(crate) async fn dequeue_projection_batch(&self, limit: usize) -> Result<Vec<FactRecord>> {
         self.ensure_migrated().await?;
         let conn = self.open_conn().await?;
@@ -376,7 +436,7 @@ impl SqliteFactStore {
 
     async fn migrate_inner(&self) -> Result<()> {
         info!(
-            target: "borg_ltm",
+            target: "borg_memory",
             path = %self.db_path.display(),
             "running fact-store migrations"
         );
@@ -416,7 +476,7 @@ impl SqliteFactStore {
         ).await?;
         self.ensure_arity_column(&conn).await?;
 
-        info!(target: "borg_ltm", "fact-store migrations completed");
+        info!(target: "borg_memory", "fact-store migrations completed");
         Ok(())
     }
 
@@ -484,6 +544,7 @@ fn encode_value(
         ),
         FactValue::Bytes(v) => ("bytes", None, None, None, None, Some(v.clone()), None),
         FactValue::Ref(v) => ("ref", None, None, None, None, None, Some(v.to_string())),
+        FactValue::Json(v) => ("json", Some(v.to_string()), None, None, None, None, None),
     }
 }
 
@@ -503,6 +564,9 @@ fn decode_value(
         "bool" => Ok(FactValue::Boolean(value_bool.unwrap_or_default() == 1)),
         "bytes" => Ok(FactValue::Bytes(value_bytes.unwrap_or_default())),
         "ref" => Ok(FactValue::Ref(Uri::parse(value_ref.unwrap_or_default())?)),
+        "json" => Ok(FactValue::Json(
+            serde_json::from_str(value_text.as_deref().unwrap_or("null"))?,
+        )),
         _ => Err(anyhow!("unsupported fact value kind: {}", kind)),
     }
 }
@@ -539,7 +603,7 @@ mod tests {
     use super::*;
 
     fn make_root() -> PathBuf {
-        let root = PathBuf::from(format!("/tmp/borg-ltm-fact-store-{}", Uuid::now_v7()));
+        let root = PathBuf::from(format!("/tmp/borg-memory-fact-store-{}", Uuid::now_v7()));
         std::fs::create_dir_all(&root).unwrap();
         root
     }

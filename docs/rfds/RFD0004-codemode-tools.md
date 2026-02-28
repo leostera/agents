@@ -18,7 +18,7 @@ like the `CodeMode.executeCode` tool. This is closer to "MCP Tool".
 ## Problem statement
 
 In the current model for borg, tools are hardcoded and provied by crates like
-borg-ltm and borg-rt. Borg LTM gives us access to `stateFacts` and
+borg-memory and borg-rt. Borg Memory gives us access to `stateFacts` and
 `searchMemory`, and Borg RT gives us tools like `executeCode`.
 
 This means that an agent cannot choose what tools it picks, it is given these

@@ -56,7 +56,7 @@ impl TantivySearchIndex {
 
     pub(crate) async fn migrate(&self) -> Result<()> {
         info!(
-            target: "borg_ltm",
+            target: "borg_memory",
             path = %self.path.display(),
             "tantivy search index ready"
         );
