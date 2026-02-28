@@ -8,8 +8,9 @@ Scope: builds, workspace wiring, and command expectations.
   - `bun run build:web`
 - Rust build:
   - `cargo build`
+  - Fast local path (auto-uses `sccache` when installed): `./cargo build -p borg-cli`
 - Full local build:
-  - `bun run build && cargo build -p borg-cli` (or equivalent sequence)
+  - `bun run build && ./cargo build -p borg-cli` (or equivalent sequence)
 
 ## Dev Commands
 
@@ -26,6 +27,11 @@ Scope: builds, workspace wiring, and command expectations.
 - Workspace-level Cargo config forces bundled RocksDB compilation via:
   - `.cargo/config.toml` with `ROCKSDB_COMPILE=1`
   - This avoids accidental linking to missing system `librocksdb.a` when global Cargo env overrides are present.
+- Workspace-level Cargo config also pins `PKG_CONFIG_PATH` to a stable value.
+  - This prevents repeated native crate invalidation (`libz-sys`, `libgit2-sys`) caused by shell-specific `PKG_CONFIG_PATH` drift.
+- Dev profile keeps dependency debuginfo disabled:
+  - `[profile.dev.package."*"] debug = 0`
+  - This shortens local rebuilds while preserving debuginfo for workspace crates.
 
 ## Commit Hygiene
 

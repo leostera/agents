@@ -1,5 +1,5 @@
 {
-  "name": "borg-web-monorepo",
+  "name": "borg",
   "private": true,
   "packageManager": "bun@1.2.20",
   "workspaces": [
