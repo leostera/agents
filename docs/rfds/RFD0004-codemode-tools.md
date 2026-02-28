@@ -1,6 +1,6 @@
-# RFD0004 - Connected Accounts, Declarative Tools, and CodeMode Package MCP
+# RFD0004 - Apps Expose Capabilities, Internal Tools Power Execution
 
-- Feature Name: `connected_accounts_declarative_tools`
+- Feature Name: `apps_capabilities_execution_runtime`
 - Start Date: `2026-02-28`
 - RFD PR: [leostera/borg#0000](https://github.com/leostera/borg/pull/0000)
 - Borg Issue: [leostera/borg#0000](https://github.com/leostera/borg/issues/0000)
@@ -8,229 +8,236 @@
 ## Summary
 [summary]: #summary
 
-Introduce a simple integrations model where:
+Adopt a product model where:
 
-1. Connected Accounts and Secrets provide credentials and OAuth tokens.
-2. Tools are declarative records in DB focused on retrieval/planning metadata (name, intent, pseudocode, package hints), not executable source.
-3. Execution is always CodeMode JavaScript in a V8 isolate.
-4. CodeMode gains an MCP-backed package discovery flow so the LLM can search npm/deno packages, read docs/API signatures, generate code, and execute it.
+1. **Apps** represent external integrations (uTorrent, SerpAPI, Google Calendar).
+2. **Capabilities** represent user-facing actions exposed by an App (`Add Torrent`, `Search Google`, `Create Calendar Event`).
+3. **Tools** are no longer user-facing product objects; they are internal runtime primitives (MCP/internal APIs like CodeMode, Shell, Task, Memory, Cron).
+4. Capability execution can be:
+   - **direct builtin handler**, or
+   - **indirect via internal tools** (primarily CodeMode, secondarily Shell).
+5. Every invocation is logged in a `tool_calls` table for replay, debugging, and future policy enforcement.
 
-This keeps tool behavior dynamic and configurable while keeping execution in one runtime path (CodeMode).
+This keeps the UX simple (`App / Capability`) while preserving execution flexibility.
 
 ## Motivation
 [motivation]: #motivation
 
-Borg needs first-class tools that agents can be constrained to, with secure integrations and predictable execution.
+Borg needs a clear model that users and operators can reason about quickly.
 
-Current pain points:
+Current confusion points:
 
-- Integrations need credentials and account linkage, but we do not yet model this cleanly.
-- We need dynamic tool definition/update without requiring deploys.
-- We need to keep execution safe and debuggable.
-- We want strong agent capability boundaries ("this agent can only do scheduling + CRM updates").
+- "Tool" means both product feature and runtime primitive.
+- Integrations need account + secret wiring, but execution paths vary.
+- We need dynamic coverage of long-tail integrations without building every provider as a first-class builtin.
+- We need full execution traces now, before introducing policy engines.
 
-If we keep all tools hardcoded, capability management becomes rigid.
-If we put full executable JS in rows, we lose too much operational control.
+This RFD separates concepts:
 
-This RFD proposes a simpler middle path: declarative tools in DB + CodeMode execution only.
+- Product surface: `Apps` + `Capabilities`
+- Runtime plumbing: internal `Tools`
 
 ## Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
 ### Mental model
 
-- **Connected Accounts**: "Who is connected to which provider?" (Google, Slack, etc).
-- **Secrets**: "What static credentials does Borg have?" (OAuth client secret, webhook secret, API keys).
-- **Tools**: "What actions exist and how to plan them?" (declarative shape in DB).
-- **Execution**: "How actions actually run." (always CodeMode JS in V8).
+- **App**: External system Borg can connect to.
+  - Examples: `uTorrent`, `SerpAPI`, `Google Calendar`.
+- **Capability**: Action an App exposes.
+  - Examples: `uTorrent / Add Torrent`, `SerpAPI / Search Google`.
+- **Internal Tool**: Borg runtime primitive used to execute capability logic.
+  - Examples: `CodeMode.runCode`, `Shell.execute`, `Task.createTask`, `Memory.search`.
 
-### Example: Google Calendar
+Users discover and invoke **Capabilities**. Borg decides how to run them.
 
-1. Operator configures Google OAuth client in Secrets.
-2. User connects Google account in Connected Accounts.
-3. Tool definition exists in DB (e.g. `google.calendar.create_event`) with:
-   - intent/pseudocode
-   - package/API hints
-   - required auth references
-4. Agent calls tool.
-5. Runtime retrieves/refreshes token from Connected Accounts and runs generated JS via CodeMode.
+### Capability discovery and execution flow
 
-No executable tool JS has to be stored in DB.
+1. User asks for intent.
+   - Example: "find a legal indie movie torrent and download it".
+2. Agent resolves best matching capability.
+   - Example result: `SerpAPI / Search Web`, `uTorrent / Add Torrent`, `uTorrent / Get Torrent Status`.
+3. Runtime checks capability execution mode.
+   - `builtin`: call built-in handler directly.
+   - `codemode`: execute generated JS through `CodeMode.runCode`.
+   - `shell`: fallback for CLI/system workflows.
+4. Runtime returns structured result to agent.
+5. Runtime writes invocation records to `tool_calls`.
 
-### CodeMode + MCP package workflow
+### Torrent walkthrough
 
-For tasks requiring package usage:
+Example target behavior:
 
-1. LLM calls a Package MCP tool (search npm/deno).
-2. LLM retrieves docs/API signatures.
-3. LLM generates CodeMode snippet.
-4. LLM executes snippet in existing V8 isolate runtime.
+1. Use `SerpAPI / Search Web` capability to find a legal `.torrent` or magnet source.
+2. Use `uTorrent / Add Torrent` capability to register it.
+3. Use `uTorrent / Get Torrent Status` capability to monitor progress.
 
-This keeps package discovery/documentation dynamic while preserving execution under existing sandbox constraints.
+Possible implementation mapping:
+
+- `SerpAPI / Search Web`: `codemode` execution (`fetch`/SDK call with `SERPAPI_API_KEY`).
+- `uTorrent / Add Torrent`: either `builtin` HTTP handler or `codemode` calling local `/gui` endpoint.
+- `uTorrent / Get Torrent Status`: same backend choice as above.
+
+User sees only capabilities; runtime may use one or more internal tools.
 
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
 ### Data model
 
-#### `code_locations`
+#### `apps`
 
-- `location_id` (URI)
-- `path` (absolute or BorgDir-relative)
-- `enabled`
-- `scan_kind` (initial: `local_fs`)
-- `created_at`, `updated_at`
-
-`code_locations` declares where Borg should scan for local code-defined tools.
-
-#### `connected_accounts`
-
-- `account_id` (URI)
-- `user_id` (URI)
-- `provider` (`google`, `github`, etc)
-- `external_account_id`
-- `scopes_json`
-- `token_json_encrypted` (access/refresh/expiry)
-- `status` (`active`, `revoked`, `expired`)
-- `created_at`, `updated_at`
-
-#### `secrets`
-
-- `secret_id` (URI)
-- `namespace` (e.g. `provider.google.oauth.client_secret`)
-- `value_encrypted`
-- `created_at`, `updated_at`
-
-#### `tools`
-
-- `tool_id` (URI, e.g. `borg:tool:<uuid>`)
-- `name` (stable human-readable identifier)
+- `app_id` (URI)
+- `name` (e.g. `uTorrent`, `SerpAPI`)
+- `slug` (stable identifier)
 - `description`
-- `intent_text` (what the tool is for, when to use it)
-- `pseudocode_text` (high-level steps the model should implement)
-- `package_hints_json` (npm/deno package names, URLs, preferred SDKs)
-- `auth_hints_json` (which connected account/secrets are expected)
+- `status` (`active`, `disabled`)
+- `created_at`, `updated_at`
+
+#### `app_connections`
+
+Represents account/config connectivity for an app in a user/workspace context.
+
+- `connection_id` (URI)
+- `app_id` (FK -> `apps`)
+- `user_id` (nullable depending on app scope)
+- `workspace_id` (nullable depending on scope)
+- `auth_kind` (`oauth`, `api_key`, `local_service`, `none`)
+- `auth_ref_json` (secret names/account refs; no raw secret values)
+- `config_json` (host/port/default paths/flags)
+- `status` (`connected`, `disconnected`, `error`)
+- `created_at`, `updated_at`
+
+#### `capabilities`
+
+User-facing operations exposed by apps.
+
+- `capability_id` (URI)
+- `app_id` (FK -> `apps`)
+- `name` (e.g. `Add Torrent`)
+- `slug` (e.g. `add_torrent`)
+- `description`
+- `input_schema_json` (JSON Schema)
+- `output_schema_json` (JSON Schema)
+- `execution_mode` (`builtin`, `codemode`, `shell`)
+- `execution_spec_json`
+  - `builtin`: handler identifier + mapping config
+  - `codemode`: prompt/spec template + package hints + env requirements
+  - `shell`: command template + sandbox constraints
 - `enabled`
 - `created_at`, `updated_at`
 
-#### Agent assignment
+#### `tool_calls`
 
-Agent specs continue to list allowed tools (by name or tool id).
-Runtime resolves those tools from DB and only exposes that set to the model.
+Audit log for all internal tool invocations during capability execution.
 
-### Local tools
+- `tool_call_id` (URI)
+- `session_id`
+- `task_id` (nullable)
+- `turn_id`
+- `app_id` (nullable)
+- `capability_id` (nullable)
+- `tool_name` (e.g. `CodeMode.runCode`, `uTorrent.addTorrentBuiltin`)
+- `invocation_mode` (`builtin`, `codemode`, `shell`)
+- `input_json`
+- `output_json`
+- `status` (`ok`, `error`, `timeout`)
+- `error_text` (nullable)
+- `started_at`
+- `finished_at`
+- `duration_ms`
 
-In addition to DB-declarative tools, Borg supports local filesystem tools.
+### Internal tools (non-product)
 
-A local tool is a directory containing:
+Built-in runtime tools remain first-class for orchestration:
 
-- `package.json`
-- `tool.js`
+- `CodeMode.*` (package discovery, type/example retrieval, code execution)
+- `Shell.*`
+- `Cron.*`
+- `Task.*`
+- `Memory.*`
 
-`package.json` provides metadata (name, description, version, intent hints, package hints).
-`tool.js` provides executable JS entrypoint for the tool.
+They are implementation details that capabilities can map to.
 
-Discovery flow:
+### Capability execution contract
 
-1. Load enabled `code_locations`.
-2. Scan directories for valid local tool packages.
-3. Validate metadata shape.
-4. Register tool in runtime registry (ephemeral) and/or sync into `tools` table as managed entries.
+Given `(app_id, capability_id, input)`:
 
-This allows contributors/operators to build tools by writing JS locally, while still using the same runtime policy and agent assignment model.
+1. Validate input against `input_schema_json`.
+2. Resolve connection/auth/config from `app_connections` + secrets/account refs.
+3. Dispatch by `execution_mode`.
+4. Validate output against `output_schema_json` (best effort initial phase).
+5. Persist `tool_calls` rows for each internal execution step.
+6. Return normalized output to agent.
 
-### Execution contract
+### CodeMode role
 
-Tool execution is unified:
+CodeMode is the primary path for long-tail integrations where no dedicated builtin exists.
 
-- all tool calls produce a CodeMode JS plan/snippet
-- snippet runs in `borg-rt` V8 isolate
-- snippet uses Borg SDK + package MCP context as needed
-- runtime enforces sandbox/policy/timeouts
+Expected CodeMode sequence for capability execution:
 
-### Auth contract
-
-Generated CodeMode snippets call SDK auth primitives:
-
-- `oauth:<provider>` -> token from Connected Accounts (refresh if needed)
-- `secret:<namespace>` -> static secret from Secrets
-
-### CodeMode MCP package capability
-
-Add MCP tools callable from CodeMode flow:
-
-- `package.search` (npm + deno)
-- `package.getDocs` (README/API examples/signatures)
-- `package.getTypes` (when available)
-
-Expected usage chain:
-
-1. discover package
-2. inspect docs/types
-3. generate code
-4. execute code in V8
+1. discover/select package(s)
+2. inspect docs/types/examples
+3. synthesize code from capability spec + input schema
+4. execute with scoped env/network/filesystem
+5. return structured JSON result
 
 ## Drawbacks
 [drawbacks]: #drawbacks
 
-- Adds new control-plane surfaces (accounts, secrets, tool registry).
-- Requires careful secret/token encryption and rotation policy.
-- Tool quality depends on prompt + metadata quality (intent/pseudocode/package hints).
+- More control-plane entities (`apps`, `capabilities`, `connections`) than a single tool table.
+- Requires strong schema discipline for consistent capability behavior.
+- Dynamic CodeMode-backed capabilities can be less predictable than dedicated builtins.
 
 ## Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-### Alternative A: Store executable `code_js` in `tools`
+### Alternative A: Keep "Tools" as user-facing concept
 
 Pros:
-- maximal flexibility
-- no deploy for behavior changes
+- simpler migration from current wording
 
 Cons:
-- weaker safety and auditability
-- harder compatibility/version management
-- easy to create brittle production behavior
+- persistent ambiguity between product tool and runtime tool
 
-Decision: rejected for default path.
+Decision: rejected.
 
-### Alternative B: Keep all tools hardcoded
+### Alternative B: Only builtin integrations
 
 Pros:
-- strong safety and maintainability
+- highest control and reliability
 
 Cons:
-- poor dynamic composition
-- slower product iteration
+- low extensibility
+- slower shipping for new providers
 
 Decision: rejected.
 
 ### Chosen approach
 
-Declarative DB tools + unified CodeMode execution gives:
-
-- dynamic capability management
-- strong runtime controls
-- clear migration path
+- Product: `Apps expose Capabilities`
+- Runtime: internal tool orchestration, mostly CodeMode for long-tail providers
+- Observability first via `tool_calls`
 
 ## Prior art
 [prior-art]: #prior-art
 
-- OAuth "connected account" patterns in SaaS integration platforms.
-- Declarative API actions in workflow tools (metadata in DB, execution in code).
-- MCP-style discovery/docs retrieval for model-guided coding workflows.
+- Integration platforms that expose provider-specific actions under connected apps.
+- Capability/action catalogs in workflow automation systems.
+- Model-driven code execution using package/docs/type retrieval before runtime execution.
 
 ## Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-- Should agent specs reference tools by `tool_id`, `name`, or both?
-- Which encryption backend/key management scheme do we use for `secrets` and token blobs?
-- Do we need per-tool rate limits and quotas in first release?
-- How strict should package MCP outputs be (only curated packages vs public registries)?
+- How strict should output schema validation be in v0 (`warn` vs `hard-fail`)?
+- Should `app_connections` be user-scoped, workspace-scoped, or both per app?
+- What is the minimum required redaction strategy for `input_json`/`output_json` in `tool_calls`?
+- How should capability discovery rank between builtin and CodeMode-backed options when both exist?
 
 ## Future possibilities
 [future-possibilities]: #future-possibilities
 
-- Optional "advanced mode" that allows signed/verified `code_js` tools.
-- Per-tenant BYO OAuth app credentials.
-- Tool execution trace table for full request/response audit.
-- Policy-aware tool gating by user/session/port.
+- Capability policy engine (allow/deny/rate limits by user, app, capability).
+- Capability composition graphs (multi-capability plans as reusable workflows).
+- Promotion pipeline from successful CodeMode executions to stable builtins.
+- User-installable external app adapters with the same capability contract.
