@@ -1,6 +1,7 @@
 [env]
 ROCKSDB_COMPILE = "1"
 ROCKSDB_INCLUDE_DIR = "rocksdb/include"
+DATABASE_URL = "sqlite://crates/borg-db/.sqlx-dev.db"
 # Keep pkg-config inputs stable across login shells to avoid native crate
 # fingerprint churn (notably libz-sys/libgit2-sys).
 PKG_CONFIG_PATH = { value = "", force = true }

@@ -7,12 +7,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
   Input,
   Label,
   Link,
@@ -24,8 +18,14 @@ import {
   TableRow,
   Textarea,
 } from "@borg/ui";
-import { LoaderCircle, Plus, Power, User } from "lucide-react";
+import { LoaderCircle, Plus, Power, Users } from "lucide-react";
 import React from "react";
+import {
+  Section,
+  SectionContent,
+  SectionEmpty,
+  SectionToolbar,
+} from "../../../components/Section";
 
 const borgApi = createBorgApiClient();
 
@@ -104,6 +104,7 @@ export function UsersPage() {
       return haystack.includes(term);
     });
   }, [users, query]);
+  const hasUsers = users.length > 0;
 
   const handleCreateUser = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -151,92 +152,90 @@ export function UsersPage() {
   };
 
   return (
-    <section className="space-y-4">
-      <section className="flex flex-wrap items-center gap-2">
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder="Search users by key or profile"
-          aria-label="Search users"
-          className="max-w-md"
-        />
-        <Button variant="outline" onClick={() => setIsDialogOpen(true)}>
-          <Plus className="size-4" />
-          Add User
-        </Button>
-      </section>
+    <Section className="gap-4">
+      {hasUsers ? (
+        <SectionToolbar>
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            placeholder="Search users by key or profile"
+            aria-label="Search users"
+            className="max-w-md"
+          />
+          <Button variant="outline" onClick={() => setIsDialogOpen(true)}>
+            <Plus className="size-4" />
+            Add User
+          </Button>
+        </SectionToolbar>
+      ) : null}
 
       {error ? <p className="text-destructive text-xs">{error}</p> : null}
 
-      {!isLoading && filteredUsers.length === 0 ? (
-        <Empty className="border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <User />
-            </EmptyMedia>
-            <EmptyTitle>No Users Found</EmptyTitle>
-            <EmptyDescription>
-              Create your first user profile to start sessions.
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent className="flex-row justify-center">
-            <Button onClick={() => setIsDialogOpen(true)}>+ Add User</Button>
-          </EmptyContent>
-        </Empty>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>User</TableHead>
-              <TableHead>Profile</TableHead>
-              <TableHead>Updated</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
+      <SectionContent>
+        {!isLoading && filteredUsers.length === 0 ? (
+          <SectionEmpty
+            icon={Users}
+            title="No Users Found"
+            description="Create your first user profile to start sessions."
+            action={
+              <Button onClick={() => setIsDialogOpen(true)}>+ Add User</Button>
+            }
+          />
+        ) : (
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell
-                  colSpan={4}
-                  className="text-muted-foreground text-center"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <LoaderCircle className="size-4 animate-spin" />
-                    Loading users...
-                  </span>
-                </TableCell>
+                <TableHead>User</TableHead>
+                <TableHead>Profile</TableHead>
+                <TableHead>Updated</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
-            ) : (
-              filteredUsers.map((user) => (
-                <TableRow key={user.user_key}>
-                  <TableCell className="font-mono text-[11px]">
-                    <Link href={`/control/users/${user.user_key}`}>
-                      {user.user_key}
-                    </Link>
-                  </TableCell>
-                  <TableCell className="font-mono text-[11px]">
-                    {JSON.stringify(user.profile)}
-                  </TableCell>
-                  <TableCell>
-                    {new Date(user.updated_at).toLocaleString()}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="icon-sm"
-                      variant="outline"
-                      onClick={() => void handleDisableUser(user.user_key)}
-                      aria-label={`Disable ${user.user_key}`}
-                      title="Disable user"
-                    >
-                      <Power className="size-3.5" />
-                    </Button>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={4}
+                    className="text-muted-foreground text-center"
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <LoaderCircle className="size-4 animate-spin" />
+                      Loading users...
+                    </span>
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      )}
+              ) : (
+                filteredUsers.map((user) => (
+                  <TableRow key={user.user_key}>
+                    <TableCell className="font-mono text-[11px]">
+                      <Link href={`/control/users/${user.user_key}`}>
+                        {user.user_key}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="font-mono text-[11px]">
+                      {JSON.stringify(user.profile)}
+                    </TableCell>
+                    <TableCell>
+                      {new Date(user.updated_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        onClick={() => void handleDisableUser(user.user_key)}
+                        aria-label={`Disable ${user.user_key}`}
+                        title="Disable user"
+                      >
+                        <Power className="size-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        )}
+      </SectionContent>
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="sm:max-w-xl">
@@ -288,6 +287,6 @@ export function UsersPage() {
           </form>
         </DialogContent>
       </Dialog>
-    </section>
+    </Section>
   );
 }
