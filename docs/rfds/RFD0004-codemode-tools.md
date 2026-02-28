@@ -62,7 +62,7 @@ Both Apps and Capabilities are _data_ in our system, backed by tables. Apps
 include information like what secrets they require, any docs about them. For
 example, the `uTorrent` app would look like this:
 
-```json
+```js
 {
   id: "borg:app:<uuid>",
   name: "uTorrent",
@@ -77,7 +77,7 @@ example, the `uTorrent` app would look like this:
       hint: "Use this tool to add torrents to an existing utorrent instance for downloading",
       mode: "codemode" (could be "shell" or "built-in"),
       secrets: ["UTORRENT_API"],
-      instructions: To call this API, use the `npm:@ctrl/utorrent` package.
+      instructions: `To call this API, use the npm:@ctrl/utorrent package.
 
 Example:
 
@@ -96,7 +96,7 @@ Example:
     }
 </code>
 
-"
+`
     },
     ...
   ]
