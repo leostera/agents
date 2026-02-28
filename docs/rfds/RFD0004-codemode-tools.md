@@ -205,7 +205,7 @@ The model follows established integration platforms where providers expose actio
 ## Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-The main open questions are about operational boundaries and lifecycle, not direction. We still need to decide how strict output schema enforcement should be in v0, whether app connections should default to user scope or workspace scope, what minimum redaction rules apply to trace payloads in `tool_calls`, and how ranking should behave when both builtin and codemode implementations can satisfy the same capability. We also need to settle capability versioning and compatibility rules, retry/timeout defaults per execution mode, and how secret resolution behaves when both app-level and connection-level values are present.
+The main open questions are about operational boundaries and lifecycle, not direction. In this model, capabilities provide instructions and CodeMode executes generated code, so the unresolved work is not schema enforcement but execution discipline: whether app connections should default to user scope or workspace scope, what minimum redaction rules apply to trace payloads in `tool_calls`, how ranking should behave when both builtin and codemode implementations can satisfy the same capability, how capability versioning and compatibility should be represented, what retry/timeout defaults should apply per execution mode, and how secret resolution should behave when both app-level and connection-level values are present.
 
 ## Future possibilities
 [future-possibilities]: #future-possibilities
