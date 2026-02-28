@@ -1,15 +1,8 @@
 import { type AgentSpecRecord, createBorgApiClient } from "@borg/api";
 import {
-  Badge,
   Button,
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
+  EntityLink,
   Input,
-  Link,
   Table,
   TableBody,
   TableCell,
@@ -17,8 +10,14 @@ import {
   TableHeader,
   TableRow,
 } from "@borg/ui";
-import { Bot, LoaderCircle, Plus, Power } from "lucide-react";
+import { Bot, LoaderCircle, Pencil, Plus, Power } from "lucide-react";
 import React from "react";
+import {
+  Section,
+  SectionContent,
+  SectionEmpty,
+  SectionToolbar,
+} from "../../../components/Section";
 import { AddAgentForm } from "./AddAgentForm";
 
 const borgApi = createBorgApiClient();
@@ -77,6 +76,7 @@ export function AgentsPage() {
       return haystack.includes(term);
     });
   }, [agents, query]);
+  const hasNoAgents = !isLoading && agents.length === 0;
 
   const handleCreateAgent = async (input: {
     agentId: string;
@@ -84,7 +84,6 @@ export function AgentsPage() {
     provider: string;
     model: string;
     systemPrompt: string;
-    tools: unknown;
   }) => {
     setError(null);
 
@@ -93,9 +92,9 @@ export function AgentsPage() {
       await borgApi.upsertAgentSpec({
         agentId: input.agentId,
         name: input.name,
+        defaultProviderId: input.provider,
         model: input.model.trim(),
         systemPrompt: input.systemPrompt,
-        tools: input.tools,
       });
       setIsDialogOpen(false);
       await loadAgents();
@@ -109,6 +108,11 @@ export function AgentsPage() {
       setIsSaving(false);
     }
   };
+
+  const navigateToAgentDetails = React.useCallback((agentId: string) => {
+    window.history.pushState(null, "", `/control/agents/${agentId}`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, []);
 
   const handleToggleAgentEnabled = async (
     agentId: string,
@@ -128,103 +132,122 @@ export function AgentsPage() {
   };
 
   return (
-    <section className="space-y-4">
-      <section className="flex flex-wrap items-center gap-2">
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder="Search agents by id, model, or prompt"
-          aria-label="Search agents"
-          className="max-w-md"
-        />
-        <Button variant="outline" onClick={() => setIsDialogOpen(true)}>
-          <Plus className="size-4" />
-          Add Agent
-        </Button>
-      </section>
+    <Section className="gap-4">
+      {hasNoAgents ? null : (
+        <SectionToolbar>
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            placeholder="Search agents by id, model, or prompt"
+            aria-label="Search agents"
+            className="max-w-md"
+          />
+          <Button variant="outline" onClick={() => setIsDialogOpen(true)}>
+            <Plus className="size-4" />
+            Add Agent
+          </Button>
+        </SectionToolbar>
+      )}
 
       {error ? <p className="text-destructive text-xs">{error}</p> : null}
 
-      {!isLoading && filteredAgents.length === 0 ? (
-        <Empty className="border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <Bot />
-            </EmptyMedia>
-            <EmptyTitle>No Agents Found</EmptyTitle>
-            <EmptyDescription>
-              Create your first agent to configure model, tools, and behavior.
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent className="flex-row justify-center">
-            <Button onClick={() => setIsDialogOpen(true)}>+ Add Agent</Button>
-          </EmptyContent>
-        </Empty>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Agent</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Model</TableHead>
-              <TableHead>Updated</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
+      <SectionContent>
+        {hasNoAgents ? (
+          <SectionEmpty
+            icon={Bot}
+            title="No Agents Found"
+            description="Create your first agent to configure model, tools, and behavior."
+            action={
+              <Button onClick={() => setIsDialogOpen(true)}>+ Add Agent</Button>
+            }
+          />
+        ) : (
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-muted-foreground text-center"
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <LoaderCircle className="size-4 animate-spin" />
-                    Loading agents...
-                  </span>
-                </TableCell>
+                <TableHead className="w-[44px]">Status</TableHead>
+                <TableHead>Agent</TableHead>
+                <TableHead>Model</TableHead>
+                <TableHead>Updated</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
-            ) : (
-              filteredAgents.map((agent) => (
-                <TableRow key={agent.agent_id}>
-                  <TableCell className="font-mono text-[11px]">
-                    <Link href={`/control/agents/${agent.agent_id}`}>
-                      {agent.agent_id}
-                    </Link>
-                  </TableCell>
-                  <TableCell>{agent.name || "Agent"}</TableCell>
-                  <TableCell>
-                    <Badge variant={agent.enabled ? "secondary" : "outline"}>
-                      {agent.enabled ? "Enabled" : "Disabled"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{agent.model}</TableCell>
-                  <TableCell>
-                    {new Date(agent.updated_at).toLocaleString()}
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="icon-sm"
-                      variant="outline"
-                      onClick={() =>
-                        void handleToggleAgentEnabled(
-                          agent.agent_id,
-                          agent.enabled
-                        )
-                      }
-                      aria-label={`${agent.enabled ? "Disable" : "Enable"} ${agent.agent_id}`}
-                      title={agent.enabled ? "Disable agent" : "Enable agent"}
-                    >
-                      <Power className="size-3.5" />
-                    </Button>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={5}
+                    className="text-muted-foreground text-center"
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <LoaderCircle className="size-4 animate-spin" />
+                      Loading agents...
+                    </span>
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      )}
+              ) : (
+                filteredAgents.map((agent) => (
+                  <TableRow
+                    key={agent.agent_id}
+                    className="cursor-pointer"
+                    onClick={() => navigateToAgentDetails(agent.agent_id)}
+                  >
+                    <TableCell>
+                      <span
+                        className={
+                          agent.enabled
+                            ? "inline-block size-2.5 rounded-full bg-emerald-500"
+                            : "inline-block size-2.5 rounded-full bg-rose-500"
+                        }
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <EntityLink
+                        uri={agent.agent_id}
+                        name={agent.name || "Agent"}
+                        className="inline-flex items-center gap-1"
+                      />
+                    </TableCell>
+                    <TableCell>{agent.model}</TableCell>
+                    <TableCell>
+                      {new Date(agent.updated_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="space-x-2">
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          navigateToAgentDetails(agent.agent_id);
+                        }}
+                        aria-label={`Edit ${agent.name || agent.agent_id}`}
+                        title="Edit agent"
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleToggleAgentEnabled(
+                            agent.agent_id,
+                            agent.enabled
+                          );
+                        }}
+                        aria-label={`${agent.enabled ? "Disable" : "Enable"} ${agent.agent_id}`}
+                        title={agent.enabled ? "Disable agent" : "Enable agent"}
+                      >
+                        <Power className="size-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        )}
+      </SectionContent>
 
       <AddAgentForm
         open={isDialogOpen}
@@ -232,6 +255,6 @@ export function AgentsPage() {
         isSaving={isSaving}
         onSubmit={handleCreateAgent}
       />
-    </section>
+    </Section>
   );
 }

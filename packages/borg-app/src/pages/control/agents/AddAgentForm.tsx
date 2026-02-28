@@ -1,6 +1,12 @@
 import { createBorgApiClient, type ProviderRecord } from "@borg/api";
 import {
   Button,
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -27,7 +33,6 @@ export type AddAgentInput = {
   provider: string;
   model: string;
   systemPrompt: string;
-  tools: unknown;
 };
 
 type AddAgentFormProps = {
@@ -42,7 +47,6 @@ type FormState = {
   provider: string;
   model: string;
   systemPrompt: string;
-  toolsJson: string;
 };
 
 const DEFAULT_FORM: FormState = {
@@ -50,7 +54,6 @@ const DEFAULT_FORM: FormState = {
   provider: "",
   model: "",
   systemPrompt: "",
-  toolsJson: "[]",
 };
 
 function createAgentUri(): string {
@@ -62,12 +65,6 @@ function createAgentUri(): string {
   }
   const fallback = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
   return `borg:agent:${fallback}`;
-}
-
-function parseToolsJson(raw: string): unknown {
-  const value = raw.trim();
-  if (!value) return [];
-  return JSON.parse(value);
 }
 
 export function AddAgentForm({
@@ -176,14 +173,6 @@ export function AddAgentForm({
     event.preventDefault();
     setError(null);
 
-    let tools: unknown;
-    try {
-      tools = parseToolsJson(form.toolsJson);
-    } catch {
-      setError("Tools must be valid JSON");
-      return;
-    }
-
     if (!form.provider) {
       setError("Connect a provider first");
       return;
@@ -199,7 +188,6 @@ export function AddAgentForm({
       provider: form.provider,
       model: form.model,
       systemPrompt: form.systemPrompt,
-      tools,
     });
   };
 
@@ -263,31 +251,31 @@ export function AddAgentForm({
 
             <div className="space-y-1">
               <Label>Model</Label>
-              <Select
-                value={form.model}
-                onValueChange={(value) =>
-                  setForm((current) => ({ ...current, model: value }))
+              <Combobox
+                items={models}
+                selectedValue={form.model || null}
+                onSelectedValueChange={(value) =>
+                  setForm((current) => ({ ...current, model: value ?? "" }))
                 }
               >
-                <SelectTrigger
-                  disabled={
-                    !form.provider || isLoadingModels || models.length === 0
+                <ComboboxInput
+                  disabled={!form.provider || isLoadingModels}
+                  placeholder={
+                    isLoadingModels ? "Loading models..." : "Select model"
                   }
-                >
-                  <SelectValue
-                    placeholder={
-                      isLoadingModels ? "Loading models..." : "Select model"
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map((model) => (
-                    <SelectItem key={model} value={model}>
-                      {model}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  showClear
+                />
+                <ComboboxContent>
+                  <ComboboxEmpty>No models found.</ComboboxEmpty>
+                  <ComboboxList>
+                    {(model) => (
+                      <ComboboxItem key={model} value={model}>
+                        {model}
+                      </ComboboxItem>
+                    )}
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
             </div>
           </div>
 
@@ -303,21 +291,6 @@ export function AddAgentForm({
                 }))
               }
               placeholder="You are a helpful assistant..."
-              rows={4}
-            />
-          </div>
-
-          <div className="space-y-1">
-            <Label htmlFor="agent-tools">Tools (JSON)</Label>
-            <Textarea
-              id="agent-tools"
-              value={form.toolsJson}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  toolsJson: event.currentTarget.value,
-                }))
-              }
               rows={4}
             />
           </div>

@@ -1,14 +1,26 @@
 import {
   type AgentSpecRecord,
   createBorgApiClient,
+  type ProviderRecord,
   type SessionRecord,
 } from "@borg/api";
 import {
   Badge,
   Button,
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
   Input,
   Label,
   Link,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Table,
   TableBody,
   TableCell,
@@ -17,7 +29,7 @@ import {
   TableRow,
   Textarea,
 } from "@borg/ui";
-import { LoaderCircle, Save, Trash2 } from "lucide-react";
+import { LoaderCircle, Power, Save } from "lucide-react";
 import React from "react";
 
 const borgApi = createBorgApiClient();
@@ -28,9 +40,9 @@ type AgentDetailsPageProps = {
 
 type AgentFormState = {
   name: string;
+  provider: string;
   model: string;
   systemPrompt: string;
-  toolsJson: string;
 };
 
 type SessionMessageRow = {
@@ -68,15 +80,52 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
   const [agent, setAgent] = React.useState<AgentSpecRecord | null>(null);
   const [form, setForm] = React.useState<AgentFormState>({
     name: "",
+    provider: "",
     model: "",
     systemPrompt: "",
-    toolsJson: "[]",
   });
+  const [providers, setProviders] = React.useState<ProviderRecord[]>([]);
+  const [models, setModels] = React.useState<string[]>([]);
+  const [isLoadingProviders, setIsLoadingProviders] = React.useState(false);
+  const [isLoadingModels, setIsLoadingModels] = React.useState(false);
   const [sessions, setSessions] = React.useState<SessionRecord[]>([]);
   const [messages, setMessages] = React.useState<SessionMessageRow[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  const loadModelsForProvider = React.useCallback(
+    async (provider: string, preferredModel?: string) => {
+      if (!provider) {
+        setModels([]);
+        setForm((current) => ({ ...current, model: "" }));
+        return;
+      }
+      setIsLoadingModels(true);
+      try {
+        const rows = await borgApi.listProviderModels(provider);
+        setModels(rows);
+        setForm((current) => ({
+          ...current,
+          model:
+            preferredModel && rows.includes(preferredModel)
+              ? preferredModel
+              : (rows[0] ?? ""),
+        }));
+      } catch (loadError) {
+        setModels([]);
+        setForm((current) => ({ ...current, model: "" }));
+        setError(
+          loadError instanceof Error
+            ? loadError.message
+            : "Unable to load provider models"
+        );
+      } finally {
+        setIsLoadingModels(false);
+      }
+    },
+    []
+  );
 
   const loadAgent = React.useCallback(async () => {
     if (!agentId.trim()) {
@@ -87,11 +136,13 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
     }
 
     setIsLoading(true);
+    setIsLoadingProviders(true);
     setError(null);
     try {
-      const [spec, recentSessions] = await Promise.all([
+      const [spec, recentSessions, providerRows] = await Promise.all([
         borgApi.getAgentSpec(agentId),
         borgApi.listSessions(200),
+        borgApi.listProviders(100),
       ]);
 
       if (!spec) {
@@ -101,12 +152,25 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
       }
 
       setAgent(spec);
+      setProviders(providerRows);
+      const resolvedProvider =
+        providerRows.find(
+          (provider) => provider.provider === spec.default_provider_id
+        )?.provider ??
+        providerRows[0]?.provider ??
+        "";
       setForm({
         name: spec.name || "Agent",
-        model: spec.model,
+        provider: resolvedProvider,
+        model: "",
         systemPrompt: spec.system_prompt,
-        toolsJson: JSON.stringify(spec.tools ?? [], null, 2),
       });
+      if (resolvedProvider) {
+        await loadModelsForProvider(resolvedProvider, spec.model);
+      } else {
+        setModels([]);
+        setForm((current) => ({ ...current, model: spec.model }));
+      }
 
       const sampledSessions = recentSessions.slice(0, 20);
       const messageResults = await Promise.all(
@@ -147,15 +211,18 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
       setMessages(matchedMessages.slice(0, 20));
     } catch (loadError) {
       setAgent(null);
+      setProviders([]);
+      setModels([]);
       setSessions([]);
       setMessages([]);
       setError(
         loadError instanceof Error ? loadError.message : "Unable to load agent"
       );
     } finally {
+      setIsLoadingProviders(false);
       setIsLoading(false);
     }
-  }, [agentId]);
+  }, [agentId, loadModelsForProvider]);
 
   React.useEffect(() => {
     void loadAgent();
@@ -164,12 +231,12 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
   const handleSave = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
-
-    let tools: unknown;
-    try {
-      tools = JSON.parse(form.toolsJson || "[]");
-    } catch {
-      setError("Tools must be valid JSON");
+    if (!form.provider) {
+      setError("Select a provider");
+      return;
+    }
+    if (!form.model) {
+      setError("Select a model");
       return;
     }
 
@@ -178,9 +245,9 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
       await borgApi.upsertAgentSpec({
         agentId,
         name: form.name.trim() || "Agent",
+        defaultProviderId: form.provider,
         model: form.model.trim(),
         systemPrompt: form.systemPrompt,
-        tools,
       });
       await loadAgent();
     } catch (saveError) {
@@ -195,14 +262,14 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
   const handleDisable = async () => {
     setError(null);
     try {
-      await borgApi.deleteAgentSpec(agentId, { ignoreNotFound: true });
-      window.history.pushState(null, "", "/control/agents");
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    } catch (deleteError) {
+      if (!agent) return;
+      await borgApi.setAgentSpecEnabled(agentId, !agent.enabled);
+      await loadAgent();
+    } catch (toggleError) {
       setError(
-        deleteError instanceof Error
-          ? deleteError.message
-          : "Unable to disable agent"
+        toggleError instanceof Error
+          ? toggleError.message
+          : "Unable to update agent status"
       );
     }
   };
@@ -220,12 +287,19 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
       <section className="space-y-3">
         <section className="flex items-center justify-between gap-2">
-          <Badge variant="outline" className="font-mono text-[11px]">
-            {agentId}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="font-mono text-[11px]">
+              {agentId}
+            </Badge>
+            {agent ? (
+              <Badge variant={agent.enabled ? "secondary" : "outline"}>
+                {agent.enabled ? "Enabled" : "Disabled"}
+              </Badge>
+            ) : null}
+          </div>
           <Button variant="outline" onClick={() => void handleDisable()}>
-            <Trash2 className="size-4" />
-            Disable
+            <Power className="size-4" />
+            {agent?.enabled ? "Disable" : "Enable"}
           </Button>
         </section>
 
@@ -248,18 +322,67 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="agent-model">Model</Label>
-              <Input
-                id="agent-model"
-                value={form.model}
-                onChange={(event) =>
+              <Label>Provider</Label>
+              <Select
+                value={form.provider}
+                onValueChange={(provider) => {
+                  setError(null);
                   setForm((current) => ({
                     ...current,
-                    model: event.currentTarget.value,
-                  }))
+                    provider,
+                    model: "",
+                  }));
+                  void loadModelsForProvider(provider);
+                }}
+              >
+                <SelectTrigger disabled={isLoadingProviders}>
+                  <SelectValue
+                    placeholder={
+                      isLoadingProviders
+                        ? "Loading providers..."
+                        : "Select provider"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {providers.map((provider) => (
+                    <SelectItem
+                      key={provider.provider}
+                      value={provider.provider}
+                    >
+                      {provider.provider}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Model</Label>
+              <Combobox
+                items={models}
+                selectedValue={form.model || null}
+                onSelectedValueChange={(value) =>
+                  setForm((current) => ({ ...current, model: value ?? "" }))
                 }
-                required
-              />
+              >
+                <ComboboxInput
+                  disabled={!form.provider || isLoadingModels}
+                  placeholder={
+                    isLoadingModels ? "Loading models..." : "Select model"
+                  }
+                  showClear
+                />
+                <ComboboxContent>
+                  <ComboboxEmpty>No models found.</ComboboxEmpty>
+                  <ComboboxList>
+                    {(model) => (
+                      <ComboboxItem key={model} value={model}>
+                        {model}
+                      </ComboboxItem>
+                    )}
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
             </div>
             <div className="space-y-1">
               <Label htmlFor="agent-system-prompt">System Prompt</Label>
@@ -275,21 +398,10 @@ export function AgentDetailsPage({ agentId }: AgentDetailsPageProps) {
                 rows={8}
               />
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="agent-tools">Tools (JSON)</Label>
-              <Textarea
-                id="agent-tools"
-                value={form.toolsJson}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    toolsJson: event.currentTarget.value,
-                  }))
-                }
-                rows={10}
-              />
-            </div>
-            <Button type="submit" disabled={isSaving}>
+            <Button
+              type="submit"
+              disabled={isSaving || !form.provider || !form.model}
+            >
               {isSaving ? (
                 <LoaderCircle className="size-4 animate-spin" />
               ) : (

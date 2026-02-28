@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{AgentTools, ContextWindow, Message, Session, SessionResult, ToolSpec};
-use borg_codemode::{CodeModeContext, CodeModeRuntime, default_tool_specs};
+use borg_codemode::{CodeModeContext, CodeModeRuntime};
 use borg_core::{
     Event, SessionContextSnapshot, SessionToolSchema, Task, TaskEvent, TaskKind, TaskStatus, Uri,
     uri,
@@ -10,7 +10,7 @@ use borg_llm::BorgLLM;
 use borg_llm::TranscriptionRequest;
 use borg_llm::providers::openai::{OpenAiApiMode, OpenAiProvider};
 use borg_llm::providers::openrouter::OpenRouterProvider;
-use borg_ltm::{MemoryStore, default_memory_tool_specs};
+use borg_memory::MemoryStore;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -400,22 +400,21 @@ impl BorgExecutor {
 
         let session = self.session_for_session_id(session_id).await?;
         let agent_id = session.agent.agent_id.clone();
-        let (system_prompt, tools) = if let Some(spec) = self.db.get_agent_spec(&agent_id).await? {
-            let merged_tools = match serde_json::from_value::<Vec<ToolSpec>>(spec.tools.clone()) {
-                Ok(existing_tools) => serde_json::to_value(merge_default_tools(existing_tools))?,
-                Err(_) => spec.tools.clone(),
+        let (system_prompt, default_provider_id) =
+            if let Some(spec) = self.db.get_agent_spec(&agent_id).await? {
+                (spec.system_prompt, spec.default_provider_id)
+            } else {
+                (session.agent.system_prompt.clone(), None)
             };
-            (spec.system_prompt, merged_tools)
-        } else {
-            let merged_tools = merge_default_tools(session.agent.tools.clone());
-            (
-                session.agent.system_prompt.clone(),
-                serde_json::to_value(&merged_tools)?,
-            )
-        };
 
         self.db
-            .upsert_agent_spec(&agent_id, "Default Agent", model, &system_prompt, &tools)
+            .upsert_agent_spec(
+                &agent_id,
+                "Default Agent",
+                default_provider_id.as_deref(),
+                model,
+                &system_prompt,
+            )
             .await?;
         Ok((agent_id, model.to_string()))
     }
@@ -1040,20 +1039,6 @@ fn tool_call_outcome(output: &borg_agent::ToolResultData) -> (bool, Option<Strin
         }
         _ => (true, None, None),
     }
-}
-
-fn merge_default_tools(existing: Vec<ToolSpec>) -> Vec<ToolSpec> {
-    let mut by_name: std::collections::BTreeMap<String, ToolSpec> = existing
-        .into_iter()
-        .map(|tool| (tool.name.clone(), tool))
-        .collect();
-    for tool in default_tool_specs()
-        .into_iter()
-        .chain(default_memory_tool_specs().into_iter())
-    {
-        by_name.insert(tool.name.clone(), tool);
-    }
-    by_name.into_values().collect()
 }
 
 fn to_session_tool_schema(tool: &ToolSpec) -> SessionToolSchema {

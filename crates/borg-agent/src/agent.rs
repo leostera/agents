@@ -84,11 +84,9 @@ impl Agent {
 
     pub async fn load(agent_id: &Uri, db: &BorgDb) -> Result<Self> {
         if let Some(spec) = db.get_agent_spec(agent_id).await? {
-            let tools: Vec<ToolSpec> = serde_json::from_value(spec.tools)?;
             return Ok(Self::new(spec.agent_id)
                 .with_model(spec.model)
-                .with_system_prompt(spec.system_prompt)
-                .with_tools(tools));
+                .with_system_prompt(spec.system_prompt));
         }
 
         if agent_id.as_str() == DEFAULT_AGENT_ID {

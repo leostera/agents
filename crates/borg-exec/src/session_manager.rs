@@ -3,7 +3,7 @@ use borg_agent::{Agent, Message, Session, SessionContextManager, SessionEventPay
 use borg_codemode::default_tool_specs;
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
-use borg_ltm::default_memory_tool_specs;
+use borg_memory::default_memory_tool_specs;
 use std::sync::Arc;
 
 use crate::types::UserMessage;
@@ -28,11 +28,10 @@ impl SessionManager {
         let agent_id = self.resolve_agent_id(msg, &session_id).await?;
         let mut agent = Agent::load(&agent_id, &self.db).await?;
         if let Some(spec) = self.db.get_agent_spec(&agent_id).await? {
-            let tools: Vec<ToolSpec> = serde_json::from_value(spec.tools)?;
             agent = agent
                 .with_model(spec.model)
                 .with_system_prompt(spec.system_prompt)
-                .with_tools(ensure_default_tools(tools));
+                .with_tools(ensure_default_tools(Vec::new()));
         } else {
             agent = agent
                 .with_model(self.model.clone())

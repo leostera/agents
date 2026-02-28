@@ -137,9 +137,10 @@ pub struct NewTask {
 pub struct AgentSpecRecord {
     pub agent_id: Uri,
     pub name: String,
+    pub enabled: bool,
+    pub default_provider_id: Option<String>,
     pub model: String,
     pub system_prompt: String,
-    pub tools: Value,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -249,6 +250,7 @@ pub struct AppRecord {
     pub slug: String,
     pub description: String,
     pub status: String,
+    pub built_in: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -27,6 +27,7 @@ export type AppRecord = {
   slug: string;
   description: string;
   status: string;
+  built_in: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -75,9 +76,9 @@ export type AgentSpecRecord = {
   agent_id: string;
   name: string;
   enabled: boolean;
+  default_provider_id?: string | null;
   model: string;
   system_prompt: string;
-  tools: unknown;
   updated_at: string;
 };
 
@@ -528,9 +529,9 @@ export class BorgApiClient {
   async upsertAgentSpec(payload: {
     agentId: string;
     name: string;
+    defaultProviderId?: string | null;
     model: string;
     systemPrompt: string;
-    tools: unknown;
   }): Promise<void> {
     await this.request(
       `/api/agents/specs/${encodeURIComponent(payload.agentId)}`,
@@ -539,9 +540,9 @@ export class BorgApiClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           name: payload.name,
+          default_provider_id: payload.defaultProviderId ?? null,
           model: payload.model,
           system_prompt: payload.systemPrompt,
-          tools: payload.tools,
         }),
       }
     );

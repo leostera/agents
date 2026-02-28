@@ -1,5 +1,5 @@
 import { createI18n } from "@borg/i18n";
-import { Card } from "@borg/ui";
+import { Card, TooltipProvider } from "@borg/ui";
 import React, { useMemo } from "react";
 import { DashboardApp } from "./DashboardApp";
 
@@ -24,13 +24,15 @@ export function App() {
 
   if (pathname === ONBOARD_PATH) {
     return (
-      <section className="p-6">
-        <Card title="Onboarding">
-          <p className="text-sm text-muted-foreground">
-            Onboarding is being rebuilt in `borg-app`.
-          </p>
-        </Card>
-      </section>
+      <TooltipProvider>
+        <section className="p-6">
+          <Card title="Onboarding">
+            <p className="text-sm text-muted-foreground">
+              Onboarding is being rebuilt in `borg-app`.
+            </p>
+          </Card>
+        </section>
+      </TooltipProvider>
     );
   }
 
@@ -42,14 +44,20 @@ export function App() {
       (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
     )
   ) {
-    return <DashboardApp />;
+    return (
+      <TooltipProvider>
+        <DashboardApp />
+      </TooltipProvider>
+    );
   }
 
   return (
-    <section className="card">
-      <p className="notice-error">
-        {i18n.t("web.unknown_route")}: {pathname}
-      </p>
-    </section>
+    <TooltipProvider>
+      <section className="card">
+        <p className="notice-error">
+          {i18n.t("web.unknown_route")}: {pathname}
+        </p>
+      </section>
+    </TooltipProvider>
   );
 }

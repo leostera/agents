@@ -210,9 +210,9 @@ async fn session_resumes_same_agent_id_when_message_omits_agent() {
     db.upsert_agent_spec(
         &custom_agent,
         "Support Agent",
+        Some("openai"),
         "gpt-4o-mini",
         "You are support.",
-        &json!([]),
     )
     .await
     .unwrap();
@@ -399,17 +399,12 @@ async fn set_model_for_session_updates_existing_agent_spec_and_preserves_fields(
         uri!("borg", "worker", "set-model-existing"),
     );
     let default_agent_id = uri!("borg", "agent", "default");
-    let existing_tools = json!([{
-        "name": "tool-a",
-        "description": "demo",
-        "parameters": { "type": "object" }
-    }]);
     db.upsert_agent_spec(
         &default_agent_id,
         "Default Agent",
+        Some("openrouter"),
         "gpt-4o-mini",
         "Keep this system prompt.",
-        &existing_tools,
     )
     .await
     .unwrap();
@@ -426,12 +421,7 @@ async fn set_model_for_session_updates_existing_agent_spec_and_preserves_fields(
     let updated = db.get_agent_spec(&default_agent_id).await.unwrap().unwrap();
     assert_eq!(updated.model, "openai/gpt-4.1-mini");
     assert_eq!(updated.system_prompt, "Keep this system prompt.");
-    assert!(
-        updated
-            .tools
-            .as_array()
-            .is_some_and(|tools| tools.iter().any(|tool| tool["name"] == "tool-a"))
-    );
+    assert_eq!(updated.default_provider_id.as_deref(), Some("openrouter"));
 }
 
 #[tokio::test]
@@ -457,12 +447,7 @@ async fn set_model_for_session_creates_default_agent_spec_when_missing() {
     let created = db.get_agent_spec(&agent_id).await.unwrap().unwrap();
     assert_eq!(created.model, "openai/gpt-4.1-nano");
     assert!(!created.system_prompt.is_empty());
-    assert!(
-        created
-            .tools
-            .as_array()
-            .is_some_and(|tools| !tools.is_empty())
-    );
+    assert_eq!(created.default_provider_id, None);
 }
 
 #[tokio::test]

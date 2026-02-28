@@ -31,6 +31,9 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - `port_settings` stores runtime defaults under `port=runtime` (for example `preferred_provider`).
 - `port_bindings` stores `port + conversation_key -> session_id (+ optional agent_id)`.
 - `port_session_ctx` stores port-owned per-session context snapshots (`port + session_id -> ctx_json`).
+- `agent_specs` includes `enabled` for soft-disabling agent definitions without deleting rows.
+- `agent_specs.default_provider_id` stores the preferred provider key for provider-first model selection in control UI.
+- `agent_specs` no longer persists per-agent `tools_json`; runtime toolchain is composed from default code+memory tools.
 - Telegram port refreshes known session context snapshots on startup (best-effort chat/admin hydration).
 - Onboarding persists provider key via `POST /api/providers/:provider` and updates runtime preferred provider.
 - Provider precedence is env-first: `BORG_LLM_PROVIDER` overrides persisted `runtime/preferred_provider`.
@@ -40,6 +43,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - `POST /ports/http` should return resolved `session_id` and `reply` (task ID optional).
 - `X-Borg-Session-Id` header should be set on successful response.
 - Invalid URI inputs at API boundary must fail with structured 400.
+- Agent soft-disable endpoint is `PUT /api/agents/specs/:agent_id/enabled` with `{ "enabled": boolean }`.
 - Code-mode filesystem API is `Borg.OS.ls(...)` (not `BorgOs.ls(...)`).
 - Telegram command `/model` supports:
   - `/model` to show current `agent_id` + model for the chat session.
