@@ -5,7 +5,7 @@ use borg_llm::{LlmRequest, Provider, ProviderBlock, StopReason};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::info;
-use tracing::{Instrument, info_span, warn};
+use tracing::{Instrument, error, info_span, warn};
 
 use crate::{
     AgentTools, Session, SessionOutput, SessionResult, ToolCallRecord, ToolResultData, ToolSpec,
@@ -261,13 +261,21 @@ impl Agent {
                         assistant_message.stop_reason,
                         StopReason::Aborted | StopReason::Error
                     ) {
+                        let session_error_message = assistant_message
+                            .error_message
+                            .clone()
+                            .unwrap_or_else(|| "assistant aborted or errored".to_string());
+                        error!(
+                            target: "borg_agent",
+                            session_id = %session.session_id,
+                            stop_reason = ?assistant_message.stop_reason,
+                            block_count = assistant_message.content.len(),
+                            error = session_error_message.as_str(),
+                            "assistant turn ended with error stop reason"
+                        );
                         return finish_session(
                             session,
-                            SessionResult::SessionError(
-                                assistant_message
-                                    .error_message
-                                    .unwrap_or_else(|| "assistant aborted or errored".to_string()),
-                            ),
+                            SessionResult::SessionError(session_error_message),
                         )
                         .await;
                     }

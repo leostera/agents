@@ -99,12 +99,20 @@ fn app_router(state: AppState) -> Router {
             "/api/observability/llm-calls",
             get(DbController::list_llm_calls),
         )
+        .route(
+            "/api/observability/llm-calls/:call_id",
+            get(DbController::get_llm_call),
+        )
         .route("/api/providers", get(DbController::list_providers))
         .route(
             "/api/providers/:provider",
             get(DbController::get_provider)
                 .put(DbController::upsert_provider)
                 .delete(DbController::delete_provider),
+        )
+        .route(
+            "/api/providers/:provider/models",
+            get(DbController::list_provider_models),
         )
         .route(
             "/api/providers/openai/device-code/start",
@@ -166,32 +174,32 @@ fn app_router(state: AppState) -> Router {
                 .delete(DbController::delete_session_message),
         )
         .route(
-            "/api/ports/:port",
-            axum::routing::delete(DbController::delete_port),
+            "/api/ports/:port_uri",
+            put(DbController::upsert_port).delete(DbController::delete_port),
         )
         .route("/api/ports", get(DbController::list_ports))
         .route(
-            "/api/ports/:port/settings",
+            "/api/ports/:port_uri/settings",
             get(DbController::list_port_settings),
         )
         .route(
-            "/api/ports/:port/settings/:key",
+            "/api/ports/:port_uri/settings/:key",
             get(DbController::get_port_setting)
                 .put(DbController::upsert_port_setting)
                 .delete(DbController::delete_port_setting),
         )
         .route(
-            "/api/ports/:port/bindings",
+            "/api/ports/:port_uri/bindings",
             get(DbController::list_port_bindings),
         )
         .route(
-            "/api/ports/:port/bindings/:conversation_key",
+            "/api/ports/:port_uri/bindings/:conversation_key",
             get(DbController::get_port_binding)
                 .put(DbController::upsert_port_binding)
                 .delete(DbController::delete_port_binding),
         )
         .route(
-            "/api/ports/:port/sessions/:session_id/context",
+            "/api/ports/:port_uri/sessions/:session_id/context",
             get(DbController::get_port_session_context)
                 .put(DbController::upsert_port_session_context)
                 .delete(DbController::delete_port_session_context),
@@ -600,19 +608,34 @@ mod tests {
         let (status, _) = request_json(
             &app,
             Method::PUT,
-            "/api/ports/telegram/settings/bot_token",
+            "/api/ports/borg:port:telegram",
+            json!({
+                "provider":"telegram",
+                "enabled": true,
+                "allows_guests": true,
+                "settings": {}
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/ports/borg:port:telegram/settings/bot_token",
             json!({"value":"123:abc"}),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
 
         let (status, body) =
-            request_no_body(&app, Method::GET, "/api/ports/telegram/settings/bot_token").await;
+            request_no_body(&app, Method::GET, "/api/ports/borg:port:telegram/settings/bot_token")
+                .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["value"], "123:abc");
 
         let (status, body) =
-            request_no_body(&app, Method::GET, "/api/ports/telegram/settings").await;
+            request_no_body(&app, Method::GET, "/api/ports/borg:port:telegram/settings").await;
         assert_eq!(status, StatusCode::OK);
         assert!(body["settings"].as_array().is_some_and(|v| !v.is_empty()));
 
@@ -621,7 +644,7 @@ mod tests {
         let ports = body["ports"].as_array().expect("ports array");
         let telegram = ports
             .iter()
-            .find(|port| port["port"] == "telegram")
+            .find(|port| port["port_name"] == "telegram")
             .expect("telegram port row");
         assert_eq!(telegram["provider"], "telegram");
         assert!(telegram["enabled"].is_boolean());
@@ -630,12 +653,13 @@ mod tests {
         let (status, _) = request_no_body(
             &app,
             Method::DELETE,
-            "/api/ports/telegram/settings/bot_token",
+            "/api/ports/borg:port:telegram/settings/bot_token",
         )
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
 
-        let (status, _) = request_no_body(&app, Method::DELETE, "/api/ports/telegram").await;
+        let (status, _) = request_no_body(&app, Method::DELETE, "/api/ports/borg:port:telegram")
+            .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
     }
 
@@ -645,7 +669,7 @@ mod tests {
         let (status, _) = request_json(
             &app,
             Method::PUT,
-            "/api/ports/telegram/bindings/borg:user:chat1",
+            "/api/ports/borg:port:telegram/bindings/borg:user:chat1",
             json!({
                 "session_id":"borg:session:s1",
                 "agent_id":"borg:agent:default"
@@ -657,21 +681,21 @@ mod tests {
         let (status, body) = request_no_body(
             &app,
             Method::GET,
-            "/api/ports/telegram/bindings/borg:user:chat1",
+            "/api/ports/borg:port:telegram/bindings/borg:user:chat1",
         )
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["binding"]["session_id"], "borg:session:s1");
 
         let (status, body) =
-            request_no_body(&app, Method::GET, "/api/ports/telegram/bindings").await;
+            request_no_body(&app, Method::GET, "/api/ports/borg:port:telegram/bindings").await;
         assert_eq!(status, StatusCode::OK);
         assert!(body["bindings"].as_array().is_some_and(|v| !v.is_empty()));
 
         let (status, _) = request_json(
             &app,
             Method::PUT,
-            "/api/ports/telegram/sessions/borg:session:s1/context",
+            "/api/ports/borg:port:telegram/sessions/borg:session:s1/context",
             json!({"ctx":{"chat_id":"123"}}),
         )
         .await;
@@ -680,7 +704,7 @@ mod tests {
         let (status, body) = request_no_body(
             &app,
             Method::GET,
-            "/api/ports/telegram/sessions/borg:session:s1/context",
+            "/api/ports/borg:port:telegram/sessions/borg:session:s1/context",
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -694,7 +718,7 @@ mod tests {
         let (status, _) = request_no_body(
             &app,
             Method::DELETE,
-            "/api/ports/telegram/sessions/borg:session:s1/context",
+            "/api/ports/borg:port:telegram/sessions/borg:session:s1/context",
         )
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
@@ -702,7 +726,7 @@ mod tests {
         let (status, _) = request_no_body(
             &app,
             Method::DELETE,
-            "/api/ports/telegram/bindings/borg:user:chat1",
+            "/api/ports/borg:port:telegram/bindings/borg:user:chat1",
         )
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
@@ -878,17 +902,27 @@ mod tests {
     async fn ports_negative_paths() {
         let app = test_app("ports-negative").await;
         let (status, _) =
-            request_no_body(&app, Method::GET, "/api/ports/telegram/settings/missing").await;
+            request_no_body(
+                &app,
+                Method::GET,
+                "/api/ports/borg:port:telegram/settings/missing",
+            )
+            .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
 
         let (status, _) =
-            request_no_body(&app, Method::GET, "/api/ports/telegram/bindings/not-a-uri").await;
+            request_no_body(
+                &app,
+                Method::GET,
+                "/api/ports/borg:port:telegram/bindings/not-a-uri",
+            )
+            .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
 
         let (status, _) = request_no_body(
             &app,
             Method::GET,
-            "/api/ports/telegram/sessions/not-a-uri/context",
+            "/api/ports/borg:port:telegram/sessions/not-a-uri/context",
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);

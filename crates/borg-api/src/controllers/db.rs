@@ -2,7 +2,7 @@ use axum::{
     Json,
     extract::{Path as AxumPath, Query, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use borg_core::Config;
 use reqwest::Client;
@@ -38,6 +38,17 @@ pub(crate) struct PortBindingsQuery {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct UpsertPortRequest {
+    provider: String,
+    enabled: bool,
+    allows_guests: bool,
+    #[serde(default)]
+    default_agent_id: Option<String>,
+    #[serde(default)]
+    settings: Option<Value>,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct UpsertProviderRequest {
     api_key: String,
     #[serde(default)]
@@ -51,6 +62,8 @@ pub(crate) struct UpsertPolicyRequest {
 
 #[derive(Deserialize)]
 pub(crate) struct UpsertAgentSpecRequest {
+    #[serde(default)]
+    name: Option<String>,
     model: String,
     system_prompt: String,
     tools: Value,
@@ -111,6 +124,42 @@ pub(crate) struct UpsertPortSessionContextRequest {
 pub(crate) struct DbController;
 
 impl DbController {
+    fn default_models_for_provider(provider: &str) -> &'static [&'static str] {
+        match provider {
+            "openai" => &["gpt-5.3-codex", "gpt-4o-mini"],
+            "openrouter" => &["openai/gpt-4o-mini", "meta-llama/3.3-70b-instruct"],
+            _ => &[],
+        }
+    }
+
+    fn fallback_agent_name(agent_id: &str) -> String {
+        if agent_id == "borg:agent:default" {
+            return "Default Agent".to_string();
+        }
+        let tail = agent_id.rsplit(':').next().unwrap_or(agent_id);
+        if tail.is_empty() {
+            "Agent".to_string()
+        } else {
+            tail.to_string()
+        }
+    }
+
+    fn port_name_from_uri(port_uri: &str) -> Result<String, Response> {
+        let port_id = parse_uri_field("port_uri", port_uri)?;
+        let raw = port_id.to_string();
+        let mut parts = raw.splitn(3, ':');
+        let ns = parts.next().unwrap_or_default();
+        let kind = parts.next().unwrap_or_default();
+        let id = parts.next().unwrap_or_default();
+        if ns != "borg" || kind != "port" || id.trim().is_empty() {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "port_uri must be in the format borg:port:<name>".to_string(),
+            ));
+        }
+        Ok(id.to_string())
+    }
+
     pub(crate) async fn list_llm_calls(
         State(state): State<AppState>,
         Query(query): Query<LimitQuery>,
@@ -118,6 +167,17 @@ impl DbController {
         let limit = query.limit.unwrap_or(500);
         match state.db.list_llm_calls(limit).await {
             Ok(calls) => (StatusCode::OK, Json(json!({ "llm_calls": calls }))).into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn get_llm_call(
+        State(state): State<AppState>,
+        AxumPath(call_id): AxumPath<String>,
+    ) -> impl IntoResponse {
+        match state.db.get_llm_call(&call_id).await {
+            Ok(Some(call)) => (StatusCode::OK, Json(json!({ "llm_call": call }))).into_response(),
+            Ok(None) => api_error(StatusCode::NOT_FOUND, "llm call not found".to_string()),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
         }
     }
@@ -220,6 +280,23 @@ impl DbController {
         (
             StatusCode::OK,
             Json(json!({ "ok": true, "device_code": payload })),
+        )
+            .into_response()
+    }
+
+    pub(crate) async fn list_provider_models(
+        AxumPath(provider): AxumPath<String>,
+    ) -> impl IntoResponse {
+        let models = Self::default_models_for_provider(&provider);
+        if models.is_empty() {
+            return api_error(StatusCode::NOT_FOUND, "provider not found".to_string());
+        }
+        (
+            StatusCode::OK,
+            Json(json!({
+                "provider": provider,
+                "models": models,
+            })),
         )
             .into_response()
     }
@@ -389,10 +466,17 @@ impl DbController {
             Ok(v) => v,
             Err(err) => return err,
         };
+        let name = payload
+            .name
+            .clone()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| Self::fallback_agent_name(&agent_id.to_string()));
         match state
             .db
             .upsert_agent_spec(
                 &agent_id,
+                &name,
                 &payload.model,
                 &payload.system_prompt,
                 &payload.tools,
@@ -808,13 +892,60 @@ impl DbController {
         }
     }
 
+    pub(crate) async fn upsert_port(
+        State(state): State<AppState>,
+        AxumPath(port_uri): AxumPath<String>,
+        Json(payload): Json<UpsertPortRequest>,
+    ) -> impl IntoResponse {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
+        let default_agent_id = match payload.default_agent_id {
+            Some(raw) if raw.trim().is_empty() => None,
+            Some(raw) => match parse_uri_field("default_agent_id", raw.trim()) {
+                Ok(uri) => Some(uri),
+                Err(err) => return err,
+            },
+            None => None,
+        };
+        let settings = payload.settings.unwrap_or_else(|| json!({}));
+
+        match state
+            .db
+            .upsert_port(
+                &port_name,
+                &payload.provider,
+                payload.enabled,
+                payload.allows_guests,
+                default_agent_id.as_ref(),
+                &settings,
+            )
+            .await
+        {
+            Ok(()) => match state
+                .ports_supervisor
+                .on_port_setting_changed(&port_name, "provider")
+                .await
+            {
+                Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+                Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            },
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    }
+
     pub(crate) async fn list_port_settings(
         State(state): State<AppState>,
-        AxumPath(port): AxumPath<String>,
+        AxumPath(port_uri): AxumPath<String>,
         Query(query): Query<PortSettingsQuery>,
     ) -> impl IntoResponse {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
         let limit = query.limit.unwrap_or(200);
-        match state.db.list_port_settings(&port, limit).await {
+        match state.db.list_port_settings(&port_name, limit).await {
             Ok(items) => {
                 let settings: Vec<Value> = items
                     .into_iter()
@@ -828,12 +959,16 @@ impl DbController {
 
     pub(crate) async fn delete_port(
         State(state): State<AppState>,
-        AxumPath(port): AxumPath<String>,
+        AxumPath(port_uri): AxumPath<String>,
     ) -> impl IntoResponse {
-        match state.db.delete_port(&port).await {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
+        match state.db.delete_port(&port_name).await {
             Ok(()) => match state
                 .ports_supervisor
-                .on_port_setting_changed(&port, "enabled")
+                .on_port_setting_changed(&port_name, "enabled")
                 .await
             {
                 Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -845,12 +980,16 @@ impl DbController {
 
     pub(crate) async fn get_port_setting(
         State(state): State<AppState>,
-        AxumPath((port, key)): AxumPath<(String, String)>,
+        AxumPath((port_uri, key)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
-        match state.db.get_port_setting(&port, &key).await {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
+        match state.db.get_port_setting(&port_name, &key).await {
             Ok(Some(value)) => (
                 StatusCode::OK,
-                Json(json!({ "port": port, "key": key, "value": value })),
+                Json(json!({ "port": port_name, "key": key, "value": value })),
             )
                 .into_response(),
             Ok(None) => api_error(StatusCode::NOT_FOUND, "port setting not found".to_string()),
@@ -860,17 +999,21 @@ impl DbController {
 
     pub(crate) async fn upsert_port_setting(
         State(state): State<AppState>,
-        AxumPath((port, key)): AxumPath<(String, String)>,
+        AxumPath((port_uri, key)): AxumPath<(String, String)>,
         Json(payload): Json<UpsertPortSettingRequest>,
     ) -> impl IntoResponse {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
         match state
             .db
-            .upsert_port_setting(&port, &key, &payload.value)
+            .upsert_port_setting(&port_name, &key, &payload.value)
             .await
         {
             Ok(()) => match state
                 .ports_supervisor
-                .on_port_setting_changed(&port, &key)
+                .on_port_setting_changed(&port_name, &key)
                 .await
             {
                 Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
@@ -882,13 +1025,17 @@ impl DbController {
 
     pub(crate) async fn delete_port_setting(
         State(state): State<AppState>,
-        AxumPath((port, key)): AxumPath<(String, String)>,
+        AxumPath((port_uri, key)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
-        match state.db.delete_port_setting(&port, &key).await {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
+        match state.db.delete_port_setting(&port_name, &key).await {
             Ok(0) => api_error(StatusCode::NOT_FOUND, "port setting not found".to_string()),
             Ok(_) => match state
                 .ports_supervisor
-                .on_port_setting_changed(&port, &key)
+                .on_port_setting_changed(&port_name, &key)
                 .await
             {
                 Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -900,11 +1047,15 @@ impl DbController {
 
     pub(crate) async fn list_port_bindings(
         State(state): State<AppState>,
-        AxumPath(port): AxumPath<String>,
+        AxumPath(port_uri): AxumPath<String>,
         Query(query): Query<PortBindingsQuery>,
     ) -> impl IntoResponse {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
         let limit = query.limit.unwrap_or(200);
-        match state.db.list_port_bindings(&port, limit).await {
+        match state.db.list_port_bindings(&port_name, limit).await {
             Ok(items) => {
                 let bindings: Vec<Value> = items
                     .into_iter()
@@ -924,15 +1075,19 @@ impl DbController {
 
     pub(crate) async fn get_port_binding(
         State(state): State<AppState>,
-        AxumPath((port, conversation_key)): AxumPath<(String, String)>,
+        AxumPath((port_uri, conversation_key)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
         let conversation_key = match parse_uri_field("conversation_key", &conversation_key) {
             Ok(v) => v,
             Err(err) => return err,
         };
         match state
             .db
-            .get_port_binding_record(&port, &conversation_key)
+            .get_port_binding_record(&port_name, &conversation_key)
             .await
         {
             Ok(Some((conversation_key, session_id, agent_id))) => (
@@ -953,9 +1108,13 @@ impl DbController {
 
     pub(crate) async fn upsert_port_binding(
         State(state): State<AppState>,
-        AxumPath((port, conversation_key)): AxumPath<(String, String)>,
+        AxumPath((port_uri, conversation_key)): AxumPath<(String, String)>,
         Json(payload): Json<UpsertPortBindingRequest>,
     ) -> impl IntoResponse {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
         let conversation_key = match parse_uri_field("conversation_key", &conversation_key) {
             Ok(v) => v,
             Err(err) => return err,
@@ -974,7 +1133,12 @@ impl DbController {
 
         match state
             .db
-            .upsert_port_binding_record(&port, &conversation_key, &session_id, agent_id.as_ref())
+            .upsert_port_binding_record(
+                &port_name,
+                &conversation_key,
+                &session_id,
+                agent_id.as_ref(),
+            )
             .await
         {
             Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
@@ -984,13 +1148,21 @@ impl DbController {
 
     pub(crate) async fn delete_port_binding(
         State(state): State<AppState>,
-        AxumPath((port, conversation_key)): AxumPath<(String, String)>,
+        AxumPath((port_uri, conversation_key)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
         let conversation_key = match parse_uri_field("conversation_key", &conversation_key) {
             Ok(v) => v,
             Err(err) => return err,
         };
-        match state.db.delete_port_binding(&port, &conversation_key).await {
+        match state
+            .db
+            .delete_port_binding(&port_name, &conversation_key)
+            .await
+        {
             Ok(0) => api_error(StatusCode::NOT_FOUND, "port binding not found".to_string()),
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
@@ -999,16 +1171,20 @@ impl DbController {
 
     pub(crate) async fn get_port_session_context(
         State(state): State<AppState>,
-        AxumPath((port, session_id)): AxumPath<(String, String)>,
+        AxumPath((port_uri, session_id)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
         let session_id = match parse_uri_field("session_id", &session_id) {
             Ok(v) => v,
             Err(err) => return err,
         };
-        match state.db.get_port_session_context(&port, &session_id).await {
+        match state.db.get_port_session_context(&port_name, &session_id).await {
             Ok(Some(ctx)) => (
                 StatusCode::OK,
-                Json(json!({ "port": port, "session_id": session_id, "ctx": ctx })),
+                Json(json!({ "port": port_name, "session_id": session_id, "ctx": ctx })),
             )
                 .into_response(),
             Ok(None) => api_error(
@@ -1021,16 +1197,20 @@ impl DbController {
 
     pub(crate) async fn upsert_port_session_context(
         State(state): State<AppState>,
-        AxumPath((port, session_id)): AxumPath<(String, String)>,
+        AxumPath((port_uri, session_id)): AxumPath<(String, String)>,
         Json(payload): Json<UpsertPortSessionContextRequest>,
     ) -> impl IntoResponse {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
         let session_id = match parse_uri_field("session_id", &session_id) {
             Ok(v) => v,
             Err(err) => return err,
         };
         match state
             .db
-            .upsert_port_session_context(&port, &session_id, &payload.ctx)
+            .upsert_port_session_context(&port_name, &session_id, &payload.ctx)
             .await
         {
             Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
@@ -1040,15 +1220,19 @@ impl DbController {
 
     pub(crate) async fn delete_port_session_context(
         State(state): State<AppState>,
-        AxumPath((port, session_id)): AxumPath<(String, String)>,
+        AxumPath((port_uri, session_id)): AxumPath<(String, String)>,
     ) -> impl IntoResponse {
+        let port_name = match Self::port_name_from_uri(&port_uri) {
+            Ok(port_name) => port_name,
+            Err(err) => return err,
+        };
         let session_id = match parse_uri_field("session_id", &session_id) {
             Ok(v) => v,
             Err(err) => return err,
         };
         match state
             .db
-            .clear_port_session_context(&port, &session_id)
+            .clear_port_session_context(&port_name, &session_id)
             .await
         {
             Ok(0) => api_error(

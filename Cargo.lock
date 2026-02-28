@@ -626,14 +626,17 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "borg-core",
  "chrono",
  "reqwest",
  "serde",
  "serde_json",
+ "sqlx",
  "testcontainers",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

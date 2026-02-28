@@ -117,6 +117,18 @@ impl BorgExecutor {
         port: &str,
         mut msg: UserMessage,
     ) -> Result<SessionTurnOutput> {
+        let port_config = self.db.get_port(port).await?;
+        if let Some(config) = &port_config {
+            if !config.enabled {
+                return Err(anyhow!("port is disabled"));
+            }
+            if !config.allows_guests
+                && !self.is_allowed_external_user(config.provider.as_str(), &config.settings, &msg)
+            {
+                return Err(anyhow!("guest access is disabled for this port"));
+            }
+        }
+
         let (session_id, bound_agent_id) = self
             .db
             .resolve_port_session(
@@ -128,7 +140,11 @@ impl BorgExecutor {
             .await?;
         msg.session_id = Some(session_id.clone());
         if msg.agent_id.is_none() {
-            msg.agent_id = bound_agent_id;
+            msg.agent_id = bound_agent_id.or_else(|| {
+                port_config
+                    .as_ref()
+                    .and_then(|config| config.default_agent_id.clone())
+            });
         }
 
         info!(
@@ -162,6 +178,43 @@ impl BorgExecutor {
                 })
                 .unwrap_or_default(),
         })
+    }
+
+    fn is_allowed_external_user(
+        &self,
+        provider: &str,
+        settings: &Value,
+        msg: &UserMessage,
+    ) -> bool {
+        let Some(allowed_ids) = settings
+            .as_object()
+            .and_then(|map| map.get("allowed_external_user_ids"))
+            .and_then(Value::as_array)
+        else {
+            return false;
+        };
+
+        let external_user_id = self.external_user_id(provider, msg);
+        let Some(external_user_id) = external_user_id else {
+            return false;
+        };
+
+        allowed_ids
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|value| value == external_user_id)
+    }
+
+    fn external_user_id(&self, provider: &str, msg: &UserMessage) -> Option<String> {
+        match provider {
+            "telegram" => msg
+                .metadata
+                .as_object()
+                .and_then(|obj| obj.get("sender_id"))
+                .and_then(Value::as_u64)
+                .map(|sender_id| format!("telegram:user:{sender_id}")),
+            _ => None,
+        }
     }
 
     pub async fn get_task_events(&self, task_id: &Uri) -> Result<Vec<TaskEvent>> {
@@ -257,7 +310,7 @@ impl BorgExecutor {
         };
 
         self.db
-            .upsert_agent_spec(&agent_id, model, &system_prompt, &tools)
+            .upsert_agent_spec(&agent_id, "Default Agent", model, &system_prompt, &tools)
             .await?;
         Ok((agent_id, model.to_string()))
     }
@@ -577,9 +630,21 @@ impl BorgExecutor {
         {
             SessionResult::Completed(Ok(output)) => output,
             SessionResult::Completed(Err(err)) => {
+                error!(
+                    target: "borg_exec",
+                    session_id = %session_id,
+                    error = err.as_str(),
+                    "agent session completed with error"
+                );
                 return Err(anyhow!("agent session completed with error: {}", err));
             }
             SessionResult::SessionError(err) => {
+                error!(
+                    target: "borg_exec",
+                    session_id = %session_id,
+                    error = err.as_str(),
+                    "agent session errored"
+                );
                 return Err(anyhow!("agent session error: {}", err));
             }
             SessionResult::Idle => {

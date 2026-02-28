@@ -30,6 +30,7 @@ export type SessionResponse = {
 
 export type AgentSpecRecord = {
   agent_id: string;
+  name: string;
   model: string;
   system_prompt: string;
   tools: unknown;
@@ -69,9 +70,13 @@ export type PortSetting = {
 };
 
 export type PortRecord = {
+  port_id: string;
   provider: string;
-  port: string;
+  port_name: string;
   enabled: boolean;
+  allows_guests: boolean;
+  default_agent_id?: string | null;
+  settings: Record<string, unknown>;
   active_sessions: number;
   updated_at?: string | null;
 };
@@ -96,6 +101,11 @@ export type PortBinding = {
 
 export type PortBindingsResponse = {
   bindings?: PortBinding[];
+};
+
+export type ProviderModelsResponse = {
+  provider?: string;
+  models?: string[];
 };
 
 export type MemoryEntity = {
@@ -137,10 +147,17 @@ export type LlmCallRecord = {
   latency_ms?: number | null;
   sent_at: string;
   received_at?: string | null;
+  request_json: unknown;
+  response_json: unknown;
+  response_body: string;
 };
 
 export type LlmCallsResponse = {
   llm_calls?: LlmCallRecord[];
+};
+
+export type LlmCallResponse = {
+  llm_call?: LlmCallRecord;
 };
 
 export class BorgApiError extends Error {
@@ -309,6 +326,7 @@ export class BorgApiClient {
 
   async upsertAgentSpec(payload: {
     agentId: string;
+    name: string;
     model: string;
     systemPrompt: string;
     tools: unknown;
@@ -319,6 +337,7 @@ export class BorgApiClient {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          name: payload.name,
           model: payload.model,
           system_prompt: payload.systemPrompt,
           tools: payload.tools,
@@ -410,9 +429,9 @@ export class BorgApiClient {
     }
   }
 
-  async listPortSettings(port: string, limit = 200): Promise<PortSetting[]> {
+  async listPortSettings(portUri: string, limit = 200): Promise<PortSetting[]> {
     const data = await this.requestJson<PortSettingsResponse>(
-      `/api/ports/${encodeURIComponent(port)}/settings?limit=${limit}`
+      `/api/ports/${encodeURIComponent(portUri)}/settings?limit=${limit}`
     );
     return Array.isArray(data.settings) ? data.settings : [];
   }
@@ -424,12 +443,29 @@ export class BorgApiClient {
     return Array.isArray(data.ports) ? data.ports : [];
   }
 
+  async upsertPort(
+    portUri: string,
+    payload: {
+      provider: string;
+      enabled: boolean;
+      allows_guests: boolean;
+      default_agent_id?: string | null;
+      settings?: Record<string, unknown>;
+    }
+  ): Promise<void> {
+    await this.request(`/api/ports/${encodeURIComponent(portUri)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
   async deletePort(
-    port: string,
+    portUri: string,
     options: { ignoreNotFound?: boolean } = {}
   ): Promise<void> {
     try {
-      await this.request(`/api/ports/${encodeURIComponent(port)}`, {
+      await this.request(`/api/ports/${encodeURIComponent(portUri)}`, {
         method: "DELETE",
       });
     } catch (error) {
@@ -444,10 +480,10 @@ export class BorgApiClient {
     }
   }
 
-  async getPortSetting(port: string, key: string): Promise<string | null> {
+  async getPortSetting(portUri: string, key: string): Promise<string | null> {
     try {
       const data = await this.requestJson<PortSettingResponse>(
-        `/api/ports/${encodeURIComponent(port)}/settings/${encodeURIComponent(key)}`
+        `/api/ports/${encodeURIComponent(portUri)}/settings/${encodeURIComponent(key)}`
       );
       return typeof data.value === "string" ? data.value : null;
     } catch (error) {
@@ -459,12 +495,12 @@ export class BorgApiClient {
   }
 
   async upsertPortSetting(
-    port: string,
+    portUri: string,
     key: string,
     value: string
   ): Promise<void> {
     await this.request(
-      `/api/ports/${encodeURIComponent(port)}/settings/${encodeURIComponent(key)}`,
+      `/api/ports/${encodeURIComponent(portUri)}/settings/${encodeURIComponent(key)}`,
       {
         method: "PUT",
         headers: { "content-type": "application/json" },
@@ -474,13 +510,13 @@ export class BorgApiClient {
   }
 
   async deletePortSetting(
-    port: string,
+    portUri: string,
     key: string,
     options: { ignoreNotFound?: boolean } = {}
   ): Promise<void> {
     try {
       await this.request(
-        `/api/ports/${encodeURIComponent(port)}/settings/${encodeURIComponent(key)}`,
+        `/api/ports/${encodeURIComponent(portUri)}/settings/${encodeURIComponent(key)}`,
         { method: "DELETE" }
       );
     } catch (error) {
@@ -495,9 +531,9 @@ export class BorgApiClient {
     }
   }
 
-  async listPortBindings(port: string, limit = 200): Promise<PortBinding[]> {
+  async listPortBindings(portUri: string, limit = 200): Promise<PortBinding[]> {
     const data = await this.requestJson<PortBindingsResponse>(
-      `/api/ports/${encodeURIComponent(port)}/bindings?limit=${limit}`
+      `/api/ports/${encodeURIComponent(portUri)}/bindings?limit=${limit}`
     );
     return Array.isArray(data.bindings) ? data.bindings : [];
   }
@@ -508,6 +544,13 @@ export class BorgApiClient {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ api_key: apiKey }),
     });
+  }
+
+  async listProviderModels(provider: string): Promise<string[]> {
+    const data = await this.requestJson<ProviderModelsResponse>(
+      `/api/providers/${encodeURIComponent(provider)}/models`
+    );
+    return Array.isArray(data.models) ? data.models : [];
   }
 
   async deleteProvider(
@@ -590,6 +633,20 @@ export class BorgApiClient {
       `/api/observability/llm-calls?limit=${limit}`
     );
     return Array.isArray(data.llm_calls) ? data.llm_calls : [];
+  }
+
+  async getLlmCall(callId: string): Promise<LlmCallRecord | null> {
+    try {
+      const data = await this.requestJson<LlmCallResponse>(
+        `/api/observability/llm-calls/${encodeURIComponent(callId)}`
+      );
+      return data.llm_call ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
   }
 }
 

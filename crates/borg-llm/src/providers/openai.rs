@@ -254,7 +254,8 @@ impl Provider for OpenAiProvider {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let error_message = format!("openai audio transcriptions returned {}", status);
-            call.failed(Some(status), None, Some(body.as_str()), &error_message);
+            call.failed(Some(status), None, Some(body.as_str()), &error_message)
+                .await;
             error!(
                 target: "borg_llm",
                 status = %status,
@@ -265,7 +266,7 @@ impl Provider for OpenAiProvider {
         }
 
         let payload: Value = response.json().await?;
-        call.succeeded(status, &payload);
+        call.succeeded(status, &payload).await;
         let text = payload
             .get("text")
             .and_then(Value::as_str)
@@ -333,7 +334,8 @@ impl OpenAiProvider {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let error_message = format!("openai chat completions returned {}", status);
-            call.failed(Some(status), None, Some(body.as_str()), &error_message);
+            call.failed(Some(status), None, Some(body.as_str()), &error_message)
+                .await;
             error!(
                 target: "borg_llm",
                 status = %status,
@@ -345,7 +347,7 @@ impl OpenAiProvider {
 
         debug!(target: "borg_llm", status = %status, "chat completion request succeeded");
         let payload: Value = response.json().await?;
-        call.succeeded(status, &payload);
+        call.succeeded(status, &payload).await;
         trace!(target: "borg_llm", payload = ?payload, "raw chat completion payload");
         parse_openai_assistant_message(&payload)
     }
@@ -380,7 +382,8 @@ impl OpenAiProvider {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let error_message = format!("openai completions returned {}", status);
-            call.failed(Some(status), None, Some(body.as_str()), &error_message);
+            call.failed(Some(status), None, Some(body.as_str()), &error_message)
+                .await;
             error!(
                 target: "borg_llm",
                 status = %status,
@@ -391,7 +394,7 @@ impl OpenAiProvider {
         }
 
         let payload: Value = response.json().await?;
-        call.succeeded(status, &payload);
+        call.succeeded(status, &payload).await;
         trace!(target: "borg_llm", payload = ?payload, "raw completions payload");
         let text = payload
             .get("choices")
@@ -402,20 +405,24 @@ impl OpenAiProvider {
             .unwrap_or_default()
             .trim()
             .to_string();
-        let stop_reason = match payload
+        let finish_reason = payload
             .get("choices")
             .and_then(Value::as_array)
             .and_then(|choices| choices.first())
             .and_then(|choice| choice.get("finish_reason"))
-            .and_then(Value::as_str)
-        {
+            .and_then(Value::as_str);
+        let stop_reason = match finish_reason {
             Some("length") => StopReason::Error,
             _ => StopReason::EndOfTurn,
+        };
+        let error_message = match finish_reason {
+            Some("length") => Some("openai completion stopped due to token limit".to_string()),
+            _ => None,
         };
         Ok(LlmAssistantMessage {
             content: vec![ProviderBlock::Text(text)],
             stop_reason,
-            error_message: None,
+            error_message,
             usage_tokens: payload_usage_tokens(&payload),
         })
     }
@@ -660,18 +667,24 @@ fn parse_openai_assistant_message(payload: &Value) -> Result<LlmAssistantMessage
         }
     }
 
-    let stop_reason = match choice.get("finish_reason").and_then(Value::as_str) {
+    let finish_reason = choice.get("finish_reason").and_then(Value::as_str);
+    let stop_reason = match finish_reason {
         Some("tool_calls") => StopReason::ToolCall,
         Some("stop") => StopReason::EndOfTurn,
         Some("length") => StopReason::Error,
         Some("content_filter") => StopReason::Error,
         _ => StopReason::EndOfTurn,
     };
+    let error_message = match finish_reason {
+        Some("length") => Some("openai chat completion stopped due to token limit".to_string()),
+        Some("content_filter") => Some("openai chat completion blocked by content filter".to_string()),
+        _ => None,
+    };
 
     let message = LlmAssistantMessage {
         content: blocks,
         stop_reason,
-        error_message: None,
+        error_message,
         usage_tokens: payload_usage_tokens(payload),
     };
     info!(

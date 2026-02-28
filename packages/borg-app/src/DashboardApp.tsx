@@ -17,6 +17,8 @@ import { AppSidebar } from "./AppSidebar";
 import { CommandK, type CommandSectionGroup } from "./CommandK";
 import { AgentsPage } from "./pages/control/agents";
 import { AgentDetailsPage } from "./pages/control/agents/id";
+import { AgentSkillsPage } from "./pages/control/agents/skills";
+import { AgentToolsPage } from "./pages/control/agents/tools";
 import { PortsPage } from "./pages/control/ports";
 import { PortDetailsPage } from "./pages/control/ports/id";
 import { SessionPage } from "./pages/control/sessions";
@@ -32,8 +34,12 @@ import { ObservabilityTracingPage } from "./pages/observability/tracing";
 import { OverviewPage } from "./pages/overview";
 import { ProvidersPage } from "./pages/settings/providers";
 
-type DashboardRouteItem = CommandSectionGroup["items"][number] & {
+type DashboardRouteItem = {
+  id: string;
+  title: string;
+  icon: React.ComponentType<{ className?: string }>;
   path: string;
+  children?: DashboardRouteItem[];
 };
 
 type DashboardRouteGroup = {
@@ -78,6 +84,18 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
         title: "Agents",
         icon: Bot,
         path: "/control/agents",
+      },
+      {
+        id: "control-agents-skills",
+        title: "Skills",
+        icon: Bot,
+        path: "/control/agents/skills",
+      },
+      {
+        id: "control-agents-tools",
+        title: "Tools",
+        icon: Bot,
+        path: "/control/agents/tools",
       },
       {
         id: "control-users",
@@ -150,12 +168,30 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
         title: "Tracing",
         icon: Route,
         path: "/observability/tracing",
+        children: [
+          {
+            id: "observability-tracing-llm-calls",
+            title: "LLM Calls",
+            icon: Route,
+            path: "/observability/tracing/llm-calls",
+          },
+        ],
       },
     ],
   },
 ];
 
-const ALL_SECTIONS = SECTION_GROUPS.flatMap((group) => group.items);
+function flattenRouteItems(items: DashboardRouteItem[]): DashboardRouteItem[] {
+  return items.flatMap((item) =>
+    item.children && item.children.length > 0
+      ? [item, ...flattenRouteItems(item.children)]
+      : [item]
+  );
+}
+
+const ALL_SECTIONS = SECTION_GROUPS.flatMap((group) =>
+  flattenRouteItems(group.items)
+);
 const SECTION_BY_ID = Object.fromEntries(
   ALL_SECTIONS.map((section) => [section.id, section])
 ) as Record<string, DashboardRouteItem>;
@@ -170,6 +206,8 @@ const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
   "/settings": SECTION_BY_ID["settings-providers"],
   "/observability/overview": SECTION_BY_ID["observability-overview"],
   "/observability/traces": SECTION_BY_ID["observability-tracing"],
+  "/observability/tracing/llm-calls":
+    SECTION_BY_ID["observability-tracing-llm-calls"],
   "/observability": SECTION_BY_ID["observability-overview"],
   "/memory": SECTION_BY_ID["memory-explorer"],
   "/memory/search": SECTION_BY_ID["memory-explorer"],
@@ -180,6 +218,8 @@ const CONTROL_SESSION_PREFIX = "/control/sessions/";
 const CONTROL_AGENT_PREFIX = "/control/agents/";
 const CONTROL_USER_PREFIX = "/control/users/";
 const CONTROL_PORT_PREFIX = "/control/ports/";
+const OBSERVABILITY_TRACING_PREFIX = "/observability/tracing/";
+const SETTINGS_PROVIDER_PREFIX = "/settings/provider/";
 const borgApi = createBorgApiClient();
 
 function ControlPlaceholder({ title }: { title: string }) {
@@ -244,7 +284,8 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
   }
   if (
     normalizedPathname.startsWith(CONTROL_SESSION_PREFIX) &&
-    normalizedPathname.length > CONTROL_SESSION_PREFIX.length
+    normalizedPathname.length > CONTROL_SESSION_PREFIX.length &&
+    !SECTION_BY_PATH[normalizedPathname]
   ) {
     const encodedSessionId = normalizedPathname.slice(
       CONTROL_SESSION_PREFIX.length
@@ -269,7 +310,8 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
   }
   if (
     normalizedPathname.startsWith(CONTROL_AGENT_PREFIX) &&
-    normalizedPathname.length > CONTROL_AGENT_PREFIX.length
+    normalizedPathname.length > CONTROL_AGENT_PREFIX.length &&
+    !SECTION_BY_PATH[normalizedPathname]
   ) {
     const encodedAgentId = normalizedPathname.slice(
       CONTROL_AGENT_PREFIX.length
@@ -294,7 +336,8 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
   }
   if (
     normalizedPathname.startsWith(CONTROL_PORT_PREFIX) &&
-    normalizedPathname.length > CONTROL_PORT_PREFIX.length
+    normalizedPathname.length > CONTROL_PORT_PREFIX.length &&
+    !SECTION_BY_PATH[normalizedPathname]
   ) {
     const encodedPort = normalizedPathname.slice(CONTROL_PORT_PREFIX.length);
     try {
@@ -317,7 +360,8 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
   }
   if (
     normalizedPathname.startsWith(CONTROL_USER_PREFIX) &&
-    normalizedPathname.length > CONTROL_USER_PREFIX.length
+    normalizedPathname.length > CONTROL_USER_PREFIX.length &&
+    !SECTION_BY_PATH[normalizedPathname]
   ) {
     const encodedUserKey = normalizedPathname.slice(CONTROL_USER_PREFIX.length);
     try {
@@ -337,6 +381,43 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
         portName: null,
       };
     }
+  }
+  if (
+    normalizedPathname.startsWith("/observability/tracing/llm-calls/") &&
+    normalizedPathname.length > "/observability/tracing/llm-calls/".length
+  ) {
+    return {
+      id: "observability-tracing-llm-calls",
+      entityUri: null,
+      explorerUri: null,
+      sessionId: null,
+      portName: null,
+    };
+  }
+  if (
+    normalizedPathname.startsWith(OBSERVABILITY_TRACING_PREFIX) &&
+    normalizedPathname.length > OBSERVABILITY_TRACING_PREFIX.length &&
+    !SECTION_BY_PATH[normalizedPathname]
+  ) {
+    return {
+      id: "observability-tracing",
+      entityUri: null,
+      explorerUri: null,
+      sessionId: null,
+      portName: null,
+    };
+  }
+  if (
+    normalizedPathname.startsWith(SETTINGS_PROVIDER_PREFIX) &&
+    normalizedPathname.length > SETTINGS_PROVIDER_PREFIX.length
+  ) {
+    return {
+      id: "settings-providers",
+      entityUri: null,
+      explorerUri: null,
+      sessionId: null,
+      portName: null,
+    };
   }
 
   const section =
@@ -397,6 +478,8 @@ export function DashboardApp() {
         <SessionDetailsPage sessionId={route.sessionId ?? ""} />
       ),
       "control-agents": () => <AgentsPage />,
+      "control-agents-skills": () => <AgentSkillsPage />,
+      "control-agents-tools": () => <AgentToolsPage />,
       "control-agent": () => (
         <AgentDetailsPage agentId={route.entityUri ?? ""} />
       ),
@@ -405,11 +488,12 @@ export function DashboardApp() {
         <UserDetailsPage userKey={route.explorerUri ?? ""} />
       ),
       "control-ports": () => <PortsPage />,
-      "control-port": () => <PortDetailsPage port={route.portName ?? ""} />,
+      "control-port": () => <PortDetailsPage portUri={route.portName ?? ""} />,
       "control-policies": () => <ControlPlaceholder title="Policies" />,
       "observability-overview": () => <ObservabilityOverviewPage />,
       "observability-alerts": () => <ObservabilityAlertsPage />,
       "observability-tracing": () => <ObservabilityTracingPage />,
+      "observability-tracing-llm-calls": () => <ObservabilityTracingPage />,
       "memory-graph": () => <MemoryGraphPage />,
       "memory-explorer": () => (
         <MemoryExplorerPage explorerUri={route.explorerUri ?? undefined} />
@@ -498,6 +582,19 @@ export function DashboardApp() {
   const isExplorerImmersive = activeId === "memory-graph";
   const isHeadlineHidden =
     activeId === "memory-graph" || activeId === "memory-explorer";
+  const commandGroups = React.useMemo<CommandSectionGroup[]>(
+    () =>
+      SECTION_GROUPS.map((group) => ({
+        id: group.id,
+        title: group.title,
+        items: flattenRouteItems(group.items).map(({ id, title, icon }) => ({
+          id,
+          title,
+          icon,
+        })),
+      })),
+    []
+  );
 
   return (
     <section className="borg-dashboard-shell text-foreground">
@@ -541,7 +638,7 @@ export function DashboardApp() {
       <CommandK
         open={isCommandMenuOpen}
         onOpenChange={setIsCommandMenuOpen}
-        groups={SECTION_GROUPS}
+        groups={commandGroups}
         onSelectSection={handleSelectSection}
       />
     </section>

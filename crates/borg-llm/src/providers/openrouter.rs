@@ -179,7 +179,8 @@ impl Provider for OpenRouterProvider {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let error_message = format!("openrouter chat completions returned {}", status);
-            call.failed(Some(status), None, Some(body.as_str()), &error_message);
+            call.failed(Some(status), None, Some(body.as_str()), &error_message)
+                .await;
             error!(
                 target: "borg_llm",
                 status = %status,
@@ -195,7 +196,7 @@ impl Provider for OpenRouterProvider {
             "openrouter chat completion request succeeded"
         );
         let payload: Value = response.json().await?;
-        call.succeeded(status, &payload);
+        call.succeeded(status, &payload).await;
         trace!(target: "borg_llm", payload = ?payload, "raw openrouter chat payload");
         parse_assistant_message(&payload)
     }
@@ -249,7 +250,8 @@ impl Provider for OpenRouterProvider {
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             let error_message = format!("openrouter transcriptions returned {}", status);
-            call.failed(Some(status), None, Some(body.as_str()), &error_message);
+            call.failed(Some(status), None, Some(body.as_str()), &error_message)
+                .await;
             error!(
                 target: "borg_llm",
                 status = %status,
@@ -260,7 +262,7 @@ impl Provider for OpenRouterProvider {
         }
 
         let payload: Value = response.json().await?;
-        call.succeeded(status, &payload);
+        call.succeeded(status, &payload).await;
         extract_text_from_chat_payload(&payload)
             .ok_or_else(|| anyhow!("missing text in openrouter transcription response"))
     }
@@ -452,18 +454,28 @@ fn parse_assistant_message(payload: &Value) -> Result<LlmAssistantMessage> {
         }
     }
 
-    let stop_reason = match choice.get("finish_reason").and_then(Value::as_str) {
+    let finish_reason = choice.get("finish_reason").and_then(Value::as_str);
+    let stop_reason = match finish_reason {
         Some("tool_calls") => StopReason::ToolCall,
         Some("stop") => StopReason::EndOfTurn,
         Some("length") => StopReason::Error,
         Some("content_filter") => StopReason::Error,
         _ => StopReason::EndOfTurn,
     };
+    let error_message = match finish_reason {
+        Some("length") => {
+            Some("openrouter chat completion stopped due to token limit".to_string())
+        }
+        Some("content_filter") => {
+            Some("openrouter chat completion blocked by content filter".to_string())
+        }
+        _ => None,
+    };
 
     Ok(LlmAssistantMessage {
         content: blocks,
         stop_reason,
-        error_message: None,
+        error_message,
         usage_tokens: payload_usage_tokens(payload),
     })
 }

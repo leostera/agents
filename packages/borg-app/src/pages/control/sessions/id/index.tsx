@@ -10,6 +10,7 @@ type SessionDetailsPageProps = {
 
 export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
   const [session, setSession] = React.useState<SessionRecord | null>(null);
+  const [messages, setMessages] = React.useState<Record<string, unknown>[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -25,25 +26,45 @@ export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
     setIsLoading(true);
     setError(null);
 
-    void borgApi
-      .getSession(sessionId)
-      .then((row) => {
+    void (async () => {
+      try {
+        const row = await borgApi.getSession(sessionId);
         if (!active) return;
         setSession(row);
-      })
-      .catch((loadError) => {
+        if (!row) {
+          setMessages([]);
+          return;
+        }
+
+        const allMessages: Record<string, unknown>[] = [];
+        const pageSize = 500;
+        let from = 0;
+        while (true) {
+          const batch = await borgApi.listSessionMessages(sessionId, {
+            from,
+            limit: pageSize,
+          });
+          if (!active) return;
+          if (batch.length === 0) break;
+          allMessages.push(...batch);
+          from += batch.length;
+          if (batch.length < pageSize) break;
+        }
+        setMessages(allMessages);
+      } catch (loadError) {
         if (!active) return;
         setSession(null);
+        setMessages([]);
         setError(
           loadError instanceof Error
             ? loadError.message
             : "Unable to load session"
         );
-      })
-      .finally(() => {
+      } finally {
         if (!active) return;
         setIsLoading(false);
-      });
+      }
+    })();
 
     return () => {
       active = false;
@@ -83,6 +104,31 @@ export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
           <p className="text-muted-foreground text-xs">Updated</p>
           <p>{new Date(session.updated_at).toLocaleString()}</p>
         </div>
+      </section>
+
+      <section className="space-y-2">
+        <p className="text-sm font-semibold">
+          Session Messages (Chronological)
+        </p>
+        {messages.length === 0 ? (
+          <p className="text-muted-foreground text-sm">No messages found.</p>
+        ) : (
+          <div className="space-y-2">
+            {messages.map((message, index) => (
+              <article
+                key={`${session.session_id}-${index}`}
+                className="rounded-lg border p-3"
+              >
+                <p className="text-muted-foreground mb-2 text-[11px]">
+                  #{index + 1}
+                </p>
+                <pre className="bg-muted/30 overflow-x-auto rounded-lg border p-3 text-xs leading-relaxed">
+                  {JSON.stringify(message, null, 2)}
+                </pre>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="space-y-2">

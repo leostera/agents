@@ -134,6 +134,7 @@ pub struct NewTask {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentSpecRecord {
     pub agent_id: Uri,
+    pub name: String,
     pub model: String,
     pub system_prompt: String,
     pub tools: Value,
@@ -178,9 +179,13 @@ pub struct ProviderRecord {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PortRecord {
+    pub port_id: Uri,
     pub provider: String,
-    pub port: String,
+    pub port_name: String,
     pub enabled: bool,
+    pub allows_guests: bool,
+    pub default_agent_id: Option<Uri>,
+    pub settings: Value,
     pub active_sessions: u64,
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -214,4 +219,7 @@ pub struct LlmCallRecord {
     pub latency_ms: Option<u64>,
     pub sent_at: DateTime<Utc>,
     pub received_at: Option<DateTime<Utc>>,
+    pub request_json: Value,
+    pub response_json: Value,
+    pub response_body: String,
 }

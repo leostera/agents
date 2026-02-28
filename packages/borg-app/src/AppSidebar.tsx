@@ -21,6 +21,7 @@ type SectionItem = {
   id: string;
   title: string;
   icon: React.ComponentType<{ className?: string }>;
+  children?: SectionItem[];
 };
 
 type SectionGroup = {
@@ -52,6 +53,11 @@ export function AppSidebar({
   const handleSearch = React.useCallback(() => {
     onOpenCommandMenu?.();
   }, [onOpenCommandMenu]);
+  const hasActiveChild = React.useCallback(
+    (section: SectionItem) =>
+      (section.children ?? []).some((child) => child.id === activeId),
+    [activeId]
+  );
 
   return (
     <Sidebar
@@ -91,17 +97,37 @@ export function AppSidebar({
               <SidebarMenu className="flex flex-col">
                 {group.items.map((section) => {
                   const Icon = section.icon;
+                  const isParentActive =
+                    activeId === section.id || hasActiveChild(section);
 
                   return (
-                    <SidebarMenuItem key={section.id}>
+                    <SidebarMenuItem key={section.id} className="space-y-1">
                       <SidebarMenuButton
-                        isActive={activeId === section.id}
+                        isActive={isParentActive}
                         onClick={() => onSelect(section.id)}
                         className="h-9 justify-start rounded-lg text-[13px] font-medium"
                       >
                         <Icon className="size-4" />
                         <span>{section.title}</span>
                       </SidebarMenuButton>
+                      {section.children && isParentActive ? (
+                        <div className="ml-6 space-y-1 border-l border-border/50 pl-2">
+                          {section.children.map((child) => {
+                            const ChildIcon = child.icon;
+                            return (
+                              <SidebarMenuButton
+                                key={child.id}
+                                isActive={activeId === child.id}
+                                onClick={() => onSelect(child.id)}
+                                className="h-8 justify-start rounded-md text-[12px] font-medium"
+                              >
+                                <ChildIcon className="size-3.5" />
+                                <span>{child.title}</span>
+                              </SidebarMenuButton>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </SidebarMenuItem>
                   );
                 })}
