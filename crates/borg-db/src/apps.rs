@@ -11,7 +11,7 @@ impl BorgDb {
         let mut rows = self
             .conn
             .query(
-                "SELECT app_id, name, slug, description, status, created_at, updated_at
+                "SELECT app_id, name, slug, description, status, built_in, created_at, updated_at
                  FROM apps
                  ORDER BY updated_at DESC, slug ASC
                  LIMIT ?1",
@@ -21,14 +21,15 @@ impl BorgDb {
 
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {
-            let created_at_raw: String = row.get(5)?;
-            let updated_at_raw: String = row.get(6)?;
+            let created_at_raw: String = row.get(6)?;
+            let updated_at_raw: String = row.get(7)?;
             out.push(AppRecord {
                 app_id: Uri::parse(&row.get::<String>(0)?)?,
                 name: row.get(1)?,
                 slug: row.get(2)?,
                 description: row.get(3)?,
                 status: row.get(4)?,
+                built_in: row.get::<i64>(5)? != 0,
                 created_at: parse_ts(&created_at_raw)?,
                 updated_at: parse_ts(&updated_at_raw)?,
             });
@@ -40,7 +41,7 @@ impl BorgDb {
         let mut rows = self
             .conn
             .query(
-                "SELECT app_id, name, slug, description, status, created_at, updated_at
+                "SELECT app_id, name, slug, description, status, built_in, created_at, updated_at
                  FROM apps
                  WHERE app_id = ?1
                  LIMIT 1",
@@ -52,14 +53,15 @@ impl BorgDb {
             return Ok(None);
         };
 
-        let created_at_raw: String = row.get(5)?;
-        let updated_at_raw: String = row.get(6)?;
+        let created_at_raw: String = row.get(6)?;
+        let updated_at_raw: String = row.get(7)?;
         Ok(Some(AppRecord {
             app_id: Uri::parse(&row.get::<String>(0)?)?,
             name: row.get(1)?,
             slug: row.get(2)?,
             description: row.get(3)?,
             status: row.get(4)?,
+            built_in: row.get::<i64>(5)? != 0,
             created_at: parse_ts(&created_at_raw)?,
             updated_at: parse_ts(&updated_at_raw)?,
         }))
@@ -73,12 +75,38 @@ impl BorgDb {
         description: &str,
         status: &str,
     ) -> Result<()> {
+        self.upsert_app_with_built_in(app_id, name, slug, description, status, false)
+            .await
+    }
+
+    pub async fn upsert_builtin_app(
+        &self,
+        app_id: &Uri,
+        name: &str,
+        slug: &str,
+        description: &str,
+        status: &str,
+    ) -> Result<()> {
+        self.upsert_app_with_built_in(app_id, name, slug, description, status, true)
+            .await
+    }
+
+    async fn upsert_app_with_built_in(
+        &self,
+        app_id: &Uri,
+        name: &str,
+        slug: &str,
+        description: &str,
+        status: &str,
+        built_in: bool,
+    ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
+        let built_in_i64 = if built_in { 1_i64 } else { 0_i64 };
         self.conn
             .execute(
                 r#"
-                INSERT INTO apps(app_id, name, slug, description, status, created_at, updated_at)
-                VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                INSERT INTO apps(app_id, name, slug, description, status, built_in, created_at, updated_at)
+                VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 ON CONFLICT(app_id) DO UPDATE SET
                   name = excluded.name,
                   slug = excluded.slug,
@@ -92,6 +120,7 @@ impl BorgDb {
                     slug.to_string(),
                     description.to_string(),
                     status.to_string(),
+                    built_in_i64,
                     now.clone(),
                     now,
                 ),

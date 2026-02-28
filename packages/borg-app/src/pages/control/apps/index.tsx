@@ -1,4 +1,8 @@
-import { type AppRecord, createBorgApiClient } from "@borg/api";
+import {
+  type AppCapabilityRecord,
+  type AppRecord,
+  createBorgApiClient,
+} from "@borg/api";
 import {
   Badge,
   Button,
@@ -14,9 +18,10 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
+  EntityLink,
   Input,
   Label,
-  Link,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -25,7 +30,14 @@ import {
   TableRow,
   Textarea,
 } from "@borg/ui";
-import { AppWindow, LoaderCircle, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  AppWindow,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  Power,
+  Trash2,
+} from "lucide-react";
 import React from "react";
 import { AddAppForm, type AddAppInput } from "./AddAppForm";
 
@@ -34,7 +46,6 @@ const borgApi = createBorgApiClient();
 type AppFormState = {
   appId: string;
   name: string;
-  slug: string;
   description: string;
   status: string;
 };
@@ -42,18 +53,9 @@ type AppFormState = {
 const DEFAULT_FORM: AppFormState = {
   appId: "",
   name: "",
-  slug: "",
   description: "",
   status: "active",
 };
-
-function formatStatus(status: string): string {
-  const normalized = status.trim().toLowerCase();
-  if (normalized === "active") return "Active";
-  if (normalized === "disabled") return "Disabled";
-  if (normalized === "archived") return "Archived";
-  return status;
-}
 
 function slugFromName(name: string): string {
   const slug = name
@@ -85,6 +87,9 @@ function navigateToAppDetails(appId: string): void {
 
 export function AppsPage() {
   const [apps, setApps] = React.useState<AppRecord[]>([]);
+  const [capabilitiesByAppId, setCapabilitiesByAppId] = React.useState<
+    Record<string, AppCapabilityRecord[]>
+  >({});
   const [query, setQuery] = React.useState(
     () => new URLSearchParams(window.location.search).get("q") ?? ""
   );
@@ -93,6 +98,9 @@ export function AppsPage() {
   const [isAddDialogOpen, setIsAddDialogOpen] = React.useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
+  const [statusUpdatingAppId, setStatusUpdatingAppId] = React.useState<
+    string | null
+  >(null);
   const [form, setForm] = React.useState<AppFormState>(DEFAULT_FORM);
   const [editingAppId, setEditingAppId] = React.useState<string | null>(null);
 
@@ -102,8 +110,23 @@ export function AppsPage() {
     try {
       const rows = await borgApi.listApps(500);
       setApps(rows);
+      const capabilitiesRows = await Promise.all(
+        rows.map(async (app) => {
+          try {
+            const capabilities = await borgApi.listAppCapabilities(
+              app.app_id,
+              500
+            );
+            return [app.app_id, capabilities] as const;
+          } catch {
+            return [app.app_id, []] as const;
+          }
+        })
+      );
+      setCapabilitiesByAppId(Object.fromEntries(capabilitiesRows));
     } catch (loadError) {
       setApps([]);
+      setCapabilitiesByAppId({});
       setError(
         loadError instanceof Error ? loadError.message : "Unable to load apps"
       );
@@ -134,7 +157,7 @@ export function AppsPage() {
     const term = query.trim().toLowerCase();
     if (!term) return apps;
     return apps.filter((app) =>
-      [app.app_id, app.name, app.slug, app.description, app.status]
+      [app.app_id, app.name, app.description, app.status]
         .join(" ")
         .toLowerCase()
         .includes(term)
@@ -150,7 +173,6 @@ export function AppsPage() {
     setForm({
       appId: app.app_id,
       name: app.name,
-      slug: app.slug,
       description: app.description,
       status: app.status,
     });
@@ -172,14 +194,24 @@ export function AppsPage() {
 
     setIsSaving(true);
     try {
+      const capabilityId = nextCapabilityId();
       await borgApi.upsertApp(appId, { name, slug, description, status });
-      await borgApi.upsertAppCapability(appId, nextCapabilityId(), {
+      await borgApi.upsertAppCapability(appId, capabilityId, {
         name: input.capability.name.trim(),
         hint: input.capability.hint.trim(),
         mode: input.capability.mode.trim() || "codemode",
         instructions: input.capability.instructions.trim(),
         status: "active",
       });
+      const createdCapability = await borgApi.getAppCapability(
+        appId,
+        capabilityId
+      );
+      if (!createdCapability) {
+        throw new Error(
+          "App was created, but initial capability could not be verified."
+        );
+      }
       setIsAddDialogOpen(false);
       await loadApps();
     } catch (saveError) {
@@ -197,11 +229,11 @@ export function AppsPage() {
 
     const appId = form.appId.trim();
     const name = form.name.trim();
-    const slug = form.slug.trim();
+    const slug = slugFromName(name);
     const description = form.description.trim();
     const status = form.status.trim() || "active";
-    if (!appId || !name || !slug) {
-      setError("App id, name, and slug are required.");
+    if (!appId || !name) {
+      setError("App id and name are required.");
       return;
     }
 
@@ -239,21 +271,47 @@ export function AppsPage() {
     }
   };
 
+  const handleToggleAppStatus = async (app: AppRecord) => {
+    const nextStatus =
+      app.status.trim().toLowerCase() === "active" ? "disabled" : "active";
+    setError(null);
+    setStatusUpdatingAppId(app.app_id);
+    try {
+      await borgApi.upsertApp(app.app_id, {
+        name: app.name,
+        slug: app.slug,
+        description: app.description,
+        status: nextStatus,
+      });
+      await loadApps();
+    } catch (toggleError) {
+      setError(
+        toggleError instanceof Error
+          ? toggleError.message
+          : "Unable to update app status"
+      );
+    } finally {
+      setStatusUpdatingAppId(null);
+    }
+  };
+
   return (
     <section className="space-y-4">
-      <section className="flex flex-wrap items-center gap-2">
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder="Search apps by id, name, slug, or status"
-          aria-label="Search apps"
-          className="max-w-md"
-        />
-        <Button variant="outline" onClick={openCreateDialog}>
-          <Plus className="size-4" />
-          Add App
-        </Button>
-      </section>
+      {isLoading || apps.length > 0 ? (
+        <section className="flex flex-wrap items-center gap-2">
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            placeholder="Search apps"
+            aria-label="Search apps"
+            className="max-w-md"
+          />
+          <Button variant="outline" onClick={openCreateDialog}>
+            <Plus className="size-4" />
+            Add App
+          </Button>
+        </section>
+      ) : null}
 
       {error ? <p className="text-destructive text-xs">{error}</p> : null}
 
@@ -276,9 +334,10 @@ export function AppsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>App</TableHead>
+              <TableHead className="w-[44px]">Status</TableHead>
               <TableHead>Name</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>Description</TableHead>
+              <TableHead>Capabilities</TableHead>
               <TableHead>Updated</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
@@ -287,7 +346,7 @@ export function AppsPage() {
             {isLoading ? (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={6}
                   className="text-muted-foreground text-center"
                 >
                   <span className="inline-flex items-center gap-2">
@@ -303,29 +362,75 @@ export function AppsPage() {
                   className="cursor-pointer"
                   onClick={() => navigateToAppDetails(app.app_id)}
                 >
-                  <TableCell className="font-mono text-[11px]">
-                    <Link
-                      href={`/control/apps/${encodeURIComponent(app.app_id)}`}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      {app.app_id}
-                    </Link>
+                  <TableCell>
+                    <span
+                      className={
+                        app.status.trim().toLowerCase() === "active"
+                          ? "inline-block size-2.5 rounded-full bg-emerald-500"
+                          : "inline-block size-2.5 rounded-full bg-rose-500"
+                      }
+                    />
                   </TableCell>
                   <TableCell>
-                    <div className="space-y-0.5">
-                      <p>{app.name}</p>
-                      <p className="text-muted-foreground text-xs">
-                        {app.slug}
-                      </p>
+                    <EntityLink uri={app.app_id} name={app.name} />
+                  </TableCell>
+                  <TableCell className="max-w-[280px]">
+                    <p className="text-muted-foreground text-xs truncate">
+                      {app.description || "—"}
+                    </p>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      {(capabilitiesByAppId[app.app_id] ?? [])
+                        .slice(0, 3)
+                        .map((capability) => (
+                          <Badge
+                            key={capability.capability_id}
+                            variant="outline"
+                          >
+                            {capability.name}
+                          </Badge>
+                        ))}
+                      {(capabilitiesByAppId[app.app_id] ?? []).length > 3 ? (
+                        <Badge variant="outline">
+                          +{(capabilitiesByAppId[app.app_id] ?? []).length - 3}
+                        </Badge>
+                      ) : null}
+                      {(capabilitiesByAppId[app.app_id] ?? []).length === 0 ? (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      ) : null}
                     </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{formatStatus(app.status)}</Badge>
                   </TableCell>
                   <TableCell>
                     {new Date(app.updated_at).toLocaleString()}
                   </TableCell>
                   <TableCell className="space-x-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleToggleAppStatus(app);
+                      }}
+                      disabled={statusUpdatingAppId === app.app_id}
+                      title={
+                        app.status.trim().toLowerCase() === "active"
+                          ? "Disable app"
+                          : "Enable app"
+                      }
+                      aria-label={
+                        app.status.trim().toLowerCase() === "active"
+                          ? `Disable ${app.name}`
+                          : `Enable ${app.name}`
+                      }
+                    >
+                      <Power className="size-3.5" />
+                      {statusUpdatingAppId === app.app_id
+                        ? "Updating..."
+                        : app.status.trim().toLowerCase() === "active"
+                          ? "Disable"
+                          : "Enable"}
+                    </Button>
                     <Button
                       size="icon-sm"
                       variant="outline"
@@ -338,18 +443,20 @@ export function AppsPage() {
                     >
                       <Pencil className="size-3.5" />
                     </Button>
-                    <Button
-                      size="icon-sm"
-                      variant="outline"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleDeleteApp(app);
-                      }}
-                      title="Delete app"
-                      aria-label={`Delete ${app.name}`}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
+                    {!app.built_in ? (
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleDeleteApp(app);
+                        }}
+                        title="Delete app"
+                        aria-label={`Delete ${app.name}`}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    ) : null}
                   </TableCell>
                 </TableRow>
               ))
@@ -379,15 +486,10 @@ export function AppsPage() {
               <Input
                 id="app-id"
                 value={form.appId}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    appId: event.currentTarget.value,
-                  }))
-                }
                 placeholder="borg:app:movieindex"
                 required
-                disabled={Boolean(editingAppId)}
+                readOnly
+                disabled
               />
             </div>
             <div className="space-y-1">
@@ -402,21 +504,6 @@ export function AppsPage() {
                   }))
                 }
                 placeholder="MovieIndex"
-                required
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="app-slug">Slug</Label>
-              <Input
-                id="app-slug"
-                value={form.slug}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    slug: event.currentTarget.value,
-                  }))
-                }
-                placeholder="movieindex"
                 required
               />
             </div>
@@ -436,17 +523,21 @@ export function AppsPage() {
             </div>
             <div className="space-y-1">
               <Label htmlFor="app-status">Status</Label>
-              <Input
-                id="app-status"
-                value={form.status}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    status: event.currentTarget.value,
-                  }))
-                }
-                placeholder="active"
-              />
+              <div className="flex items-center gap-3">
+                <Switch
+                  id="app-status"
+                  checked={form.status === "active"}
+                  onCheckedChange={(checked) =>
+                    setForm((current) => ({
+                      ...current,
+                      status: checked ? "active" : "disabled",
+                    }))
+                  }
+                />
+                <span className="text-sm">
+                  {form.status === "active" ? "Active" : "Disabled"}
+                </span>
+              </div>
             </div>
             <DialogFooter>
               <Button
