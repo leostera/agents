@@ -7,12 +7,12 @@ import {
 import {
   Badge,
   Button,
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -27,9 +27,6 @@ import {
   EmptyTitle,
   Input,
   Label,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
   Table,
   TableBody,
   TableCell,
@@ -38,9 +35,7 @@ import {
   TableRow,
 } from "@borg/ui";
 import {
-  Check,
   CheckCircle2,
-  ChevronsUpDown,
   Cpu,
   LoaderCircle,
   Pause,
@@ -66,66 +61,6 @@ type EditProviderState = {
   chatModel: string | null;
   audioModel: string | null;
 };
-
-function ModelCombobox({
-  value,
-  items,
-  placeholder,
-  onChange,
-}: {
-  value: string | null;
-  items: string[];
-  placeholder: string;
-  onChange: (value: string) => void;
-}) {
-  const [open, setOpen] = React.useState(false);
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          className="w-full justify-between font-normal"
-        >
-          <span className="truncate text-left">
-            {value && value.length > 0 ? value : placeholder}
-          </span>
-          <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        className="w-[var(--radix-popover-trigger-width)] p-0"
-        align="start"
-      >
-        <Command>
-          <CommandInput placeholder="Search model..." />
-          <CommandList>
-            <CommandEmpty>No models found.</CommandEmpty>
-            <CommandGroup>
-              {items.map((item) => (
-                <CommandItem
-                  key={item}
-                  value={item}
-                  onSelect={(currentValue) => {
-                    onChange(currentValue);
-                    setOpen(false);
-                  }}
-                >
-                  <Check
-                    className={`mr-2 size-4 ${value === item ? "opacity-100" : "opacity-0"}`}
-                  />
-                  {item}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 export function ProvidersPage() {
   const [providersByName, setProvidersByName] = React.useState<
@@ -562,29 +497,53 @@ export function ProvidersPage() {
             </div>
             <div className="space-y-1">
               <Label>Default Chat Model</Label>
-              <ModelCombobox
-                value={editingProvider?.chatModel ?? null}
+              <Combobox
                 items={editingProviderModels}
-                placeholder="Select chat model"
-                onChange={(value) =>
+                selectedValue={editingProvider?.chatModel ?? null}
+                onSelectedValueChange={(value) =>
                   setEditingProvider((current) =>
-                    current ? { ...current, chatModel: value } : current
+                    current ? { ...current, chatModel: value ?? null } : current
                   )
                 }
-              />
+              >
+                <ComboboxInput placeholder="Search and select chat model" />
+                <ComboboxContent>
+                  <ComboboxEmpty>No models found.</ComboboxEmpty>
+                  <ComboboxList>
+                    {(item) => (
+                      <ComboboxItem key={item} value={item}>
+                        {item}
+                      </ComboboxItem>
+                    )}
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
             </div>
             <div className="space-y-1">
               <Label>Default Audio Model</Label>
-              <ModelCombobox
-                value={editingProvider?.audioModel ?? null}
+              <Combobox
                 items={editingProviderModels}
-                placeholder="Select audio model"
-                onChange={(value) =>
+                selectedValue={editingProvider?.audioModel ?? null}
+                onSelectedValueChange={(value) =>
                   setEditingProvider((current) =>
-                    current ? { ...current, audioModel: value } : current
+                    current
+                      ? { ...current, audioModel: value ?? null }
+                      : current
                   )
                 }
-              />
+              >
+                <ComboboxInput placeholder="Search and select audio model" />
+                <ComboboxContent>
+                  <ComboboxEmpty>No models found.</ComboboxEmpty>
+                  <ComboboxList>
+                    {(item) => (
+                      <ComboboxItem key={item} value={item}>
+                        {item}
+                      </ComboboxItem>
+                    )}
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
             </div>
             <DialogFooter>
               <Button type="submit" disabled={isSavingEdit}>

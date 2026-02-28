@@ -1,5 +1,6 @@
 import { createBorgApiClient, type PortRecord } from "@borg/api";
 import {
+  Badge,
   Button,
   Input,
   Link,
@@ -41,6 +42,22 @@ function formatProviderName(provider?: string): string {
   if (normalized === "http") return "HTTP";
   if (normalized === "custom") return "Custom";
   return provider ?? "Custom";
+}
+
+function modeChipClass(allowsGuests: boolean): string {
+  return allowsGuests
+    ? "border-yellow-300 bg-yellow-100 text-yellow-900"
+    : "border-blue-300 bg-blue-100 text-blue-900";
+}
+
+function telegramAllowedUserIds(port: PortRecord): string[] {
+  if (port.provider.trim().toLowerCase() !== "telegram") return [];
+  if (port.allows_guests) return [];
+  const raw = port.settings?.allowed_external_user_ids;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean);
 }
 
 export function PortsPage() {
@@ -133,15 +150,17 @@ export function PortsPage() {
     [reload]
   );
 
-  const handleTogglePause = React.useCallback(
+  const handleToggleEnabled = React.useCallback(
     async (port: PortRecord) => {
       setError(null);
       try {
-        await borgApi.upsertPortSetting(
-          port.port_id,
-          "enabled",
-          port.enabled ? "false" : "true"
-        );
+        await borgApi.upsertPort(port.port_id, {
+          provider: port.provider,
+          enabled: !port.enabled,
+          allows_guests: port.allows_guests,
+          default_agent_id: port.default_agent_id ?? null,
+          settings: port.settings,
+        });
         await reload();
       } catch (toggleError) {
         setError(
@@ -196,8 +215,11 @@ export function PortsPage() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8" />
               <TableHead>Provider</TableHead>
               <TableHead>Port Name</TableHead>
+              <TableHead>Mode</TableHead>
+              <TableHead>Allowed Users</TableHead>
               <TableHead>Active Sessions</TableHead>
               <TableHead>Updated</TableHead>
               <TableHead>Actions</TableHead>
@@ -207,7 +229,7 @@ export function PortsPage() {
             {isLoading ? (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={8}
                   className="text-muted-foreground text-center"
                 >
                   Loading ports...
@@ -216,7 +238,7 @@ export function PortsPage() {
             ) : filteredPorts.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={8}
                   className="text-muted-foreground text-center"
                 >
                   No ports found.
@@ -236,6 +258,14 @@ export function PortsPage() {
                     window.dispatchEvent(new PopStateEvent("popstate"));
                   }}
                 >
+                  <TableCell>
+                    <span
+                      className={`inline-block h-2.5 w-2.5 rounded-full ${
+                        port.enabled ? "bg-green-500" : "bg-muted-foreground/40"
+                      }`}
+                      title={port.enabled ? "Enabled" : "Disabled"}
+                    />
+                  </TableCell>
                   <TableCell>{formatProviderName(port.provider)}</TableCell>
                   <TableCell className="font-mono text-[11px]">
                     <Link
@@ -245,6 +275,23 @@ export function PortsPage() {
                       {port.port_name}
                     </Link>
                   </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant="outline"
+                      className={modeChipClass(port.allows_guests)}
+                    >
+                      {port.allows_guests ? "Public" : "Private"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap items-center gap-1">
+                      {telegramAllowedUserIds(port).map((userId) => (
+                        <Badge key={userId} variant="outline">
+                          {userId}
+                        </Badge>
+                      ))}
+                    </div>
+                  </TableCell>
                   <TableCell>{port.active_sessions}</TableCell>
                   <TableCell>{formatUpdatedAt(port.updated_at)}</TableCell>
                   <TableCell className="space-x-2">
@@ -253,10 +300,10 @@ export function PortsPage() {
                       size="sm"
                       onClick={(event) => {
                         event.stopPropagation();
-                        void handleTogglePause(port);
+                        void handleToggleEnabled(port);
                       }}
                     >
-                      {port.enabled ? "Pause" : "Resume"}
+                      {port.enabled ? "Disable" : "Enable"}
                     </Button>
                     <Button
                       variant="outline"

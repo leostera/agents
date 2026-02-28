@@ -22,6 +22,15 @@ const frameworks = [
   "SolidStart",
 ] as const;
 
+const providerModels = [
+  "openrouter/kimi-k2",
+  "openrouter/claude-3.7-sonnet",
+  "openrouter/gpt-4o-mini",
+  "openrouter/qwen/qwen-2.5-coder-32b-instruct",
+  "openai/gpt-4.1-mini",
+  "openai/whisper-1",
+] as const;
+
 const meta: Meta<typeof Combobox> = {
   title: "UI/Combobox",
   component: Combobox,
@@ -92,6 +101,37 @@ export const GroupedOptions: Story = {
             </ComboboxList>
           </ComboboxContent>
         </Combobox>
+      </div>
+    );
+  },
+};
+
+export const ProviderModelPicker: Story = {
+  render: () => {
+    const [value, setValue] = useState<string | null>("openrouter/kimi-k2");
+
+    return (
+      <div className="w-96 space-y-2">
+        <Combobox
+          items={providerModels}
+          selectedValue={value}
+          onSelectedValueChange={setValue}
+        >
+          <ComboboxInput placeholder="Search and select model" showClear />
+          <ComboboxContent>
+            <ComboboxEmpty>No models found.</ComboboxEmpty>
+            <ComboboxList>
+              {(item) => (
+                <ComboboxItem key={item} value={item}>
+                  {item}
+                </ComboboxItem>
+              )}
+            </ComboboxList>
+          </ComboboxContent>
+        </Combobox>
+        <p className="text-muted-foreground text-xs">
+          Selected model: {value ?? "None"}
+        </p>
       </div>
     );
   },
