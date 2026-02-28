@@ -9,7 +9,7 @@ use axum::{
     routing::{get, post, put},
 };
 use borg_db::BorgDb;
-use borg_exec::ExecEngine;
+use borg_exec::{ExecEngine, ProviderConfigSupervisor};
 use borg_ltm::MemoryStore;
 use borg_ports::{BorgPortsSupervisor, HttpPort, init_http_port};
 use tokio::net::TcpListener;
@@ -30,6 +30,7 @@ pub(crate) struct AppState {
     pub(crate) http_port: HttpPort,
     pub(crate) memory: MemoryStore,
     pub(crate) ports_supervisor: BorgPortsSupervisor,
+    pub(crate) provider_supervisor: ProviderConfigSupervisor,
 }
 
 pub struct BorgApiServer {
@@ -39,6 +40,8 @@ pub struct BorgApiServer {
 
 impl BorgApiServer {
     pub fn new(bind: String, db: BorgDb, exec: ExecEngine, memory: MemoryStore) -> Self {
+        let provider_supervisor =
+            ProviderConfigSupervisor::new(db.clone(), exec.provider_settings_handle());
         Self {
             bind,
             state: AppState {
@@ -46,13 +49,16 @@ impl BorgApiServer {
                 http_port: init_http_port(exec.clone()).expect("failed to initialize http port"),
                 memory,
                 ports_supervisor: BorgPortsSupervisor::new(db, exec.clone()),
+                provider_supervisor,
             },
         }
     }
 
     pub async fn run(self) -> Result<()> {
         let ports_supervisor = self.state.ports_supervisor.clone();
+        let provider_supervisor = self.state.provider_supervisor.clone();
         let ports_task = ports_supervisor.clone().start();
+        let provider_task = provider_supervisor.clone().start();
         let router = app_router(self.state);
 
         let addr: SocketAddr = self.bind.parse()?;
@@ -70,7 +76,9 @@ impl BorgApiServer {
             .with_graceful_shutdown(shutdown)
             .await?;
         ports_task.abort();
+        provider_task.abort();
         ports_supervisor.shutdown().await;
+        provider_supervisor.shutdown().await;
 
         Ok(())
     }
@@ -96,6 +104,14 @@ fn app_router(state: AppState) -> Router {
             get(SystemController::get_memory_entity),
         )
         .route(
+            "/api/observability/tool-calls",
+            get(DbController::list_tool_calls),
+        )
+        .route(
+            "/api/observability/tool-calls/:call_id",
+            get(DbController::get_tool_call),
+        )
+        .route(
             "/api/observability/llm-calls",
             get(DbController::list_llm_calls),
         )
@@ -113,6 +129,23 @@ fn app_router(state: AppState) -> Router {
         .route(
             "/api/providers/:provider/models",
             get(DbController::list_provider_models),
+        )
+        .route("/api/apps", get(DbController::list_apps))
+        .route(
+            "/api/apps/:app_id",
+            get(DbController::get_app)
+                .put(DbController::upsert_app)
+                .delete(DbController::delete_app),
+        )
+        .route(
+            "/api/apps/:app_id/capabilities",
+            get(DbController::list_app_capabilities),
+        )
+        .route(
+            "/api/apps/:app_id/capabilities/:capability_id",
+            get(DbController::get_app_capability)
+                .put(DbController::upsert_app_capability)
+                .delete(DbController::delete_app_capability),
         )
         .route(
             "/api/providers/openai/device-code/start",
@@ -266,16 +299,17 @@ fn is_allowed_localhost_origin(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppState, BorgPortsSupervisor, HttpPortRequest, app_router, validate_port_request,
+        AppState, BorgPortsSupervisor, HttpPortRequest, ProviderConfigSupervisor, app_router,
+        validate_port_request,
     };
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode, header};
+    use borg_codemode::CodeModeRuntime;
     use borg_core::Uri;
     use borg_db::BorgDb;
     use borg_exec::ExecEngine;
     use borg_ltm::MemoryStore;
     use borg_ports::init_http_port;
-    use borg_rt::CodeModeRuntime;
     use serde_json::{Value, json};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -317,7 +351,11 @@ mod tests {
             db: db.clone(),
             http_port,
             memory,
-            ports_supervisor: BorgPortsSupervisor::disabled(db, exec),
+            ports_supervisor: BorgPortsSupervisor::disabled(db.clone(), exec.clone()),
+            provider_supervisor: ProviderConfigSupervisor::disabled(
+                db.clone(),
+                exec.provider_settings_handle(),
+            ),
         };
         app_router(state)
     }
@@ -453,6 +491,154 @@ mod tests {
         .await;
         assert_ne!(status, StatusCode::NOT_FOUND);
         assert_ne!(status, StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn apps_crud_endpoints_work() {
+        let app = test_app("apps").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/apps/borg:app:movieindex",
+            json!({
+                "name":"MovieIndex",
+                "slug":"movieindex",
+                "description":"Search legal torrents",
+                "status":"active"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/apps/borg:app:movieindex/capabilities/borg:capability:search",
+            json!({
+                "name":"searchApis",
+                "hint":"Search APIs",
+                "mode":"codemode",
+                "instructions":"Search APIs by keyword",
+                "status":"active"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/apps/borg:app:movieindex/capabilities",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body["capabilities"]
+                .as_array()
+                .is_some_and(|v| !v.is_empty())
+        );
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/apps/borg:app:movieindex/capabilities/borg:capability:search",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["capability"]["name"], "searchApis");
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/apps/borg:app:movieindex/capabilities/borg:capability:search",
+            json!({
+                "name":"searchApisV2",
+                "hint":"Updated hint",
+                "mode":"mcp",
+                "instructions":"Updated instructions",
+                "status":"disabled"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/apps/borg:app:movieindex/capabilities/borg:capability:search",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["capability"]["name"], "searchApisV2");
+        assert_eq!(body["capability"]["mode"], "mcp");
+        assert_eq!(body["capability"]["status"], "disabled");
+
+        let (status, body) =
+            request_no_body(&app, Method::GET, "/api/apps/borg:app:movieindex").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["app"]["name"], "MovieIndex");
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/apps").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["apps"].as_array().is_some_and(|v| !v.is_empty()));
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::DELETE,
+            "/api/apps/borg:app:movieindex/capabilities/borg:capability:search",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/apps/borg:app:movieindex/capabilities",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["capabilities"].as_array().map(|v| v.len()), Some(0));
+
+        let (status, _) =
+            request_no_body(&app, Method::DELETE, "/api/apps/borg:app:movieindex").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn app_capabilities_are_removed_when_app_is_deleted() {
+        let app = test_app("apps-capabilities-cascade").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/apps/borg:app:cascade",
+            json!({
+                "name":"Cascade App",
+                "slug":"cascade-app",
+                "description":"cascade test",
+                "status":"active"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/apps/borg:app:cascade/capabilities/borg:capability:one",
+            json!({
+                "name":"capOne",
+                "mode":"codemode"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, _) = request_no_body(&app, Method::DELETE, "/api/apps/borg:app:cascade").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (status, _) =
+            request_no_body(&app, Method::GET, "/api/apps/borg:app:cascade/capabilities").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -831,6 +1017,59 @@ mod tests {
 
         let (status, _) = request_no_body(&app, Method::DELETE, "/api/providers/missing").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn apps_negative_paths() {
+        let app = test_app("apps-negative").await;
+        let (status, _) = request_no_body(&app, Method::GET, "/api/apps/not-a-uri").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) = request_no_body(&app, Method::GET, "/api/apps/borg:app:missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = request_no_body(&app, Method::DELETE, "/api/apps/borg:app:missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) =
+            request_no_body(&app, Method::GET, "/api/apps/borg:app:missing/capabilities").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/apps/borg:app:missing/capabilities/borg:capability:search",
+            json!({
+                "name":"searchApis",
+                "mode":"codemode"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/apps/borg:app:movieindex/capabilities/not-a-uri",
+            json!({
+                "name":"searchApis",
+                "mode":"codemode"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/apps/borg:app:movieindex/capabilities/borg:capability:empty-name",
+            json!({
+                "name":"  ",
+                "mode":"codemode"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

@@ -1,4 +1,5 @@
 mod agents;
+mod apps;
 mod core;
 mod llm_calls;
 mod migrations;
@@ -7,6 +8,7 @@ mod ports;
 mod providers;
 mod sessions;
 mod tasks;
+mod tool_calls;
 mod users;
 mod utils;
 
@@ -222,4 +224,42 @@ pub struct LlmCallRecord {
     pub request_json: Value,
     pub response_json: Value,
     pub response_body: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ToolCallRecord {
+    pub call_id: String,
+    pub session_id: String,
+    pub task_id: Option<String>,
+    pub tool_name: String,
+    pub arguments_json: Value,
+    pub output_json: Value,
+    pub success: bool,
+    pub error: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub called_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AppRecord {
+    pub app_id: Uri,
+    pub name: String,
+    pub slug: String,
+    pub description: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AppCapabilityRecord {
+    pub capability_id: Uri,
+    pub app_id: Uri,
+    pub name: String,
+    pub hint: String,
+    pub mode: String,
+    pub instructions: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }

@@ -20,7 +20,8 @@ import { CommandK, type CommandSectionGroup } from "./CommandK";
 import { AgentsPage } from "./pages/control/agents";
 import { AgentDetailsPage } from "./pages/control/agents/id";
 import { AgentSkillsPage } from "./pages/control/agents/skills";
-import { AgentToolsPage } from "./pages/control/agents/tools";
+import { AppsPage } from "./pages/control/apps";
+import { AppDetailsPage } from "./pages/control/apps/id";
 import { PortsPage } from "./pages/control/ports";
 import { PortDetailsPage } from "./pages/control/ports/id";
 import { SessionPage } from "./pages/control/sessions";
@@ -96,10 +97,10 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
         ],
       },
       {
-        id: "control-tools",
-        title: "Tools",
+        id: "control-apps",
+        title: "Apps",
         icon: Hammer,
-        path: "/control/tools",
+        path: "/control/apps",
       },
       {
         id: "control-users",
@@ -179,6 +180,12 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
             icon: Route,
             path: "/observability/tracing/llm-calls",
           },
+          {
+            id: "observability-tracing-tool-calls",
+            title: "Tool Calls",
+            icon: Route,
+            path: "/observability/tracing/tool-calls",
+          },
         ],
       },
     ],
@@ -207,12 +214,15 @@ const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
   "/dashboard": SECTION_BY_ID["overview-home"],
   "/dashbaord": SECTION_BY_ID["overview-home"],
   "/control": SECTION_BY_ID["control-sessions"],
-  "/control/agents/tools": SECTION_BY_ID["control-tools"],
+  "/control/agents/tools": SECTION_BY_ID["control-apps"],
+  "/control/tools": SECTION_BY_ID["control-apps"],
   "/settings": SECTION_BY_ID["settings-providers"],
   "/observability/overview": SECTION_BY_ID["observability-overview"],
   "/observability/traces": SECTION_BY_ID["observability-tracing"],
   "/observability/tracing/llm-calls":
     SECTION_BY_ID["observability-tracing-llm-calls"],
+  "/observability/tracing/tool-calls":
+    SECTION_BY_ID["observability-tracing-tool-calls"],
   "/observability": SECTION_BY_ID["observability-overview"],
   "/memory": SECTION_BY_ID["memory-explorer"],
   "/memory/search": SECTION_BY_ID["memory-explorer"],
@@ -221,6 +231,7 @@ const MEMORY_ENTITY_PREFIX = "/memory/entity/";
 const MEMORY_EXPLORER_PREFIX = "/memory/explorer/";
 const CONTROL_SESSION_PREFIX = "/control/sessions/";
 const CONTROL_AGENT_PREFIX = "/control/agents/";
+const CONTROL_APP_PREFIX = "/control/apps/";
 const CONTROL_USER_PREFIX = "/control/users/";
 const CONTROL_PORT_PREFIX = "/control/ports/";
 const OBSERVABILITY_TRACING_PREFIX = "/observability/tracing/";
@@ -340,6 +351,30 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
     }
   }
   if (
+    normalizedPathname.startsWith(CONTROL_APP_PREFIX) &&
+    normalizedPathname.length > CONTROL_APP_PREFIX.length &&
+    !SECTION_BY_PATH[normalizedPathname]
+  ) {
+    const encodedAppId = normalizedPathname.slice(CONTROL_APP_PREFIX.length);
+    try {
+      return {
+        id: "control-app",
+        entityUri: decodeURIComponent(encodedAppId),
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    } catch {
+      return {
+        id: "control-app",
+        entityUri: encodedAppId,
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    }
+  }
+  if (
     normalizedPathname.startsWith(CONTROL_PORT_PREFIX) &&
     normalizedPathname.length > CONTROL_PORT_PREFIX.length &&
     !SECTION_BY_PATH[normalizedPathname]
@@ -393,6 +428,18 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
   ) {
     return {
       id: "observability-tracing-llm-calls",
+      entityUri: null,
+      explorerUri: null,
+      sessionId: null,
+      portName: null,
+    };
+  }
+  if (
+    normalizedPathname.startsWith("/observability/tracing/tool-calls/") &&
+    normalizedPathname.length > "/observability/tracing/tool-calls/".length
+  ) {
+    return {
+      id: "observability-tracing-tool-calls",
       entityUri: null,
       explorerUri: null,
       sessionId: null,
@@ -484,7 +531,8 @@ export function DashboardApp() {
       ),
       "control-agents": () => <AgentsPage />,
       "control-agents-skills": () => <AgentSkillsPage />,
-      "control-tools": () => <AgentToolsPage />,
+      "control-apps": () => <AppsPage />,
+      "control-app": () => <AppDetailsPage appId={route.entityUri ?? ""} />,
       "control-agent": () => (
         <AgentDetailsPage agentId={route.entityUri ?? ""} />
       ),
@@ -499,6 +547,7 @@ export function DashboardApp() {
       "observability-alerts": () => <ObservabilityAlertsPage />,
       "observability-tracing": () => <ObservabilityTracingPage />,
       "observability-tracing-llm-calls": () => <ObservabilityTracingPage />,
+      "observability-tracing-tool-calls": () => <ObservabilityTracingPage />,
       "memory-graph": () => <MemoryGraphPage />,
       "memory-explorer": () => (
         <MemoryExplorerPage explorerUri={route.explorerUri ?? undefined} />

@@ -19,6 +19,44 @@ export type ProvidersResponse = {
   providers?: ProviderRecord[];
 };
 
+export type AppRecord = {
+  app_id: string;
+  name: string;
+  slug: string;
+  description: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppsResponse = {
+  apps?: AppRecord[];
+};
+
+export type AppResponse = {
+  app?: AppRecord;
+};
+
+export type AppCapabilityRecord = {
+  capability_id: string;
+  app_id: string;
+  name: string;
+  hint: string;
+  mode: string;
+  instructions: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppCapabilitiesResponse = {
+  capabilities?: AppCapabilityRecord[];
+};
+
+export type AppCapabilityResponse = {
+  capability?: AppCapabilityRecord;
+};
+
 export type HealthResponse = {
   status?: string;
 };
@@ -109,6 +147,8 @@ export type PortBindingsResponse = {
 export type ProviderModelsResponse = {
   provider?: string;
   models?: string[];
+  default_text_model?: string | null;
+  default_audio_model?: string | null;
 };
 
 export type MemoryEntity = {
@@ -161,6 +201,27 @@ export type LlmCallsResponse = {
 
 export type LlmCallResponse = {
   llm_call?: LlmCallRecord;
+};
+
+export type ToolCallRecord = {
+  call_id: string;
+  session_id: string;
+  task_id?: string | null;
+  tool_name: string;
+  arguments_json: unknown;
+  output_json: unknown;
+  success: boolean;
+  error?: string | null;
+  duration_ms?: number | null;
+  called_at: string;
+};
+
+export type ToolCallsResponse = {
+  tool_calls?: ToolCallRecord[];
+};
+
+export type ToolCallResponse = {
+  tool_call?: ToolCallRecord;
 };
 
 export class BorgApiError extends Error {
@@ -264,6 +325,135 @@ export class BorgApiClient {
       `/api/providers?limit=${limit}`
     );
     return Array.isArray(data.providers) ? data.providers : [];
+  }
+
+  async listApps(limit = 100): Promise<AppRecord[]> {
+    const data = await this.requestJson<AppsResponse>(
+      `/api/apps?limit=${limit}`
+    );
+    return Array.isArray(data.apps) ? data.apps : [];
+  }
+
+  async getApp(appId: string): Promise<AppRecord | null> {
+    try {
+      const data = await this.requestJson<AppResponse>(
+        `/api/apps/${encodeURIComponent(appId)}`
+      );
+      return data.app ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async upsertApp(
+    appId: string,
+    payload: {
+      name: string;
+      slug: string;
+      description?: string;
+      status?: string;
+    }
+  ): Promise<void> {
+    await this.request(`/api/apps/${encodeURIComponent(appId)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async listAppCapabilities(
+    appId: string,
+    limit = 100
+  ): Promise<AppCapabilityRecord[]> {
+    const data = await this.requestJson<AppCapabilitiesResponse>(
+      `/api/apps/${encodeURIComponent(appId)}/capabilities?limit=${limit}`
+    );
+    return Array.isArray(data.capabilities) ? data.capabilities : [];
+  }
+
+  async getAppCapability(
+    appId: string,
+    capabilityId: string
+  ): Promise<AppCapabilityRecord | null> {
+    try {
+      const data = await this.requestJson<AppCapabilityResponse>(
+        `/api/apps/${encodeURIComponent(appId)}/capabilities/${encodeURIComponent(capabilityId)}`
+      );
+      return data.capability ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async upsertAppCapability(
+    appId: string,
+    capabilityId: string,
+    payload: {
+      name: string;
+      hint?: string;
+      mode?: string;
+      instructions?: string;
+      status?: string;
+    }
+  ): Promise<void> {
+    await this.request(
+      `/api/apps/${encodeURIComponent(appId)}/capabilities/${encodeURIComponent(capabilityId)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
+  }
+
+  async deleteAppCapability(
+    appId: string,
+    capabilityId: string,
+    options: { ignoreNotFound?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.request(
+        `/api/apps/${encodeURIComponent(appId)}/capabilities/${encodeURIComponent(capabilityId)}`,
+        {
+          method: "DELETE",
+        }
+      );
+    } catch (error) {
+      if (
+        options.ignoreNotFound &&
+        error instanceof BorgApiError &&
+        error.status === 404
+      ) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async deleteApp(
+    appId: string,
+    options: { ignoreNotFound?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.request(`/api/apps/${encodeURIComponent(appId)}`, {
+        method: "DELETE",
+      });
+    } catch (error) {
+      if (
+        options.ignoreNotFound &&
+        error instanceof BorgApiError &&
+        error.status === 404
+      ) {
+        return;
+      }
+      throw error;
+    }
   }
 
   async health(): Promise<boolean> {
@@ -574,6 +764,12 @@ export class BorgApiClient {
     return Array.isArray(data.models) ? data.models : [];
   }
 
+  async getProviderModels(provider: string): Promise<ProviderModelsResponse> {
+    return this.requestJson<ProviderModelsResponse>(
+      `/api/providers/${encodeURIComponent(provider)}/models`
+    );
+  }
+
   async deleteProvider(
     provider: string,
     options: { ignoreNotFound?: boolean } = {}
@@ -662,6 +858,27 @@ export class BorgApiClient {
         `/api/observability/llm-calls/${encodeURIComponent(callId)}`
       );
       return data.llm_call ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async listToolCalls(limit = 500): Promise<ToolCallRecord[]> {
+    const data = await this.requestJson<ToolCallsResponse>(
+      `/api/observability/tool-calls?limit=${limit}`
+    );
+    return Array.isArray(data.tool_calls) ? data.tool_calls : [];
+  }
+
+  async getToolCall(callId: string): Promise<ToolCallRecord | null> {
+    try {
+      const data = await this.requestJson<ToolCallResponse>(
+        `/api/observability/tool-calls/${encodeURIComponent(callId)}`
+      );
+      return data.tool_call ?? null;
     } catch (error) {
       if (error instanceof BorgApiError && error.status === 404) {
         return null;

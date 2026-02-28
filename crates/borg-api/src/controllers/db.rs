@@ -5,6 +5,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use borg_core::Config;
+use borg_llm::Provider;
+use borg_llm::providers::openai::OpenAiProvider;
+use borg_llm::providers::openrouter::OpenRouterProvider;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -12,6 +15,10 @@ use tracing::{debug, warn};
 
 use crate::AppState;
 use crate::controllers::common::{api_error, parse_uri_field};
+
+fn default_app_status() -> String {
+    "active".to_string()
+}
 
 #[derive(Deserialize)]
 pub(crate) struct LimitQuery {
@@ -53,6 +60,29 @@ pub(crate) struct UpsertProviderRequest {
     api_key: String,
     #[serde(default)]
     enabled: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct UpsertAppRequest {
+    name: String,
+    slug: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default = "default_app_status")]
+    status: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct UpsertAppCapabilityRequest {
+    name: String,
+    #[serde(default)]
+    hint: String,
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    instructions: String,
+    #[serde(default = "default_app_status")]
+    status: String,
 }
 
 #[derive(Deserialize)]
@@ -124,12 +154,18 @@ pub(crate) struct UpsertPortSessionContextRequest {
 pub(crate) struct DbController;
 
 impl DbController {
-    fn default_models_for_provider(provider: &str) -> &'static [&'static str] {
-        match provider {
-            "openai" => &["gpt-5.3-codex", "gpt-4o-mini"],
-            "openrouter" => &["openai/gpt-4o-mini", "meta-llama/3.3-70b-instruct"],
-            _ => &[],
-        }
+    fn infer_default_text_model(models: &[String]) -> Option<String> {
+        models
+            .iter()
+            .find(|model| !model.contains("transcribe"))
+            .cloned()
+    }
+
+    fn infer_default_audio_model(models: &[String]) -> Option<String> {
+        models
+            .iter()
+            .find(|model| model.contains("transcribe"))
+            .cloned()
     }
 
     fn fallback_agent_name(agent_id: &str) -> String {
@@ -158,6 +194,28 @@ impl DbController {
             ));
         }
         Ok(id.to_string())
+    }
+
+    pub(crate) async fn list_tool_calls(
+        State(state): State<AppState>,
+        Query(query): Query<LimitQuery>,
+    ) -> impl IntoResponse {
+        let limit = query.limit.unwrap_or(500);
+        match state.db.list_tool_calls(limit).await {
+            Ok(calls) => (StatusCode::OK, Json(json!({ "tool_calls": calls }))).into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn get_tool_call(
+        State(state): State<AppState>,
+        AxumPath(call_id): AxumPath<String>,
+    ) -> impl IntoResponse {
+        match state.db.get_tool_call(&call_id).await {
+            Ok(Some(call)) => (StatusCode::OK, Json(json!({ "tool_call": call }))).into_response(),
+            Ok(None) => api_error(StatusCode::NOT_FOUND, "tool call not found".to_string()),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
     }
 
     pub(crate) async fn list_llm_calls(
@@ -195,6 +253,210 @@ impl DbController {
         }
     }
 
+    pub(crate) async fn list_apps(
+        State(state): State<AppState>,
+        Query(query): Query<LimitQuery>,
+    ) -> impl IntoResponse {
+        let limit = query.limit.unwrap_or(100);
+        match state.db.list_apps(limit).await {
+            Ok(apps) => (StatusCode::OK, Json(json!({ "apps": apps }))).into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn get_app(
+        State(state): State<AppState>,
+        AxumPath(app_id): AxumPath<String>,
+    ) -> impl IntoResponse {
+        let app_id = match parse_uri_field("app_id", &app_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        match state.db.get_app(&app_id).await {
+            Ok(Some(app)) => (StatusCode::OK, Json(json!({ "app": app }))).into_response(),
+            Ok(None) => api_error(StatusCode::NOT_FOUND, "app not found".to_string()),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn upsert_app(
+        State(state): State<AppState>,
+        AxumPath(app_id): AxumPath<String>,
+        Json(payload): Json<UpsertAppRequest>,
+    ) -> impl IntoResponse {
+        let app_id = match parse_uri_field("app_id", &app_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+
+        if payload.name.trim().is_empty() {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "name must not be empty".to_string(),
+            );
+        }
+        if payload.slug.trim().is_empty() {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "slug must not be empty".to_string(),
+            );
+        }
+
+        match state
+            .db
+            .upsert_app(
+                &app_id,
+                payload.name.trim(),
+                payload.slug.trim(),
+                payload.description.trim(),
+                payload.status.trim(),
+            )
+            .await
+        {
+            Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    }
+
+    pub(crate) async fn delete_app(
+        State(state): State<AppState>,
+        AxumPath(app_id): AxumPath<String>,
+    ) -> impl IntoResponse {
+        let app_id = match parse_uri_field("app_id", &app_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        match state.db.delete_app(&app_id).await {
+            Ok(0) => api_error(StatusCode::NOT_FOUND, "app not found".to_string()),
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    }
+
+    pub(crate) async fn list_app_capabilities(
+        State(state): State<AppState>,
+        AxumPath(app_id): AxumPath<String>,
+        Query(query): Query<LimitQuery>,
+    ) -> impl IntoResponse {
+        let app_id = match parse_uri_field("app_id", &app_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        match state.db.get_app(&app_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => return api_error(StatusCode::NOT_FOUND, "app not found".to_string()),
+            Err(err) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+        let limit = query.limit.unwrap_or(100);
+        match state.db.list_app_capabilities(&app_id, limit).await {
+            Ok(capabilities) => (
+                StatusCode::OK,
+                Json(json!({ "capabilities": capabilities })),
+            )
+                .into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn get_app_capability(
+        State(state): State<AppState>,
+        AxumPath((app_id, capability_id)): AxumPath<(String, String)>,
+    ) -> impl IntoResponse {
+        let app_id = match parse_uri_field("app_id", &app_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        let capability_id = match parse_uri_field("capability_id", &capability_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        match state.db.get_app_capability(&app_id, &capability_id).await {
+            Ok(Some(capability)) => {
+                (StatusCode::OK, Json(json!({ "capability": capability }))).into_response()
+            }
+            Ok(None) => api_error(StatusCode::NOT_FOUND, "capability not found".to_string()),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn upsert_app_capability(
+        State(state): State<AppState>,
+        AxumPath((app_id, capability_id)): AxumPath<(String, String)>,
+        Json(payload): Json<UpsertAppCapabilityRequest>,
+    ) -> impl IntoResponse {
+        let app_id = match parse_uri_field("app_id", &app_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        let capability_id = match parse_uri_field("capability_id", &capability_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+
+        if payload.name.trim().is_empty() {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "name must not be empty".to_string(),
+            );
+        }
+        match state.db.get_app(&app_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => return api_error(StatusCode::NOT_FOUND, "app not found".to_string()),
+            Err(err) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+
+        let mode = if payload.mode.trim().is_empty() {
+            "codemode"
+        } else {
+            payload.mode.trim()
+        };
+        let status = if payload.status.trim().is_empty() {
+            "active"
+        } else {
+            payload.status.trim()
+        };
+
+        match state
+            .db
+            .upsert_app_capability(
+                &app_id,
+                &capability_id,
+                payload.name.trim(),
+                payload.hint.trim(),
+                mode,
+                payload.instructions.trim(),
+                status,
+            )
+            .await
+        {
+            Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    }
+
+    pub(crate) async fn delete_app_capability(
+        State(state): State<AppState>,
+        AxumPath((app_id, capability_id)): AxumPath<(String, String)>,
+    ) -> impl IntoResponse {
+        let app_id = match parse_uri_field("app_id", &app_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        let capability_id = match parse_uri_field("capability_id", &capability_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        match state
+            .db
+            .delete_app_capability(&app_id, &capability_id)
+            .await
+        {
+            Ok(0) => api_error(StatusCode::NOT_FOUND, "capability not found".to_string()),
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    }
+
     pub(crate) async fn get_provider(
         State(state): State<AppState>,
         AxumPath(provider): AxumPath<String>,
@@ -216,7 +478,14 @@ impl DbController {
             .upsert_provider(&provider, &payload.api_key, payload.enabled)
             .await
         {
-            Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+            Ok(()) => match state
+                .provider_supervisor
+                .on_provider_setting_changed()
+                .await
+            {
+                Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+                Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            },
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
@@ -227,7 +496,14 @@ impl DbController {
     ) -> impl IntoResponse {
         match state.db.delete_provider(&provider).await {
             Ok(0) => api_error(StatusCode::NOT_FOUND, "provider not found".to_string()),
-            Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Ok(_) => match state
+                .provider_supervisor
+                .on_provider_setting_changed()
+                .await
+            {
+                Ok(()) => StatusCode::NO_CONTENT.into_response(),
+                Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+            },
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
@@ -285,17 +561,36 @@ impl DbController {
     }
 
     pub(crate) async fn list_provider_models(
+        State(state): State<AppState>,
         AxumPath(provider): AxumPath<String>,
     ) -> impl IntoResponse {
-        let models = Self::default_models_for_provider(&provider);
-        if models.is_empty() {
-            return api_error(StatusCode::NOT_FOUND, "provider not found".to_string());
-        }
+        let Some(api_key) = (match state.db.get_provider_api_key(&provider).await {
+            Ok(value) => value,
+            Err(err) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }) else {
+            return api_error(
+                StatusCode::NOT_FOUND,
+                format!("provider `{provider}` is not configured or enabled"),
+            );
+        };
+
+        let models_result = match provider.as_str() {
+            "openai" => OpenAiProvider::new(api_key).available_models().await,
+            "openrouter" => OpenRouterProvider::new(api_key).available_models().await,
+            _ => return api_error(StatusCode::NOT_FOUND, "provider not found".to_string()),
+        };
+        let models = match models_result {
+            Ok(models) => models,
+            Err(err) => return api_error(StatusCode::BAD_GATEWAY, err.to_string()),
+        };
+
         (
             StatusCode::OK,
             Json(json!({
                 "provider": provider,
                 "models": models,
+                "default_text_model": Self::infer_default_text_model(&models),
+                "default_audio_model": Self::infer_default_audio_model(&models),
             })),
         )
             .into_response()
@@ -1016,7 +1311,22 @@ impl DbController {
                 .on_port_setting_changed(&port_name, &key)
                 .await
             {
-                Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+                Ok(()) => {
+                    if port_name == "runtime" && key == "preferred_provider" {
+                        match state
+                            .provider_supervisor
+                            .on_provider_setting_changed()
+                            .await
+                        {
+                            Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+                            Err(err) => {
+                                api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+                            }
+                        }
+                    } else {
+                        (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+                    }
+                }
                 Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
             },
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
@@ -1038,7 +1348,22 @@ impl DbController {
                 .on_port_setting_changed(&port_name, &key)
                 .await
             {
-                Ok(()) => StatusCode::NO_CONTENT.into_response(),
+                Ok(()) => {
+                    if port_name == "runtime" && key == "preferred_provider" {
+                        match state
+                            .provider_supervisor
+                            .on_provider_setting_changed()
+                            .await
+                        {
+                            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+                            Err(err) => {
+                                api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+                            }
+                        }
+                    } else {
+                        StatusCode::NO_CONTENT.into_response()
+                    }
+                }
                 Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
             },
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
