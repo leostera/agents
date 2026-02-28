@@ -53,7 +53,7 @@ function Button({
   }) {
   const resolvedVariant =
     tone === "subtle" ? "secondary" : tone === "default" ? "default" : variant;
-  const Comp = asChild ? Slot.Root : "button";
+  const Comp = asChild ? Slot : "button";
 
   return (
     <Comp

@@ -3,7 +3,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   Input,
@@ -215,7 +214,6 @@ export function ConnectProviderForm({
             </div>
           </form>
         )}
-        <DialogFooter showCloseButton />
       </DialogContent>
     </Dialog>
   );

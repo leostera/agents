@@ -59,13 +59,13 @@ function SelectContent({
         data-slot="select-content"
         position={position}
         className={cn(
-          "bg-popover text-popover-foreground z-50 min-w-[8rem] overflow-hidden rounded-md border shadow-md",
+          "bg-popover text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 relative z-[70] min-w-[8rem] overflow-hidden rounded-md border shadow-md pointer-events-auto",
           className
         )}
         {...props}
       >
         <SelectScrollUpButton />
-        <SelectPrimitive.Viewport className="p-1">
+        <SelectPrimitive.Viewport className="max-h-72 overflow-y-auto p-1">
           {children}
         </SelectPrimitive.Viewport>
         <SelectScrollDownButton />

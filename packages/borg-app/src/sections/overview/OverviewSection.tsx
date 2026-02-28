@@ -585,7 +585,7 @@ export function OverviewSection() {
             <CardTitle className="text-2xl font-semibold">96.4%</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            Top failures: executeCode, searchApis
+            Top failures: CodeMode.executeCode, CodeMode.searchApis
           </CardContent>
         </Card>
         <Card size="sm">
