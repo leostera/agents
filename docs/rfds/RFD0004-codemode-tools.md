@@ -204,11 +204,6 @@ The model follows established integration platforms where providers expose actio
 
 A close reference is Cloudflare's post, [Code Mode: give agents an entire API in 1,000 tokens](https://blog.cloudflare.com/code-mode-mcp/). The article describes a server-side codemode pattern where a large API surface is exposed through a minimal interface (`search()` and `execute()`), and the model writes code to discover operations and perform multi-step actions. It also shows concrete flows, including searching Cloudflare's OpenAPI for WAF/ruleset endpoints and then executing the resulting API sequence to protect an origin from DDoS attacks. That pattern maps directly to the Borg capability model here: compact capability discovery plus code execution over a large, evolving backend surface.
 
-## Unresolved questions
-[unresolved-questions]: #unresolved-questions
-
-The main open questions are about operational boundaries and lifecycle, not direction. In this model, capabilities provide instructions and CodeMode executes generated code, so the unresolved work is not schema enforcement but execution discipline: whether app connections should default to user scope or workspace scope, what minimum redaction rules apply to trace payloads in `tool_calls`, how ranking should behave when both builtin and codemode implementations can satisfy the same capability, how capability versioning and compatibility should be represented, what retry/timeout defaults should apply per execution mode, and how secret resolution should behave when both app-level and connection-level values are present.
-
 ## Future possibilities
 [future-possibilities]: #future-possibilities
 
