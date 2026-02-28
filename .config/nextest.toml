@@ -1,0 +1,12 @@
+[profile.default]
+# Enforce a default test timeout policy:
+# - tests must finish within 10s
+# - if they don't, nextest retries the timeout window once and then terminates
+slow-timeout = { period = "10s", terminate-after = 2 }
+
+[[profile.default.overrides]]
+# Any intentionally long-running test must be explicit by naming:
+#   *_long
+# and gets a larger timeout budget.
+filter = "test(/_long$/)"
+slow-timeout = { period = "60s", terminate-after = 2 }
