@@ -11,7 +11,14 @@ import {
   TableHeader,
   TableRow,
 } from "@borg/ui";
+import { Route } from "lucide-react";
 import React from "react";
+import {
+  Section,
+  SectionContent,
+  SectionEmpty,
+  SectionToolbar,
+} from "../../../components/Section";
 import { AddPortForm, type AddPortInput } from "./AddPortForm";
 
 const borgApi = createBorgApiClient();
@@ -104,6 +111,7 @@ export function PortsPage() {
     const term = normalize(query);
     return ports.filter((port) => matchesTerm(port, term));
   }, [ports, query]);
+  const hasAnyPorts = ports.length > 0;
 
   const handleCreatePort = React.useCallback(
     async (input: AddPortInput) => {
@@ -196,147 +204,153 @@ export function PortsPage() {
   );
 
   return (
-    <section className="space-y-4">
-      <section className="flex items-center gap-2">
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder="Search ports"
-          aria-label="Search ports"
-        />
-        <Button variant="outline" onClick={() => setIsDialogOpen(true)}>
-          + Add Port
-        </Button>
-      </section>
+    <Section className="gap-4">
+      {isLoading || hasAnyPorts ? (
+        <SectionToolbar>
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            placeholder="Search ports"
+            aria-label="Search ports"
+          />
+          <Button variant="outline" onClick={() => setIsDialogOpen(true)}>
+            + Add Port
+          </Button>
+        </SectionToolbar>
+      ) : null}
 
       {error ? <p className="text-destructive text-xs">{error}</p> : null}
 
-      <section>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-8" />
-              <TableHead>Provider</TableHead>
-              <TableHead>Port Name</TableHead>
-              <TableHead>Mode</TableHead>
-              <TableHead>Allowed Users</TableHead>
-              <TableHead>Active Sessions</TableHead>
-              <TableHead>Updated</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
+      <SectionContent>
+        {!isLoading && filteredPorts.length === 0 ? (
+          <SectionEmpty
+            icon={Route}
+            title="No Ports Found"
+            description="Create your first port to connect an external channel."
+            action={
+              <Button onClick={() => setIsDialogOpen(true)}>+ Add Port</Button>
+            }
+          />
+        ) : (
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell
-                  colSpan={8}
-                  className="text-muted-foreground text-center"
-                >
-                  Loading ports...
-                </TableCell>
+                <TableHead className="w-8" />
+                <TableHead>Provider</TableHead>
+                <TableHead>Port Name</TableHead>
+                <TableHead>Mode</TableHead>
+                <TableHead>Allowed Users</TableHead>
+                <TableHead>Active Sessions</TableHead>
+                <TableHead>Updated</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
-            ) : filteredPorts.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={8}
-                  className="text-muted-foreground text-center"
-                >
-                  No ports found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              filteredPorts.map((port) => (
-                <TableRow
-                  key={port.port_id}
-                  className="cursor-pointer"
-                  onClick={() => {
-                    window.history.pushState(
-                      null,
-                      "",
-                      `/control/ports/${encodeURIComponent(port.port_id)}`
-                    );
-                    window.dispatchEvent(new PopStateEvent("popstate"));
-                  }}
-                >
-                  <TableCell>
-                    <span
-                      className={`inline-block h-2.5 w-2.5 rounded-full ${
-                        port.enabled ? "bg-green-500" : "bg-muted-foreground/40"
-                      }`}
-                      title={port.enabled ? "Enabled" : "Disabled"}
-                    />
-                  </TableCell>
-                  <TableCell>{formatProviderName(port.provider)}</TableCell>
-                  <TableCell className="font-mono text-[11px]">
-                    <Link
-                      href={`/control/ports/${encodeURIComponent(port.port_id)}`}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      {port.port_name}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={modeChipClass(port.allows_guests)}
-                    >
-                      {port.allows_guests ? "Public" : "Private"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap items-center gap-1">
-                      {telegramAllowedUserIds(port).map((userId) => (
-                        <Badge key={userId} variant="outline">
-                          {userId}
-                        </Badge>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell>{port.active_sessions}</TableCell>
-                  <TableCell>{formatUpdatedAt(port.updated_at)}</TableCell>
-                  <TableCell className="space-x-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleToggleEnabled(port);
-                      }}
-                    >
-                      {port.enabled ? "Disable" : "Enable"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        window.history.pushState(
-                          null,
-                          "",
-                          `/control/ports/${encodeURIComponent(port.port_id)}`
-                        );
-                        window.dispatchEvent(new PopStateEvent("popstate"));
-                      }}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void handleDeletePort(port);
-                      }}
-                    >
-                      Delete
-                    </Button>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={8}
+                    className="text-muted-foreground text-center"
+                  >
+                    Loading ports...
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </section>
+              ) : (
+                filteredPorts.map((port) => (
+                  <TableRow
+                    key={port.port_id}
+                    className="cursor-pointer"
+                    onClick={() => {
+                      window.history.pushState(
+                        null,
+                        "",
+                        `/control/ports/${encodeURIComponent(port.port_id)}`
+                      );
+                      window.dispatchEvent(new PopStateEvent("popstate"));
+                    }}
+                  >
+                    <TableCell>
+                      <span
+                        className={`inline-block h-2.5 w-2.5 rounded-full ${
+                          port.enabled
+                            ? "bg-green-500"
+                            : "bg-muted-foreground/40"
+                        }`}
+                        title={port.enabled ? "Enabled" : "Disabled"}
+                      />
+                    </TableCell>
+                    <TableCell>{formatProviderName(port.provider)}</TableCell>
+                    <TableCell className="font-mono text-[11px]">
+                      <Link
+                        href={`/control/ports/${encodeURIComponent(port.port_id)}`}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {port.port_name}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={modeChipClass(port.allows_guests)}
+                      >
+                        {port.allows_guests ? "Public" : "Private"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {telegramAllowedUserIds(port).map((userId) => (
+                          <Badge key={userId} variant="outline">
+                            {userId}
+                          </Badge>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell>{port.active_sessions}</TableCell>
+                    <TableCell>{formatUpdatedAt(port.updated_at)}</TableCell>
+                    <TableCell className="space-x-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleToggleEnabled(port);
+                        }}
+                      >
+                        {port.enabled ? "Disable" : "Enable"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          window.history.pushState(
+                            null,
+                            "",
+                            `/control/ports/${encodeURIComponent(port.port_id)}`
+                          );
+                          window.dispatchEvent(new PopStateEvent("popstate"));
+                        }}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleDeletePort(port);
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        )}
+      </SectionContent>
 
       <AddPortForm
         open={isDialogOpen}
@@ -344,6 +358,6 @@ export function PortsPage() {
         isSaving={isSaving}
         onSubmit={handleCreatePort}
       />
-    </section>
+    </Section>
   );
 }

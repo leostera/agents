@@ -98,9 +98,15 @@ pub(crate) struct UpsertPolicyRequest {
 pub(crate) struct UpsertAgentSpecRequest {
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    default_provider_id: Option<String>,
     model: String,
     system_prompt: String,
-    tools: Value,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SetAgentSpecEnabledRequest {
+    enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -342,6 +348,17 @@ impl DbController {
             Ok(v) => v,
             Err(err) => return err,
         };
+        match state.db.get_app(&app_id).await {
+            Ok(Some(app)) if app.built_in => {
+                return api_error(
+                    StatusCode::FORBIDDEN,
+                    "built-in apps cannot be deleted".to_string(),
+                );
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => return api_error(StatusCode::NOT_FOUND, "app not found".to_string()),
+            Err(err) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
         match state.db.delete_app(&app_id).await {
             Ok(0) => api_error(StatusCode::NOT_FOUND, "app not found".to_string()),
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
@@ -789,14 +806,19 @@ impl DbController {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| Self::fallback_agent_name(&agent_id.to_string()));
+        let default_provider_id = payload
+            .default_provider_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
         match state
             .db
             .upsert_agent_spec(
                 &agent_id,
                 &name,
+                default_provider_id,
                 &payload.model,
                 &payload.system_prompt,
-                &payload.tools,
             )
             .await
         {
@@ -816,6 +838,26 @@ impl DbController {
         match state.db.delete_agent_spec(&agent_id).await {
             Ok(0) => api_error(StatusCode::NOT_FOUND, "agent spec not found".to_string()),
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    }
+
+    pub(crate) async fn set_agent_spec_enabled(
+        State(state): State<AppState>,
+        AxumPath(agent_id): AxumPath<String>,
+        Json(payload): Json<SetAgentSpecEnabledRequest>,
+    ) -> impl IntoResponse {
+        let agent_id = match parse_uri_field("agent_id", &agent_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        match state
+            .db
+            .set_agent_spec_enabled(&agent_id, payload.enabled)
+            .await
+        {
+            Ok(0) => api_error(StatusCode::NOT_FOUND, "agent spec not found".to_string()),
+            Ok(_) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }

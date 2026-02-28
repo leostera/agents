@@ -1,13 +1,20 @@
 import {
+  type AgentSpecRecord,
   createBorgApiClient,
   type PortBinding,
-  type PortSetting,
+  type PortRecord,
   type SessionRecord,
 } from "@borg/api";
 import {
   Badge,
   Button,
   Input,
+  Link,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Table,
   TableBody,
   TableCell,
@@ -16,30 +23,67 @@ import {
   TableRow,
 } from "@borg/ui";
 import React from "react";
+import { resolvePortFromRoute } from "../utils";
 
 const borgApi = createBorgApiClient();
+const NO_AGENT = "__none__";
 
 type PortDetailsPageProps = {
   portUri: string;
 };
 
+function normalizeTimestamp(value?: string | null): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return parsed.toLocaleString();
+}
+
+function toAllowedExternalIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter(Boolean);
+}
+
+function readableMode(allowsGuests: boolean): string {
+  return allowsGuests ? "Public" : "Private";
+}
+
+function providerKind(provider: string): string {
+  return provider.trim().toLowerCase();
+}
+
+function toMemoryEntityHref(uri: string): string {
+  return `/memory/entity/${encodeURIComponent(uri)}`;
+}
+
 export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
-  const [settings, setSettings] = React.useState<PortSetting[]>([]);
+  const [port, setPort] = React.useState<PortRecord | null>(null);
+  const [agents, setAgents] = React.useState<AgentSpecRecord[]>([]);
   const [bindings, setBindings] = React.useState<PortBinding[]>([]);
   const [sessions, setSessions] = React.useState<SessionRecord[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [keyInput, setKeyInput] = React.useState("");
-  const [valueInput, setValueInput] = React.useState("");
   const [isSaving, setIsSaving] = React.useState(false);
+
+  const [enabled, setEnabled] = React.useState(true);
+  const [mode, setMode] = React.useState<"public" | "private">("public");
+  const [defaultAgentId, setDefaultAgentId] = React.useState(NO_AGENT);
+  const [botToken, setBotToken] = React.useState("");
+  const [allowedExternalUserIds, setAllowedExternalUserIds] = React.useState<
+    string[]
+  >([]);
+  const [allowedUserInput, setAllowedUserInput] = React.useState("");
 
   const load = React.useCallback(async () => {
     const normalizedPortUri = portUri.trim();
     if (!normalizedPortUri) {
       setError("Missing port name");
-      setSettings([]);
+      setPort(null);
       setBindings([]);
       setSessions([]);
+      setAgents([]);
       setIsLoading(false);
       return;
     }
@@ -47,21 +91,45 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
     setIsLoading(true);
     setError(null);
     try {
-      const [loadedSettings, loadedBindings, loadedSessions] =
-        await Promise.all([
-          borgApi.listPortSettings(normalizedPortUri, 1000),
-          borgApi.listPortBindings(normalizedPortUri, 1000),
-          borgApi.listSessions(10000),
-        ]);
-      setSettings(loadedSettings);
+      const [loadedPorts, loadedAgents, loadedSessions] = await Promise.all([
+        borgApi.listPorts(1000),
+        borgApi.listAgentSpecs(1000),
+        borgApi.listSessions(10000),
+      ]);
+
+      const selectedPort = resolvePortFromRoute(normalizedPortUri, loadedPorts);
+      if (!selectedPort) {
+        throw new Error(`Port not found: ${normalizedPortUri}`);
+      }
+
+      const loadedBindings = await borgApi.listPortBindings(
+        selectedPort.port_id,
+        1000
+      );
+
+      setPort(selectedPort);
+      setAgents(loadedAgents);
       setBindings(loadedBindings);
       setSessions(
         loadedSessions.filter((session) => session.port === normalizedPortUri)
       );
+
+      const settings = selectedPort.settings ?? {};
+      setEnabled(Boolean(selectedPort.enabled));
+      setMode(selectedPort.allows_guests ? "public" : "private");
+      setDefaultAgentId(selectedPort.default_agent_id ?? NO_AGENT);
+      setBotToken(
+        typeof settings.bot_token === "string" ? settings.bot_token : ""
+      );
+      setAllowedExternalUserIds(
+        toAllowedExternalIds(settings.allowed_external_user_ids)
+      );
+      setAllowedUserInput("");
     } catch (loadError) {
-      setSettings([]);
+      setPort(null);
       setBindings([]);
       setSessions([]);
+      setAgents([]);
       setError(
         loadError instanceof Error
           ? loadError.message
@@ -76,161 +144,221 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
     void load();
   }, [load]);
 
-  const handleSaveSetting = React.useCallback(
+  const isTelegramPort = providerKind(port?.provider ?? "") === "telegram";
+
+  const addAllowedUser = React.useCallback(() => {
+    const next = allowedUserInput.trim();
+    if (!next) return;
+    setAllowedExternalUserIds((current) => {
+      if (current.includes(next)) return current;
+      return [...current, next];
+    });
+    setAllowedUserInput("");
+  }, [allowedUserInput]);
+
+  const removeAllowedUser = React.useCallback((userId: string) => {
+    setAllowedExternalUserIds((current) =>
+      current.filter((value) => value !== userId)
+    );
+  }, []);
+
+  const handleSavePort = React.useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      const normalizedPortUri = portUri.trim();
-      const key = keyInput.trim();
-      if (!normalizedPortUri || !key) {
-        setError("Port and key are required.");
-        return;
-      }
+      if (!port) return;
 
       setIsSaving(true);
       setError(null);
       try {
-        await borgApi.upsertPortSetting(normalizedPortUri, key, valueInput);
-        setKeyInput("");
-        setValueInput("");
+        const nextSettings: Record<string, unknown> = {
+          ...(port.settings ?? {}),
+        };
+        if (isTelegramPort) {
+          nextSettings.bot_token = botToken.trim();
+          nextSettings.allowed_external_user_ids = allowedExternalUserIds;
+        }
+
+        await borgApi.upsertPort(port.port_id, {
+          provider: port.provider,
+          enabled,
+          allows_guests: mode === "public",
+          default_agent_id: defaultAgentId === NO_AGENT ? null : defaultAgentId,
+          settings: nextSettings,
+        });
         await load();
       } catch (saveError) {
         setError(
-          saveError instanceof Error
-            ? saveError.message
-            : "Unable to save setting"
+          saveError instanceof Error ? saveError.message : "Unable to save port"
         );
       } finally {
         setIsSaving(false);
       }
     },
-    [keyInput, load, portUri, valueInput]
-  );
-
-  const handleEditSetting = React.useCallback((setting: PortSetting) => {
-    setKeyInput(setting.key);
-    setValueInput(setting.value);
-  }, []);
-
-  const handleDeleteSetting = React.useCallback(
-    async (key: string) => {
-      setError(null);
-      try {
-        await borgApi.deletePortSetting(portUri, key, { ignoreNotFound: true });
-        await load();
-      } catch (deleteError) {
-        setError(
-          deleteError instanceof Error
-            ? deleteError.message
-            : "Unable to delete setting"
-        );
-      }
-    },
-    [load, portUri]
+    [
+      allowedExternalUserIds,
+      botToken,
+      defaultAgentId,
+      enabled,
+      isTelegramPort,
+      load,
+      mode,
+      port,
+    ]
   );
 
   if (isLoading) {
     return <p className="text-muted-foreground text-sm">Loading port...</p>;
   }
 
-  if (error) {
-    return <p className="text-destructive text-sm">{error}</p>;
+  if (!port) {
+    return (
+      <p className="text-destructive text-sm">{error ?? "Port not found."}</p>
+    );
   }
 
   return (
     <section className="space-y-6">
-      <section className="grid gap-3 md:grid-cols-3">
+      {error ? <p className="text-destructive text-sm">{error}</p> : null}
+
+      <section className="grid gap-3 md:grid-cols-4">
         <div>
           <p className="text-muted-foreground text-xs">Port</p>
-          <p className="font-mono text-xs break-all">{portUri}</p>
+          <p className="font-mono text-xs break-all">{port.port_id}</p>
         </div>
         <div>
-          <p className="text-muted-foreground text-xs">Settings</p>
-          <Badge variant="outline">{settings.length}</Badge>
-        </div>
-        <div>
-          <p className="text-muted-foreground text-xs">Active Sessions</p>
-          <Badge variant="outline">{sessions.length}</Badge>
+          <p className="text-muted-foreground text-xs">Updated</p>
+          <p className="text-xs">{normalizeTimestamp(port.updated_at)}</p>
         </div>
       </section>
 
       <section className="space-y-2">
-        <p className="text-sm font-semibold">Configure Port</p>
-        <form
-          className="grid gap-2 md:grid-cols-3"
-          onSubmit={handleSaveSetting}
-        >
-          <Input
-            value={keyInput}
-            onChange={(event) => setKeyInput(event.currentTarget.value)}
-            placeholder="Key"
-            aria-label="Setting key"
-          />
-          <Input
-            value={valueInput}
-            onChange={(event) => setValueInput(event.currentTarget.value)}
-            placeholder="Value"
-            aria-label="Setting value"
-          />
+        <p className="text-sm font-semibold">Edit Port</p>
+        <form className="space-y-3" onSubmit={handleSavePort}>
+          <div className="grid gap-2 md:grid-cols-3">
+            <div className="space-y-1">
+              <p className="text-muted-foreground text-xs">Status</p>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEnabled((current) => !current)}
+              >
+                {enabled ? "Disable" : "Enable"}
+              </Button>
+            </div>
+            <div className="space-y-1">
+              <p className="text-muted-foreground text-xs">Mode</p>
+              <Select
+                value={mode}
+                onValueChange={(value) =>
+                  setMode(value === "private" ? "private" : "public")
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="public">Public (allows guests)</SelectItem>
+                  <SelectItem value="private">
+                    Private (does not allow guests)
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <p className="text-muted-foreground text-xs">Default agent</p>
+              <Select value={defaultAgentId} onValueChange={setDefaultAgentId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select agent" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_AGENT}>No default agent</SelectItem>
+                  {agents.map((agent) => (
+                    <SelectItem key={agent.agent_id} value={agent.agent_id}>
+                      {agent.name || agent.agent_id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {isTelegramPort ? (
+            <section className="space-y-3 rounded-md border p-3">
+              <p className="text-sm font-semibold">Telegram Details</p>
+              <div className="space-y-1">
+                <p className="text-muted-foreground text-xs">bot_token</p>
+                <Input
+                  type="password"
+                  value={botToken}
+                  onChange={(event) => setBotToken(event.currentTarget.value)}
+                  placeholder="Telegram bot token"
+                  aria-label="Bot token"
+                />
+              </div>
+
+              {mode === "private" ? (
+                <div className="space-y-2">
+                  <p className="text-muted-foreground text-xs">
+                    allowed_external_user_ids
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={allowedUserInput}
+                      onChange={(event) =>
+                        setAllowedUserInput(event.currentTarget.value)
+                      }
+                      placeholder="Telegram user id"
+                      aria-label="Allowed user id"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={addAllowedUser}
+                    >
+                      + Add
+                    </Button>
+                  </div>
+                  {allowedExternalUserIds.length === 0 ? (
+                    <p className="text-muted-foreground text-xs">
+                      No allowed users configured.
+                    </p>
+                  ) : (
+                    <div className="space-y-1">
+                      {allowedExternalUserIds.map((userId) => (
+                        <div
+                          key={userId}
+                          className="flex items-center justify-between rounded border px-2 py-1"
+                        >
+                          <span className="font-mono text-xs">{userId}</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => removeAllowedUser(userId)}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
           <Button type="submit" disabled={isSaving}>
-            {isSaving ? "Saving..." : "Save setting"}
+            {isSaving ? "Saving..." : "Save"}
           </Button>
         </form>
       </section>
 
       <section className="space-y-2">
-        <p className="text-sm font-semibold">Settings</p>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Key</TableHead>
-              <TableHead>Value</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {settings.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={3}
-                  className="text-muted-foreground text-center"
-                >
-                  No settings yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              settings.map((setting) => (
-                <TableRow key={setting.key}>
-                  <TableCell className="font-mono text-[11px]">
-                    {setting.key}
-                  </TableCell>
-                  <TableCell className="font-mono text-[11px]">
-                    {setting.value}
-                  </TableCell>
-                  <TableCell className="space-x-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleEditSetting(setting)}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void handleDeleteSetting(setting.key)}
-                    >
-                      Delete
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </section>
-
-      <section className="space-y-2">
-        <p className="text-sm font-semibold">Bindings</p>
+        <p className="text-sm font-semibold">Conversation Bindings</p>
+        <p className="text-muted-foreground text-xs">
+          A binding maps an external conversation key (for example a Telegram
+          chat id) to a Borg session and optional agent.
+        </p>
         <Table>
           <TableHeader>
             <TableRow>
@@ -253,13 +381,23 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
               bindings.map((binding) => (
                 <TableRow key={binding.conversation_key}>
                   <TableCell className="font-mono text-[11px]">
-                    {binding.conversation_key}
+                    <Link href={toMemoryEntityHref(binding.conversation_key)}>
+                      {binding.conversation_key}
+                    </Link>
                   </TableCell>
                   <TableCell className="font-mono text-[11px]">
-                    {binding.session_id}
+                    <Link href={toMemoryEntityHref(binding.session_id)}>
+                      {binding.session_id}
+                    </Link>
                   </TableCell>
                   <TableCell className="font-mono text-[11px]">
-                    {binding.agent_id ?? "—"}
+                    {binding.agent_id ? (
+                      <Link href={toMemoryEntityHref(binding.agent_id)}>
+                        {binding.agent_id}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
                   </TableCell>
                 </TableRow>
               ))
@@ -298,7 +436,7 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
                     {session.users.join(", ")}
                   </TableCell>
                   <TableCell>
-                    {new Date(session.updated_at).toLocaleString()}
+                    {normalizeTimestamp(session.updated_at)}
                   </TableCell>
                 </TableRow>
               ))

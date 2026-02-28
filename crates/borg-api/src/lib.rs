@@ -534,9 +534,9 @@ mod tests {
             Method::PUT,
             "/api/agents/specs/borg:agent:default",
             json!({
+                "default_provider_id":"openai",
                 "model":"gpt-4o-mini",
-                "system_prompt":"you are borg",
-                "tools":[{"name":"search"}]
+                "system_prompt":"you are borg"
             }),
         )
         .await;
@@ -547,6 +547,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["agent_spec"]["model"], "gpt-4o-mini");
         assert_eq!(body["agent_spec"]["enabled"], true);
+        assert_eq!(body["agent_spec"]["default_provider_id"], "openai");
 
         let (status, body) = request_no_body(&app, Method::GET, "/api/agents/specs").await;
         assert_eq!(status, StatusCode::OK);
