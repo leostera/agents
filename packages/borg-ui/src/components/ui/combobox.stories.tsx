@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { useState } from "react";
+import { expect, userEvent, within } from "storybook/test";
 
 import {
   Combobox,
@@ -134,5 +135,60 @@ export const ProviderModelPicker: Story = {
         </p>
       </div>
     );
+  },
+};
+
+export const ProviderModelPickerInDialogKeyboard: Story = {
+  render: () => {
+    const [value, setValue] = useState<string | null>(null);
+
+    return (
+      <div className="w-[42rem] rounded-xl border bg-background p-4 shadow-sm">
+        <div className="mb-3">
+          <h3 className="text-sm font-medium">Provider Model Picker</h3>
+          <p className="text-muted-foreground text-xs">
+            Type to filter, then use arrow keys and enter to select.
+          </p>
+        </div>
+        <div className="space-y-2">
+          <Combobox
+            items={providerModels}
+            selectedValue={value}
+            onSelectedValueChange={setValue}
+          >
+            <ComboboxInput placeholder="Search and select model" showClear />
+            <ComboboxContent className="max-h-80">
+              <ComboboxEmpty>No models found.</ComboboxEmpty>
+              <ComboboxList>
+                {(item) => (
+                  <ComboboxItem key={item} value={item}>
+                    {item}
+                  </ComboboxItem>
+                )}
+              </ComboboxList>
+            </ComboboxContent>
+          </Combobox>
+          <p
+            data-testid="selected-provider-model"
+            className="text-muted-foreground text-xs"
+          >
+            Selected model: {value ?? "None"}
+          </p>
+        </div>
+      </div>
+    );
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const input = canvas.getByPlaceholderText("Search and select model");
+
+    await userEvent.click(input);
+    await userEvent.clear(input);
+    await userEvent.type(input, "kimi");
+    await userEvent.keyboard("{ArrowDown}{Enter}");
+
+    await expect(
+      canvas.getByTestId("selected-provider-model")
+    ).toHaveTextContent("openrouter/kimi-k2");
   },
 };

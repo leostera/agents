@@ -36,6 +36,7 @@ import { ObservabilityAlertsPage } from "./pages/observability/alerts";
 import { ObservabilityTracingPage } from "./pages/observability/tracing";
 import { OverviewPage } from "./pages/overview";
 import { ProvidersPage } from "./pages/settings/providers";
+import { ProviderDetailsPage } from "./pages/settings/providers/id";
 
 type DashboardRouteItem = {
   id: string;
@@ -235,7 +236,8 @@ const CONTROL_APP_PREFIX = "/control/apps/";
 const CONTROL_USER_PREFIX = "/control/users/";
 const CONTROL_PORT_PREFIX = "/control/ports/";
 const OBSERVABILITY_TRACING_PREFIX = "/observability/tracing/";
-const SETTINGS_PROVIDER_PREFIX = "/settings/provider/";
+const SETTINGS_PROVIDER_PREFIX = "/settings/providers/";
+const SETTINGS_PROVIDER_LEGACY_PREFIX = "/settings/provider/";
 const borgApi = createBorgApiClient();
 
 function ControlPlaceholder({ title }: { title: string }) {
@@ -463,6 +465,56 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
     normalizedPathname.startsWith(SETTINGS_PROVIDER_PREFIX) &&
     normalizedPathname.length > SETTINGS_PROVIDER_PREFIX.length
   ) {
+    const encodedProvider = normalizedPathname.slice(
+      SETTINGS_PROVIDER_PREFIX.length
+    );
+    try {
+      return {
+        id: "settings-provider",
+        entityUri: decodeURIComponent(encodedProvider),
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    } catch {
+      return {
+        id: "settings-provider",
+        entityUri: encodedProvider,
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    }
+  }
+  if (
+    normalizedPathname.startsWith(SETTINGS_PROVIDER_LEGACY_PREFIX) &&
+    normalizedPathname.length > SETTINGS_PROVIDER_LEGACY_PREFIX.length
+  ) {
+    const encodedProvider = normalizedPathname.slice(
+      SETTINGS_PROVIDER_LEGACY_PREFIX.length
+    );
+    try {
+      return {
+        id: "settings-provider",
+        entityUri: decodeURIComponent(encodedProvider),
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    } catch {
+      return {
+        id: "settings-provider",
+        entityUri: encodedProvider,
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    }
+  }
+  if (
+    normalizedPathname === "/settings/provider" ||
+    normalizedPathname === "/settings/providers"
+  ) {
     return {
       id: "settings-providers",
       entityUri: null,
@@ -556,6 +608,9 @@ export function DashboardApp() {
         <MemoryEntityPage entityUri={route.entityUri ?? ""} />
       ),
       "settings-providers": () => <ProvidersPage />,
+      "settings-provider": () => (
+        <ProviderDetailsPage providerId={route.entityUri ?? ""} />
+      ),
     };
     return sectionById[activeId] ?? sectionById["overview-home"];
   }, [
@@ -678,12 +733,7 @@ export function DashboardApp() {
                 Offline: Borg API is unreachable.
               </section>
             ) : null}
-            <section
-              id={activeId}
-              className={
-                isExplorerImmersive ? "borg-dashboard-section--full" : undefined
-              }
-            >
+            <section id={activeId} className="borg-dashboard-section--full">
               <ActiveSection />
             </section>
           </div>

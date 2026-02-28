@@ -1,32 +1,11 @@
 import {
   BorgApiError,
   createBorgApiClient,
-  type ProviderModelsResponse,
   type ProviderRecord,
 } from "@borg/api";
 import {
   Badge,
   Button,
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-  Input,
-  Label,
   Table,
   TableBody,
   TableCell,
@@ -36,15 +15,21 @@ import {
 } from "@borg/ui";
 import {
   CheckCircle2,
-  Cpu,
   LoaderCircle,
   Pause,
   Pencil,
   Play,
+  Settings2,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
 import React from "react";
+import {
+  Section,
+  SectionContent,
+  SectionEmpty,
+  SectionToolbar,
+} from "../../../components/Section";
 import { ConnectProviderForm } from "./ConnectProviderForm";
 
 const borgApi = createBorgApiClient();
@@ -54,13 +39,6 @@ function formatProviderName(provider: string): string {
   if (provider === "openrouter") return "OpenRouter";
   return provider;
 }
-
-type EditProviderState = {
-  provider: string;
-  apiKey: string;
-  chatModel: string | null;
-  audioModel: string | null;
-};
 
 export function ProvidersPage() {
   const [providersByName, setProvidersByName] = React.useState<
@@ -75,12 +53,6 @@ export function ProvidersPage() {
   const [isStartingOpenAi, setIsStartingOpenAi] = React.useState(false);
   const [statusMessage, setStatusMessage] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
-  const [editingProvider, setEditingProvider] =
-    React.useState<EditProviderState | null>(null);
-  const [isSavingEdit, setIsSavingEdit] = React.useState(false);
-  const [providerModelsByName, setProviderModelsByName] = React.useState<
-    Record<string, ProviderModelsResponse>
-  >({});
 
   const loadProviders = React.useCallback(async () => {
     setIsLoading(true);
@@ -110,28 +82,6 @@ export function ProvidersPage() {
     return () =>
       window.removeEventListener("providers:open-connect", handleOpenConnect);
   }, []);
-
-  const openEditProvider = async (provider: ProviderRecord) => {
-    setEditingProvider({
-      provider: provider.provider,
-      apiKey: provider.api_key,
-      chatModel: provider.default_text_model ?? null,
-      audioModel: provider.default_audio_model ?? null,
-    });
-    if (providerModelsByName[provider.provider]) return;
-    try {
-      const models = await borgApi.getProviderModels(provider.provider);
-      setProviderModelsByName((current) => ({
-        ...current,
-        [provider.provider]: models,
-      }));
-    } catch {
-      setProviderModelsByName((current) => ({
-        ...current,
-        [provider.provider]: { provider: provider.provider, models: [] },
-      }));
-    }
-  };
 
   const handleSaveOpenRouter = async (
     event: React.FormEvent<HTMLFormElement>
@@ -251,65 +201,21 @@ export function ProvidersPage() {
     }
   };
 
-  const handleSaveEditProvider = async (
-    event: React.FormEvent<HTMLFormElement>
-  ) => {
-    event.preventDefault();
-    if (!editingProvider) return;
-    const apiKey = editingProvider.apiKey.trim();
-    if (!apiKey) {
-      setErrorMessage("API key is required");
-      return;
-    }
-
-    const current = providersByName[editingProvider.provider];
-    if (!current) {
-      setErrorMessage("Provider no longer exists");
-      return;
-    }
-
-    setIsSavingEdit(true);
-    setErrorMessage(null);
-    setStatusMessage(null);
-    try {
-      await borgApi.upsertProvider({
-        provider: editingProvider.provider,
-        apiKey,
-        enabled: current.enabled,
-        defaultTextModel: editingProvider.chatModel,
-        defaultAudioModel: editingProvider.audioModel,
-      });
-      setEditingProvider(null);
-      setStatusMessage(
-        `${formatProviderName(editingProvider.provider)} updated`
-      );
-      await loadProviders();
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Unable to update provider"
-      );
-    } finally {
-      setIsSavingEdit(false);
-    }
-  };
-
   const providerRows = React.useMemo(
     () => Object.values(providersByName),
     [providersByName]
   );
-  const editingProviderModels = React.useMemo(
-    () => providerModelsByName[editingProvider?.provider ?? ""]?.models ?? [],
-    [editingProvider?.provider, providerModelsByName]
-  );
   const showEmptyState = !isLoading && providerRows.length === 0;
 
   return (
-    <section className="space-y-4">
-      <section className="flex items-center justify-end">
-        <Button variant="outline" onClick={() => setIsDialogOpen(true)}>
-          + Connect Provider
-        </Button>
-      </section>
+    <Section className="gap-4">
+      {!showEmptyState ? (
+        <SectionToolbar className="justify-end">
+          <Button variant="outline" onClick={() => setIsDialogOpen(true)}>
+            + Connect Provider
+          </Button>
+        </SectionToolbar>
+      ) : null}
 
       {statusMessage ? (
         <div className="flex items-center gap-2 rounded-md border border-emerald-600/30 bg-emerald-600/10 px-3 py-2 text-xs text-emerald-700">
@@ -325,123 +231,132 @@ export function ProvidersPage() {
         </div>
       ) : null}
 
-      {showEmptyState ? (
-        <Empty className="border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <Cpu />
-            </EmptyMedia>
-            <EmptyTitle>No Providers Configured</EmptyTitle>
-            <EmptyDescription>
-              No providers configured yet. Connect your first provider.
-            </EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent className="flex-row justify-center">
-            <Button onClick={() => setIsDialogOpen(true)}>
-              + Connect Provider
-            </Button>
-          </EmptyContent>
-          {errorMessage ? (
-            <p className="inline-flex items-center gap-2 text-xs text-destructive">
-              <TriangleAlert className="size-3.5" />
-              {errorMessage}
-            </p>
-          ) : null}
-        </Empty>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Provider</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Tokens Used</TableHead>
-              <TableHead>Last Used</TableHead>
-              <TableHead>Updated</TableHead>
-              <TableHead>Chat Model</TableHead>
-              <TableHead>Audio Model</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {providerRows.map((provider) => (
-              <TableRow key={provider.provider}>
-                <TableCell className="font-medium">
-                  {formatProviderName(provider.provider)}
-                </TableCell>
-                <TableCell>
-                  <Badge variant={provider.enabled ? "secondary" : "outline"}>
-                    {provider.enabled ? "active" : "paused"}
-                  </Badge>
-                </TableCell>
-                <TableCell>{provider.tokens_used.toLocaleString()}</TableCell>
-                <TableCell>
-                  {provider.last_used
-                    ? new Date(provider.last_used).toLocaleString()
-                    : "—"}
-                </TableCell>
-                <TableCell>
-                  {new Date(provider.updated_at).toLocaleString()}
-                </TableCell>
-                <TableCell>
-                  {provider.default_text_model ? (
-                    <Badge variant="outline">
-                      {provider.default_text_model}
-                    </Badge>
-                  ) : (
-                    "—"
-                  )}
-                </TableCell>
-                <TableCell>
-                  {provider.default_audio_model ? (
-                    <Badge variant="outline">
-                      {provider.default_audio_model}
-                    </Badge>
-                  ) : (
-                    "—"
-                  )}
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      size="icon-sm"
-                      variant="outline"
-                      onClick={() => void openEditProvider(provider)}
-                      aria-label={`Edit ${formatProviderName(provider.provider)}`}
-                      title="Edit"
-                    >
-                      <Pencil className="size-3.5" />
-                    </Button>
-                    <Button
-                      size="icon-sm"
-                      variant="outline"
-                      onClick={() => void handleToggleEnabled(provider)}
-                      aria-label={`${provider.enabled ? "Pause" : "Resume"} ${formatProviderName(provider.provider)}`}
-                      title={provider.enabled ? "Pause" : "Resume"}
-                    >
-                      {provider.enabled ? (
-                        <Pause className="size-3.5" />
-                      ) : (
-                        <Play className="size-3.5" />
-                      )}
-                    </Button>
-                    <Button
-                      size="icon-sm"
-                      variant="outline"
-                      onClick={() =>
-                        void handleDeleteProvider(provider.provider)
-                      }
-                      aria-label={`Delete ${formatProviderName(provider.provider)}`}
-                      title="Delete"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </div>
-                </TableCell>
+      <SectionContent>
+        {showEmptyState ? (
+          <SectionEmpty
+            icon={Settings2}
+            title="No Providers Configured"
+            description="No providers configured yet. Connect your first provider."
+            action={
+              <Button onClick={() => setIsDialogOpen(true)}>
+                + Connect Provider
+              </Button>
+            }
+          />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[44px]">Status</TableHead>
+                <TableHead>Provider</TableHead>
+                <TableHead>Tokens Used</TableHead>
+                <TableHead>Last Used</TableHead>
+                <TableHead>Updated</TableHead>
+                <TableHead>Chat Model</TableHead>
+                <TableHead>Audio Model</TableHead>
+                <TableHead>Actions</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+            </TableHeader>
+            <TableBody>
+              {providerRows.map((provider) => (
+                <TableRow key={provider.provider}>
+                  <TableCell>
+                    <span
+                      className={
+                        provider.enabled
+                          ? "inline-block size-2.5 rounded-full bg-emerald-500"
+                          : "inline-block size-2.5 rounded-full bg-rose-500"
+                      }
+                      title={provider.enabled ? "Enabled" : "Disabled"}
+                    />
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    {formatProviderName(provider.provider)}
+                  </TableCell>
+                  <TableCell>{provider.tokens_used.toLocaleString()}</TableCell>
+                  <TableCell>
+                    {provider.last_used
+                      ? new Date(provider.last_used).toLocaleString()
+                      : "—"}
+                  </TableCell>
+                  <TableCell>
+                    {new Date(provider.updated_at).toLocaleString()}
+                  </TableCell>
+                  <TableCell>
+                    {provider.default_text_model ? (
+                      <Badge variant="outline">
+                        {provider.default_text_model}
+                      </Badge>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {provider.default_audio_model ? (
+                      <Badge variant="outline">
+                        {provider.default_audio_model}
+                      </Badge>
+                    ) : (
+                      "—"
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        onClick={() => {
+                          window.history.pushState(
+                            null,
+                            "",
+                            `/settings/providers/${provider.provider}`
+                          );
+                          window.dispatchEvent(new PopStateEvent("popstate"));
+                        }}
+                        aria-label={`Edit ${formatProviderName(provider.provider)}`}
+                        title="Edit"
+                      >
+                        <Pencil className="size-3.5" />
+                      </Button>
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        onClick={() => void handleToggleEnabled(provider)}
+                        aria-label={`${provider.enabled ? "Pause" : "Resume"} ${formatProviderName(provider.provider)}`}
+                        title={provider.enabled ? "Pause" : "Resume"}
+                      >
+                        {provider.enabled ? (
+                          <Pause className="size-3.5" />
+                        ) : (
+                          <Play className="size-3.5" />
+                        )}
+                      </Button>
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        onClick={() =>
+                          void handleDeleteProvider(provider.provider)
+                        }
+                        aria-label={`Delete ${formatProviderName(provider.provider)}`}
+                        title="Delete"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </SectionContent>
+
+      {showEmptyState && errorMessage ? (
+        <p className="inline-flex items-center gap-2 text-xs text-destructive">
+          <TriangleAlert className="size-3.5" />
+          {errorMessage}
+        </p>
+      ) : null}
 
       <ConnectProviderForm
         open={isDialogOpen}
@@ -458,104 +373,12 @@ export function ProvidersPage() {
         onSaveOpenRouter={handleSaveOpenRouter}
       />
 
-      <Dialog
-        open={editingProvider !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEditingProvider(null);
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit Provider</DialogTitle>
-            <DialogDescription>
-              Update API key for{" "}
-              {editingProvider
-                ? formatProviderName(editingProvider.provider)
-                : "provider"}
-              .
-            </DialogDescription>
-          </DialogHeader>
-          <form className="space-y-3" onSubmit={handleSaveEditProvider}>
-            <div className="space-y-1">
-              <Label htmlFor="provider-api-key">API Key</Label>
-              <Input
-                id="provider-api-key"
-                type="password"
-                autoComplete="off"
-                value={editingProvider?.apiKey ?? ""}
-                onChange={(event) =>
-                  setEditingProvider((current) =>
-                    current
-                      ? { ...current, apiKey: event.currentTarget.value }
-                      : current
-                  )
-                }
-                placeholder="sk-..."
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Default Chat Model</Label>
-              <Combobox
-                items={editingProviderModels}
-                selectedValue={editingProvider?.chatModel ?? null}
-                onSelectedValueChange={(value) =>
-                  setEditingProvider((current) =>
-                    current ? { ...current, chatModel: value ?? null } : current
-                  )
-                }
-              >
-                <ComboboxInput placeholder="Search and select chat model" />
-                <ComboboxContent>
-                  <ComboboxEmpty>No models found.</ComboboxEmpty>
-                  <ComboboxList>
-                    {(item) => (
-                      <ComboboxItem key={item} value={item}>
-                        {item}
-                      </ComboboxItem>
-                    )}
-                  </ComboboxList>
-                </ComboboxContent>
-              </Combobox>
-            </div>
-            <div className="space-y-1">
-              <Label>Default Audio Model</Label>
-              <Combobox
-                items={editingProviderModels}
-                selectedValue={editingProvider?.audioModel ?? null}
-                onSelectedValueChange={(value) =>
-                  setEditingProvider((current) =>
-                    current
-                      ? { ...current, audioModel: value ?? null }
-                      : current
-                  )
-                }
-              >
-                <ComboboxInput placeholder="Search and select audio model" />
-                <ComboboxContent>
-                  <ComboboxEmpty>No models found.</ComboboxEmpty>
-                  <ComboboxList>
-                    {(item) => (
-                      <ComboboxItem key={item} value={item}>
-                        {item}
-                      </ComboboxItem>
-                    )}
-                  </ComboboxList>
-                </ComboboxContent>
-              </Combobox>
-            </div>
-            <DialogFooter>
-              <Button type="submit" disabled={isSavingEdit}>
-                {isSavingEdit ? (
-                  <LoaderCircle className="size-4 animate-spin" />
-                ) : null}
-                Save Provider
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-    </section>
+      {!showEmptyState && errorMessage ? (
+        <p className="inline-flex items-center gap-2 text-xs text-destructive">
+          <TriangleAlert className="size-3.5" />
+          {errorMessage}
+        </p>
+      ) : null}
+    </Section>
   );
 }
