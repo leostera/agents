@@ -1,5 +1,6 @@
 import { type AgentSpecRecord, createBorgApiClient } from "@borg/api";
 import {
+  Badge,
   Button,
   Empty,
   EmptyContent,
@@ -109,16 +110,19 @@ export function AgentsPage() {
     }
   };
 
-  const handleDisableAgent = async (agentId: string) => {
+  const handleToggleAgentEnabled = async (
+    agentId: string,
+    enabled: boolean
+  ) => {
     setError(null);
     try {
-      await borgApi.deleteAgentSpec(agentId, { ignoreNotFound: true });
+      await borgApi.setAgentSpecEnabled(agentId, !enabled);
       await loadAgents();
-    } catch (deleteError) {
+    } catch (toggleError) {
       setError(
-        deleteError instanceof Error
-          ? deleteError.message
-          : "Unable to disable agent"
+        toggleError instanceof Error
+          ? toggleError.message
+          : "Unable to update agent status"
       );
     }
   };
@@ -162,6 +166,7 @@ export function AgentsPage() {
             <TableRow>
               <TableHead>Agent</TableHead>
               <TableHead>Name</TableHead>
+              <TableHead>Status</TableHead>
               <TableHead>Model</TableHead>
               <TableHead>Updated</TableHead>
               <TableHead>Actions</TableHead>
@@ -171,7 +176,7 @@ export function AgentsPage() {
             {isLoading ? (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={6}
                   className="text-muted-foreground text-center"
                 >
                   <span className="inline-flex items-center gap-2">
@@ -189,6 +194,11 @@ export function AgentsPage() {
                     </Link>
                   </TableCell>
                   <TableCell>{agent.name || "Agent"}</TableCell>
+                  <TableCell>
+                    <Badge variant={agent.enabled ? "secondary" : "outline"}>
+                      {agent.enabled ? "Enabled" : "Disabled"}
+                    </Badge>
+                  </TableCell>
                   <TableCell>{agent.model}</TableCell>
                   <TableCell>
                     {new Date(agent.updated_at).toLocaleString()}
@@ -197,9 +207,14 @@ export function AgentsPage() {
                     <Button
                       size="icon-sm"
                       variant="outline"
-                      onClick={() => void handleDisableAgent(agent.agent_id)}
-                      aria-label={`Disable ${agent.agent_id}`}
-                      title="Disable agent"
+                      onClick={() =>
+                        void handleToggleAgentEnabled(
+                          agent.agent_id,
+                          agent.enabled
+                        )
+                      }
+                      aria-label={`${agent.enabled ? "Disable" : "Enable"} ${agent.agent_id}`}
+                      title={agent.enabled ? "Disable agent" : "Enable agent"}
                     >
                       <Power className="size-3.5" />
                     </Button>

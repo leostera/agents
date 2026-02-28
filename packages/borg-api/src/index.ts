@@ -74,6 +74,7 @@ export type SessionResponse = {
 export type AgentSpecRecord = {
   agent_id: string;
   name: string;
+  enabled: boolean;
   model: string;
   system_prompt: string;
   tools: unknown;
@@ -564,6 +565,17 @@ export class BorgApiClient {
       }
       throw error;
     }
+  }
+
+  async setAgentSpecEnabled(agentId: string, enabled: boolean): Promise<void> {
+    await this.request(
+      `/api/agents/specs/${encodeURIComponent(agentId)}/enabled`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      }
+    );
   }
 
   async listUsers(limit = 100): Promise<UserRecord[]> {

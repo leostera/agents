@@ -7,12 +7,6 @@ import {
 import {
   Badge,
   Button,
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -27,6 +21,11 @@ import {
   EmptyTitle,
   Input,
   Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Table,
   TableBody,
   TableCell,
@@ -497,51 +496,57 @@ export function ProvidersPage() {
             </div>
             <div className="space-y-1">
               <Label>Default Chat Model</Label>
-              <Combobox
-                items={editingProviderModels}
-                selectedValue={editingProvider?.chatModel ?? null}
-                onSelectedValueChange={(value) =>
+              <Select
+                value={editingProvider?.chatModel ?? undefined}
+                onValueChange={(value) =>
                   setEditingProvider((current) =>
                     current ? { ...current, chatModel: value } : current
                   )
                 }
               >
-                <ComboboxInput placeholder="Select chat model" showClear />
-                <ComboboxContent>
-                  <ComboboxEmpty>No models found.</ComboboxEmpty>
-                  <ComboboxList>
-                    {(item) => (
-                      <ComboboxItem key={item} value={item}>
-                        {item}
-                      </ComboboxItem>
-                    )}
-                  </ComboboxList>
-                </ComboboxContent>
-              </Combobox>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select chat model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {editingProviderModels.length === 0 ? (
+                    <SelectItem value="__none_chat" disabled>
+                      No models found
+                    </SelectItem>
+                  ) : null}
+                  {editingProviderModels.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1">
               <Label>Default Audio Model</Label>
-              <Combobox
-                items={editingProviderModels}
-                selectedValue={editingProvider?.audioModel ?? null}
-                onSelectedValueChange={(value) =>
+              <Select
+                value={editingProvider?.audioModel ?? undefined}
+                onValueChange={(value) =>
                   setEditingProvider((current) =>
                     current ? { ...current, audioModel: value } : current
                   )
                 }
               >
-                <ComboboxInput placeholder="Select audio model" showClear />
-                <ComboboxContent>
-                  <ComboboxEmpty>No models found.</ComboboxEmpty>
-                  <ComboboxList>
-                    {(item) => (
-                      <ComboboxItem key={item} value={item}>
-                        {item}
-                      </ComboboxItem>
-                    )}
-                  </ComboboxList>
-                </ComboboxContent>
-              </Combobox>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select audio model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {editingProviderModels.length === 0 ? (
+                    <SelectItem value="__none_audio" disabled>
+                      No models found
+                    </SelectItem>
+                  ) : null}
+                  {editingProviderModels.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <DialogFooter>
               <Button type="submit" disabled={isSavingEdit}>
