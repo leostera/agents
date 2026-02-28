@@ -210,4 +210,4 @@ The main open questions are about operational boundaries and lifecycle, not dire
 ## Future possibilities
 [future-possibilities]: #future-possibilities
 
-Once this model is running in production, we can layer capability grants for agents, policy controls, capability composition, and promotion pipelines on top of it. That includes explicit allowlists of which agents can invoke which capabilities, allow/deny and quota rules, reusable multi-capability plans, and automated pathways that graduate stable codemode patterns into builtin handlers. The same contract can also be opened to user-installed adapters later without changing the core product language.
+Once this model is running in production, we can layer capability grants for agents, policy controls, and capability composition on top of it. That includes explicit allowlists of which agents can invoke which capabilities, allow/deny controls, and quota rules per connected app. We also expect reusable multi-capability plans and user-installed adapters that satisfy the same capability contract without changing the core product language.
