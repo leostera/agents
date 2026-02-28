@@ -11,8 +11,13 @@ borg-core = { path = "../borg-core" }
 borg-exec = { path = "../borg-exec" }
 borg-ltm = { path = "../borg-ltm" }
 borg-ports = { path = "../borg-ports" }
-borg-ui = { path = "../borg-ui" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tower-http.workspace = true
+reqwest.workspace = true
+
+[dev-dependencies]
+borg-rt = { path = "../borg-rt" }
+tower.workspace = true

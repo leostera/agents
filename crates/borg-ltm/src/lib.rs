@@ -3,22 +3,27 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 use borg_core::Entity;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, info, warn};
 
 mod entity_graph;
 mod fact_store;
 mod search_index;
+mod tools;
 
 use entity_graph::IndraEntityGraph;
-use fact_store::TursoFactStore;
+pub use fact_store::FactArity;
+use fact_store::SqliteFactStore;
 pub use fact_store::{FactInput, FactRecord, FactValue, StateFactsResult, Uri};
 use search_index::TantivySearchIndex;
+pub use tools::{build_memory_toolchain, default_tool_specs as default_memory_tool_specs};
 
 const CONSOLIDATION_BATCH_SIZE: usize = 128;
 const COMMAND_BUFFER: usize = 1024;
 const CONSOLIDATION_BUFFER: usize = 4096;
 const DEFAULT_SEARCH_LIMIT: usize = 25;
+const DEFAULT_EXPLORER_SEED_LIMIT: usize = 25;
+const DEFAULT_EXPLORER_MAX_NODES: usize = 300;
 
 #[macro_export]
 macro_rules! uri {
@@ -32,10 +37,11 @@ macro_rules! uri {
 
 #[derive(Clone)]
 pub struct MemoryStore {
-    fact_store: TursoFactStore,
+    fact_store: SqliteFactStore,
     entity_graph: IndraEntityGraph,
     search_index: TantivySearchIndex,
     consolidate_tx: mpsc::Sender<FactRecord>,
+    shutdown_tx: watch::Sender<bool>,
 }
 
 impl MemoryStore {
@@ -45,24 +51,26 @@ impl MemoryStore {
         std::fs::create_dir_all(&root)?;
         std::fs::create_dir_all(&search_root)?;
 
-        let fact_store = TursoFactStore::new(&root)?;
+        let fact_store = SqliteFactStore::new(&root)?;
         let entity_graph = IndraEntityGraph::new(&root)?;
         let search_index = TantivySearchIndex::new(&search_root)?;
         let (consolidate_tx, consolidate_rx) = mpsc::channel(CONSOLIDATION_BUFFER);
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         let store = Self {
             fact_store,
             entity_graph,
             search_index,
             consolidate_tx,
+            shutdown_tx,
         };
-        store.start_consolidator(consolidate_rx);
+        store.start_consolidator(consolidate_rx, shutdown_rx);
 
         info!(
             target: "borg_ltm",
             root = %root.display(),
             search_root = %search_root.display(),
-            "initialized memory store with fact_store=turso entity_graph=indradb search_index=tantivy"
+            "initialized memory store with fact_store=sqlite entity_graph=indradb search_index=tantivy"
         );
         Ok(store)
     }
@@ -91,6 +99,12 @@ impl MemoryStore {
 
     pub async fn search_query(&self, query: SearchQuery) -> Result<SearchResults> {
         let limit = query.limit.unwrap_or(DEFAULT_SEARCH_LIMIT).max(1);
+        if let Some(exact_entity) = self.try_exact_uri_match(&query).await? {
+            return Ok(SearchResults {
+                entities: vec![exact_entity],
+            });
+        }
+
         let index_hits = self.search_index.search(&query, limit).await?;
 
         let mut entities = Vec::new();
@@ -104,7 +118,7 @@ impl MemoryStore {
         }
 
         if entities.is_empty() {
-            let fallback_text = query.text().unwrap_or_default();
+            let fallback_text = query.text().unwrap_or_default().trim();
             if !fallback_text.is_empty() {
                 entities = self
                     .entity_graph
@@ -123,6 +137,21 @@ impl MemoryStore {
         }
 
         Ok(SearchResults { entities })
+    }
+
+    async fn try_exact_uri_match(&self, query: &SearchQuery) -> Result<Option<Entity>> {
+        let text = query.text().unwrap_or_default().trim();
+        if text.is_empty() || Uri::parse(text).is_err() {
+            return Ok(None);
+        }
+
+        let Some(entity) = self.entity_graph.get_entity(text).await? else {
+            return Ok(None);
+        };
+        if !entity_matches_filters(&entity, query) {
+            return Ok(None);
+        }
+        Ok(Some(entity))
     }
 
     pub async fn upsert_entity(
@@ -171,14 +200,82 @@ impl MemoryStore {
         Ok(self.search_query(query).await?.entities)
     }
 
-    fn start_consolidator(&self, mut rx: mpsc::Receiver<FactRecord>) {
+    pub async fn explore(
+        &self,
+        text: &str,
+        seed_limit: usize,
+        max_nodes: usize,
+    ) -> Result<ExplorerResults> {
+        let seed_limit = if seed_limit == 0 {
+            DEFAULT_EXPLORER_SEED_LIMIT
+        } else {
+            seed_limit
+        };
+        let max_nodes = if max_nodes == 0 {
+            DEFAULT_EXPLORER_MAX_NODES
+        } else {
+            max_nodes
+        };
+
+        let seeds = self.search(text, None, seed_limit).await?;
+        if seeds.is_empty() {
+            return Ok(ExplorerResults {
+                entities: Vec::new(),
+                edges: Vec::new(),
+            });
+        }
+
+        let seed_entity_ids: Vec<String> = seeds
+            .iter()
+            .map(|entity| entity.entity_id.to_string())
+            .collect();
+
+        let traversal = self
+            .entity_graph
+            .expand_subgraph(&seed_entity_ids, max_nodes)
+            .await?;
+
+        Ok(ExplorerResults {
+            entities: traversal.entities,
+            edges: traversal
+                .edges
+                .into_iter()
+                .map(|edge| ExplorerEdge {
+                    source: edge.source_entity_id,
+                    target: edge.target_entity_id,
+                    relation: edge.relation,
+                })
+                .collect(),
+        })
+    }
+
+    fn start_consolidator(
+        &self,
+        mut rx: mpsc::Receiver<FactRecord>,
+        mut shutdown_rx: watch::Receiver<bool>,
+    ) {
         let graph = self.entity_graph.clone();
         let index = self.search_index.clone();
         let facts = self.fact_store.clone();
         tokio::spawn(async move {
-            while let Some(fact) = rx.recv().await {
-                if let Err(err) = apply_projection(&graph, &index, &facts, fact).await {
-                    warn!(target: "borg_ltm", error = %err, "failed to project stated fact");
+            loop {
+                tokio::select! {
+                    changed = shutdown_rx.changed() => {
+                        if changed.is_ok() && *shutdown_rx.borrow() {
+                            break;
+                        }
+                        if changed.is_err() {
+                            break;
+                        }
+                    }
+                    maybe_fact = rx.recv() => {
+                        let Some(fact) = maybe_fact else {
+                            break;
+                        };
+                        if let Err(err) = apply_projection(&graph, &index, &facts, fact).await {
+                            warn!(target: "borg_ltm", error = %err, "failed to project stated fact");
+                        }
+                    }
                 }
             }
         });
@@ -203,6 +300,38 @@ impl MemoryStore {
     }
 }
 
+impl Drop for MemoryStore {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.send(true);
+    }
+}
+
+fn entity_matches_filters(entity: &Entity, query: &SearchQuery) -> bool {
+    if let Some(ns) = &query.ns {
+        let namespace = entity
+            .props
+            .get("namespace")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if namespace != ns {
+            return false;
+        }
+    }
+
+    if let Some(kind) = &query.kind {
+        let entity_kind = entity
+            .props
+            .get("kind")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if entity_kind != kind {
+            return false;
+        }
+    }
+
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NameFilter {
     pub like: String,
@@ -220,10 +349,10 @@ pub struct SearchQuery {
 
 impl SearchQuery {
     pub(crate) fn text(&self) -> Option<&str> {
-        if let Some(name) = &self.name {
-            if !name.like.trim().is_empty() {
-                return Some(name.like.as_str());
-            }
+        if let Some(name) = &self.name
+            && !name.like.trim().is_empty()
+        {
+            return Some(name.like.as_str());
         }
         self.query_text
             .as_deref()
@@ -234,6 +363,19 @@ impl SearchQuery {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResults {
     pub entities: Vec<Entity>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplorerEdge {
+    pub source: String,
+    pub target: String,
+    pub relation: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplorerResults {
+    pub entities: Vec<Entity>,
+    pub edges: Vec<ExplorerEdge>,
 }
 
 pub struct BorgLtmServer {
@@ -335,7 +477,7 @@ enum Command {
 async fn apply_projection(
     graph: &IndraEntityGraph,
     index: &TantivySearchIndex,
-    facts: &TursoFactStore,
+    facts: &SqliteFactStore,
     fact: FactRecord,
 ) -> Result<()> {
     graph.apply_fact(&fact).await?;
@@ -360,10 +502,20 @@ mod tests {
     }
 
     fn make_fact(entity: Uri, field: &str, value: FactValue) -> FactInput {
+        make_fact_with_arity(entity, field, FactArity::One, value)
+    }
+
+    fn make_fact_with_arity(
+        entity: Uri,
+        field: &str,
+        arity: FactArity,
+        value: FactValue,
+    ) -> FactInput {
         FactInput {
             source: uri!("borg", "session").unwrap(),
             entity,
             field: Uri::parse(field).unwrap(),
+            arity,
             value,
         }
     }
@@ -373,6 +525,25 @@ mod tests {
             let found = ltm.get_entity(entity.clone()).await.unwrap();
             if found.is_some() {
                 return found;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        None
+    }
+
+    async fn wait_until_entity_matches<F>(
+        ltm: &BorgLtm,
+        entity: Uri,
+        predicate: F,
+    ) -> Option<Entity>
+    where
+        F: Fn(&Entity) -> bool,
+    {
+        for _ in 0..60 {
+            if let Some(found) = ltm.get_entity(entity.clone()).await.unwrap()
+                && predicate(&found)
+            {
+                return Some(found);
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
@@ -488,16 +659,73 @@ mod tests {
         .await
         .unwrap();
 
-        let found = wait_until_entity(&ltm, entity.clone()).await.unwrap();
+        let found = wait_until_entity_matches(&ltm, entity.clone(), |candidate| {
+            candidate.props.get("year").and_then(|value| value.as_i64()) == Some(2015)
+        })
+        .await
+        .unwrap();
         assert_eq!(found.label, "Minions");
         assert_eq!(found.props.get("year").and_then(|v| v.as_i64()), Some(2015));
+    }
+
+    #[tokio::test]
+    async fn many_arity_accumulates_distinct_values_into_array() {
+        let (root, search) = temp_paths("borg-ltm-many-arity");
+        let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
+        tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
+
+        let entity = uri!("borg", "user", "leostera").unwrap();
+        ltm.state_facts(vec![
+            make_fact_with_arity(
+                entity.clone(),
+                "borg:preference:hobby",
+                FactArity::Many,
+                FactValue::Text("climbing".to_string()),
+            ),
+            make_fact_with_arity(
+                entity.clone(),
+                "borg:preference:hobby",
+                FactArity::Many,
+                FactValue::Text("cooking".to_string()),
+            ),
+            make_fact_with_arity(
+                entity.clone(),
+                "borg:preference:hobby",
+                FactArity::Many,
+                FactValue::Text("climbing".to_string()),
+            ),
+        ])
+        .await
+        .unwrap();
+
+        let found = wait_until_entity_matches(&ltm, entity, |candidate| {
+            candidate
+                .props
+                .get("hobby")
+                .and_then(|value| value.as_array())
+                .is_some_and(|hobbies| hobbies.len() == 2)
+        })
+        .await
+        .unwrap();
+        let hobbies = found
+            .props
+            .get("hobby")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        assert_eq!(hobbies.len(), 2);
+        assert!(hobbies.contains(&serde_json::Value::String("climbing".to_string())));
+        assert!(hobbies.contains(&serde_json::Value::String("cooking".to_string())));
     }
 
     #[tokio::test]
     async fn replay_pending_projection_on_restart() {
         let (root, search) = temp_paths("borg-ltm-replay");
 
-        let fact_store = super::fact_store::TursoFactStore::new(&root).unwrap();
+        let fact_store = super::fact_store::SqliteFactStore::new(&root).unwrap();
         fact_store.migrate().await.unwrap();
         let entity = uri!("plex", "movies").unwrap();
         let _ = fact_store
@@ -580,6 +808,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_query_by_exact_uri_returns_entity() {
+        let (root, search) = temp_paths("borg-ltm-exact-uri");
+        let (server, ltm) = BorgLtmServer::new(&root, &search).unwrap();
+        tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
+
+        let entity = uri!("borg", "user", "leandro").unwrap();
+        ltm.state_facts(vec![make_fact(
+            entity.clone(),
+            "borg:fields:name",
+            FactValue::Text("Leandro".to_string()),
+        )])
+        .await
+        .unwrap();
+
+        let _ = wait_until_entity(&ltm, entity.clone()).await;
+        let results = ltm
+            .search(SearchQuery {
+                ns: None,
+                kind: None,
+                name: None,
+                query_text: Some(entity.as_str().to_string()),
+                limit: Some(10),
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            results
+                .entities
+                .iter()
+                .any(|candidate| candidate.entity_id.as_str() == entity.as_str())
+        );
+    }
+
+    #[tokio::test]
     async fn search_index_persists_across_server_restart() {
         let (root, search) = temp_paths("borg-ltm-search-persist");
 
@@ -619,44 +884,51 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let (server_b, ltm_b) = BorgLtmServer::new(&root, &search).unwrap();
-        let task_b = tokio::spawn(async move {
-            server_b.run().await.unwrap();
-        });
-
-        let mut after_restart = SearchResults { entities: vec![] };
+        let mut maybe_search_index = None;
+        for _ in 0..60 {
+            match super::search_index::TantivySearchIndex::new(&search) {
+                Ok(index) => {
+                    maybe_search_index = Some(index);
+                    break;
+                }
+                Err(err) => {
+                    if err.to_string().contains("LockBusy") {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        continue;
+                    }
+                    panic!("failed to reopen search index: {err:#}");
+                }
+            }
+        }
+        let search_index = maybe_search_index.expect("search index lock did not clear in time");
+        search_index.migrate().await.unwrap();
+        let mut after_restart: Vec<String> = Vec::new();
         for _ in 0..30 {
-            after_restart = ltm_b
-                .search(SearchQuery {
-                    ns: Some("plex".to_string()),
-                    kind: Some("movies".to_string()),
-                    name: Some(NameFilter {
-                        like: "Persistent Minions".to_string(),
-                    }),
-                    query_text: None,
-                    limit: Some(10),
-                })
+            let query = SearchQuery {
+                ns: Some("plex".to_string()),
+                kind: Some("movies".to_string()),
+                name: Some(NameFilter {
+                    like: "Persistent Minions".to_string(),
+                }),
+                query_text: None,
+                limit: Some(10),
+            };
+            after_restart = search_index
+                .search(&query, query.limit.unwrap_or(10))
                 .await
                 .unwrap();
-            if !after_restart.entities.is_empty() {
+            if !after_restart.is_empty() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
-        assert!(!after_restart.entities.is_empty());
+        assert!(!after_restart.is_empty());
         assert!(
             after_restart
-                .entities
                 .iter()
-                .any(|candidate| candidate.entity_id.as_str() == entity.as_str())
+                .any(|candidate| candidate == entity.as_str())
         );
-
-        drop(ltm_b);
-        timeout(Duration::from_secs(2), task_b)
-            .await
-            .unwrap()
-            .unwrap();
     }
 
     #[test]

@@ -26,10 +26,6 @@ fn main() {
         );
     }
 
-    println!(
-        "cargo:warning=using borg-agent-sdk bundle source: {}",
-        sdk_dist.display()
-    );
     let bundle = fs::read_to_string(&sdk_dist).expect("failed to read built sdk bundle");
     fs::write(out_file, bundle).expect("failed to write sdk bundle to OUT_DIR");
 

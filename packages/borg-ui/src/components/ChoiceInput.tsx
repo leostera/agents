@@ -1,28 +1,28 @@
-import React from 'react'
+import React from "react";
 
 type ChoiceOption = {
-  label: string
-  value: string
-}
+  label: string;
+  value: string;
+};
 
 type ChoiceInputProps = {
-  name: string
-  placeholder: string
-  options: Array<ChoiceOption>
-  value: string | null
-  onChange: (value: string) => void
-}
+  name: string;
+  placeholder: string;
+  options: Array<ChoiceOption>;
+  value: string | null;
+  onChange: (value: string) => void;
+};
 
 export function ChoiceInput(props: ChoiceInputProps) {
   return (
-    <label className='borg-choice'>
-      <span className='borg-choice__label'>{props.name}</span>
+    <label className="borg-choice">
+      <span className="borg-choice__label">{props.name}</span>
       <select
-        className='borg-choice__select'
-        value={props.value ?? ''}
+        className="borg-choice__select"
+        value={props.value ?? ""}
         onChange={(event) => props.onChange(event.currentTarget.value)}
       >
-        <option value=''>{props.placeholder}</option>
+        <option value="">{props.placeholder}</option>
         {props.options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -30,5 +30,5 @@ export function ChoiceInput(props: ChoiceInputProps) {
         ))}
       </select>
     </label>
-  )
+  );
 }

@@ -6,7 +6,7 @@ mod tool_runner;
 mod types;
 
 pub use executor::{BorgExecutor, ExecEngine};
-pub use types::{SessionTurnOutput, UserMessage};
+pub use types::{SessionTurnOutput, ToolCallSummary, UserMessage};
 
 #[cfg(test)]
 mod tests;

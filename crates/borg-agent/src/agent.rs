@@ -5,6 +5,7 @@ use borg_llm::{LlmRequest, Provider, ProviderBlock, StopReason};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::info;
+use tracing::{Instrument, error, info_span, warn};
 
 use crate::{
     AgentTools, Session, SessionOutput, SessionResult, ToolCallRecord, ToolResultData, ToolSpec,
@@ -14,36 +15,38 @@ use crate::{
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 pub const DEFAULT_MAX_TURNS: usize = 50;
 pub const DEFAULT_AGENT_ID: &str = "borg:agent:default";
-pub const DEFAULT_SYSTEM_PROMPT: &str = r#"You are Borg's default agent, and this is your system prompt. Always follow these rules:
+pub const DEFAULT_SYSTEM_PROMPT: &str = r#"You are Borg's default agent, and this is your system prompt. 
 
-0. Always address the user by their name
-1. Always answer the latest user message directly.
-2. Do not repeat previous answers unless the user asks you to
-4. Prefer recalling things from long-term memory explicitly
-5. Keep responses concise and conversational
+## Rules for Responding
 
-## How to use tools effectively
+1. Always address the user by their name
+2. Always answer the latest user message directly.
+3. Do not repeat previous answers unless the user asks you to
+5. Always recall things first from long-term memory explicitly (using the `searchMemory` tool)
+6. Keep responses concise and conversational
 
-You have two primary tools available to you, use them eagerly to solve your problems and get data
-to answer questions: `search` and `execute`
+## Rules for the Code Mode System
 
-Use `search` to find JavaScript APIs in the Borg SDK that can help you achieve your tasks
+0. ALWAYS use the `searchApis` tool to find the api sdk types before generating code
+1. When using the `executeCode` tool, try to generate a single piece of code that does all the work you need
+2. Returned values in the code you pass to `executeCode` will be returned to you as JSON
 
-Use `execute` to execute JavaScript using the BorgSDK to help you achieve your tasks
+## Rules about the Memory System
 
-When writing JavaScript, try to do the least number of operations, and return exactly the data
-you're intested in
+0. Use the memory tools directly (`searchMemory`, `newEntity`, `saveFacts`) instead of code execution for routine memory operations.
+1. For facts about concrete things (people, movies, places), resolve identity first:
+   - try `searchMemory` for an existing entity URI
+   - if no reliable match exists, call `newEntity`
+   - then use `saveFacts` on that entity URI and link with `Ref`
 
-## Long-term memory subsystem
-
-The Borg LTM system allows you to store information in a graph database that is fuzzy searchable
-later. It is integrated in the tools and findable via `search` and runnable via `execute`.
+The Borg Memory system allows you to store information in a graph database that is fuzzy searchable
+later. It is integrated in the tools via `searchMemory`, `newEntity`, and `saveFacts`.
 
 This allows you to create complex code to save and retrieve memories that are durable and globally
 accessible.
 
 It works by creating small facts about the world, that are triplets: (Entity URI, Field URI,
-Value), and creates a unified view of that Entity URI. If you don't know a URI, search for it first.
+Value), and creates a unified view of that Entity URI. If you don't know a URI, search for it first, and create one with `newEntity` if needed.
 
 If the user explicitly shares any information/preference/fact that you think is worth remembering,
 be it about themselves (e.g. favorite movie), or about something they do (e.g. where they store
@@ -53,6 +56,7 @@ If the user asks about something, first search long-term memory first, then answ
 
 If memory has no matching fact, say you do not have information about that yet and offer to search
 the web or ask the user if they have the answer and wish you to remember it for later.
+
 
 
 "#;
@@ -129,6 +133,18 @@ impl Agent {
         }
 
         let mut pending = session.pop_steering_messages();
+        let user_key = match session.user_key().await {
+            Ok(value) => Some(value),
+            Err(err) => {
+                warn!(
+                    target: "borg_agent",
+                    session_id = %session.session_id,
+                    error = %err,
+                    "failed to resolve user_key for provider call context"
+                );
+                None
+            }
+        };
         let mut has_tool_calls = match session.has_unprocessed_messages().await {
             Ok(value) => value,
             Err(err) => {
@@ -192,7 +208,15 @@ impl Agent {
                     max_tokens: None,
                     api_key: None,
                 };
-                let assistant_message = match provider.chat(&req).await {
+                let call_id = uri!("borg", "call").to_string();
+                let llm_call_span = info_span!(
+                    "llm_provider_call",
+                    call_id = %call_id,
+                    session_id = %session.session_id,
+                    user_id = ?user_key.as_ref().map(Uri::to_string),
+                    model = req.model.as_str()
+                );
+                let assistant_message = match provider.chat(&req).instrument(llm_call_span).await {
                     Ok(message) => message,
                     Err(err) => {
                         return finish_session(
@@ -202,6 +226,21 @@ impl Agent {
                         .await;
                     }
                 };
+                if let Err(err) = session
+                    .record_provider_usage(
+                        provider.provider_name(),
+                        assistant_message.usage_tokens.unwrap_or(0),
+                    )
+                    .await
+                {
+                    warn!(
+                        target: "borg_agent",
+                        session_id = %session.session_id,
+                        provider = provider.provider_name(),
+                        error = %err,
+                        "failed to update provider usage summary"
+                    );
+                }
                 info!(target: "borg_agent", session_id = %session.session_id, "turn_end");
 
                 let tool_calls: Vec<(String, String, Value)> = assistant_message
@@ -222,13 +261,21 @@ impl Agent {
                         assistant_message.stop_reason,
                         StopReason::Aborted | StopReason::Error
                     ) {
+                        let session_error_message = assistant_message
+                            .error_message
+                            .clone()
+                            .unwrap_or_else(|| "assistant aborted or errored".to_string());
+                        error!(
+                            target: "borg_agent",
+                            session_id = %session.session_id,
+                            stop_reason = ?assistant_message.stop_reason,
+                            block_count = assistant_message.content.len(),
+                            error = session_error_message.as_str(),
+                            "assistant turn ended with error stop reason"
+                        );
                         return finish_session(
                             session,
-                            SessionResult::SessionError(
-                                assistant_message
-                                    .error_message
-                                    .unwrap_or_else(|| "assistant aborted or errored".to_string()),
-                            ),
+                            SessionResult::SessionError(session_error_message),
                         )
                         .await;
                     }

@@ -70,14 +70,14 @@ pub fn to_provider_messages(messages: &[Message]) -> Result<Vec<ProviderMessage>
                 name,
                 content,
             } => {
-                if let Some((expected_id, _expected_name)) = immediate_tool_call.as_ref() {
-                    if expected_id != tool_call_id {
-                        flush_interrupted_tool_call(
-                            &mut provider_messages,
-                            &mut pending_tool_calls,
-                            &mut immediate_tool_call,
-                        );
-                    }
+                if let Some((expected_id, _expected_name)) = immediate_tool_call.as_ref()
+                    && expected_id != tool_call_id
+                {
+                    flush_interrupted_tool_call(
+                        &mut provider_messages,
+                        &mut pending_tool_calls,
+                        &mut immediate_tool_call,
+                    );
                 }
                 if !pending_tool_calls.contains_key(tool_call_id) {
                     return Err(anyhow!(

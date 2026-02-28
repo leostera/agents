@@ -8,7 +8,9 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_core::uri;
 use borg_db::BorgDb;
-use borg_llm::{LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, StopReason};
+use borg_llm::{
+    LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, StopReason, TranscriptionRequest,
+};
 use serde_json::{Value, json};
 use std::sync::Once;
 use tokio::sync::{Mutex, mpsc};
@@ -68,6 +70,10 @@ impl Provider for ScriptedProvider {
             .ok_or_else(|| anyhow!("missing scripted llm response"))?
             .map_err(|e| anyhow!(e))
     }
+
+    async fn transcribe(&self, _req: &TranscriptionRequest) -> Result<String> {
+        Err(anyhow!("transcribe not supported in scripted provider"))
+    }
 }
 
 fn scripted_provider(
@@ -111,6 +117,7 @@ fn assistant_text(text: &str) -> LlmAssistantMessage {
         content: vec![ProviderBlock::Text(text.to_string())],
         stop_reason: StopReason::EndOfTurn,
         error_message: None,
+        usage_tokens: None,
     }
 }
 
@@ -126,6 +133,7 @@ fn assistant_tool_calls(calls: Vec<(&str, &str, Value)>) -> LlmAssistantMessage 
             .collect(),
         stop_reason: StopReason::ToolCall,
         error_message: None,
+        usage_tokens: None,
     }
 }
 

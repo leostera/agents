@@ -1,269 +1,189 @@
-declare global {
-  /**
-   * Low-level FFI bridge exposed by the runtime.
-   * SDK consumers should prefer the typed `Borg` APIs instead of calling this directly.
-   */
-  type FfiCall = (opName: string, args: unknown[]) => unknown;
+/* eslint-disable */
 
-  const ffi: FfiCall;
+/**
+ * Canonical Borg URI string in `ns:kind:id` form.
+ *
+ * Example:
+ * - `borg:user:leostera`
+ * - `borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f`
+ */
+type BorgUri = `${string}:${string}:${string}`;
 
-  /**
-   * String path understood by runtime file APIs.
-   * Use absolute paths when possible to avoid ambiguity.
-   */
-  type PathLike = string;
+/**
+ * Path accepted by Borg filesystem APIs.
+ *
+ * Example:
+ * - `"."`
+ * - `"/tmp"`
+ * - `"/Users/leostera/Movies"`
+ */
+type PathLike = string;
 
-  /**
-   * Kind classification for a directory entry.
-   */
-  type BorgDirEntryKind = "file" | "directory" | "symlink" | "other";
+/**
+ * Type classification for one filesystem entry.
+ */
+type BorgDirEntryKind = "file" | "directory" | "symlink" | "other";
 
-  /**
-   * Structured metadata for one filesystem entry returned by `Borg.OS.ls`.
-   */
-  interface BorgDirEntry {
-    path: string;
-    name: string;
-    kind: BorgDirEntryKind;
-  }
-
-  /**
-   * Options for directory listing behavior.
-   */
-  interface BorgLsOptions {
-    /** Return absolute paths in results when true. */
-    absolute?: boolean;
-    /** Traverse child directories recursively when true. */
-    recursive?: boolean;
-    /** Maximum recursive depth (only applies when `recursive` is true). */
-    maxDepth?: number;
-    /** Include hidden files/directories when true. */
-    includeHidden?: boolean;
-    /** Include typed `detailedEntries` output. */
-    withFileTypes?: boolean;
-  }
-
-  /**
-   * Result payload for directory listing.
-   *
-   * - `entries`: simple list of paths (useful for prompts and quick scans).
-   * - `detailedEntries`: richer typed entries when `withFileTypes` is enabled.
-   */
-  interface BorgLsResult {
-    cwd: string;
-    basePath: string;
-    entries: string[];
-    detailedEntries: BorgDirEntry[];
-  }
-
-  /**
-   * Operating-system helpers exposed by Borg.
-   */
-  interface BorgOS {
-    /**
-     * List files and directories under a path.
-     *
-     * Typical usage:
-     * - `Borg.OS.ls()` to list current working directory.
-     * - `Borg.OS.ls("/tmp", { withFileTypes: true })` for typed metadata.
-     */
-    ls(path?: PathLike, options?: BorgLsOptions): BorgLsResult;
-  }
-
-  /**
-   * Request options for `Borg.fetch`.
-   * Closely follows a simplified fetch-like shape.
-   */
-  interface BorgFetchInit {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: string | Record<string, unknown> | unknown[] | null;
-    timeoutMs?: number;
-  }
-
-  /**
-   * Normalized response from `Borg.fetch`.
-   *
-   * - `body`: raw response text.
-   * - `json`: parsed JSON when body is valid JSON, otherwise `null`.
-   */
-  interface BorgFetchResponse {
-    ok: boolean;
-    status: number;
-    status_text: string;
-    url: string;
-    headers: Record<string, string>;
-    body: string;
-    json: unknown | null;
-  }
-
-  /**
-   * Input fact payload for `Borg.Memory.stateFacts`.
-   *
-   * All URI-like fields must be canonical URI strings (for example `borg:source:cli`).
-   * `value` follows the tagged Rust enum shape expected by the backend.
-   */
-  interface BorgFactInput {
-    source: string;
-    entity: string;
-    field: string;
-    value:
-      | { Text: string }
-      | { Integer: number }
-      | { Float: number }
-      | { Boolean: boolean }
-      | { Bytes: number[] }
-      | { Ref: string };
-  }
-
-  /**
-   * Result payload returned by `Borg.Memory.stateFacts`.
-   *
-   * - `tx_id`: transaction URI for this state operation.
-   * - `facts`: persisted fact records (opaque but serializable).
-   */
-  interface BorgStateFactsResult {
-    tx_id: string;
-    facts: unknown[];
-  }
-
-  /**
-   * Partial name filter used by memory search query.
-   */
-  interface BorgNameFilter {
-    like: string;
-  }
-
-  /**
-   * Query payload for `Borg.Memory.search`.
-   *
-   * `q` and/or `name.like` can be used for text matching.
-   */
-  interface BorgSearchQuery {
-    ns?: string;
-    kind?: string;
-    name?: BorgNameFilter;
-    q?: string;
-    limit?: number;
-  }
-
-  /**
-   * Result payload returned by `Borg.Memory.search`.
-   */
-  interface BorgSearchResults {
-    entities: unknown[];
-  }
-
-  /**
-   * Long-term memory APIs exposed by Borg.
-   *
-   * Valid APIs:
-   * - `Borg.Memory.stateFacts(...)`
-   * - `Borg.Memory.search(...)`
-   *
-   * Invalid / unsupported APIs:
-   * - `Borg.LTM.store(...)`
-   * - `Borg.LTM.search(...)`
-   * - any `Borg.LTM.*` namespace
-   */
-  interface BorgMemory {
-    /**
-     * Persist one or more facts into the long-term memory store.
-     *
-     * `source`, `entity`, and `field` must be URI strings.
-     * Prefer using `Borg.URI.new(ns, kind)` for new identifiers and
-     * `Borg.URI.parse(raw)` when normalizing existing raw strings.
-     *
-     * Fact modeling guidelines:
-     * - Facts are persisted ONLY when calling `Borg.Memory.stateFacts([...])`.
-     * - Returning a JS object like `{ entity, field, value }` does NOT persist anything.
-     * - Prefer many small atomic facts over one large compound fact.
-     * - Keep one relationship per fact row.
-     * - Reuse stable entity URIs across facts (do not create duplicates for the same person/object).
-     * - Use `{ Ref: "<uri>" }` when linking one entity to another entity URI.
-     * - Use scalar values (`Text`, `Integer`, `Boolean`, etc.) for primitive attributes.
-     * - For `source`, prefer the most specific provenance URI available:
-     *   1) `borg:message:<uuid>` (best),
-     *   2) `borg:session:<id>`,
-     *   3) `borg:user:<id>` (fallback).
-     *
-     * Example (good, granular):
-     * `Borg.Memory.stateFacts([
-     *   { source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"), entity: Borg.URI.parse("borg:user:leostera"), field: Borg.URI.parse("borg:field:telegram_id"), value: { Text: "2654566" } },
-     *   { source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"), entity: Borg.URI.parse("borg:user:mariana_zabrodska"), field: Borg.URI.parse("borg:field:telegram_id"), value: { Text: "123456789" } },
-     *   { source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"), entity: Borg.URI.parse("borg:user:leostera"), field: Borg.URI.parse("borg:relationship:girlfriend"), value: { Ref: Borg.URI.parse("borg:user:mariana_zabrodska") } },
-     *   { source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"), entity: Borg.URI.parse("borg:user:mariana_zabrodska"), field: Borg.URI.parse("borg:relationship:boyfriend"), value: { Ref: Borg.URI.parse("borg:user:leostera") } }
-     * ])`
-     *
-     * Example (single atomic fact):
-     * `Borg.Memory.stateFacts([
-     *   {
-     *     source: Borg.URI.parse("borg:message:019c95d2-5757-7f90-85b6-67875fa81a7f"),
-     *     entity: Borg.URI.parse("borg:user:leostera"),
-     *     field: Borg.URI.parse("borg:field:birth_date"),
-     *     value: { Text: "1991-09-28" }
-     *   }
-     * ])`
-     *
-     * Anti-example (does not persist):
-     * `async () => { return { entity: "User:leostera", field: "full_name", value: "Leandro Ostera" }; }`
-     *
-     * Anti-example (invalid API):
-     * `await Borg.LTM.store("Leandro Ostera", "full_name", "Leandro Ostera")`
-     */
-    stateFacts(facts: BorgFactInput[]): BorgStateFactsResult;
-    /**
-     * Search long-term memory entities.
-     *
-     * Example:
-     * `Borg.Memory.search({ q: "movie", kind: "Preference", limit: 10 })`
-     *
-     * Example (search by namespace + kind):
-     * `Borg.Memory.search({ ns: "borg", kind: "user", limit: 20 })`
-     */
-    search(query: BorgSearchQuery): BorgSearchResults;
-  }
-
-  /**
-   * URI helpers for constructing and validating Borg URI strings.
-   */
-  interface BorgURI {
-    /**
-     * Create a new URI in the form `${ns}:${kind}:${id}`.
-     * If `id` is omitted, a new random id is generated.
-     */
-    new(ns: string, kind: string, id?: string): string;
-    /**
-     * Validate and normalize an existing URI string.
-     * Throws when the input is not a valid `ns:kind:id` URI.
-     */
-    parse(raw: string): string;
-  }
-
-  /**
-   * Top-level Borg SDK surface available inside Code Mode execution.
-   */
-  interface BorgSdk {
-    OS: BorgOS;
-    /**
-     * Long-term memory namespace for storing and searching structured facts.
-     */
-    Memory: BorgMemory;
-    /**
-     * URI helper namespace.
-     */
-    URI: BorgURI;
-    /**
-     * Perform an HTTP request from the runtime.
-     *
-     * Typical usage:
-     * - `Borg.fetch("https://example.com/api")`
-     * - `Borg.fetch(url, { method: "POST", headers: {...}, body: {...} })`
-     */
-    fetch: (url: string, init?: BorgFetchInit) => BorgFetchResponse;
-  }
-
-  const Borg: BorgSdk;
+/**
+ * Rich metadata for a single file or directory entry.
+ */
+interface BorgDirEntry {
+  path: string;
+  name: string;
+  kind: BorgDirEntryKind;
 }
+
+/**
+ * Options for directory listing behavior.
+ */
+interface BorgLsOptions {
+  /** Return absolute paths when true. */
+  absolute?: boolean;
+  /** Recursively traverse directories when true. */
+  recursive?: boolean;
+  /** Max traversal depth (only when recursive=true). */
+  maxDepth?: number;
+  /** Include hidden files/directories (dotfiles) when true. */
+  includeHidden?: boolean;
+  /** Include `detailedEntries` metadata when true. */
+  withFileTypes?: boolean;
+}
+
+/**
+ * Result payload from `Borg.OS.ls(...)`.
+ */
+interface BorgLsResult {
+  /** Current working directory seen by the runtime. */
+  cwd: string;
+  /** Base path that was listed. */
+  basePath: string;
+  /** Path-only entries, useful for quick listing. */
+  entries: string[];
+  /** Typed entries, populated when `withFileTypes` is true. */
+  detailedEntries: BorgDirEntry[];
+}
+
+/**
+ * Options for `Borg.fetch(...)`.
+ */
+interface BorgFetchInit {
+  /** HTTP method, defaults to `GET`. */
+  method?: string;
+  /** Request headers. */
+  headers?: Record<string, string>;
+  /** Request body string or JSON-like object/array. */
+  body?: string | Record<string, unknown> | unknown[] | null;
+  /** Optional timeout in milliseconds. */
+  timeoutMs?: number;
+}
+
+/**
+ * Normalized response payload for `Borg.fetch(...)`.
+ */
+interface BorgFetchResponse {
+  /** True when status is 2xx. */
+  ok: boolean;
+  /** HTTP status code. */
+  status: number;
+  /** HTTP status text. */
+  status_text: string;
+  /** Final request URL. */
+  url: string;
+  /** Response headers as a plain object. */
+  headers: Record<string, string>;
+  /** Raw response body text. */
+  body: string;
+  /** Parsed JSON body when possible, otherwise null. */
+  json: unknown | null;
+}
+
+interface BorgOS {
+  /**
+   * List files and directories under a path.
+   *
+   * Example:
+   * ```ts
+   * const listing = Borg.OS.ls(".")
+   * ```
+   *
+   * Example:
+   * ```ts
+   * const deep = Borg.OS.ls("/tmp", { recursive: true, maxDepth: 2, withFileTypes: true })
+   * ```
+   */
+  ls(path?: PathLike, options?: BorgLsOptions): BorgLsResult;
+}
+
+/**
+ * Message-scoped context for the currently executing turn.
+ */
+interface BorgCurrentMessage {
+  /**
+   * URI for the current inbound message, when available.
+   *
+   * Example:
+   * ```ts
+   * const messageId = Borg.Message.currentMessage().uri()
+   * ```
+   */
+  uri(): BorgUri | null;
+}
+
+interface BorgMessage {
+  /**
+   * Access the current inbound message context.
+   */
+  currentMessage(): BorgCurrentMessage;
+}
+
+/**
+ * User-scoped context for the currently executing turn.
+ */
+interface BorgUser {
+  /**
+   * URI for the current user, when available.
+   *
+   * Example:
+   * ```ts
+   * const userId = Borg.me().uri()
+   * ```
+   */
+  uri(): BorgUri | null;
+}
+
+/**
+ * Root Borg SDK available in Code Mode runtime.
+ */
+interface BorgSdk {
+  /** Operating-system helpers. */
+  OS: BorgOS;
+  /** Current message context helpers. */
+  Message: BorgMessage;
+  /**
+   * Access the current user context.
+   *
+   * Example:
+   * ```ts
+   * const me = Borg.me().uri()
+   * if (me) console.log(me)
+   * ```
+   */
+  me(): BorgUser;
+  /**
+   * Perform an HTTP request.
+   *
+   * Example:
+   * ```ts
+   * const res = await Borg.fetch("https://example.com/api")
+   * if (res.ok) console.log(res.json ?? res.body)
+   * ```
+   */
+  fetch(url: string, init?: BorgFetchInit): Promise<BorgFetchResponse>;
+}
+
+/**
+ * Global Borg API object exposed by the runtime.
+ */
+declare const Borg: BorgSdk;
 
 export {};

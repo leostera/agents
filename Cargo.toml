@@ -1,40 +1,40 @@
 [workspace]
-members = ["crates/borg-agent",
+members = [
+  "crates/borg-agent",
   "crates/borg-api",
-  "crates/borg-cmd",
   "crates/borg-cli",
+  "crates/borg-cmd",
   "crates/borg-core",
   "crates/borg-db",
   "crates/borg-exec",
   "crates/borg-llm",
   "crates/borg-ltm",
-  "crates/borg-onboard",
   "crates/borg-ports",
   "crates/borg-rt",
-  "crates/borg-ui"
 ]
 resolver = "2"
 
 [workspace.dependencies]
 anyhow = "1"
 axum = { version = "0.7", features = ["json"] }
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs"] }
 tracing = "0.1"
-turso = "0.4.4"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 deno_core = "0.311"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 async-trait = "0.1"
-url = "2"
+url = { version = "2", features = ["serde"] }
 teloxide = "0.17"
-oxc_allocator = "0.52.0"
-oxc_parser = "0.52.0"
-oxc_span = "0.52.0"
-
-[profile.dev.package."*"]
-debug = 0
+serial_test = "3"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+testcontainers = "0.27.1"
+indradb = { package = "indradb-lib", version = "5.0.0", features = ["rocksdb-datastore"] }
+tantivy = "0.22"
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }

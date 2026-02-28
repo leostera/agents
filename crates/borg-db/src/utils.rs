@@ -1,11 +1,11 @@
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use turso::Row;
 
+use crate::CompatRow;
 use borg_core::{Task, TaskKind, TaskStatus, Uri};
 
-pub(crate) fn row_to_task(row: &Row) -> Result<Task> {
+pub(crate) fn row_to_task(row: &CompatRow) -> Result<Task> {
     let status: String = row.get(2)?;
     let kind: String = row.get(3)?;
     let created_at: String = row.get(5)?;

@@ -1,4 +1,3 @@
-use std::process::Command as ProcessCommand;
 use std::{io, io::Write};
 
 use anyhow::Result;
@@ -7,20 +6,23 @@ use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
 use borg_exec::ExecEngine;
 use borg_ltm::{FactInput, MemoryStore, SearchQuery};
-use borg_onboard::OnboardServer;
 use borg_rt::CodeModeRuntime;
 use clap::{Parser, Subcommand};
 use reqwest::Client;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use serde_json::Value;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 use tokio::fs;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use uuid::Uuid;
 
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_ONBOARD_PORT: u16 = 3777;
 const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
+const OPENAI_PROVIDER: &str = "openai";
+const OPENROUTER_PROVIDER: &str = "openrouter";
+const RUNTIME_SETTINGS_PORT: &str = "runtime";
+const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -115,7 +117,7 @@ enum TaskCommand {
 enum ConfigCommand {
     /// Persist one config key/value pair.
     Set {
-        /// Config key (for example providers.openai or ports.telegram).
+        /// Config key (for example providers.openai, providers.default, or ports.telegram).
         key: String,
         /// Config value to persist.
         value: String,
@@ -162,23 +164,18 @@ impl BorgCliApp {
     async fn init(&self, onboard_port: u16) -> Result<()> {
         info!(target: "borg_cli", onboard_port, "initializing borg runtime");
         self.initialize_storage().await?;
-
-        let url = format!("http://localhost:{}/onboard", onboard_port);
-        self.open_browser(&url);
-
-        info!(target: "borg_cli", url, "borg init completed, onboarding server starting");
-        println!("borg initialized. onboarding: {}", url);
-
-        OnboardServer::new(onboard_port, self.borg_dir.config_db().to_path_buf())
-            .run()
-            .await
+        Ok(())
     }
 
     async fn start(&self, bind: String) -> Result<()> {
         info!(target: "borg_cli", config_db = %self.borg_dir.config_db().display(), bind, "starting borg machine");
 
+        self.borg_dir.ensure_initialized().await?;
         let db = self.open_config_db().await?;
         let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
+        db.migrate().await?;
+        memory.migrate().await?;
+
         let memory_for_state_facts = memory.clone();
         let memory_for_search = memory.clone();
         let runtime = CodeModeRuntime::default()
@@ -190,12 +187,10 @@ impl BorgCliApp {
             });
         let exec = ExecEngine::new(
             db.clone(),
+            memory.clone(),
             runtime,
             Uri::parse(&format!("borg:worker:{}", Uuid::now_v7()))?,
         );
-
-        db.migrate().await?;
-        memory.migrate().await?;
 
         let scheduler_exec = exec.clone();
         let scheduler = tokio::spawn(async move {
@@ -212,6 +207,7 @@ impl BorgCliApp {
     }
 
     async fn initialize_storage(&self) -> Result<()> {
+        self.borg_dir.ensure_initialized().await?;
         let db = self.open_config_db().await?;
         let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
 
@@ -221,6 +217,7 @@ impl BorgCliApp {
     }
 
     async fn open_config_db(&self) -> Result<BorgDb> {
+        self.borg_dir.ensure_initialized().await?;
         let config_path = self.borg_dir.config_db().to_string_lossy().to_string();
         BorgDb::open_local(&config_path).await
     }
@@ -231,14 +228,68 @@ impl BorgCliApp {
 
         match key.as_str() {
             "providers.openai" => {
-                db.upsert_provider_api_key("openai", value.trim()).await?;
+                db.upsert_provider_api_key(OPENAI_PROVIDER, value.trim())
+                    .await?;
+                info!(target: "borg_cli", key, "config value updated");
+                println!("ok");
+                Ok(())
+            }
+            "providers.openrouter" => {
+                db.upsert_provider_api_key(OPENROUTER_PROVIDER, value.trim())
+                    .await?;
+                info!(target: "borg_cli", key, "config value updated");
+                println!("ok");
+                Ok(())
+            }
+            "providers.default" => {
+                let provider = value.trim().to_ascii_lowercase();
+                if provider != OPENAI_PROVIDER && provider != OPENROUTER_PROVIDER {
+                    anyhow::bail!(
+                        "unsupported providers.default `{}` (expected `openai` or `openrouter`)",
+                        provider
+                    );
+                }
+                db.upsert_port_setting(
+                    RUNTIME_SETTINGS_PORT,
+                    RUNTIME_PREFERRED_PROVIDER_KEY,
+                    provider.as_str(),
+                )
+                .await?;
                 info!(target: "borg_cli", key, "config value updated");
                 println!("ok");
                 Ok(())
             }
             "ports.telegram" => {
-                db.upsert_port_setting("telegram", "bot_token", value.trim())
-                    .await?;
+                let existing = db.get_port("telegram").await?;
+                let mut settings = existing
+                    .as_ref()
+                    .map(|port| port.settings.clone())
+                    .unwrap_or_else(|| json!({}));
+                if let Some(map) = settings.as_object_mut() {
+                    map.insert(
+                        "bot_token".to_string(),
+                        Value::String(value.trim().to_string()),
+                    );
+                } else {
+                    settings = json!({ "bot_token": value.trim() });
+                }
+                let enabled = existing.as_ref().map(|port| port.enabled).unwrap_or(true);
+                let allows_guests = existing
+                    .as_ref()
+                    .map(|port| port.allows_guests)
+                    .unwrap_or(true);
+                let default_agent_id = existing
+                    .as_ref()
+                    .and_then(|port| port.default_agent_id.as_ref());
+                db.upsert_port(
+                    "telegram",
+                    "telegram",
+                    enabled,
+                    allows_guests,
+                    default_agent_id,
+                    &settings,
+                )
+                .await?;
                 info!(target: "borg_cli", key, "config value updated");
                 println!("ok");
                 Ok(())
@@ -457,38 +508,6 @@ impl BorgCliApp {
         println!("cleared and reinitialized memory stores");
         Ok(())
     }
-
-    fn open_browser(&self, url: &str) {
-        let mut commands: Vec<ProcessCommand> = Vec::new();
-
-        #[cfg(target_os = "macos")]
-        {
-            let mut cmd = ProcessCommand::new("open");
-            cmd.arg(url);
-            commands.push(cmd);
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            let mut cmd = ProcessCommand::new("xdg-open");
-            cmd.arg(url);
-            commands.push(cmd);
-        }
-
-        #[cfg(target_os = "windows")]
-        {
-            let mut cmd = ProcessCommand::new("cmd");
-            cmd.arg("/C").arg("start").arg(url);
-            commands.push(cmd);
-        }
-
-        let opened = commands.into_iter().any(|mut c| c.spawn().is_ok());
-        if opened {
-            info!(target: "borg_cli", url, "opened onboarding url in browser");
-        } else {
-            warn!(target: "borg_cli", url, "failed to auto-open browser; open url manually");
-        }
-    }
 }
 
 fn parse_single_arg<T: DeserializeOwned>(args: Vec<Value>, op_name: &str) -> Result<T> {
@@ -565,7 +584,7 @@ struct CreateTaskResponse {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| {
-            "info,borg_cli=debug,borg_api=debug,borg_ports=debug,borg_db=debug,borg_exec=debug,borg_ltm=debug,borg_rt=debug,borg_onboard=debug"
+            "info,borg_cli=debug,borg_api=debug,borg_ports=debug,borg_db=debug,borg_exec=debug,borg_ltm=debug,borg_rt=debug"
                 .to_string()
         }))
         .init();

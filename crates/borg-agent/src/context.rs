@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -31,11 +32,8 @@ pub struct PassthroughContextManager;
 #[async_trait]
 impl ContextManager for PassthroughContextManager {
     async fn build_context(&self, agent: &Agent, messages: &[Message]) -> Result<ContextWindow> {
-        let messages = with_context_metadata(
-            messages.to_vec(),
-            ContextMetadataPolicy::Passthrough,
-            None,
-        );
+        let messages =
+            with_context_metadata(messages.to_vec(), ContextMetadataPolicy::Passthrough, None);
         Ok(ContextWindow {
             messages,
             tools: agent.tools.clone(),
@@ -136,19 +134,10 @@ impl ContextManager for CompactingContextManager {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SessionContextManager {
     inner: CompactingContextManager,
     telegram_session_context: Option<serde_json::Value>,
-}
-
-impl Default for SessionContextManager {
-    fn default() -> Self {
-        Self {
-            inner: CompactingContextManager::default(),
-            telegram_session_context: None,
-        }
-    }
 }
 
 impl SessionContextManager {
@@ -176,15 +165,12 @@ impl ContextManager for SessionContextManager {
 }
 
 fn with_pinned_telegram_context(messages: Vec<Message>) -> Vec<Message> {
-    let latest = messages
-        .iter()
-        .rev()
-        .find_map(|message| match message {
-            Message::System { content } if content.starts_with(TELEGRAM_CONTEXT_PREFIX) => {
-                Some(content.clone())
-            }
-            _ => None,
-        });
+    let latest = messages.iter().rev().find_map(|message| match message {
+        Message::System { content } if content.starts_with(TELEGRAM_CONTEXT_PREFIX) => {
+            Some(content.clone())
+        }
+        _ => None,
+    });
 
     let Some(latest) = latest else {
         return messages;
@@ -249,7 +235,10 @@ fn with_context_metadata(
     let current_tokens_used = total_chars / CHAR_TO_TOKEN_RATIO;
     let max_tokens = max_chars.map(|chars| chars / CHAR_TO_TOKEN_RATIO);
     let tokens_left = max_tokens.map(|max| max.saturating_sub(current_tokens_used));
+    let now = Utc::now();
     let metadata = json!({
+        "current_datetime_utc": now.to_rfc3339(),
+        "current_unix_timestamp_secs": now.timestamp(),
         "current_tokens_used": current_tokens_used,
         "tokens_left": tokens_left,
         "autocompaction_policy": autocompaction_policy,
@@ -272,7 +261,11 @@ fn summarize_message_line(message: &Message) -> Option<String> {
             name, arguments, ..
         } => format!("Tool call `{}` args {}", name, arguments),
         Message::ToolResult { name, content, .. } => {
-            format!("Tool result `{}` {}", name, serde_json::to_string(content).ok()?)
+            format!(
+                "Tool result `{}` {}",
+                name,
+                serde_json::to_string(content).ok()?
+            )
         }
         Message::SessionEvent { name, .. } => format!("Session event `{}`", name),
     };
@@ -296,7 +289,11 @@ fn message_char_count(message: &Message) -> usize {
             tool_call_id,
             name,
             arguments,
-        } => tool_call_id.chars().count() + name.chars().count() + arguments.to_string().chars().count(),
+        } => {
+            tool_call_id.chars().count()
+                + name.chars().count()
+                + arguments.to_string().chars().count()
+        }
         Message::ToolResult {
             tool_call_id,
             name,

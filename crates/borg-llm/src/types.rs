@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StopReason {
@@ -72,9 +73,80 @@ pub struct LlmAssistantMessage {
     pub content: Vec<ProviderBlock>,
     pub stop_reason: StopReason,
     pub error_message: Option<String>,
+    #[serde(default)]
+    pub usage_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptionRequest {
+    pub audio: Vec<u8>,
+    pub mime_type: String,
+    pub model: Option<String>,
+    pub language: Option<String>,
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeviceCodeAuthConfig {
+    pub url: String,
+    pub scope: Option<String>,
+}
+
+pub trait AuthProvider: Send + Sync {
+    fn device_code_auth_config(&self) -> Option<DeviceCodeAuthConfig> {
+        None
+    }
 }
 
 #[async_trait]
 pub trait Provider: Send + Sync {
+    fn provider_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+
+    fn supports_chat_completion(&self) -> bool {
+        true
+    }
+
+    fn supports_audio_transcription(&self) -> bool {
+        true
+    }
+
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage>;
+    async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String>;
+}
+
+impl<T> AuthProvider for Arc<T>
+where
+    T: AuthProvider + ?Sized,
+{
+    fn device_code_auth_config(&self) -> Option<DeviceCodeAuthConfig> {
+        self.as_ref().device_code_auth_config()
+    }
+}
+
+#[async_trait]
+impl<T> Provider for Arc<T>
+where
+    T: Provider + ?Sized,
+{
+    fn provider_name(&self) -> &'static str {
+        self.as_ref().provider_name()
+    }
+
+    fn supports_chat_completion(&self) -> bool {
+        self.as_ref().supports_chat_completion()
+    }
+
+    fn supports_audio_transcription(&self) -> bool {
+        self.as_ref().supports_audio_transcription()
+    }
+
+    async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
+        self.as_ref().chat(req).await
+    }
+
+    async fn transcribe(&self, req: &TranscriptionRequest) -> Result<String> {
+        self.as_ref().transcribe(req).await
+    }
 }

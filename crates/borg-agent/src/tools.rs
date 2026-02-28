@@ -148,6 +148,16 @@ impl Toolchain {
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
+
+    pub fn merge(mut self, other: Toolchain) -> Result<Self> {
+        for (name, tool) in other.tools {
+            if self.tools.contains_key(&name) {
+                return Err(anyhow!("tool already registered: {}", name));
+            }
+            self.tools.insert(name, tool);
+        }
+        Ok(self)
+    }
 }
 
 impl Default for Toolchain {
@@ -185,6 +195,12 @@ impl ToolRunner for Toolchain {
 
 pub struct ToolchainBuilder {
     toolchain: Toolchain,
+}
+
+impl Default for ToolchainBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ToolchainBuilder {
@@ -234,10 +250,10 @@ fn validate_schema(value: &Value, schema: &Value, path: &str) -> Result<()> {
 
             if let Some(required) = schema.get("required").and_then(Value::as_array) {
                 for key in required {
-                    if let Some(key) = key.as_str() {
-                        if !object.contains_key(key) {
-                            return Err(anyhow!("{} missing required property `{}`", path, key));
-                        }
+                    if let Some(key) = key.as_str()
+                        && !object.contains_key(key)
+                    {
+                        return Err(anyhow!("{} missing required property `{}`", path, key));
                     }
                 }
             }
