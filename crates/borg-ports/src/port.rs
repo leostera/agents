@@ -17,6 +17,7 @@ pub enum Privacy {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Provider {
+    Discord,
     Telegram,
     Unknown,
 }
@@ -26,6 +27,7 @@ impl FromStr for Provider {
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.trim().to_ascii_lowercase().as_str() {
+            "discord" => Ok(Provider::Discord),
             "telegram" => Ok(Provider::Telegram),
             _ => Ok(Provider::Unknown),
         }

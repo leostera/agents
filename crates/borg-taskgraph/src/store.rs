@@ -67,6 +67,16 @@ impl TaskGraphStore {
         &self.db
     }
 
+    pub async fn clear_all_tasks(&self) -> Result<u64> {
+        let mut tx = self.db.pool().begin().await?;
+        let deleted = sqlx::query("DELETE FROM taskgraph_tasks")
+            .execute(tx.as_mut())
+            .await?
+            .rows_affected();
+        tx.commit().await?;
+        Ok(deleted)
+    }
+
     pub async fn create_task(
         &self,
         session_uri: &str,

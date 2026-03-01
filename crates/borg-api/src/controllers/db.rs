@@ -173,31 +173,39 @@ pub(crate) struct DbController;
 
 impl DbController {
     fn validate_port_settings(provider: &str, settings: &Value) -> Result<(), Response> {
-        if provider.trim().eq_ignore_ascii_case("telegram")
-            && let Some(value) = settings
-                .as_object()
-                .and_then(|obj| obj.get("allowed_external_user_ids"))
-        {
-            let Some(items) = value.as_array() else {
+        let normalized = provider.trim().to_ascii_lowercase();
+        let Some(value) = settings
+            .as_object()
+            .and_then(|obj| obj.get("allowed_external_user_ids"))
+        else {
+            return Ok(());
+        };
+
+        let Some(items) = value.as_array() else {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                format!("{normalized}.allowed_external_user_ids must be an array"),
+            ));
+        };
+
+        for item in items {
+            let Some(raw) = item.as_str() else {
                 return Err(api_error(
                     StatusCode::BAD_REQUEST,
-                    "telegram.allowed_external_user_ids must be an array".to_string(),
+                    format!("{normalized}.allowed_external_user_ids entries must be strings"),
                 ));
             };
-
-            for item in items {
-                let Some(raw) = item.as_str() else {
-                    return Err(api_error(
-                        StatusCode::BAD_REQUEST,
-                        "telegram.allowed_external_user_ids entries must be strings".to_string(),
-                    ));
-                };
-                if raw.parse::<TelegramUserId>().is_err() {
-                    return Err(api_error(
-                        StatusCode::BAD_REQUEST,
-                        "telegram.allowed_external_user_ids entries must be numeric ids (e.g. 2654566) or usernames (e.g. @leostera)".to_string(),
-                    ));
-                }
+            if normalized == "telegram" && raw.parse::<TelegramUserId>().is_err() {
+                return Err(api_error(
+                    StatusCode::BAD_REQUEST,
+                    "telegram.allowed_external_user_ids entries must be numeric ids (e.g. 2654566) or usernames (e.g. @leostera)".to_string(),
+                ));
+            }
+            if normalized == "discord" && !is_valid_discord_user_id(raw) {
+                return Err(api_error(
+                    StatusCode::BAD_REQUEST,
+                    "discord.allowed_external_user_ids entries must be numeric Discord user ids (snowflakes)".to_string(),
+                ));
             }
         }
         Ok(())
@@ -1730,4 +1738,10 @@ impl DbController {
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
+}
+
+fn is_valid_discord_user_id(value: &str) -> bool {
+    let trimmed = value.trim();
+    let len = trimmed.len();
+    (16..=21).contains(&len) && trimmed.chars().all(|ch| ch.is_ascii_digit())
 }

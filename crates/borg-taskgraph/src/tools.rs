@@ -432,6 +432,37 @@ pub fn build_taskgraph_toolchain(db: BorgDb) -> Result<Toolchain> {
         .build()
 }
 
+pub fn build_taskgraph_worker_toolchain(db: BorgDb) -> Result<Toolchain> {
+    let store = TaskGraphStore::new(db);
+
+    Toolchain::builder()
+        .add_tool(TaskGraphTools::get_task(store.clone())?)?
+        .add_tool(TaskGraphTools::update_task_fields(store.clone())?)?
+        .add_tool(TaskGraphTools::reassign_assignee(store.clone())?)?
+        .add_tool(TaskGraphTools::add_task_labels(store.clone())?)?
+        .add_tool(TaskGraphTools::remove_task_labels(store.clone())?)?
+        .add_tool(TaskGraphTools::set_task_parent(store.clone())?)?
+        .add_tool(TaskGraphTools::clear_task_parent(store.clone())?)?
+        .add_tool(TaskGraphTools::list_task_children(store.clone())?)?
+        .add_tool(TaskGraphTools::add_task_blocked_by(store.clone())?)?
+        .add_tool(TaskGraphTools::remove_task_blocked_by(store.clone())?)?
+        .add_tool(TaskGraphTools::set_task_duplicate_of(store.clone())?)?
+        .add_tool(TaskGraphTools::clear_task_duplicate_of(store.clone())?)?
+        .add_tool(TaskGraphTools::list_duplicated_by(store.clone())?)?
+        .add_tool(TaskGraphTools::add_task_reference(store.clone())?)?
+        .add_tool(TaskGraphTools::remove_task_reference(store.clone())?)?
+        .add_tool(TaskGraphTools::set_task_status(store.clone())?)?
+        .add_tool(TaskGraphTools::submit_review(store.clone())?)?
+        .add_tool(TaskGraphTools::approve_review(store.clone())?)?
+        .add_tool(TaskGraphTools::request_review_changes(store.clone())?)?
+        .add_tool(TaskGraphTools::add_comment(store.clone())?)?
+        .add_tool(TaskGraphTools::list_comments(store.clone())?)?
+        .add_tool(TaskGraphTools::list_events(store.clone())?)?
+        .add_tool(TaskGraphTools::next_task(store.clone())?)?
+        .add_tool(TaskGraphTools::reconcile_in_progress(store)?)?
+        .build()
+}
+
 struct TaskGraphTools;
 
 impl TaskGraphTools {

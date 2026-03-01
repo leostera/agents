@@ -53,6 +53,7 @@ impl BorgRuntime {
         agent_id: &Uri,
     ) -> Result<Toolchain> {
         let context = self.code_mode_context_for_turn(msg, session_id, agent_id);
+        let allow_task_creation = !is_task_worker_message(msg);
         let runtime_toolchain = build_exec_toolchain_with_context(
             self.runtime.clone(),
             self.shell_runtime.clone(),
@@ -61,6 +62,7 @@ impl BorgRuntime {
             self.db.clone(),
             session_id.clone(),
             agent_id.clone(),
+            allow_task_creation,
         )?;
         let apps = BorgApps::new(self.db.clone()).await?;
         let apps_toolchain = apps.as_toolchain()?;
@@ -167,4 +169,12 @@ impl BorgRuntime {
             current_user_id: Some(msg.user_id.clone()),
         }
     }
+}
+
+fn is_task_worker_message(msg: &UserMessage) -> bool {
+    msg.metadata
+        .as_object()
+        .and_then(|obj| obj.get("port"))
+        .and_then(Value::as_str)
+        .is_some_and(|port| port.eq_ignore_ascii_case("taskgraph"))
 }

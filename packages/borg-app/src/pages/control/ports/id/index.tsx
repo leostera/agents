@@ -65,6 +65,11 @@ function isValidTelegramAllowedUserId(value: string): boolean {
   return /^@[a-zA-Z0-9_]{5,32}$/.test(trimmed);
 }
 
+function isValidDiscordAllowedUserId(value: string): boolean {
+  const trimmed = value.trim();
+  return /^[0-9]{16,21}$/.test(trimmed);
+}
+
 export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
   const [port, setPort] = React.useState<PortRecord | null>(null);
   const [agents, setAgents] = React.useState<AgentSpecRecord[]>([]);
@@ -152,13 +157,20 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
   }, [load]);
 
   const isTelegramPort = providerKind(port?.provider ?? "") === "telegram";
+  const isDiscordPort = providerKind(port?.provider ?? "") === "discord";
 
   const addAllowedUser = React.useCallback(() => {
     const next = allowedUserInput.trim();
     if (!next) return;
-    if (!isValidTelegramAllowedUserId(next)) {
+    if (isTelegramPort && !isValidTelegramAllowedUserId(next)) {
       setError(
         "Allowed user must be a numeric Telegram ID (e.g. 2654566) or @username (e.g. @leostera)."
+      );
+      return;
+    }
+    if (isDiscordPort && !isValidDiscordAllowedUserId(next)) {
+      setError(
+        "Allowed user must be a numeric Discord user ID (snowflake)."
       );
       return;
     }
@@ -168,7 +180,7 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
     });
     setError(null);
     setAllowedUserInput("");
-  }, [allowedUserInput]);
+  }, [allowedUserInput, isDiscordPort, isTelegramPort]);
 
   const removeAllowedUser = React.useCallback((userId: string) => {
     setAllowedExternalUserIds((current) =>
@@ -187,7 +199,7 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
         const nextSettings: Record<string, unknown> = {
           ...(port.settings ?? {}),
         };
-        if (isTelegramPort) {
+        if (isTelegramPort || isDiscordPort) {
           nextSettings.bot_token = botToken.trim();
           nextSettings.allowed_external_user_ids = allowedExternalUserIds;
         }
@@ -213,6 +225,7 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
       botToken,
       defaultAgentId,
       enabled,
+      isDiscordPort,
       isTelegramPort,
       load,
       mode,
@@ -296,9 +309,11 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
             </div>
           </div>
 
-          {isTelegramPort ? (
+          {isTelegramPort || isDiscordPort ? (
             <section className="space-y-3 rounded-md border p-3">
-              <p className="text-sm font-semibold">Telegram Details</p>
+              <p className="text-sm font-semibold">
+                {isTelegramPort ? "Telegram Details" : "Discord Details"}
+              </p>
               <div className="space-y-1">
                 <p className="text-muted-foreground text-xs">bot_token</p>
                 <Input
@@ -316,8 +331,9 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
                     allowed_external_user_ids
                   </p>
                   <p className="text-muted-foreground text-[11px]">
-                    Use numeric Telegram IDs (for example 2654566) or usernames
-                    (for example @leostera).
+                    {isTelegramPort
+                      ? "Use numeric Telegram IDs (for example 2654566) or usernames (for example @leostera)."
+                      : "Use numeric Discord user IDs (snowflakes)."}
                   </p>
                   <div className="flex items-center gap-2">
                     <Input
@@ -325,7 +341,9 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
                       onChange={(event) =>
                         setAllowedUserInput(event.currentTarget.value)
                       }
-                      placeholder="2654566 or @leostera"
+                      placeholder={
+                        isTelegramPort ? "2654566 or @leostera" : "123456789012345678"
+                      }
                       aria-label="Allowed user id"
                     />
                     <Button

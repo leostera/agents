@@ -12,6 +12,7 @@ borg-db = { path = "../borg-db" }
 borg-exec = { path = "../borg-exec" }
 serde.workspace = true
 serde_json.workspace = true
+serenity.workspace = true
 teloxide.workspace = true
 tokio.workspace = true
 tracing.workspace = true

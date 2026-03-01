@@ -68,6 +68,12 @@ enum Command {
         #[command(subcommand)]
         cmd: ConfigCommand,
     },
+    /// Runtime administration commands.
+    Admin {
+        /// Admin subcommand.
+        #[command(subcommand)]
+        cmd: AdminCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -102,6 +108,26 @@ enum SessionCommand {
 enum MemoryCommand {
     /// Clear all LTM fact store and derived search/graph data.
     Clear {
+        /// Skip confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AdminCommand {
+    /// TaskGraph maintenance commands.
+    Tasks {
+        /// Tasks subcommand.
+        #[command(subcommand)]
+        cmd: AdminTasksCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AdminTasksCommand {
+    /// Delete all TaskGraph tasks (and cascaded taskgraph rows).
+    ClearAllTasks {
         /// Skip confirmation prompt.
         #[arg(long)]
         yes: bool,
@@ -175,8 +201,16 @@ impl BorgCliApp {
                     "assignee_agent_id": task.assignee_agent_id,
                 });
                 let text = format!(
-                    "Task dispatch:\n- title: {}\n- description: {}\n- definition_of_done: {}",
-                    task.title, task.description, task.definition_of_done
+                    "This is your task: {}\n\
+                     Task URI: {}\n\
+                     Description: {}\n\
+                     Definition of done: {}\n\n\
+                     Execution policy:\n\
+                     1. Execute this task yourself in the least number of steps possible.\n\
+                     2. Do not create new tasks by default.\n\
+                     3. Only create subtasks if there are more than 10 independent steps that can be parallelized for a clear speedup.\n\
+                     4. If subtasks are not justified by rule #3, continue doing the work directly and finish it.",
+                    task.title, task.task_uri, task.description, task.definition_of_done
                 );
                 supervisor_for_tasks
                     .cast(BorgMessage {
@@ -366,6 +400,25 @@ impl BorgCliApp {
         println!("cleared and reinitialized memory stores");
         Ok(())
     }
+
+    async fn admin_tasks_clear_all(&self, yes: bool) -> Result<()> {
+        if !yes && !confirm_taskgraph_clear_all()? {
+            println!("aborted");
+            return Ok(());
+        }
+
+        let db = self.open_config_db().await?;
+        db.migrate().await?;
+        let store = borg_taskgraph::TaskGraphStore::new(db);
+        let deleted = store.clear_all_tasks().await?;
+        info!(
+            target: "borg_cli",
+            deleted_tasks = deleted,
+            "cleared all taskgraph tasks"
+        );
+        println!("cleared {} task(s) from taskgraph", deleted);
+        Ok(())
+    }
 }
 
 fn parse_single_arg<T: DeserializeOwned>(args: Vec<Value>, op_name: &str) -> Result<T> {
@@ -416,6 +469,15 @@ fn confirm_memory_clear() -> Result<bool> {
     Ok(normalized == "y" || normalized == "yes")
 }
 
+fn confirm_taskgraph_clear_all() -> Result<bool> {
+    print!("This will permanently delete all TaskGraph tasks. Continue? [y/N]: ");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let normalized = input.trim().to_ascii_lowercase();
+    Ok(normalized == "y" || normalized == "yes")
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -445,6 +507,11 @@ async fn main() -> Result<()> {
         },
         Command::Config { cmd } => match cmd {
             ConfigCommand::Set { key, value } => app.config_set(key, value).await,
+        },
+        Command::Admin { cmd } => match cmd {
+            AdminCommand::Tasks { cmd } => match cmd {
+                AdminTasksCommand::ClearAllTasks { yes } => app.admin_tasks_clear_all(yes).await,
+            },
         },
     }
 }

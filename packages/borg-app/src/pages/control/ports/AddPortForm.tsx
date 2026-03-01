@@ -23,6 +23,7 @@ export type AddPortInput = {
   portKind: string;
   portName: string;
   telegramBotToken?: string;
+  discordBotToken?: string;
 };
 
 type PortKindOption = {
@@ -57,6 +58,7 @@ export function AddPortForm({
   const [selectedPortKind, setSelectedPortKind] = React.useState("telegram");
   const [portName, setPortName] = React.useState("");
   const [telegramBotToken, setTelegramBotToken] = React.useState("");
+  const [discordBotToken, setDiscordBotToken] = React.useState("");
 
   React.useEffect(() => {
     if (!open) {
@@ -64,6 +66,7 @@ export function AddPortForm({
       setSelectedPortKind("telegram");
       setPortName("");
       setTelegramBotToken("");
+      setDiscordBotToken("");
     }
   }, [open]);
 
@@ -73,6 +76,7 @@ export function AddPortForm({
       portKind: selectedPortKind,
       portName,
       telegramBotToken,
+      discordBotToken,
     });
   };
 
@@ -91,7 +95,8 @@ export function AddPortForm({
             <div className="grid grid-cols-2 gap-2">
               {PORT_KIND_OPTIONS.map((option) => {
                 const Icon = option.icon;
-                const isEnabled = option.id === "telegram";
+                const isEnabled =
+                  option.id === "telegram" || option.id === "discord";
                 return (
                   <Button
                     key={option.id}
@@ -158,6 +163,35 @@ export function AddPortForm({
                   <p>
                     3. Copy the API token from BotFather and paste it here
                     (format: <code>123456:ABC...</code>).
+                  </p>
+                </div>
+              </div>
+            ) : null}
+            {selectedPortKind === "discord" ? (
+              <div className="space-y-2">
+                <Label htmlFor="discord-bot-token">Discord bot token</Label>
+                <Input
+                  id="discord-bot-token"
+                  type="password"
+                  autoComplete="off"
+                  value={discordBotToken}
+                  onChange={(event) =>
+                    setDiscordBotToken(event.currentTarget.value)
+                  }
+                  placeholder="Discord bot token"
+                  aria-label="Discord bot token"
+                />
+                <div className="text-muted-foreground space-y-1 text-xs">
+                  <p>How to get this token:</p>
+                  <p>
+                    1. Open the Discord Developer Portal and create/select an
+                    application.
+                  </p>
+                  <p>
+                    2. Add a Bot user under <code>Bot</code>.
+                  </p>
+                  <p>
+                    3. Copy the bot token and paste it here.
                   </p>
                 </div>
               </div>

@@ -175,6 +175,7 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
         open_test_db().await,
         uri!("borg", "session", "test-runtime"),
         uri!("borg", "agent", "test-runtime"),
+        true,
     )
     .unwrap();
     let tools = AgentTools {
@@ -269,6 +270,7 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
         open_test_db().await,
         uri!("borg", "session", "test-invalid"),
         uri!("borg", "agent", "test-invalid"),
+        true,
     )
     .unwrap();
     let tools = AgentTools {

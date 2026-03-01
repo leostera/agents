@@ -656,6 +656,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discord_port_settings_crud_endpoints_work() {
+        let app = test_app("discord-port-settings").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/ports/borg:port:discord",
+            json!({
+                "provider":"discord",
+                "enabled": true,
+                "allows_guests": false,
+                "settings": {
+                    "bot_token": "discord-token",
+                    "allowed_external_user_ids": ["123456789012345678"]
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/ports?limit=100").await;
+        assert_eq!(status, StatusCode::OK);
+        let ports = body["ports"].as_array().expect("ports array");
+        let discord = ports
+            .iter()
+            .find(|port| port["port_name"] == "discord")
+            .expect("discord port row");
+        assert_eq!(discord["provider"], "discord");
+
+        let (status, _) =
+            request_no_body(&app, Method::DELETE, "/api/ports/borg:port:discord").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
     async fn port_bindings_and_context_endpoints_work() {
         let app = test_app("port-bindings-context").await;
         let (status, _) = request_json(
@@ -956,6 +990,22 @@ mod tests {
                 "allows_guests": false,
                 "settings": {
                     "allowed_external_user_ids": ["not-valid-user-format"]
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/ports/borg:port:discord",
+            json!({
+                "provider":"discord",
+                "enabled": true,
+                "allows_guests": false,
+                "settings": {
+                    "allowed_external_user_ids": ["@not-a-discord-id"]
                 }
             }),
         )

@@ -5,6 +5,14 @@ use serde_json::Value;
 
 use crate::{BorgDb, PortRecord};
 
+fn default_provider_for_port_name(port_name: &str) -> String {
+    match port_name.trim().to_ascii_lowercase().as_str() {
+        "telegram" => "telegram".to_string(),
+        "discord" => "discord".to_string(),
+        _ => "custom".to_string(),
+    }
+}
+
 impl BorgDb {
     pub async fn list_ports(&self, limit: usize) -> Result<Vec<PortRecord>> {
         let limit = i64::try_from(limit).unwrap_or(200);
@@ -275,11 +283,7 @@ impl BorgDb {
     pub async fn upsert_port_setting(&self, port_name: &str, key: &str, value: &str) -> Result<()> {
         let mut port = self.get_port(port_name).await?.unwrap_or(PortRecord {
             port_id: uri!("borg", "port"),
-            provider: if port_name == "telegram" {
-                "telegram".to_string()
-            } else {
-                "custom".to_string()
-            },
+            provider: default_provider_for_port_name(port_name),
             port_name: port_name.to_string(),
             enabled: true,
             allows_guests: true,
@@ -390,7 +394,7 @@ impl BorgDb {
 
         let changed = match key {
             "provider" | "kind" => {
-                port.provider = "custom".to_string();
+                port.provider = default_provider_for_port_name(port_name);
                 true
             }
             "enabled" => {

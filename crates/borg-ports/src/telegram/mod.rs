@@ -6,12 +6,12 @@ use borg_cmd::CommandRegistry;
 use borg_core::{TelegramUserId, Uri};
 use borg_exec::{BorgCommand, SessionOutput, TelegramSessionContext};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use teloxide::prelude::*;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, warn};
 
 use crate::message::PortInput;
+use crate::output_format::{format_tool_action_message, split_message_by_limit};
 use crate::{Port, PortConfig, PortMessage};
 
 const TELEGRAM_USER_ID_PREFIX: &str = "telegram";
@@ -92,7 +92,7 @@ impl TelegramPort {
     }
 
     async fn send_text(&self, chat_id: ChatId, message: String) -> Result<()> {
-        for chunk in split_message(&message) {
+        for chunk in split_message_by_limit(&message, TELEGRAM_MESSAGE_LIMIT) {
             self.bot.send_message(chat_id, chunk).await?;
         }
         Ok(())
@@ -146,6 +146,21 @@ impl Port for TelegramPort {
                 };
 
                 if command_registry.is_command(text) {
+                    if is_help_command(text) {
+                        if let Err(err) = inbound_port
+                            .send_text(message.chat.id, command_registry.help())
+                            .await
+                        {
+                            warn!(
+                                target: "borg_ports",
+                                port_name = %inbound_port.port_name,
+                                error = %err,
+                                "failed to send local telegram help response"
+                            );
+                        }
+                        return respond(());
+                    }
+
                     match command_registry.run(text).await {
                         Ok(Some(TelegramCommandRoute::Local(reply))) => {
                             if let Err(err) = inbound_port.send_text(message.chat.id, reply).await {
@@ -261,6 +276,19 @@ fn parse_model_command_action(args: &[String]) -> ModelCommandAction {
     }
 }
 
+fn is_help_command(input: &str) -> bool {
+    let token = input.split_whitespace().next().unwrap_or_default();
+    if !token.starts_with('/') {
+        return false;
+    }
+    let command = token
+        .trim_start_matches('/')
+        .split('@')
+        .next()
+        .unwrap_or("");
+    command.eq_ignore_ascii_case("help")
+}
+
 fn format_participants_for_message(message: &Message) -> String {
     let ctx = telegram_session_context_from_message(message);
     if ctx.participants.is_empty() {
@@ -280,27 +308,6 @@ fn format_participants_for_message(message: &Message) -> String {
         lines.push(format!("- {} [{}]", display, participant.id));
     }
     lines.join("\n")
-}
-
-fn split_message(message: &str) -> Vec<String> {
-    if message.is_empty() {
-        return Vec::new();
-    }
-
-    let mut out = Vec::new();
-    let mut current = String::new();
-    for line in message.lines() {
-        if current.len() + line.len() + 1 > TELEGRAM_MESSAGE_LIMIT {
-            out.push(current.trim_end().to_string());
-            current.clear();
-        }
-        current.push_str(line);
-        current.push('\n');
-    }
-    if !current.trim().is_empty() {
-        out.push(current.trim_end().to_string());
-    }
-    out
 }
 
 fn conversation_user_id(message: &Message) -> Option<Uri> {
@@ -393,26 +400,6 @@ fn telegram_candidates(ctx: &TelegramSessionContext) -> Vec<TelegramUserId> {
         }
     }
     out
-}
-
-fn format_tool_action_message(tool_name: &str, arguments: &Value) -> String {
-    let label = match tool_name {
-        "CodeMode-executeCode" => "Running code",
-        "CodeMode-searchApis" => "Searching APIs",
-        "Memory-getSchema" => "Loading memory schema",
-        "Memory-searchMemory" => "Searching memory",
-        "Memory-storeFacts" => "Storing memory",
-        "TaskGraph-createTask" => "Creating task",
-        "TaskGraph-updateTask" => "Updating task",
-        "TaskGraph-setTaskStatus" => "Updating task status",
-        "TaskGraph-submitReview" => "Submitting review",
-        "TaskGraph-approveReview" => "Approving review",
-        "TaskGraph-requestReviewChanges" => "Requesting review changes",
-        _ => "Running tool",
-    };
-    let pretty_args =
-        serde_json::to_string_pretty(arguments).unwrap_or_else(|_| arguments.to_string());
-    format!("Action: {label}\n{}", pretty_args.trim())
 }
 
 #[cfg(test)]

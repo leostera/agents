@@ -12,8 +12,9 @@ use tokio::time;
 use tracing::{error, info, warn};
 
 use crate::PortMessage;
+use crate::discord::DiscordPort;
 use crate::message::PortInput;
-use crate::port::Provider::{Telegram, Unknown};
+use crate::port::Provider::{Discord, Telegram, Unknown};
 use crate::telegram::TelegramPort;
 use crate::{Port, PortConfig};
 
@@ -142,6 +143,10 @@ impl BorgPortsSupervisor {
         let port_id_for_port_task = port_id.clone();
         let port_task = tokio::spawn(async move {
             match config_for_port_task.provider {
+                Discord => match DiscordPort::new(config_for_port_task.clone()).await {
+                    Ok(port) => port.run(inbound_tx, outbound_rx).await,
+                    Err(err) => Err(err),
+                },
                 Telegram => match TelegramPort::new(config_for_port_task.clone()).await {
                     Ok(port) => port.run(inbound_tx, outbound_rx).await,
                     Err(err) => Err(err),
@@ -172,7 +177,7 @@ impl BorgPortsSupervisor {
         });
 
         self.ports.insert(port_id.clone(), (config, task));
-        info!(target: "borg_ports", port_id = %port_id, "telegram port enabled");
+        info!(target: "borg_ports", port_id = %port_id, "port enabled");
         Ok(())
     }
 }
@@ -293,11 +298,11 @@ mod tests {
         Uri::parse(value).expect("valid uri")
     }
 
-    fn config(port_id: &str, name: &str) -> PortConfig {
+    fn config(port_id: &str, name: &str, provider: Provider) -> PortConfig {
         PortConfig {
             port_id: uri(port_id),
             port_name: name.to_string(),
-            provider: Provider::Telegram,
+            provider,
             status: Status::Enabled,
             privacy: Privacy::Public,
             default_agent_id: None,
@@ -311,7 +316,7 @@ mod tests {
         current.insert(
             uri("borg:port:telegram"),
             RunningPortState {
-                config: config("borg:port:telegram", "telegram"),
+                config: config("borg:port:telegram", "telegram", Provider::Telegram),
                 is_finished: false,
             },
         );
@@ -330,7 +335,7 @@ mod tests {
         let mut desired = HashMap::new();
         desired.insert(
             uri("borg:port:telegram"),
-            config("borg:port:telegram", "telegram"),
+            config("borg:port:telegram", "telegram", Provider::Telegram),
         );
 
         let actions = compute_reconcile_plan(&current, &desired);
@@ -346,14 +351,14 @@ mod tests {
         current.insert(
             uri("borg:port:telegram"),
             RunningPortState {
-                config: config("borg:port:telegram", "telegram-old"),
+                config: config("borg:port:telegram", "telegram-old", Provider::Telegram),
                 is_finished: false,
             },
         );
         let mut desired = HashMap::new();
         desired.insert(
             uri("borg:port:telegram"),
-            config("borg:port:telegram", "telegram"),
+            config("borg:port:telegram", "telegram", Provider::Telegram),
         );
 
         let actions = compute_reconcile_plan(&current, &desired);
@@ -369,20 +374,36 @@ mod tests {
         current.insert(
             uri("borg:port:telegram"),
             RunningPortState {
-                config: config("borg:port:telegram", "telegram"),
+                config: config("borg:port:telegram", "telegram", Provider::Telegram),
                 is_finished: true,
             },
         );
         let mut desired = HashMap::new();
         desired.insert(
             uri("borg:port:telegram"),
-            config("borg:port:telegram", "telegram"),
+            config("borg:port:telegram", "telegram", Provider::Telegram),
         );
 
         let actions = compute_reconcile_plan(&current, &desired);
         assert_eq!(
             actions,
             vec![ReconcileAction::Restart(uri("borg:port:telegram"))]
+        );
+    }
+
+    #[test]
+    fn reconcile_plan_starts_new_discord_port() {
+        let current = HashMap::new();
+        let mut desired = HashMap::new();
+        desired.insert(
+            uri("borg:port:discord"),
+            config("borg:port:discord", "discord", Provider::Discord),
+        );
+
+        let actions = compute_reconcile_plan(&current, &desired);
+        assert_eq!(
+            actions,
+            vec![ReconcileAction::Start(uri("borg:port:discord"))]
         );
     }
 }

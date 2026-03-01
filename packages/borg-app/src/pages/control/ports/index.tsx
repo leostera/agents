@@ -57,8 +57,9 @@ function modeChipClass(allowsGuests: boolean): string {
     : "border-blue-300 bg-blue-100 text-blue-900";
 }
 
-function telegramAllowedUserIds(port: PortRecord): string[] {
-  if (port.provider.trim().toLowerCase() !== "telegram") return [];
+function allowedUserIds(port: PortRecord): string[] {
+  const provider = port.provider.trim().toLowerCase();
+  if (provider !== "telegram" && provider !== "discord") return [];
   if (port.allows_guests) return [];
   const raw = port.settings?.allowed_external_user_ids;
   if (!Array.isArray(raw)) return [];
@@ -128,6 +129,13 @@ export function PortsPage() {
         setError("Telegram bot token is required.");
         return;
       }
+      if (
+        input.portKind === "discord" &&
+        (input.discordBotToken ?? "").trim().length === 0
+      ) {
+        setError("Discord bot token is required.");
+        return;
+      }
 
       setIsSaving(true);
       setError(null);
@@ -135,6 +143,10 @@ export function PortsPage() {
         const settings: Record<string, unknown> = {};
         if (input.portKind === "telegram") {
           settings.bot_token = (input.telegramBotToken ?? "").trim();
+          settings.allowed_external_user_ids = [];
+        }
+        if (input.portKind === "discord") {
+          settings.bot_token = (input.discordBotToken ?? "").trim();
           settings.allowed_external_user_ids = [];
         }
         await borgApi.upsertPort(`borg:port:${port}`, {
@@ -298,7 +310,7 @@ export function PortsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-1">
-                        {telegramAllowedUserIds(port).map((userId) => (
+                        {allowedUserIds(port).map((userId) => (
                           <Badge key={userId} variant="outline">
                             {userId}
                           </Badge>
