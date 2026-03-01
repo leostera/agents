@@ -568,6 +568,8 @@ dependencies = [
  "borg-core",
  "borg-db",
  "borg-memory",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -649,6 +651,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "borg-agent",
+ "borg-apps",
  "borg-codemode",
  "borg-core",
  "borg-db",

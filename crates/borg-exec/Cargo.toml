@@ -11,6 +11,7 @@ borg-db = { path = "../borg-db" }
 borg-llm = { path = "../borg-llm" }
 borg-memory = { path = "../borg-memory" }
 borg-codemode = { path = "../borg-codemode" }
+borg-apps = { path = "../borg-apps" }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

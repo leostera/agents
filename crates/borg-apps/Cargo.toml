@@ -10,3 +10,5 @@ borg-codemode = { path = "../borg-codemode" }
 borg-core = { path = "../borg-core" }
 borg-db = { path = "../borg-db" }
 borg-memory = { path = "../borg-memory" }
+serde.workspace = true
+serde_json.workspace = true

@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{AgentTools, ContextWindow, Message, Session, SessionResult};
+use borg_apps::BorgApps;
 use borg_codemode::{CodeModeContext, CodeModeRuntime};
 use borg_core::{TelegramUserId, Uri, uri};
 use borg_db::BorgDb;
@@ -435,11 +436,14 @@ impl BorgExecutor {
         let session_id = session.session_id.clone();
         self.ensure_session_record(msg, &session_id).await?;
         let code_mode_context = self.code_mode_context_for_turn(msg, &session_id);
-        let toolchain = build_exec_toolchain_with_context(
+        let runtime_toolchain = build_exec_toolchain_with_context(
             self.runtime.clone(),
             code_mode_context,
             self.memory.clone(),
         )?;
+        let apps = BorgApps::new(self.db.clone()).await?;
+        let apps_toolchain = apps.as_toolchain()?;
+        let toolchain = runtime_toolchain.merge(apps_toolchain)?;
         let tools = AgentTools {
             tool_runner: &toolchain,
         };

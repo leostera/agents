@@ -1,9 +1,11 @@
 use anyhow::Result;
-use borg_agent::ToolSpec;
+use borg_agent::{Tool, ToolRequest, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use borg_codemode::default_tool_specs as default_codemode_tool_specs;
 use borg_core::Uri;
-use borg_db::BorgDb;
+use borg_db::{AppCapabilityRecord, AppRecord, BorgDb};
 use borg_memory::default_memory_tool_specs;
+use serde::Serialize;
+use serde_json::json;
 
 #[derive(Debug, Clone)]
 pub struct DefaultCapability {
@@ -135,4 +137,105 @@ fn capability_uri_from_tool_name(app_slug: &str, tool_name: &str) -> String {
         .to_ascii_lowercase()
         .replace([' ', ':', '/'], "-");
     format!("borg:capability:{app_slug}-{normalized_tool_name}")
+}
+
+#[derive(Debug, Clone)]
+pub struct BorgApps {
+    apps: Vec<AppCatalogEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct AppCatalogEntry {
+    app: AppRecord,
+    capabilities: Vec<AppCapabilityRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CapabilityCatalogItem {
+    app_id: String,
+    app_name: String,
+    app_slug: String,
+    app_status: String,
+    app_built_in: bool,
+    capability_id: String,
+    capability_name: String,
+    capability_hint: String,
+    capability_mode: String,
+    capability_instructions: String,
+    capability_status: String,
+}
+
+impl BorgApps {
+    pub async fn new(db: BorgDb) -> Result<Self> {
+        let apps = db.list_apps(500).await?;
+        let mut entries = Vec::with_capacity(apps.len());
+        for app in apps {
+            let capabilities = db.list_app_capabilities(&app.app_id, 500).await?;
+            entries.push(AppCatalogEntry { app, capabilities });
+        }
+        Ok(Self { apps: entries })
+    }
+
+    pub fn as_toolchain(&self) -> Result<Toolchain> {
+        let catalog_items = self.list_capabilities();
+        let tool = Tool::new(
+            apps_list_capabilities_tool_spec(),
+            None,
+            move |_request: ToolRequest| {
+                let items = catalog_items.clone();
+                async move {
+                    Ok(ToolResponse {
+                        content: ToolResultData::Text(serde_json::to_string(&json!({
+                            "capabilities": items
+                        }))?),
+                    })
+                }
+            },
+        );
+        Toolchain::builder().add_tool(tool)?.build()
+    }
+
+    pub fn list_capabilities(&self) -> Vec<CapabilityCatalogItem> {
+        let mut items = Vec::new();
+        for entry in &self.apps {
+            for capability in &entry.capabilities {
+                items.push(CapabilityCatalogItem {
+                    app_id: entry.app.app_id.to_string(),
+                    app_name: entry.app.name.clone(),
+                    app_slug: entry.app.slug.clone(),
+                    app_status: entry.app.status.clone(),
+                    app_built_in: entry.app.built_in,
+                    capability_id: capability.capability_id.to_string(),
+                    capability_name: capability.name.clone(),
+                    capability_hint: capability.hint.clone(),
+                    capability_mode: capability.mode.clone(),
+                    capability_instructions: capability.instructions.clone(),
+                    capability_status: capability.status.clone(),
+                });
+            }
+        }
+        items
+    }
+}
+
+pub fn apps_list_capabilities_tool_spec() -> ToolSpec {
+    ToolSpec {
+        name: "Apps-listCapabilities".to_string(),
+        description: r#"
+Lists all app capabilities currently defined in the database.
+Use this to discover what integrations/capabilities exist before deciding what to call next.
+Returns app and capability metadata, including mode and instructions.
+"#
+        .trim()
+        .to_string(),
+        parameters: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+        }),
+    }
+}
+
+pub fn default_tool_specs() -> Vec<ToolSpec> {
+    vec![apps_list_capabilities_tool_spec()]
 }
