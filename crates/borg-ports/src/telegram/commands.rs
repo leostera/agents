@@ -1,6 +1,6 @@
 use anyhow::Result;
 use borg_cmd::{CommandRegistry, CommandRequest};
-use borg_core::Uri;
+use borg_core::{TelegramUserId, Uri};
 
 use super::{TELEGRAM_START_GREETING, TelegramCommandState, TelegramPort};
 
@@ -123,7 +123,7 @@ impl TelegramCommandState {
             .as_ref()
             .map(|user| user.id.0)
             .unwrap_or(chat_id as u64);
-        Uri::from_parts("telegram", "user", Some(&user_id.to_string()))
+        Ok(TelegramUserId::from_sender_id(user_id).into_uri())
     }
 }
 

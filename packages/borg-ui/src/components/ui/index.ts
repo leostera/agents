@@ -22,6 +22,7 @@ export * from "./direction";
 export * from "./drawer";
 export * from "./dropdown-menu";
 export * from "./empty";
+export * from "./entity-link";
 export * from "./entity-view";
 export * from "./field";
 export * from "./hover-card";

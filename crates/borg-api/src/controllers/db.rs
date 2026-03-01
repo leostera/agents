@@ -5,6 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use borg_core::Config;
+use borg_core::TelegramUserId;
 use borg_llm::Provider;
 use borg_llm::providers::openai::OpenAiProvider;
 use borg_llm::providers::openrouter::OpenRouterProvider;
@@ -164,6 +165,37 @@ pub(crate) struct UpsertPortSessionContextRequest {
 pub(crate) struct DbController;
 
 impl DbController {
+    fn validate_port_settings(provider: &str, settings: &Value) -> Result<(), Response> {
+        if provider.trim().eq_ignore_ascii_case("telegram")
+            && let Some(value) = settings
+                .as_object()
+                .and_then(|obj| obj.get("allowed_external_user_ids"))
+        {
+            let Some(items) = value.as_array() else {
+                return Err(api_error(
+                    StatusCode::BAD_REQUEST,
+                    "telegram.allowed_external_user_ids must be an array".to_string(),
+                ));
+            };
+
+            for item in items {
+                let Some(raw) = item.as_str() else {
+                    return Err(api_error(
+                        StatusCode::BAD_REQUEST,
+                        "telegram.allowed_external_user_ids entries must be strings".to_string(),
+                    ));
+                };
+                if raw.parse::<TelegramUserId>().is_err() {
+                    return Err(api_error(
+                        StatusCode::BAD_REQUEST,
+                        "telegram.allowed_external_user_ids entries must be numeric ids (e.g. 2654566) or usernames (e.g. @leostera)".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn infer_default_text_model(models: &[String]) -> Option<String> {
         models
             .iter()
@@ -1269,6 +1301,9 @@ impl DbController {
             None => None,
         };
         let settings = payload.settings.unwrap_or_else(|| json!({}));
+        if let Err(err) = Self::validate_port_settings(&payload.provider, &settings) {
+            return err;
+        }
 
         match state
             .db

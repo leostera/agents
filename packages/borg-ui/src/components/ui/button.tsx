@@ -39,33 +39,47 @@ const buttonVariants = cva(
   }
 );
 
-function Button({
-  className,
-  variant = "default",
-  size = "default",
-  tone,
-  asChild = false,
-  ...props
-}: React.ComponentProps<"button"> &
-  VariantProps<typeof buttonVariants> & {
-    tone?: "default" | "subtle";
-    asChild?: boolean;
-  }) {
-  const resolvedVariant =
-    tone === "subtle" ? "secondary" : tone === "default" ? "default" : variant;
-  const Comp = asChild ? Slot : "button";
+const Button = React.forwardRef<
+  HTMLButtonElement,
+  React.ComponentProps<"button"> &
+    VariantProps<typeof buttonVariants> & {
+      tone?: "default" | "subtle";
+      asChild?: boolean;
+    }
+>(
+  (
+    {
+      className,
+      variant = "default",
+      size = "default",
+      tone,
+      asChild = false,
+      ...props
+    },
+    ref
+  ) => {
+    const resolvedVariant =
+      tone === "subtle"
+        ? "secondary"
+        : tone === "default"
+          ? "default"
+          : variant;
+    const Comp = asChild ? Slot : "button";
 
-  return (
-    <Comp
-      data-slot="button"
-      data-variant={resolvedVariant}
-      data-size={size}
-      className={cn(
-        buttonVariants({ variant: resolvedVariant, size, className })
-      )}
-      {...props}
-    />
-  );
-}
+    return (
+      <Comp
+        ref={ref}
+        data-slot="button"
+        data-variant={resolvedVariant}
+        data-size={size}
+        className={cn(
+          buttonVariants({ variant: resolvedVariant, size, className })
+        )}
+        {...props}
+      />
+    );
+  }
+);
+Button.displayName = "Button";
 
 export { Button, buttonVariants };

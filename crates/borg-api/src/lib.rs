@@ -620,7 +620,9 @@ mod tests {
                 "provider":"telegram",
                 "enabled": true,
                 "allows_guests": true,
-                "settings": {}
+                "settings": {
+                    "allowed_external_user_ids": ["2654566", "@leostera"]
+                }
             }),
         )
         .await;
@@ -964,6 +966,22 @@ mod tests {
     #[tokio::test]
     async fn ports_negative_paths() {
         let app = test_app("ports-negative").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/ports/borg:port:telegram",
+            json!({
+                "provider":"telegram",
+                "enabled": true,
+                "allows_guests": false,
+                "settings": {
+                    "allowed_external_user_ids": ["not-valid-user-format"]
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
         let (status, _) = request_no_body(
             &app,
             Method::GET,

@@ -602,10 +602,10 @@ impl BorgDb {
             port,
             conversation_key,
         )
-            .execute(self.conn.pool())
-            .await
-            .context("failed to delete port binding")?
-            .rows_affected();
+        .execute(self.conn.pool())
+        .await
+        .context("failed to delete port binding")?
+        .rows_affected();
         Ok(deleted)
     }
 
@@ -635,9 +635,9 @@ impl BorgDb {
             created_at,
             updated_at,
         )
-            .execute(self.conn.pool())
-            .await
-            .context("failed to upsert port session context")?;
+        .execute(self.conn.pool())
+        .await
+        .context("failed to upsert port session context")?;
         Ok(())
     }
 
@@ -690,8 +690,8 @@ impl BorgDb {
         let Some(row) = row else {
             return Ok(None);
         };
-        let parsed = serde_json::from_str(&row.ctx_json)
-            .context("invalid session port context json")?;
+        let parsed =
+            serde_json::from_str(&row.ctx_json).context("invalid session port context json")?;
         Ok(Some((row.port, parsed)))
     }
 
@@ -707,7 +707,9 @@ impl BorgDb {
         .await
         .context("failed to list port session ids")?;
 
-        rows.into_iter().map(|row| Uri::parse(&row.session_id)).collect()
+        rows.into_iter()
+            .map(|row| Uri::parse(&row.session_id))
+            .collect()
     }
 
     pub async fn clear_port_session_context(&self, port: &str, session_id: &Uri) -> Result<u64> {
@@ -718,10 +720,10 @@ impl BorgDb {
             port,
             session_id,
         )
-            .execute(self.conn.pool())
-            .await
-            .context("failed to clear port session context")?
-            .rows_affected();
+        .execute(self.conn.pool())
+        .await
+        .context("failed to clear port session context")?
+        .rows_affected();
         Ok(deleted)
     }
 }
