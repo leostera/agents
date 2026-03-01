@@ -10,9 +10,12 @@
 
 This RFD defines a new `borg-taskgraph` crate and MCP server, `borg.taskgraph`,
 that manages durable tasks as a DAG with Linear-like ergonomics and
-agent-friendly queue semantics. The server provides resource URIs for tasks and
-append-only logs, enforces acyclic relationships, and exposes a toolset for
-CRUD, dependencies, review workflow, and queueing.
+agent-friendly queue semantics. It exposes only MCP tools (no MCP resources),
+stores append-only comments/events, enforces acyclic task structure, and
+requires reviewer-mediated completion for every task.
+
+Identity model is session-first: a `session_uri` identifies one Agent+Task
+execution context. Work execution and review each run in fresh sessions.
 
 ## Motivation
 [motivation]: #motivation
@@ -22,7 +25,7 @@ for planning and execution coordination. We need:
 
 1. a single canonical task model with stable URI IDs (`borg:task:<uuid>`)
 2. explicit graph constraints (no cycles, parent completion rules)
-3. review-aware completion without introducing extra status values
+3. review-aware completion with explicit `review` status
 4. a queue API that lets agents pull "next available work" safely
 5. append-only audit and comments for explainability and replay
 
@@ -32,14 +35,25 @@ which is brittle under retries, multi-agent execution, and long-running work.
 ## Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-### Mental model
+### Terminology and identity
 
 `borg.taskgraph` stores one primary entity: `Task`.
 
-- "Subtask" is any task with `parent_uri != null`.
-- Dependencies are represented as `blocked_by` edges.
-- Parent-child implies a derived dependency: child completion gates parent done.
-- Comments and events are append-only streams, separate from the task row.
+1. Agent: long-lived prompt+tools identity (`agent_id`).
+2. Session: execution context for exactly one agent on exactly one task.
+3. `session_uri` (`borg:session:...`) is the auth/audit identity for runtime
+   actions.
+4. Every task has one assignee session at a time and one reviewer session.
+5. Reassignment creates a new assignee session and replaces
+   `assignee_session_uri`.
+
+### Mental model
+
+1. "Subtask" is any task with `parent_uri != null`.
+2. Explicit dependencies are `blocked_by` edges.
+3. Parent-child is structural and induces derived dependency edges:
+   for parent `P` and child `C`, `P` is blocked by `C`.
+4. Comments and events are append-only streams, separate from the task row.
 
 ### Canonical task shape
 
@@ -49,10 +63,12 @@ which is brittle under retries, multi-agent execution, and long-running work.
   "title": "string",
   "description": "string",
   "definition_of_done": "string",
-  "status": "pending | doing | done | discarded",
-  "assignee": "borg:session:... (required)",
-  "reviewer": "borg:session:...|null",
-  "labels": ["#string"],
+  "status": "pending | doing | review | done | discarded",
+  "assignee_agent_id": "string (required)",
+  "assignee_session_uri": "borg:session:... (required)",
+  "reviewer_agent_id": "string (required)",
+  "reviewer_session_uri": "borg:session:... (required)",
+  "labels": ["initiative:alpha", "area:runtime", "priority:p1"],
   "parent_uri": "borg:task:...|null",
   "blocked_by": ["borg:task:..."],
   "duplicate_of": "borg:task:...|null",
@@ -67,39 +83,43 @@ which is brittle under retries, multi-agent execution, and long-running work.
 }
 ```
 
-### Actor and auth model
-
-TaskGraph does not introduce a separate Actor entity. All mutation/auth/audit
-uses `session_uri` (`borg:session:...`), because Borg already models work
-identity through sessions.
+### Auth model
 
 Rules:
 
 1. Every mutating tool requires `session_uri`.
-2. A mutation is allowed only when `session_uri == task.assignee` or
-   `session_uri == task.reviewer`.
+2. Mutations are allowed only when
+   `session_uri == assignee_session_uri` or
+   `session_uri == reviewer_session_uri`, except `TaskGraph-addComment`.
 3. Events always store the acting `session_uri`.
-4. `TaskGraph-createTask` is allowed only when `session_uri == assignee` of the
-   new task.
+4. `TaskGraph-addComment` is exempt and allows any session.
 
 ### Invariants contributors should rely on
 
 1. The structural graph is always a DAG.
-2. A task cannot move to `done` while any child is outside `{done, discarded}`.
-3. If `reviewer != null`, `done` requires review approval.
-4. `TaskGraph-submitReview` does not set `done`; it marks review intent.
-5. `TaskGraph-approveReview` sets `done`.
-6. Queue availability requires all blockers to be in `{done, discarded}`.
-7. Tasks are always assigned; unassigned tasks are invalid.
+2. `assignee_agent_id`, `reviewer_agent_id`, `assignee_session_uri`, and
+   `reviewer_session_uri` are always required.
+3. `assignee_agent_id != reviewer_agent_id`.
+4. `assignee_session_uri != reviewer_session_uri`.
+5. `reviewer_agent_id` and `reviewer_session_uri` are immutable after create.
+6. `assignee_session_uri` can be changed only by reviewer via
+   `TaskGraph-reassignAssignee`.
+7. `complete` means `status in {done, discarded}`.
+8. A task cannot move to `done` while any child is not `complete`.
+9. `done` means approved by reviewer.
+10. Queue eligibility requires all blockers to be `complete`.
+11. Discarding a task transitively discards its descendant subtree atomically.
+12. Discarded tasks are never queue-eligible.
 
 ### Typical agent flow
 
-1. Create a parent task.
-2. Split into explicit subtasks (`TaskGraph-splitTaskIntoSubtasks`).
-3. Agents pull available work via `TaskGraph-claimNextWork`.
-4. Assignee finishes implementation and calls `TaskGraph-submitReview`.
-5. Reviewer approves via `TaskGraph-approveReview`, which sets `done`.
-6. Parent becomes completable only when all children are in `{done, discarded}`.
+1. Creator session calls `TaskGraph-createTask` with `assignee_agent_id`;
+   server sets reviewer agent to creator and allocates fresh assignee/reviewer
+   sessions.
+2. Assignee session executes work and optionally sets `doing`.
+3. Assignee session calls `TaskGraph-submitReview`.
+4. Reviewer session calls `TaskGraph-approveReview`, which sets `done`.
+5. Parent becomes completable when all children are `complete`.
 
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -110,19 +130,10 @@ Introduce crate `crates/borg-taskgraph` with:
 
 1. task graph domain model and validators
 2. storage adapter (initially SQLite-backed, matching existing Borg DB posture)
-3. MCP tool and resource handlers
+3. MCP tool handlers
 
 `borg-cli` remains the only binary crate. `borg-taskgraph` is linked from the
 existing runtime/toolchain assembly path similarly to other tool crates.
-
-## Resources
-
-Readable resources:
-
-1. `borg:task:<uuid>` -> full task object
-2. `borg:task:<uuid>#comments` -> comment stream (paginated)
-3. `borg:task:<uuid>#events` -> event stream (paginated)
-4. `borg:task:<uuid>#children` -> direct child list
 
 ## Tool contract
 
@@ -131,17 +142,43 @@ Readable resources:
 1. `TaskGraph-createTask`
 2. `TaskGraph-getTask`
 3. `TaskGraph-updateTaskFields`
+4. `TaskGraph-reassignAssignee`
 
-`TaskGraph-updateTaskFields` supports patching:
-`title | description | definition_of_done | assignee | reviewer`.
-`TaskGraph-createTask` requires non-null `assignee` (session URI).
+`TaskGraph-createTask` input includes `assignee_agent_id` (not session).
+`reviewer_agent_id` is set to creator agent by default in v0.
+Server allocates fresh `assignee_session_uri` and a distinct fresh
+`reviewer_session_uri` for this task.
+`TaskGraph-createTask` must reject `assignee_agent_id == reviewer_agent_id`.
+
+`TaskGraph-updateTaskFields` supports patching only:
+`title | description | definition_of_done`.
+It must not patch assignee/reviewer.
+
+`TaskGraph-reassignAssignee`:
+
+1. only reviewer may call it
+2. input provides new `assignee_agent_id`
+3. creates a new `assignee_session_uri` for the new assignee
+4. must reject new assignee equal to reviewer
+5. clears review timestamps (`submitted_at`, `approved_at`,
+   `changes_requested_at`)
+6. sets `status = pending`
+7. appends reassignment audit event with old/new assignee identity
+
+Assigning tasks to a reviewer other than creator is out of scope for v0.
+
+Identity contract:
+
+1. `TaskGraph-createTask` takes assignee agent identity (`assignee_agent_id`).
+2. All other mutating tools are session-authenticated via `session_uri`.
 
 ### 2. Labels
 
 1. `TaskGraph-addTaskLabels`
 2. `TaskGraph-removeTaskLabels`
 
-Labels are normalized unique strings prefixed with `#`.
+Labels are normalized unique URI-like strings (`scheme:value`).
+Examples: `initiative:my-project`, `area:runtime`, `priority:p1`.
 
 ### 3. Parent/child
 
@@ -158,21 +195,26 @@ Use unambiguous blocked-by API:
 1. `TaskGraph-addTaskBlockedBy` (`A` is blocked by `B`)
 2. `TaskGraph-removeTaskBlockedBy`
 
-Structural edge direction for cycle checks: `A -> B` when `A` is blocked by `B`.
-Derived parent edge for completion gating: `parent -> child`.
+Cycle checks MUST include:
+
+1. explicit blocked-by edges (`A -> B`)
+2. derived parent-blocked-by-child edges from parent links (`parent -> child`)
 
 ### 5. Duplicate/reference links
 
 1. `TaskGraph-setTaskDuplicateOf`
 2. `TaskGraph-clearTaskDuplicateOf`
-3. `TaskGraph-addTaskReference`
-4. `TaskGraph-removeTaskReference`
+3. `TaskGraph-listDuplicatedBy`
+4. `TaskGraph-addTaskReference`
+5. `TaskGraph-removeTaskReference`
 
 `references` are non-structural and do not affect availability or DAG checks.
 `duplicate_of` is non-structural as an edge, but setting `duplicate_of` has an
 operational side-effect: the duplicate task is immediately discarded (with
-transitive subtree cascade). Implementation should reject self-duplicate and
-duplicate cycles for data hygiene.
+transitive subtree cascade). `duplicate_of` cannot point to self.
+
+`duplicated_by` is derived at read time (not stored): all task URIs whose
+`duplicate_of` points to the current task URI.
 
 ### 6. Status transitions
 
@@ -180,12 +222,26 @@ duplicate cycles for data hygiene.
 
 Rules:
 
-1. cannot set `done` if any child status is outside `{done, discarded}`
-2. cannot set `done` if `reviewer != null` and `review.approved_at == null`
-3. setting `discarded` MUST atomically and transitively set all descendants to
+1. assignee may set `pending` or `doing`
+2. reviewer may set `discarded`
+3. reviewer-only `TaskGraph-approveReview` is the only path to `done`
+4. `pending -> done` is valid via approval flow (`doing` is optional)
+5. cannot set `done` if any child status is outside `{done, discarded}`
+6. setting `discarded` MUST atomically and transitively set all descendants to
    `discarded`
-4. discard clears review state (`submitted_at`, `approved_at`,
-   `changes_requested_at` set to `null`)
+7. discard/duplicate cascades do not clear review timestamps
+
+State transitions:
+
+1. `pending -> doing`
+2. `pending -> review`
+3. `doing -> review`
+4. `review -> done`
+5. `review -> doing`
+6. `review -> pending`
+7. `pending|doing|review|done -> discarded`
+
+`discarded` is terminal in v0 (recovery is out of scope).
 
 ### 7. Review flow
 
@@ -195,9 +251,15 @@ Rules:
 
 State effects:
 
-1. submit -> set `submitted_at`, keep `status=doing`
-2. approve -> set `approved_at`, clear `changes_requested_at`, set `status=done`
-3. request_changes -> set `changes_requested_at`, clear `approved_at`, keep `status=doing`
+1. submit -> allowed from `pending` or `doing`; set `submitted_at`, set
+   `status=review`
+2. approve -> requires `submitted_at != null`; set `approved_at`, clear
+   `changes_requested_at`, set `status=done`
+3. request_changes -> input requires `{ "return_to": "pending" | "doing" }`;
+   set `changes_requested_at`, clear `approved_at`, keep `submitted_at`,
+   set `status` to `return_to`
+4. review tools do not reject `discarded` status; they still apply semantics and
+   append audit events
 
 ### 8. Split
 
@@ -206,9 +268,12 @@ State effects:
 Behavior:
 
 1. rejects if parent is `done`
-2. requires each subtask to provide non-null `assignee`
-3. sets parent status to `doing`
-4. creates `n` child tasks with explicit input fields and no metadata
+2. requires each subtask to provide non-null `assignee_agent_id`
+3. each subtask reviewer agent is set to caller agent
+4. server allocates fresh assignee/reviewer sessions for each subtask
+5. each subtask must satisfy `assignee_agent_id != reviewer_agent_id`
+6. sets parent status to `doing`
+7. creates `n` child tasks with explicit input fields and no metadata
    inheritance by default (except parent linkage)
 
 ### 9. Comments and events
@@ -217,49 +282,47 @@ Behavior:
 2. `TaskGraph-listComments`
 3. `TaskGraph-listEvents`
 
+Comments are append-only. Any session may add comments. No edits/deletes in v0.
+Comments are allowed on all statuses including `done` and `discarded`.
 Events are append-only and server-authored for all mutating calls.
 
-### 10. Queues
+### 10. Queue
 
-1. `TaskGraph-nextWork`
-2. `TaskGraph-claimNextWork`
-3. `TaskGraph-nextReview`
+1. `TaskGraph-nextTask`
+2. `TaskGraph-reconcileInProgress`
 
-`TaskGraph-nextWork` and `TaskGraph-claimNextWork` are per-assignee APIs and must
-require `session_uri`; there is no global/unfiltered queue mode.
+Queue behavior:
 
-`TaskGraph-nextWork` availability:
+1. global scope: all non-discarded tasks in store
+2. algorithm: Kahn-style topological availability over the structural DAG
+3. topo-first; tie-breaking among simultaneously available nodes is unspecified
+4. read-only: queue never assigns or mutates tasks
+5. eligibility: `status in {pending, doing}`
+6. eligibility: all blockers (explicit + derived parent-child blockers) are
+   `complete`
+7. eligibility: task `assignee_session_uri == input.session_uri`
+8. eligibility: task is not discarded
 
-1. `status == pending`
-2. all `blocked_by` tasks are in `{done, discarded}`
-3. if `prefer_leaf_tasks == true`, task has no children
-4. task `assignee == session_uri` input
+`TaskGraph-reconcileInProgress` exists for startup/ops and returns current
+in-progress candidates; it does not mutate task status.
 
-`TaskGraph-claimNextWork`:
-
-1. selects one `next_work` candidate for `session_uri`
-2. sets status to `doing` when returning a pending task
-3. does not reassign ownership
-4. returns `null` when no work is available
-
-`TaskGraph-nextReview` availability:
-
-1. `status == doing`
-2. `review.submitted_at != null`
-3. `review.approved_at == null`
-4. `reviewer == input.session_uri`
+No queue pagination contract in v0.
 
 ### 11. Mutation auth requirement
 
-All mutating tools in sections 1-9 require `session_uri` input and enforce:
-`session_uri == assignee || session_uri == reviewer` for the target task.
+All mutating tools except `TaskGraph-addComment` require `session_uri` and
+enforce:
+`session_uri == assignee_session_uri || session_uri == reviewer_session_uri`.
+
+`TaskGraph-createTask` is a special case: allowed for any caller session, but
+the created task must set `reviewer_agent_id` to caller agent and allocate a
+fresh reviewer session.
 
 This includes:
 
-1. `TaskGraph-createTask`, `TaskGraph-updateTaskFields`, `TaskGraph-setTaskParent`, `TaskGraph-clearTaskParent`
-2. dependency/duplicate/reference tools
-3. `TaskGraph-setTaskStatus`, review tools, split
-4. `TaskGraph-addComment`
+1. `TaskGraph-updateTaskFields`, `TaskGraph-reassignAssignee`,
+   parent/dependency/duplicate/reference tools
+2. `TaskGraph-setTaskStatus`, review tools, split
 
 ## Error model
 
@@ -268,25 +331,30 @@ Server errors should map to structured codes:
 1. `task.not_found`
 2. `task.invalid_uri`
 3. `task.validation_failed`
-4. `task.dag_cycle_detected`
+4. `task.cycle_detected`
 5. `task.children_incomplete`
-6. `auth.session_required`
-7. `auth.forbidden`
-8. `auth.unknown_session` (optional if caller session must pre-exist)
-9. `review.session_mismatch`
-10. `review.note_required`
+6. `task.assignee_reviewer_must_differ`
+7. `task.reviewer_immutable`
+8. `task.reassign_forbidden`
+9. `auth.session_required`
+10. `auth.forbidden`
+11. `auth.unknown_session` (optional if caller session must pre-exist)
+12. `review.session_mismatch`
+13. `review.note_required`
 
 Cycle and invariant violations should return conflict-class semantics (409-like).
 
 ## Pagination
 
-List/read APIs with pagination (`TaskGraph-listComments`, `TaskGraph-listEvents`,
-queue list calls)
-must use:
+List APIs with pagination (`TaskGraph-listComments`, `TaskGraph-listEvents`,
+`TaskGraph-listTaskChildren`, `TaskGraph-listDuplicatedBy`) use:
 
 1. stable ordering: `created_at ASC`, tie-break by ID ascending
 2. opaque cursor returned by server
 3. explicit `limit` input with max bound `<= 100`
+
+Queue tool (`TaskGraph-nextTask`) does not guarantee stable ordering and does
+not use this pagination contract in v0.
 
 ## Storage notes
 
@@ -299,35 +367,42 @@ Minimum durable tables:
 5. `taskgraph_comments`
 6. `taskgraph_events`
 
+`duplicate_of` is stored on task rows. `duplicated_by` is derived.
+
 Writes are transactional per tool call, with event append in the same
 transaction as state change.
+
+Cascade rules:
+
+1. discard cascade writes one audit event per changed task
+2. duplicate cascade writes one audit event per changed task
+3. no global event ordering guarantee across cascaded tasks
 
 ## Drawbacks
 [drawbacks]: #drawbacks
 
 This adds a second "task" concept in Borg (runtime execution tasks vs product
 task graph tasks), which can confuse contributors until naming/docs stabilize.
-Discard-cascade semantics are intentionally opinionated and may be too strong
-for teams that expect per-child confirmation before dropping a subtree.
+Session-per-Agent+Task identity is strict and may require explicit session
+lifecycle tooling for operators.
 
 ## Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
 Why this shape:
 
-1. Keep status minimal (`pending|doing|done|discarded`) and encode review via timestamps.
-2. Use blocked-by API naming to avoid directional ambiguity.
-3. Keep references non-structural to avoid accidental queue starvation.
-4. Keep queue logic server-side with assignment-preserving claim semantics.
-5. Use session identity (`borg:session:...`) for auth/audit instead of a new
-   actor namespace.
+1. Keep status explicit (`pending|doing|review|done|discarded`) and encode
+   review history via timestamps.
+2. Require reviewer for every task and force assignee/reviewer separation.
+3. Keep queue read-only and selection-only, with global topo availability.
+4. Keep references non-structural.
+5. Use session identity (`borg:session:...`) for auth/audit, aligned with Borg runtime.
 
 Alternatives considered:
 
-1. Add explicit `in_review` status. Rejected to preserve compact status model.
-2. Treat `discarded` as not satisfying dependencies. Rejected; discarded now
-   counts as complete for dependency/parent gating by policy.
-3. Make `references` structural. Rejected because it overloads "see also" links.
+1. Optional reviewer. Rejected to guarantee mandatory review gates.
+2. Queue claim/assignment APIs. Rejected because tasks are always assigned.
+3. Reject duplicate cycles beyond self-links. Rejected; v0 only forbids self-link.
 
 ## Prior art
 [prior-art]: #prior-art
@@ -342,12 +417,12 @@ resolution and topological availability queues.
 1. Do we want optimistic concurrency fields (e.g., `version`) on mutable writes?
 2. Should `auth.unknown_session` be enforced against a session registry, or left
    to caller-side validation in v0?
-3. Should `TaskGraph-claimNextWork` always set `doing`, or allow a read-only mode?
+3. Should `TaskGraph-nextTask` return only one task in v0, or allow small `limit` batches?
 
 ## Future possibilities
 [future-possibilities]: #future-possibilities
 
-1. SLA fields (`priority`, `due_at`) with queue ordering policies.
+1. Dedicated session lifecycle tools for work/review session provisioning.
 2. Batch operations (`TaskGraph-batchUpdateTasks`, `TaskGraph-batchAddTaskBlockedBy`).
 3. Cross-project scoping and multi-tenant task namespaces.
 4. Streaming subscriptions for queue updates and review inbox changes.
