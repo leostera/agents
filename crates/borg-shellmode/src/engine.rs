@@ -75,10 +75,12 @@ impl ShellModeRuntime {
         debug!(target: "borg_shellmode", exit_code = exit_code, stdout_len = stdout.len(), stderr_len = stderr.len(), "shell command completed");
 
         Ok(ExecutionResult {
-            stdout,
-            stderr,
+            stdout: stdout.clone(),
+            stderr: stderr.clone(),
             result_json: serde_json::json!({
                 "exit_code": exit_code,
+                "stdout": stdout,
+                "stderr": stderr,
                 "duration": {
                     "secs": duration.as_secs(),
                     "nanos": duration.subsec_nanos()
