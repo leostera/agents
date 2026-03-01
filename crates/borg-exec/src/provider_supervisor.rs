@@ -68,12 +68,43 @@ impl ProviderConfigSupervisor {
     }
 
     pub async fn reconcile_now(&self) -> Result<()> {
+        let openai = self.db.get_provider(OPENAI_PROVIDER).await?;
+        let openrouter = self.db.get_provider(OPENROUTER_PROVIDER).await?;
+
         let settings = ProviderConfigSnapshot {
-            openai_api_key: self.db.get_provider_api_key(OPENAI_PROVIDER).await?,
+            openai_api_key: openai
+                .as_ref()
+                .filter(|provider| provider.enabled)
+                .map(|provider| provider.api_key.trim().to_string())
+                .filter(|api_key| !api_key.is_empty()),
             openai_base_url: None,
             openai_api_mode: None,
-            openrouter_api_key: self.db.get_provider_api_key(OPENROUTER_PROVIDER).await?,
+            openai_default_text_model: openai
+                .as_ref()
+                .and_then(|provider| provider.default_text_model.clone())
+                .map(|model| model.trim().to_string())
+                .filter(|model| !model.is_empty()),
+            openai_default_audio_model: openai
+                .as_ref()
+                .and_then(|provider| provider.default_audio_model.clone())
+                .map(|model| model.trim().to_string())
+                .filter(|model| !model.is_empty()),
+            openrouter_api_key: openrouter
+                .as_ref()
+                .filter(|provider| provider.enabled)
+                .map(|provider| provider.api_key.trim().to_string())
+                .filter(|api_key| !api_key.is_empty()),
             openrouter_base_url: None,
+            openrouter_default_text_model: openrouter
+                .as_ref()
+                .and_then(|provider| provider.default_text_model.clone())
+                .map(|model| model.trim().to_string())
+                .filter(|model| !model.is_empty()),
+            openrouter_default_audio_model: openrouter
+                .as_ref()
+                .and_then(|provider| provider.default_audio_model.clone())
+                .map(|model| model.trim().to_string())
+                .filter(|model| !model.is_empty()),
             preferred_provider: self
                 .db
                 .get_port_setting(RUNTIME_SETTINGS_PORT, RUNTIME_PREFERRED_PROVIDER_KEY)
@@ -92,6 +123,10 @@ impl ProviderConfigSupervisor {
             preferred_provider = ?settings.preferred_provider,
             has_openai = settings.openai_api_key.is_some(),
             has_openrouter = settings.openrouter_api_key.is_some(),
+            openai_default_text_model = ?settings.openai_default_text_model,
+            openai_default_audio_model = ?settings.openai_default_audio_model,
+            openrouter_default_text_model = ?settings.openrouter_default_text_model,
+            openrouter_default_audio_model = ?settings.openrouter_default_audio_model,
             "provider supervisor reconciled settings"
         );
 

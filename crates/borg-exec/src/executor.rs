@@ -72,12 +72,19 @@ fn build_openai_provider(settings: &ProviderConfigSnapshot) -> Result<Option<Ope
         return Ok(None);
     };
     let api_mode = parse_openai_mode(settings.openai_api_mode.clone())?;
-    let provider = if let Some(base_url) = normalize_optional(settings.openai_base_url.clone()) {
-        OpenAiProvider::new_with_base_url_and_mode(api_key, base_url, api_mode)
-    } else {
-        OpenAiProvider::new_with_mode(api_key, api_mode)
-    };
-    Ok(Some(provider))
+    let mut builder = OpenAiProvider::build().api_key(api_key).api_mode(api_mode);
+
+    if let Some(base_url) = normalize_optional(settings.openai_base_url.clone()) {
+        builder = builder.base_url(base_url);
+    }
+    if let Some(model) = normalize_optional(settings.openai_default_text_model.clone()) {
+        builder = builder.chat_completions_model(model);
+    }
+    if let Some(model) = normalize_optional(settings.openai_default_audio_model.clone()) {
+        builder = builder.audio_transcriptions_model(model);
+    }
+
+    Ok(Some(builder.build()?))
 }
 
 fn build_openrouter_provider(
@@ -86,17 +93,22 @@ fn build_openrouter_provider(
     let Some(api_key) = normalize_optional(settings.openrouter_api_key.clone()) else {
         return Ok(None);
     };
-    let provider = if let Some(base_url) = normalize_optional(settings.openrouter_base_url.clone())
-    {
-        OpenRouterProvider::new_with_base_url(api_key, base_url)
+    let mut builder = OpenRouterProvider::build().api_key(api_key);
+    if let Some(base_url) = normalize_optional(settings.openrouter_base_url.clone()) {
+        builder = builder.base_url(base_url);
     } else if let Some(base_url) =
         normalize_optional(std::env::var("BORG_OPENROUTER_BASE_URL").ok())
     {
-        OpenRouterProvider::new_with_base_url(api_key, base_url)
-    } else {
-        OpenRouterProvider::new(api_key)
-    };
-    Ok(Some(provider))
+        builder = builder.base_url(base_url);
+    }
+    if let Some(model) = normalize_optional(settings.openrouter_default_text_model.clone()) {
+        builder = builder.chat_completions_model(model);
+    }
+    if let Some(model) = normalize_optional(settings.openrouter_default_audio_model.clone()) {
+        builder = builder.audio_transcriptions_model(model);
+    }
+
+    Ok(Some(builder.build()?))
 }
 
 #[derive(Clone)]
