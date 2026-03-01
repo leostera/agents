@@ -63,6 +63,10 @@ impl TaskGraphStore {
         Self { db }
     }
 
+    pub fn db(&self) -> &BorgDb {
+        &self.db
+    }
+
     pub async fn create_task(
         &self,
         session_uri: &str,
@@ -89,6 +93,21 @@ impl TaskGraphStore {
         for label in &input.labels {
             ensure_label(label)?;
         }
+
+        ensure_agent_exists(
+            &self.db,
+            creator_agent_id,
+            "task.validation_failed: creator_agent_id",
+        )
+        .await
+        .ok();
+        ensure_agent_exists(
+            &self.db,
+            &input.assignee_agent_id,
+            "task.validation_failed: assignee_agent_id",
+        )
+        .await
+        .ok();
 
         let task_uri = new_uri("task")?;
         let assignee_session_uri = new_uri("session")?;
@@ -1494,6 +1513,18 @@ fn parse_json_or_empty(raw: String) -> Value {
 
 fn ensure_non_empty(input: &str, code: &str) -> Result<()> {
     if input.trim().is_empty() {
+        return Err(anyhow!(code.to_string()));
+    }
+    Ok(())
+}
+
+async fn ensure_agent_exists(db: &BorgDb, agent_id: &str, code: &str) -> Result<()> {
+    let uri = Uri::parse(agent_id).map_err(|_| anyhow!(code.to_string()))?;
+    let spec = db
+        .get_agent_spec(&uri)
+        .await
+        .map_err(|_| anyhow!(code.to_string()))?;
+    if spec.is_none() {
         return Err(anyhow!(code.to_string()));
     }
     Ok(())

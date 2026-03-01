@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use borg_core::Uri;
 use borg_db::BorgDb;
-use borg_exec::{BorgMessage, BorgRuntime, BorgSupervisor, SessionOutput};
+use borg_exec::{BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, SessionOutput};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 use tokio::time;
@@ -251,8 +251,8 @@ async fn bridge_loop(
         let output = match sup
             .call(BorgMessage {
                 user_id: message.user_id,
-                text: message.text,
                 session_id,
+                input: BorgInput::Chat { text: message.text },
                 port_context: message.port_context,
             })
             .await

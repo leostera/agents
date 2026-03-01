@@ -4,7 +4,7 @@ use serde_json::Value;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserMessage {
-    pub user_key: Uri,
+    pub user_id: Uri,
     pub text: String,
     #[serde(default)]
     pub session_id: Option<Uri>,

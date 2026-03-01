@@ -6,15 +6,15 @@ use borg_apps::DefaultAppsCatalog;
 use borg_codemode::CodeModeRuntime;
 use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
-use borg_exec::ExecEngine;
+use borg_exec::{BorgRuntime, BorgSupervisor};
 use borg_memory::{FactInput, MemoryStore, SearchQuery};
 use borg_shellmode::ShellModeRuntime;
+use borg_taskgraph::TaskGraphSupervisor;
 use clap::{Parser, Subcommand};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::fs;
 use tracing::info;
-use uuid::Uuid;
 
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
 const DEFAULT_ONBOARD_PORT: u16 = 3777;
@@ -150,15 +150,14 @@ impl BorgCliApp {
                 ffi_memory_search(memory_for_search.clone(), args)
             });
         let shell_runtime = ShellModeRuntime::new();
-        let exec = ExecEngine::new(
-            db.clone(),
-            memory.clone(),
-            runtime,
-            shell_runtime,
-            Uri::parse(&format!("borg:worker:{}", Uuid::now_v7()))?,
-        );
+        let runtime = BorgRuntime::new(db.clone(), memory.clone(), runtime, shell_runtime);
+        let runtime = std::sync::Arc::new(runtime);
+        let supervisor = BorgSupervisor::new(runtime.clone());
+        let taskgraph_supervisor = TaskGraphSupervisor::new(db.clone());
+        taskgraph_supervisor.start().await;
+        info!(target: "borg_cli", "taskgraph supervisor started");
 
-        let api_server = BorgApiServer::new(bind, db, exec, memory);
+        let api_server = BorgApiServer::new(bind, runtime, supervisor);
         api_server.run().await
     }
 

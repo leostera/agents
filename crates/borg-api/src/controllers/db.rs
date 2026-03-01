@@ -1303,16 +1303,7 @@ impl DbController {
             )
             .await
         {
-            Ok(()) => {
-                let reconcile = {
-                    let mut supervisor = state.ports_supervisor.lock().await;
-                    supervisor.reconcile_now().await
-                };
-                match reconcile {
-                    Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
-                    Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-                }
-            }
+            Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
@@ -1348,16 +1339,7 @@ impl DbController {
             Err(err) => return err,
         };
         match state.db.delete_port(&port_name).await {
-            Ok(()) => {
-                let reconcile = {
-                    let mut supervisor = state.ports_supervisor.lock().await;
-                    supervisor.reconcile_now().await
-                };
-                match reconcile {
-                    Ok(()) => StatusCode::NO_CONTENT.into_response(),
-                    Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-                }
-            }
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
@@ -1395,16 +1377,7 @@ impl DbController {
             .upsert_port_setting(&port_name, &key, &payload.value)
             .await
         {
-            Ok(()) => {
-                let reconcile = {
-                    let mut supervisor = state.ports_supervisor.lock().await;
-                    supervisor.reconcile_now().await
-                };
-                match reconcile {
-                    Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
-                    Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-                }
-            }
+            Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
@@ -1419,16 +1392,7 @@ impl DbController {
         };
         match state.db.delete_port_setting(&port_name, &key).await {
             Ok(0) => api_error(StatusCode::NOT_FOUND, "port setting not found".to_string()),
-            Ok(_) => {
-                let reconcile = {
-                    let mut supervisor = state.ports_supervisor.lock().await;
-                    supervisor.reconcile_now().await
-                };
-                match reconcile {
-                    Ok(()) => StatusCode::NO_CONTENT.into_response(),
-                    Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
-                }
-            }
+            Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }

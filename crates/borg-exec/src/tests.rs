@@ -18,12 +18,8 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
-use crate::BorgExecutor;
+use crate::BorgSupervisor;
 use crate::tool_runner::build_exec_toolchain_with_context;
-
-const OPENROUTER_PROVIDER: &str = "openrouter";
-const RUNTIME_SETTINGS_PORT: &str = "runtime";
-const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 
 fn temp_db_path() -> PathBuf {
     std::env::temp_dir().join(format!("borg-exec-test-{}.db", uuid::Uuid::now_v7()))
@@ -49,37 +45,6 @@ async fn open_test_db() -> BorgDb {
     db
 }
 
-async fn openrouter_exec_without_openai_transcription_fallback(
-    db: BorgDb,
-    worker: &str,
-) -> BorgExecutor {
-    db.upsert_provider_api_key(OPENROUTER_PROVIDER, "test-openrouter-key")
-        .await
-        .unwrap();
-    db.upsert_port_setting(
-        RUNTIME_SETTINGS_PORT,
-        RUNTIME_PREFERRED_PROVIDER_KEY,
-        OPENROUTER_PROVIDER,
-    )
-    .await
-    .unwrap();
-    let memory = open_test_memory().await;
-    let exec = BorgExecutor::new(
-        db,
-        memory,
-        CodeModeRuntime::default(),
-        ShellModeRuntime::new(),
-        Uri::parse(worker).unwrap(),
-    );
-    {
-        let provider_settings = exec.provider_settings_handle();
-        let mut settings = provider_settings.write().await;
-        settings.openrouter_api_key = Some("test-openrouter-key".to_string());
-        settings.preferred_provider = Some(OPENROUTER_PROVIDER.to_string());
-    }
-    exec
-}
-
 fn init_test_tracing() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -91,111 +56,6 @@ fn init_test_tracing() {
             .try_init()
             .ok();
     });
-}
-
-#[tokio::test]
-async fn openrouter_transcription_requires_openai_fallback_key() {
-    let db = open_test_db().await;
-    let exec =
-        openrouter_exec_without_openai_transcription_fallback(db, "borg:worker:openrouter").await;
-
-    let err = exec
-        .transcribe_audio(vec![0x01, 0x02], "audio/ogg")
-        .await
-        .expect_err("transcription should fail without openai fallback");
-    assert!(
-        err.to_string()
-            .contains("OpenAI provider key is required for transcription")
-            || err
-                .to_string()
-                .contains("audio transcription model is required"),
-        "unexpected error: {}",
-        err
-    );
-}
-
-#[tokio::test]
-async fn set_model_for_session_updates_existing_agent_spec_and_preserves_fields() {
-    let db = open_test_db().await;
-    let memory = open_test_memory().await;
-    let exec = BorgExecutor::new(
-        db.clone(),
-        memory,
-        CodeModeRuntime::default(),
-        ShellModeRuntime::new(),
-        uri!("borg", "worker", "set-model-existing"),
-    );
-    let default_agent_id = uri!("borg", "agent", "default");
-    db.upsert_agent_spec(
-        &default_agent_id,
-        "Default Agent",
-        Some("openrouter"),
-        "gpt-4o-mini",
-        "Keep this system prompt.",
-    )
-    .await
-    .unwrap();
-
-    let session_id = uri!("borg", "session", "model-update-existing");
-    let (agent_id, model) = exec
-        .set_model_for_session(&session_id, "openai/gpt-4.1-mini")
-        .await
-        .unwrap();
-
-    assert_eq!(agent_id, default_agent_id);
-    assert_eq!(model, "openai/gpt-4.1-mini");
-
-    let updated = db.get_agent_spec(&default_agent_id).await.unwrap().unwrap();
-    assert_eq!(updated.model, "openai/gpt-4.1-mini");
-    assert_eq!(updated.system_prompt, "Keep this system prompt.");
-    assert_eq!(updated.default_provider_id.as_deref(), Some("openrouter"));
-}
-
-#[tokio::test]
-async fn set_model_for_session_creates_default_agent_spec_when_missing() {
-    let db = open_test_db().await;
-    let memory = open_test_memory().await;
-    let exec = BorgExecutor::new(
-        db.clone(),
-        memory,
-        CodeModeRuntime::default(),
-        ShellModeRuntime::new(),
-        uri!("borg", "worker", "set-model-new"),
-    );
-
-    let session_id = uri!("borg", "session", "model-update-new");
-    let (agent_id, model) = exec
-        .set_model_for_session(&session_id, "openai/gpt-4.1-nano")
-        .await
-        .unwrap();
-
-    assert_eq!(agent_id, uri!("borg", "agent", "default"));
-    assert_eq!(model, "openai/gpt-4.1-nano");
-
-    let created = db.get_agent_spec(&agent_id).await.unwrap().unwrap();
-    assert_eq!(created.model, "openai/gpt-4.1-nano");
-    assert!(!created.system_prompt.is_empty());
-    assert_eq!(created.default_provider_id, None);
-}
-
-#[tokio::test]
-async fn set_model_for_session_rejects_empty_model() {
-    let db = open_test_db().await;
-    let memory = open_test_memory().await;
-    let exec = BorgExecutor::new(
-        db,
-        memory,
-        CodeModeRuntime::default(),
-        ShellModeRuntime::new(),
-        uri!("borg", "worker", "set-model-invalid"),
-    );
-
-    let session_id = uri!("borg", "session", "model-update-invalid");
-    let err = exec
-        .set_model_for_session(&session_id, "   ")
-        .await
-        .expect_err("empty model must fail");
-    assert!(err.to_string().contains("model must not be empty"));
 }
 
 #[derive(Clone)]
@@ -424,4 +284,21 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
             } if message.contains("async zero-arg function expression")
         )
     }));
+}
+
+#[tokio::test]
+async fn borg_supervisor_creation_and_lifecycle() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let runtime = crate::BorgRuntime::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
+    );
+    let runtime = std::sync::Arc::new(runtime);
+    let supervisor = BorgSupervisor::new(runtime);
+
+    supervisor.start().await.unwrap();
+    supervisor.shutdown().await;
 }

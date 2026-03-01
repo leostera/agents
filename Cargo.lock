@@ -606,6 +606,7 @@ dependencies = [
  "borg-exec",
  "borg-memory",
  "borg-shellmode",
+ "borg-taskgraph",
  "clap",
  "reqwest",
  "serde",
@@ -745,12 +746,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "axum 0.7.9",
- "borg-cmd",
  "borg-core",
  "borg-db",
  "borg-exec",
- "reqwest",
  "serde",
  "serde_json",
  "teloxide",
@@ -786,6 +784,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

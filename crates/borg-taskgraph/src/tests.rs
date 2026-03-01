@@ -210,3 +210,85 @@ async fn toolchain_smoke_create_get() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn taskgraph_supervisor_creation_and_lifecycle() -> Result<()> {
+    let db = test_db().await?;
+    let supervisor = crate::TaskGraphSupervisor::new(db);
+
+    supervisor.start().await;
+
+    supervisor.shutdown().await;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn taskgraph_supervisor_tracks_task_status_changes() -> Result<()> {
+    let db = test_db().await?;
+    let store = TaskGraphStore::new(db.clone());
+
+    let task = store
+        .create_task(
+            "borg:session:creator",
+            "agent:creator",
+            create_input("agent:worker"),
+        )
+        .await?;
+
+    let initial_statuses = store.list_all_task_uris().await?;
+    assert_eq!(initial_statuses.len(), 1);
+    assert_eq!(initial_statuses[0].0, task.uri);
+    assert_eq!(initial_statuses[0].1, "pending");
+
+    store
+        .set_task_status(
+            &task.assignee_session_uri,
+            &task.uri,
+            crate::model::TaskStatus::Doing,
+        )
+        .await?;
+
+    let updated_statuses = store.list_all_task_uris().await?;
+    assert_eq!(updated_statuses[0].1, "doing");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn taskgraph_supervisor_get_task_parent() -> Result<()> {
+    let db = test_db().await?;
+    let store = TaskGraphStore::new(db.clone());
+
+    let parent = store
+        .create_task(
+            "borg:session:creator",
+            "agent:creator",
+            create_input("agent:worker"),
+        )
+        .await?;
+
+    let child_input = CreateTaskInput {
+        title: "Child".to_string(),
+        description: "child desc".to_string(),
+        definition_of_done: "child dod".to_string(),
+        assignee_agent_id: "agent:worker".to_string(),
+        parent_uri: Some(parent.uri.clone()),
+        blocked_by: vec![],
+        references: vec![],
+        labels: vec![],
+    };
+
+    let child = store
+        .create_task("borg:session:creator2", "agent:creator2", child_input)
+        .await?;
+
+    let parent_uri = parent.uri.clone();
+    let child_parent = store.get_task_parent(&child.uri).await?;
+    assert_eq!(child_parent, Some(parent_uri.clone()));
+
+    let parent_parent = store.get_task_parent(&parent_uri).await?;
+    assert_eq!(parent_parent, None);
+
+    Ok(())
+}

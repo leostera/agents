@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use axum::http::HeaderMap;
 use borg_core::Uri;
-use borg_exec::{ExecEngine, UserMessage};
+use borg_exec::{BorgSupervisor, UserMessage};
 
 use crate::{Port, PortConfig, PortMessage};
 
@@ -32,7 +32,7 @@ impl PortMessage {
 
 #[derive(Clone)]
 pub struct HttpPort {
-    exec: ExecEngine,
+    exec: BorgSupervisor,
 }
 
 #[async_trait]
@@ -77,6 +77,6 @@ impl Port for HttpPort {
     }
 }
 
-pub fn init_http_port(exec: ExecEngine) -> Result<HttpPort> {
+pub fn init_http_port(exec: BorgSupervisor) -> Result<HttpPort> {
     HttpPort::init(PortConfig::Http { exec })
 }

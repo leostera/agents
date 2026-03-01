@@ -20,6 +20,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - Tasks may own dedicated task-sessions that close on task completion.
 - Scheduler/executor loop is for explicit tasks, not baseline chat ingress.
 - TaskGraph MCP tooling is available by default via `TaskGraph-*` tools from `borg-taskgraph`.
+- `borg start` launches `TaskGraphSupervisor` as a background runtime monitor for task status transitions.
 
 ## Storage + Paths
 - `~/.borg/config.db` is control-plane/config DB.
