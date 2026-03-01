@@ -12,7 +12,35 @@ import {
 } from "@/components/ui/input-group";
 import { cn } from "@/lib/utils";
 
-const Combobox = ComboboxPrimitive.Root;
+type ComboboxProps = React.ComponentPropsWithRef<
+  typeof ComboboxPrimitive.Root
+> & {
+  selectedValue?: React.ComponentPropsWithRef<
+    typeof ComboboxPrimitive.Root
+  >["value"];
+  onSelectedValueChange?: React.ComponentPropsWithRef<
+    typeof ComboboxPrimitive.Root
+  >["onValueChange"];
+};
+
+function Combobox({
+  selectedValue,
+  onSelectedValueChange,
+  value,
+  onValueChange,
+  ...props
+}: ComboboxProps) {
+  const resolvedValue = value ?? selectedValue;
+  const resolvedOnValueChange = onValueChange ?? onSelectedValueChange;
+
+  return (
+    <ComboboxPrimitive.Root
+      value={resolvedValue}
+      onValueChange={resolvedOnValueChange}
+      {...props}
+    />
+  );
+}
 
 function ComboboxValue({ ...props }: ComboboxPrimitive.Value.Props) {
   return <ComboboxPrimitive.Value data-slot="combobox-value" {...props} />;

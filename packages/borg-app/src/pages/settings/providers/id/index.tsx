@@ -134,7 +134,13 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
     }
   };
 
-  const modelOptions = models?.models ?? [];
+  const modelOptions = React.useMemo(() => {
+    const fromApi = models?.models ?? [];
+    const fromSaved = [form?.chatModel, form?.audioModel].filter(
+      (value): value is string => typeof value === "string" && value.length > 0
+    );
+    return Array.from(new Set([...fromApi, ...fromSaved]));
+  }, [form?.audioModel, form?.chatModel, models?.models]);
 
   return (
     <Section className="gap-4">
