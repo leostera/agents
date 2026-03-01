@@ -415,7 +415,10 @@ impl BorgExecutor {
         Ok(())
     }
 
-    async fn run_session_turn(&self, msg: &UserMessage) -> Result<Option<borg_agent::SessionOutput>> {
+    async fn run_session_turn(
+        &self,
+        msg: &UserMessage,
+    ) -> Result<Option<borg_agent::SessionOutput>> {
         let mut session = self.session_manager.session_for_task(msg).await?;
         let session_id = session.session_id.clone();
         self.ensure_session_record(msg, &session_id).await?;
@@ -472,7 +475,6 @@ impl BorgExecutor {
                 .insert_tool_call(
                     &uri!("borg", "tool_call").to_string(),
                     &session_id.to_string(),
-                    None,
                     &call.tool_name,
                     &call.arguments,
                     &serde_json::to_value(&call.output)?,
@@ -585,7 +587,6 @@ impl BorgExecutor {
             .await?;
         Ok(())
     }
-
 }
 
 fn tool_call_outcome(output: &borg_agent::ToolResultData) -> (bool, Option<String>, Option<u64>) {

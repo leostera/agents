@@ -24,7 +24,6 @@ function matchesTerm(call: ToolCallRecord, term: string): boolean {
   const haystack = [
     call.call_id,
     call.session_id,
-    call.task_id ?? "",
     call.tool_name,
     call.error ?? "",
   ]
@@ -109,13 +108,17 @@ function ToolCallDetailPage({ callId }: { callId: string }) {
   }, [callId]);
 
   if (isLoading) {
-    return <p className="text-muted-foreground text-sm">Loading tool call...</p>;
+    return (
+      <p className="text-muted-foreground text-sm">Loading tool call...</p>
+    );
   }
   if (error) {
     return <p className="text-destructive text-sm">{error}</p>;
   }
   if (!call) {
-    return <p className="text-muted-foreground text-sm">Tool call not found.</p>;
+    return (
+      <p className="text-muted-foreground text-sm">Tool call not found.</p>
+    );
   }
 
   return (
@@ -128,7 +131,9 @@ function ToolCallDetailPage({ callId }: { callId: string }) {
         >
           Back to Tool Calls
         </Button>
-        <p className="font-mono text-[11px] text-muted-foreground">{call.call_id}</p>
+        <p className="font-mono text-[11px] text-muted-foreground">
+          {call.call_id}
+        </p>
       </div>
 
       <section className="rounded-md border bg-muted/20 p-3">
@@ -144,10 +149,6 @@ function ToolCallDetailPage({ callId }: { callId: string }) {
           <p className="text-xs">
             <span className="text-muted-foreground">Session: </span>
             <span className="font-mono">{call.session_id}</span>
-          </p>
-          <p className="text-xs">
-            <span className="text-muted-foreground">Task ID: </span>
-            <span className="font-mono">{call.task_id ?? "—"}</span>
           </p>
           <p className="text-xs">
             <span className="text-muted-foreground">Success: </span>
@@ -246,7 +247,7 @@ function ToolCallsListPage() {
       <Input
         value={query}
         onChange={(event) => setQuery(event.currentTarget.value)}
-        placeholder="Search by call id, session, task, tool name, or error"
+        placeholder="Search by call id, session, tool name, or error"
         aria-label="Search tool calls"
       />
       {error ? <p className="text-destructive text-xs">{error}</p> : null}
@@ -257,7 +258,6 @@ function ToolCallsListPage() {
             <TableHead>Called</TableHead>
             <TableHead>Tool</TableHead>
             <TableHead>Session</TableHead>
-            <TableHead>Task</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Duration</TableHead>
           </TableRow>
@@ -265,13 +265,19 @@ function ToolCallsListPage() {
         <TableBody>
           {isLoading ? (
             <TableRow>
-              <TableCell colSpan={7} className="text-muted-foreground text-center">
+              <TableCell
+                colSpan={6}
+                className="text-muted-foreground text-center"
+              >
                 Loading tool calls...
               </TableCell>
             </TableRow>
           ) : filteredCalls.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={7} className="text-muted-foreground text-center">
+              <TableCell
+                colSpan={6}
+                className="text-muted-foreground text-center"
+              >
                 No tool calls found.
               </TableCell>
             </TableRow>
@@ -286,8 +292,12 @@ function ToolCallsListPage() {
                   )
                 }
               >
-                <TableCell className="font-mono text-[11px]">{call.call_id}</TableCell>
-                <TableCell className="text-xs">{formatDate(call.called_at)}</TableCell>
+                <TableCell className="font-mono text-[11px]">
+                  {call.call_id}
+                </TableCell>
+                <TableCell className="text-xs">
+                  {formatDate(call.called_at)}
+                </TableCell>
                 <TableCell>{call.tool_name}</TableCell>
                 <TableCell className="font-mono text-[11px]">
                   <Link
@@ -297,7 +307,6 @@ function ToolCallsListPage() {
                     {call.session_id}
                   </Link>
                 </TableCell>
-                <TableCell className="font-mono text-[11px]">{call.task_id ?? "—"}</TableCell>
                 <TableCell>{call.success ? "Success" : "Failed"}</TableCell>
                 <TableCell>{formatDuration(call.duration_ms)}</TableCell>
               </TableRow>

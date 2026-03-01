@@ -121,7 +121,7 @@ const providerTokenLoad = [
 
 const runtimeChecks = [
   { label: "API", status: "Healthy" },
-  { label: "Task Queue", status: "Healthy" },
+  { label: "Session Router", status: "Healthy" },
   { label: "LLM Providers", status: "Degraded" },
   { label: "Memory Index", status: "Healthy" },
 ];
@@ -129,7 +129,7 @@ const runtimeChecks = [
 const incidents = [
   "3 provider timeouts in the last 30 minutes.",
   "One session exceeded policy budget threshold.",
-  "Queue spikes detected on Telegram ingress.",
+  "Ingress spikes detected on Telegram messages.",
 ];
 
 export function OverviewSection() {
@@ -228,7 +228,7 @@ export function OverviewSection() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <Card size="sm">
           <CardHeader>
-            <CardDescription>Task Throughput</CardDescription>
+            <CardDescription>Turn Throughput</CardDescription>
             <CardTitle className="text-2xl font-semibold">
               {throughputNow}/h
             </CardTitle>
@@ -286,7 +286,7 @@ export function OverviewSection() {
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="xl:col-span-2">
           <CardHeader>
-            <CardTitle>Ingress vs Completed Tasks</CardTitle>
+            <CardTitle>Ingress vs Completed Turns</CardTitle>
             <CardDescription>
               Volume trend by day across platform traffic.
             </CardDescription>
@@ -460,7 +460,7 @@ export function OverviewSection() {
           <CardHeader>
             <CardTitle>Latency Trend</CardTitle>
             <CardDescription>
-              P50 and P95 response latency for completed tasks.
+              P50 and P95 response latency for completed turns.
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-2">

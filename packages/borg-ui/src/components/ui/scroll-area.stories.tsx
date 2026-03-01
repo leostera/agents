@@ -20,7 +20,7 @@ const logs = [
   "Agent selected model: gpt-4.1-mini",
   "Generated response: 281 tokens",
   "Persisted message to sqlite",
-  "Task queue depth: 2",
+  "Message queue depth: 2",
   "Heartbeat healthy",
 ];
 

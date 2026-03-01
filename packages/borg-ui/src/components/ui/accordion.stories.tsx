@@ -68,7 +68,7 @@ export const Multiple: Story = {
         </AccordionContent>
       </AccordionItem>
       <AccordionItem value="item-2">
-        <AccordionTrigger>Pending tasks</AccordionTrigger>
+        <AccordionTrigger>Pending work</AccordionTrigger>
         <AccordionContent>
           <p>Code review, onboarding copy update, and release note draft.</p>
         </AccordionContent>

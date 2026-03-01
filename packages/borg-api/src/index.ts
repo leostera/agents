@@ -210,7 +210,6 @@ export type LlmCallResponse = {
 export type ToolCallRecord = {
   call_id: string;
   session_id: string;
-  task_id?: string | null;
   tool_name: string;
   arguments_json: unknown;
   output_json: unknown;

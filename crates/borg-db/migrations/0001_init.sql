@@ -1,30 +1,3 @@
-CREATE TABLE IF NOT EXISTS tasks (
-    task_id TEXT PRIMARY KEY,
-    parent_task_id TEXT,
-    status TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    claimed_by TEXT,
-    attempts INTEGER NOT NULL DEFAULT 0,
-    last_error TEXT
-);
-
-CREATE TABLE IF NOT EXISTS deps (
-    task_id TEXT NOT NULL,
-    depends_on_task_id TEXT NOT NULL,
-    PRIMARY KEY (task_id, depends_on_task_id)
-);
-
-CREATE TABLE IF NOT EXISTS task_events (
-    event_id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
-    type TEXT NOT NULL,
-    payload_json TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY,
     users_json TEXT NOT NULL,

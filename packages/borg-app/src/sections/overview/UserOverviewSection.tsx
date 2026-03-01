@@ -31,7 +31,7 @@ const providerSpendData = [
 ];
 
 const recentlyLearnedFacts = [
-  "Preferred language is TypeScript for tooling tasks.",
+  "Preferred language is TypeScript for tooling work.",
   "Primary deployment target is Fly.io for preview environments.",
   "User prefers terse status updates during long-running work.",
   "Most active conversation window is weekday mornings.",
@@ -39,7 +39,7 @@ const recentlyLearnedFacts = [
 
 const mostCommonMemories = [
   { topic: "Provider setup", count: 38 },
-  { topic: "Task retries", count: 27 },
+  { topic: "Run retries", count: 27 },
   { topic: "Session routing", count: 22 },
   { topic: "Policy tuning", count: 17 },
 ];

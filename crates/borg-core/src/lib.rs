@@ -3,14 +3,14 @@ pub mod config;
 mod entity;
 mod event;
 mod execution;
-mod task;
+mod telegram;
 mod uri;
 
 pub use config::Config;
 pub use entity::Entity;
 pub use event::{Event, SessionContextSnapshot, SessionToolSchema};
 pub use execution::ExecutionResult;
-pub use task::{Task, TaskEvent, TaskKind, TaskStatus};
+pub use telegram::TelegramUserId;
 pub use uri::Uri;
 
 #[macro_export]

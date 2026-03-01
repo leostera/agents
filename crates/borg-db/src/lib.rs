@@ -138,7 +138,6 @@ pub struct LlmCallRecord {
 pub struct ToolCallRecord {
     pub call_id: String,
     pub session_id: String,
-    pub task_id: Option<String>,
     pub tool_name: String,
     pub arguments_json: Value,
     pub output_json: Value,
