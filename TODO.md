@@ -62,3 +62,5 @@
   - remove placeholder/fake table data
   - clarify provider column naming
   - render real database-backed values directly
+- LLM provider fallback:
+  - when a provider rejects a model as invalid/unsupported, treat it as provider failure and immediately fallback to the next configured provider

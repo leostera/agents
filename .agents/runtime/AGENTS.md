@@ -45,6 +45,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - Invalid URI inputs at API boundary must fail with structured 400.
 - Agent soft-disable endpoint is `PUT /api/agents/specs/:agent_id/enabled` with `{ "enabled": boolean }`.
 - Code-mode filesystem API is `Borg.OS.ls(...)` (not `BorgOs.ls(...)`).
+- Code-mode module resolution is embedded (no host `node` dependency): dynamic imports may use `npm:` and `jsr:` specifiers, with cache/state under `~/.borg/codemode` and `node_modules` in `~/.borg/codemode/node_modules`.
 - Telegram command `/model` supports:
   - `/model` to show current `agent_id` + model for the chat session.
   - `/model <model_name>` to persist model on the resolved agent spec.

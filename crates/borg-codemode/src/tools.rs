@@ -9,7 +9,7 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "CodeMode-searchApis".to_string(),
-            description: "Search for APIs available to execute code. ALWAYS use the `CodeMode-searchApis` tool to search for APIs before executing code. Returns only APIs available in the TypeScript SDK definitions for the Borg SDK".to_string(),
+            description: "Search for APIs available to execute code. ALWAYS use the `CodeMode-searchApis` tool to search for APIs before executing code. Returns only APIs available in the TypeScript SDK definitions for the Borg SDK. CodeMode supports dynamic imports inside execution payloads, for example `const kleur = (await import('npm:kleur@4.1.5')).default;` or `const semver = await import('jsr:@std/semver');`, plus local `file:` and remote `http(s):` specifiers. Package installs and resolver state are managed in `~/.borg/codemode` with `node_modules` at `~/.borg/codemode/node_modules`. Static `import ... from ...` declarations are not valid in the function payload shape, but are supported inside imported modules.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -24,7 +24,7 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "CodeMode-executeCode".to_string(),
-            description: "Execute JavaScript in Code Mode runtime. ALWAYS use the `CodeMode-searchApis` tool to search for APIs before executing code. Input must be {\"code\": string} where code is exactly an async zero-arg arrow function, for example: `async () => { const listing = await Borg.OS.ls('.'); return listing; }`. Returns JSON from the function return value. The code must be valid TypeScript or JavaScript code that follows the APIs described by the `CodeMode-searchApis` tool".to_string(),
+            description: "Execute JavaScript in Code Mode runtime. ALWAYS use the `CodeMode-searchApis` tool to search for APIs before executing code. Input must be {\"code\": string} where code is exactly an async zero-arg arrow function, for example: `async () => { const listing = await Borg.OS.ls('.'); return listing; }`. Returns JSON from the function return value. Dynamic imports are supported via `await import(specifier)`, including package specifiers like `npm:kleur@4.1.5` and `jsr:@std/semver`, plus local `file:` and remote `http(s):` specifiers. Resolver + package install state is embedded and persisted under `~/.borg/codemode` (`~/.borg/codemode/node_modules` for installed packages). Static `import ... from ...` declarations are not supported in this function-expression payload format.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {

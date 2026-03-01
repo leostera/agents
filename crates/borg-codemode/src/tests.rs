@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{CodeModeContext, CodeModeRuntime};
 
@@ -163,6 +164,72 @@ fn ffi_handler_panic_is_reported_as_runtime_error() {
         err.to_string().contains("ffi execution panic"),
         "unexpected error: {err}"
     );
+}
+
+#[test]
+fn execute_supports_dynamic_file_imports() {
+    let rt = CodeModeRuntime::default();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time after unix epoch")
+        .as_nanos();
+    let module_path = std::env::temp_dir().join(format!("borg-codemode-import-{unique}.mjs"));
+    std::fs::write(&module_path, "export const dynamicValue = 42;").expect("write temp module");
+    let module_specifier = deno_core::ModuleSpecifier::from_file_path(&module_path)
+        .expect("convert temp module path to file specifier")
+        .to_string();
+    let code = format!(
+        "async () => {{ const m = await import('{module_specifier}'); return m.dynamicValue; }}"
+    );
+
+    let result = rt.execute(&code, CodeModeContext::default()).unwrap();
+    assert_eq!(result.result_json, json!(42));
+
+    let _ = std::fs::remove_file(module_path);
+}
+
+#[test]
+fn execute_supports_static_npm_imports_inside_module() {
+    let rt = CodeModeRuntime::default();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time after unix epoch")
+        .as_nanos();
+    let module_path =
+        std::env::temp_dir().join(format!("borg-codemode-static-import-{unique}.mjs"));
+    let module_source = r#"
+import kleur from "npm:kleur@4.1.5";
+export default async () => kleur.bold("ok");
+"#;
+    std::fs::write(&module_path, module_source).expect("write temp module");
+    let module_specifier = deno_core::ModuleSpecifier::from_file_path(&module_path)
+        .expect("convert temp module path to file specifier")
+        .to_string();
+    let code = format!(
+        "async () => {{ const mod = await import('{module_specifier}'); return await mod.default(); }}"
+    );
+
+    let result = rt.execute(&code, CodeModeContext::default()).unwrap();
+    assert!(
+        result
+            .result_json
+            .as_str()
+            .is_some_and(|value| value.contains("ok"))
+    );
+
+    let _ = std::fs::remove_file(module_path);
+}
+
+#[test]
+fn execute_supports_dynamic_jsr_imports() {
+    let rt = CodeModeRuntime::default();
+    let result = rt
+        .execute(
+            "async () => { const semver = await import('jsr:@std/semver@1.0.0'); const a = semver.parse('1.2.0'); const b = semver.parse('1.1.0'); return semver.compare(a, b); }",
+            CodeModeContext::default(),
+        )
+        .unwrap();
+    assert_eq!(result.result_json, json!(1));
 }
 
 #[test]

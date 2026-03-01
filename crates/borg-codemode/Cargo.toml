@@ -13,3 +13,13 @@ tracing.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 borg-agent = { path = "../borg-agent" }
 tokio.workspace = true
+deno_resolver = { version = "0.65.0", features = ["sync"] }
+deno_npm_installer = "0.29.0"
+deno_npm_cache = "0.53.0"
+deno_semver = "0.9.1"
+deno_config = { version = "0.84.0", features = ["workspace"] }
+node_resolver = { version = "0.72.0", features = ["sync"] }
+sys_traits = { version = "0.1.24", features = ["real", "getrandom", "winapi", "libc"] }
+deno_error = "0.7.1"
+url.workspace = true
+async-trait.workspace = true

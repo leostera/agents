@@ -20,7 +20,7 @@ use crate::session_manager::SessionManager;
 use crate::tool_runner::build_exec_toolchain_with_context;
 use crate::types::{SessionTurnOutput, ToolCallSummary, UserMessage};
 
-const DEFAULT_AGENT_MODEL: &str = "gpt-4o-mini";
+const DEFAULT_AGENT_MODEL: &str = "";
 const CONTEXT_USAGE_CHAR_TO_TOKEN_RATIO: usize = 4;
 
 fn normalize_optional(value: Option<String>) -> Option<String> {

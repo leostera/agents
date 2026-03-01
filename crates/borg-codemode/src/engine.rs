@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -12,12 +13,16 @@ use serde_json::Value;
 use tracing::{debug, info, trace};
 
 use crate::ffi::install_ffi;
+use crate::module_loader::CodeModeModuleLoader;
 use crate::ops::default_ffi_handlers;
 use crate::sdk::{ApiCapability, search_capabilities};
 use crate::types::{FfiHandler, FfiResult};
 
 const SDK_BUNDLE: &str = include_str!(concat!(env!("OUT_DIR"), "/borg_agent_sdk.bundle.js"));
 static RUNTIME_EXECUTION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+const PRELUDE_SCRIPT_ORIGIN: &str = "file:///__borg_prelude__.js";
+const SDK_SCRIPT_ORIGIN: &str = "file:///__borg_agent_sdk__.js";
+const EXEC_SCRIPT_ORIGIN: &str = "file:///__borg_exec_fn__.js";
 
 #[derive(Debug, Clone, Default)]
 pub struct CodeModeContext {
@@ -121,7 +126,10 @@ impl CodeModeRuntime {
             debug!(target: "borg_codemode", code, "js payload");
 
             let start = Instant::now();
-            let mut runtime = JsRuntime::new(RuntimeOptions::default());
+            let mut runtime = JsRuntime::new(RuntimeOptions {
+                module_loader: Some(Rc::new(CodeModeModuleLoader::new())),
+                ..RuntimeOptions::default()
+            });
             install_ffi(
                 &mut runtime,
                 Arc::new(self.ffi_handlers.clone()),
@@ -130,7 +138,7 @@ impl CodeModeRuntime {
 
             if !self.prelude.trim().is_empty() {
                 runtime
-                    .execute_script("borg_prelude.js", self.prelude.clone())
+                    .execute_script(PRELUDE_SCRIPT_ORIGIN, self.prelude.clone())
                     .map_err(|err| {
                         info!(target: "borg_codemode", error = %err, "code-mode prelude execution failure");
                         anyhow!(normalize_runtime_error(format!(
@@ -140,7 +148,7 @@ impl CodeModeRuntime {
                     })?;
             }
             runtime
-                .execute_script("borg_agent_sdk.js", self.sdk_bundle.clone())
+                .execute_script(SDK_SCRIPT_ORIGIN, self.sdk_bundle.clone())
                 .map_err(|err| {
                     info!(target: "borg_codemode", error = %err, "code-mode sdk execution failure");
                     anyhow!(normalize_runtime_error(format!(
@@ -150,7 +158,7 @@ impl CodeModeRuntime {
                 })?;
 
             let function = runtime
-                .execute_script("borg_exec_fn.js", format!("({})", code))
+                .execute_script(EXEC_SCRIPT_ORIGIN, format!("({})", code))
                 .map_err(|err| {
                     info!(target: "borg_codemode", error = %err, "code-mode function compile failure");
                     anyhow!(normalize_runtime_error(format!(

@@ -1,5 +1,6 @@
 mod engine;
 mod ffi;
+mod module_loader;
 mod ops;
 mod sdk;
 mod tools;
