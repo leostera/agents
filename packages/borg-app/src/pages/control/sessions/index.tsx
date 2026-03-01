@@ -9,7 +9,14 @@ import {
   TableHeader,
   TableRow,
 } from "@borg/ui";
+import { Workflow } from "lucide-react";
 import React from "react";
+import {
+  Section,
+  SectionContent,
+  SectionEmpty,
+  SectionToolbar,
+} from "../../../components/Section";
 
 const borgApi = createBorgApiClient();
 
@@ -79,84 +86,83 @@ export function SessionPage() {
   }, [query, sessions]);
 
   return (
-    <section className="space-y-4">
-      <section>
+    <Section className="gap-4">
+      <SectionToolbar>
         <Input
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
           placeholder="Search sessions by id, users, or port"
           aria-label="Search sessions"
         />
-      </section>
+      </SectionToolbar>
 
       {error ? <p className="text-destructive text-xs">{error}</p> : null}
 
-      <section>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Session ID</TableHead>
-              <TableHead>Users</TableHead>
-              <TableHead>Providers</TableHead>
-              <TableHead>Port</TableHead>
-              <TableHead>Updated</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
+      <SectionContent>
+        {!isLoading && filteredSessions.length === 0 ? (
+          <SectionEmpty
+            icon={Workflow}
+            title="No Sessions Found"
+            description="No sessions match your search yet."
+          />
+        ) : (
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell
-                  colSpan={5}
-                  className="text-muted-foreground text-center"
-                >
-                  Loading sessions...
-                </TableCell>
+                <TableHead>Session ID</TableHead>
+                <TableHead>Users</TableHead>
+                <TableHead>Providers</TableHead>
+                <TableHead>Port</TableHead>
+                <TableHead>Updated</TableHead>
               </TableRow>
-            ) : filteredSessions.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={5}
-                  className="text-muted-foreground text-center"
-                >
-                  No sessions found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              filteredSessions.map((session) => (
-                <TableRow
-                  key={session.session_id}
-                  className="cursor-pointer"
-                  onClick={() => {
-                    window.history.pushState(
-                      null,
-                      "",
-                      `/control/sessions/${session.session_id}`
-                    );
-                    window.dispatchEvent(new PopStateEvent("popstate"));
-                  }}
-                >
-                  <TableCell className="font-mono text-[11px]">
-                    <Link
-                      href={`/control/sessions/${session.session_id}`}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      {session.session_id}
-                    </Link>
-                  </TableCell>
-                  <TableCell className="font-mono text-[11px]">
-                    {session.users.join(", ")}
-                  </TableCell>
-                  <TableCell>—</TableCell>
-                  <TableCell>{session.port}</TableCell>
-                  <TableCell>
-                    {new Date(session.updated_at).toLocaleString()}
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={5}
+                    className="text-muted-foreground text-center"
+                  >
+                    Loading sessions...
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </section>
-    </section>
+              ) : (
+                filteredSessions.map((session) => (
+                  <TableRow
+                    key={session.session_id}
+                    className="cursor-pointer"
+                    onClick={() => {
+                      window.history.pushState(
+                        null,
+                        "",
+                        `/control/sessions/${session.session_id}`
+                      );
+                      window.dispatchEvent(new PopStateEvent("popstate"));
+                    }}
+                  >
+                    <TableCell className="font-mono text-[11px]">
+                      <Link
+                        href={`/control/sessions/${session.session_id}`}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {session.session_id}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="font-mono text-[11px]">
+                      {session.users.join(", ")}
+                    </TableCell>
+                    <TableCell>—</TableCell>
+                    <TableCell>{session.port}</TableCell>
+                    <TableCell>
+                      {new Date(session.updated_at).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        )}
+      </SectionContent>
+    </Section>
   );
 }

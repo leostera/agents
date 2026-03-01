@@ -58,6 +58,13 @@ function toMemoryEntityHref(uri: string): string {
   return `/memory/entity/${encodeURIComponent(uri)}`;
 }
 
+function isValidTelegramAllowedUserId(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (/^\d+$/.test(trimmed)) return true;
+  return /^@[a-zA-Z0-9_]{5,32}$/.test(trimmed);
+}
+
 export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
   const [port, setPort] = React.useState<PortRecord | null>(null);
   const [agents, setAgents] = React.useState<AgentSpecRecord[]>([]);
@@ -149,10 +156,17 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
   const addAllowedUser = React.useCallback(() => {
     const next = allowedUserInput.trim();
     if (!next) return;
+    if (!isValidTelegramAllowedUserId(next)) {
+      setError(
+        "Allowed user must be a numeric Telegram ID (e.g. 2654566) or @username (e.g. @leostera)."
+      );
+      return;
+    }
     setAllowedExternalUserIds((current) => {
       if (current.includes(next)) return current;
       return [...current, next];
     });
+    setError(null);
     setAllowedUserInput("");
   }, [allowedUserInput]);
 
@@ -301,13 +315,17 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
                   <p className="text-muted-foreground text-xs">
                     allowed_external_user_ids
                   </p>
+                  <p className="text-muted-foreground text-[11px]">
+                    Use numeric Telegram IDs (for example 2654566) or usernames
+                    (for example @leostera).
+                  </p>
                   <div className="flex items-center gap-2">
                     <Input
                       value={allowedUserInput}
                       onChange={(event) =>
                         setAllowedUserInput(event.currentTarget.value)
                       }
-                      placeholder="Telegram user id"
+                      placeholder="2654566 or @leostera"
                       aria-label="Allowed user id"
                     />
                     <Button

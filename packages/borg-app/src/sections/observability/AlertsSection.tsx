@@ -4,7 +4,11 @@ import React from "react";
 const starterAlerts = [
   { metric: "P95 Latency", condition: "> 6s for 5m", status: "Enabled" },
   { metric: "Error Rate", condition: "> 3% for 10m", status: "Enabled" },
-  { metric: "Queue Depth", condition: "> 75 messages for 10m", status: "Draft" },
+  {
+    metric: "Queue Depth",
+    condition: "> 75 messages for 10m",
+    status: "Draft",
+  },
 ];
 
 export function AlertsSection() {

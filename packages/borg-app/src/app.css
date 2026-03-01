@@ -21,17 +21,23 @@
 
 .borg-dashboard-content {
   width: 100%;
-}
-
-.borg-dashboard-content--full {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
 
+.borg-dashboard-content--full {
+  min-height: 100%;
+}
+
 .borg-dashboard-section--full {
   flex: 1;
   min-height: 0;
+  width: 100%;
+}
+
+#settings-providers {
+  height: 100%;
 }
 
 .borg-dashboard-headline {
