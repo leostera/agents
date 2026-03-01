@@ -17,10 +17,6 @@ pub(crate) fn app_router(state: AppState) -> Router {
         .route("/dashboard", get(SystemController::ui_dashboard))
         .route("/health", get(SystemController::health))
         .route("/ports/http", post(SystemController::ports_http))
-        .route("/tasks", get(SystemController::list_tasks))
-        .route("/tasks/:id", get(SystemController::get_task))
-        .route("/tasks/:id/events", get(SystemController::get_task_events))
-        .route("/tasks/:id/output", get(SystemController::get_task_output))
         .route("/memory/search", get(SystemController::memory_search))
         .route(
             "/api/memory/explorer",

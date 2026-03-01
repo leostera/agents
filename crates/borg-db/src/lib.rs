@@ -7,7 +7,6 @@ mod policies;
 mod ports;
 mod providers;
 mod sessions;
-mod tasks;
 mod tool_calls;
 mod users;
 mod utils;
@@ -17,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::SqlitePool;
 
-use borg_core::{TaskKind, Uri};
+use borg_core::Uri;
 
 #[derive(Clone)]
 pub struct BorgDb {
@@ -37,13 +36,6 @@ impl CompatConn {
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct NewTask {
-    pub kind: TaskKind,
-    pub payload: Value,
-    pub parent_task_id: Option<Uri>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

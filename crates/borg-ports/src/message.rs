@@ -13,7 +13,6 @@ pub struct PortMessage {
     pub metadata: Value,
     pub session_id: Option<Uri>,
     pub agent_id: Option<Uri>,
-    pub task_id: Option<String>,
     pub reply: Option<String>,
     pub tool_calls: Option<Vec<ToolCallSummary>>,
     pub error: Option<String>,

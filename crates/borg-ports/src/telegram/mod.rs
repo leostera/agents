@@ -77,7 +77,6 @@ impl PortMessage {
             }),
             session_id: None,
             agent_id: None,
-            task_id: None,
             reply: None,
             tool_calls: None,
             error: None,
@@ -107,7 +106,6 @@ impl Port for TelegramPort {
 
             let outbound = match self.exec.process_port_message(&message.port, inbox).await {
                 Ok(output) => PortMessage {
-                    task_id: None,
                     session_id: Some(output.session_id),
                     reply: output.reply,
                     tool_calls: Some(output.tool_calls),
@@ -115,7 +113,6 @@ impl Port for TelegramPort {
                     ..message
                 },
                 Err(err) => PortMessage {
-                    task_id: None,
                     session_id: message.session_id,
                     reply: None,
                     tool_calls: None,

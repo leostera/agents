@@ -9,12 +9,10 @@ use borg_db::BorgDb;
 use borg_exec::ExecEngine;
 use borg_memory::{FactInput, MemoryStore, SearchQuery};
 use clap::{Parser, Subcommand};
-use reqwest::Client;
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::fs;
-use tracing::{error, info};
+use tracing::info;
 use uuid::Uuid;
 
 const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
@@ -29,7 +27,7 @@ const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 #[command(
     name = "borg",
     about = "Borg runtime CLI",
-    long_about = "Manage Borg services, tasks, sessions, memory, and configuration."
+    long_about = "Manage Borg services, sessions, memory, and configuration."
 )]
 struct Cli {
     /// Top-level command to run.
@@ -51,29 +49,6 @@ enum Command {
         #[arg(long, default_value = DEFAULT_HTTP_BIND)]
         bind: String,
     },
-    /// Task operations against the API.
-    Task {
-        /// Task subcommand.
-        #[command(subcommand)]
-        cmd: TaskCommand,
-        /// API address in host:port form.
-        #[arg(long, default_value = DEFAULT_HTTP_BIND)]
-        api: String,
-        /// Poll interval (ms) for streaming task events.
-        #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
-        poll_ms: u64,
-    },
-    /// Stream task events by task id.
-    Events {
-        /// Task URI (for example borg:task:...).
-        task_id: String,
-        /// API address in host:port form.
-        #[arg(long, default_value = DEFAULT_HTTP_BIND)]
-        api: String,
-        /// Poll interval (ms) for checking new events.
-        #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS)]
-        poll_ms: u64,
-    },
     /// Session utilities (stream and history operations).
     Session {
         /// Session subcommand.
@@ -91,26 +66,6 @@ enum Command {
         /// Config subcommand.
         #[command(subcommand)]
         cmd: ConfigCommand,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum TaskCommand {
-    /// Fetch one task by id.
-    Get {
-        /// Task URI (for example borg:task:...).
-        id: String,
-    },
-    /// Send a new user message to the HTTP port and stream events.
-    New {
-        /// User message text.
-        text: String,
-        /// User URI (for example borg:user:alice).
-        #[arg(long)]
-        user_key: Option<String>,
-        /// Optional existing session URI.
-        #[arg(long)]
-        session_id: Option<String>,
     },
 }
 
@@ -200,18 +155,8 @@ impl BorgCliApp {
             Uri::parse(&format!("borg:worker:{}", Uuid::now_v7()))?,
         );
 
-        let scheduler_exec = exec.clone();
-        let scheduler = tokio::spawn(async move {
-            info!(target: "borg_cli", "executor loop started");
-            if let Err(err) = scheduler_exec.run().await {
-                error!(target: "borg_cli", error = %err, "executor loop terminated");
-            }
-        });
-
         let api_server = BorgApiServer::new(bind, db, exec, memory);
-        let result = api_server.run().await;
-        scheduler.abort();
-        result
+        api_server.run().await
     }
 
     async fn initialize_storage(&self) -> Result<()> {
@@ -310,146 +255,6 @@ impl BorgCliApp {
                 Ok(())
             }
             other => anyhow::bail!("unsupported config key `{}`", other),
-        }
-    }
-
-    async fn task_get(&self, api: String, id: String) -> Result<()> {
-        let client = Client::new();
-        let url = format!("http://{}/tasks/{}", api, id);
-        let response = client.get(&url).send().await?;
-        let status = response.status();
-        let body = response.text().await?;
-
-        if !status.is_success() {
-            anyhow::bail!("request failed with {}: {}", status, body);
-        }
-
-        println!("{}", body);
-        Ok(())
-    }
-
-    async fn task_new_and_stream(
-        &self,
-        api: String,
-        text: String,
-        user_key: Option<String>,
-        session_id: Option<String>,
-        poll_ms: u64,
-    ) -> Result<()> {
-        let resolved_user_key = user_key
-            .as_ref()
-            .filter(|key| !key.trim().is_empty())
-            .cloned()
-            .or_else(|| std::env::var("USERNAME").ok())
-            .or_else(|| std::env::var("USER").ok())
-            .filter(|key| !key.trim().is_empty())
-            .unwrap_or_else(|| "cli".to_string());
-        let user_key_uri = if resolved_user_key.contains(':') {
-            Uri::parse(&resolved_user_key)?
-        } else {
-            let slug: String = resolved_user_key
-                .chars()
-                .map(|ch| {
-                    if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                        ch
-                    } else {
-                        '-'
-                    }
-                })
-                .collect();
-            Uri::parse(&format!("borg:user:{}", slug))?
-        };
-        if let Some(explicit) = &user_key {
-            Uri::parse(explicit).map_err(|_| {
-                anyhow::anyhow!(
-                    "invalid --user-key URI `{}` (expected URI like borg:user:alice)",
-                    explicit
-                )
-            })?;
-        }
-        let parsed_session_id = match session_id {
-            Some(raw) => Some(Uri::parse(&raw).map_err(|_| {
-                anyhow::anyhow!(
-                    "invalid --session-id URI `{}` (expected URI like borg:session:<id>)",
-                    raw
-                )
-            })?),
-            None => None,
-        };
-
-        let client = Client::new();
-        let url = format!("http://{}/ports/http", api);
-        let body = serde_json::json!({
-            "user_key": user_key_uri,
-            "text": text,
-            "session_id": parsed_session_id,
-            "metadata": {}
-        });
-
-        let response = client.post(&url).json(&body).send().await?;
-        let status = response.status();
-        let response_body = response.text().await?;
-        if !status.is_success() {
-            anyhow::bail!("failed to create task with {}: {}", status, response_body);
-        }
-
-        let created: CreateTaskResponse = serde_json::from_str(&response_body)?;
-        println!(
-            "{}",
-            serde_json::to_string(&serde_json::json!({
-                "task_id": created.task_id,
-                "session_id": created.session_id,
-                "reply": created.reply,
-            }))?
-        );
-
-        if let Some(task_id) = created.task_id {
-            self.events(api, task_id.to_string(), poll_ms, true).await
-        } else {
-            Ok(())
-        }
-    }
-
-    async fn events(
-        &self,
-        api: String,
-        task_id: String,
-        poll_ms: u64,
-        stop_on_terminal: bool,
-    ) -> Result<()> {
-        let client = Client::new();
-        let mut seen = std::collections::HashSet::<Uri>::new();
-        let url = format!("http://{}/tasks/{}/events", api, task_id);
-
-        loop {
-            tokio::select! {
-                ctrl = tokio::signal::ctrl_c() => {
-                    ctrl?;
-                    info!(target: "borg_cli", "events stream interrupted by ctrl-c");
-                    return Ok(());
-                }
-                _ = tokio::time::sleep(std::time::Duration::from_millis(poll_ms)) => {
-                    let response = client.get(&url).send().await?;
-                    let status = response.status();
-                    let body = response.text().await?;
-                    if !status.is_success() {
-                        anyhow::bail!("events request failed with {}: {}", status, body);
-                    }
-
-                    let parsed: TaskEventsResponse = serde_json::from_str(&body)?;
-                    for event in parsed.events {
-                        if seen.insert(event.event_id.clone()) {
-                            println!("{}", serde_json::to_string(&event)?);
-                            if stop_on_terminal
-                                && (event.event_type.as_str() == "borg:task:succeeded"
-                                    || event.event_type.as_str() == "borg:task:failed")
-                            {
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -573,28 +378,6 @@ fn confirm_memory_clear() -> Result<bool> {
     Ok(normalized == "y" || normalized == "yes")
 }
 
-#[derive(Debug, Deserialize, serde::Serialize)]
-struct TaskEventJson {
-    event_id: Uri,
-    task_id: Uri,
-    ts: String,
-    #[serde(rename = "event_type")]
-    event_type: Uri,
-    payload: Value,
-}
-
-#[derive(Debug, Deserialize)]
-struct TaskEventsResponse {
-    events: Vec<TaskEventJson>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateTaskResponse {
-    task_id: Option<Uri>,
-    session_id: Option<Uri>,
-    reply: Option<String>,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -610,22 +393,6 @@ async fn main() -> Result<()> {
     match Cli::parse().cmd {
         Command::Init { onboard_port } => app.init(onboard_port).await,
         Command::Start { bind } => app.start(bind).await,
-        Command::Task { cmd, api, poll_ms } => match cmd {
-            TaskCommand::Get { id } => app.task_get(api, id).await,
-            TaskCommand::New {
-                text,
-                user_key,
-                session_id,
-            } => {
-                app.task_new_and_stream(api, text, user_key, session_id, poll_ms)
-                    .await
-            }
-        },
-        Command::Events {
-            task_id,
-            api,
-            poll_ms,
-        } => app.events(api, task_id, poll_ms, false).await,
         Command::Session { cmd } => match cmd {
             SessionCommand::Stream {
                 session_id,

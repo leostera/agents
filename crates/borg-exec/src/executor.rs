@@ -1,11 +1,8 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{AgentTools, ContextWindow, Message, Session, SessionResult, ToolSpec};
+use borg_agent::{AgentTools, ContextWindow, Message, Session, SessionResult};
 use borg_codemode::{CodeModeContext, CodeModeRuntime};
-use borg_core::{
-    Event, SessionContextSnapshot, SessionToolSchema, Task, TaskEvent, TaskKind, TaskStatus, Uri,
-    uri,
-};
-use borg_db::{BorgDb, NewTask};
+use borg_core::{TelegramUserId, Uri, uri};
+use borg_db::BorgDb;
 use borg_llm::BorgLLM;
 use borg_llm::TranscriptionRequest;
 use borg_llm::providers::openai::{OpenAiApiMode, OpenAiProvider};
@@ -14,18 +11,15 @@ use borg_memory::MemoryStore;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info};
 
 use crate::port_context::{PortContext, TelegramSessionContext};
 use crate::provider_config::ProviderConfigSnapshot;
 use crate::session_manager::SessionManager;
-use crate::task_queue::TaskQueue;
 use crate::tool_runner::build_exec_toolchain_with_context;
 use crate::types::{SessionTurnOutput, ToolCallSummary, UserMessage};
 
-const QUEUED_RETRY_DELAY_MILLIS: u64 = 100;
 const DEFAULT_AGENT_MODEL: &str = "gpt-4o-mini";
-const STARTUP_REQUEUE_MAX_RETRIES: u8 = 5;
 const CONTEXT_USAGE_CHAR_TO_TOKEN_RATIO: usize = 4;
 
 fn normalize_optional(value: Option<String>) -> Option<String> {
@@ -111,7 +105,6 @@ pub struct BorgExecutor {
     memory: MemoryStore,
     runtime: CodeModeRuntime,
     worker_id: Uri,
-    task_queue: TaskQueue,
     session_manager: SessionManager,
     openai_base_url: Option<String>,
     agent_model: String,
@@ -122,7 +115,6 @@ pub type ExecEngine = BorgExecutor;
 
 impl BorgExecutor {
     pub fn new(db: BorgDb, memory: MemoryStore, runtime: CodeModeRuntime, worker_id: Uri) -> Self {
-        let task_queue = TaskQueue::new();
         let agent_model = DEFAULT_AGENT_MODEL.to_string();
         let session_manager = SessionManager::new(db.clone(), agent_model.clone());
         Self {
@@ -130,7 +122,6 @@ impl BorgExecutor {
             memory,
             runtime,
             worker_id,
-            task_queue,
             session_manager,
             openai_base_url: None,
             agent_model,
@@ -190,30 +181,6 @@ impl BorgExecutor {
         Ok(builder.build()?)
     }
 
-    pub async fn enqueue_user_message(
-        &self,
-        mut msg: UserMessage,
-        requested_session_id: Option<Uri>,
-    ) -> Result<(Uri, Uri)> {
-        let session_id = requested_session_id.unwrap_or_else(|| uri!("borg", "session"));
-        msg.session_id = Some(session_id.clone());
-        let payload = serde_json::to_value(msg)?;
-        let task_id = self
-            .db
-            .enqueue_task(NewTask {
-                kind: TaskKind::UserMessage,
-                payload,
-                parent_task_id: None,
-            })
-            .await?;
-        self.task_queue.queue(task_id.clone()).await?;
-        Ok((task_id, session_id))
-    }
-
-    pub async fn queue_task_id(&self, task_id: Uri) -> Result<()> {
-        self.task_queue.queue(task_id).await
-    }
-
     pub async fn process_port_message(
         &self,
         port: &str,
@@ -225,7 +192,7 @@ impl BorgExecutor {
                 return Err(anyhow!("port is disabled"));
             }
             if !config.allows_guests
-                && !self.is_allowed_external_user(config.provider.as_str(), &config.settings, &msg)
+                && !is_allowed_external_user(config.provider.as_str(), &config.settings, &msg)
             {
                 return Err(anyhow!("guest access is disabled for this port"));
             }
@@ -259,7 +226,7 @@ impl BorgExecutor {
 
         self.merge_port_message_metadata(port, &session_id, &msg.metadata)
             .await?;
-        let output = self.run_session_turn(&msg, None).await?;
+        let output = self.run_session_turn(&msg).await?;
         Ok(SessionTurnOutput {
             session_id,
             reply: output.as_ref().map(|value| value.reply.clone()),
@@ -280,47 +247,6 @@ impl BorgExecutor {
                 })
                 .unwrap_or_default(),
         })
-    }
-
-    fn is_allowed_external_user(
-        &self,
-        provider: &str,
-        settings: &Value,
-        msg: &UserMessage,
-    ) -> bool {
-        let Some(allowed_ids) = settings
-            .as_object()
-            .and_then(|map| map.get("allowed_external_user_ids"))
-            .and_then(Value::as_array)
-        else {
-            return false;
-        };
-
-        let external_user_id = self.external_user_id(provider, msg);
-        let Some(external_user_id) = external_user_id else {
-            return false;
-        };
-
-        allowed_ids
-            .iter()
-            .filter_map(Value::as_str)
-            .any(|value| value == external_user_id)
-    }
-
-    fn external_user_id(&self, provider: &str, msg: &UserMessage) -> Option<String> {
-        match provider {
-            "telegram" => msg
-                .metadata
-                .as_object()
-                .and_then(|obj| obj.get("sender_id"))
-                .and_then(Value::as_u64)
-                .map(|sender_id| format!("telegram:user:{sender_id}")),
-            _ => None,
-        }
-    }
-
-    pub async fn get_task_events(&self, task_id: &Uri) -> Result<Vec<TaskEvent>> {
-        self.db.get_task_events(task_id).await
     }
 
     pub async fn estimate_session_context_usage_percent(
@@ -479,215 +405,20 @@ impl BorgExecutor {
     }
 
     pub async fn run(self) -> Result<()> {
-        self.recover_tasks_on_startup().await?;
         info!(
             target: "borg_exec",
             worker_id = %self.worker_id,
-            "executor loop started"
+            "executor task loop disabled; waiting for shutdown"
         );
-
-        loop {
-            let task_id = self.task_queue.next().await?;
-            let exec = self.clone();
-            let task_id_for_worker = task_id.clone();
-            let join = tokio::spawn(async move { exec.process_task_id(&task_id_for_worker).await });
-            match join.await {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => {
-                    error!(
-                        target: "borg_exec",
-                        task_id = %task_id,
-                        error = %err,
-                        "executor task processing failed"
-                    );
-                }
-                Err(err) => {
-                    error!(
-                        target: "borg_exec",
-                        task_id = %task_id,
-                        error = %err,
-                        "executor task panicked; task will be marked failed and loop will continue"
-                    );
-                    let _ = self
-                        .db
-                        .fail_task(&task_id, &format!("executor panic: {}", err))
-                        .await;
-                }
-            }
-        }
-    }
-
-    async fn recover_tasks_on_startup(&self) -> Result<()> {
-        let mut requeued = None;
-        let mut last_error = None;
-        for attempt in 0..STARTUP_REQUEUE_MAX_RETRIES {
-            match self.db.requeue_running_tasks().await {
-                Ok(count) => {
-                    requeued = Some(count);
-                    break;
-                }
-                Err(err) => {
-                    last_error = Some(err);
-                    let backoff = QUEUED_RETRY_DELAY_MILLIS * u64::from(attempt + 1);
-                    warn!(
-                        target: "borg_exec",
-                        attempt = attempt + 1,
-                        retries = STARTUP_REQUEUE_MAX_RETRIES,
-                        delay_ms = backoff,
-                        "failed to requeue running tasks at startup, retrying"
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
-                }
-            }
-        }
-
-        let requeued = match requeued {
-            Some(count) => count,
-            None => return Err(last_error.expect("startup requeue error is always set")),
-        };
-
-        if requeued > 0 {
-            info!(
-                target: "borg_exec",
-                requeued,
-                "requeued running tasks at startup"
-            );
-        }
-
-        let recoverable = self.db.list_recoverable_task_ids().await?;
-        info!(
-            target: "borg_exec",
-            queued = recoverable.len(),
-            "queueing recoverable tasks at startup"
-        );
-        for task_id in recoverable {
-            self.task_queue.queue(task_id).await?;
-        }
+        std::future::pending::<()>().await;
+        #[allow(unreachable_code)]
         Ok(())
     }
 
-    async fn process_task_id(&self, task_id: &Uri) -> Result<()> {
-        let claimed_task = match self.db.claim_task_by_id(&self.worker_id, task_id).await {
-            Ok(task) => task,
-            Err(err) => {
-                warn!(
-                    target: "borg_exec",
-                    task_id = %task_id,
-                    error = %err,
-                    delay_ms = QUEUED_RETRY_DELAY_MILLIS,
-                    "failed to claim task by id, requeueing"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(QUEUED_RETRY_DELAY_MILLIS))
-                    .await;
-                self.task_queue.queue(task_id.clone()).await?;
-                return Ok(());
-            }
-        };
-
-        let Some(task) = claimed_task else {
-            if let Some(task) = self.db.get_task(task_id).await?
-                && task.status == TaskStatus::Queued
-            {
-                debug!(
-                    target: "borg_exec",
-                    task_id = %task_id,
-                    delay_ms = QUEUED_RETRY_DELAY_MILLIS,
-                    "task still queued but not claimable yet, requeueing"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(QUEUED_RETRY_DELAY_MILLIS))
-                    .await;
-                self.task_queue.queue(task_id.clone()).await?;
-            }
-            debug!(
-                target: "borg_exec",
-                task_id = %task_id,
-                "task was not claimable when popped from queue"
-            );
-            return Ok(());
-        };
-
-        info!(
-            target: "borg_exec",
-            task_id = %task.task_id,
-            kind = task.kind.as_str(),
-            "claimed task for execution"
-        );
-        self.db
-            .log_event(Event::TaskClaimed {
-                task_id: task.task_id.clone(),
-                worker_id: self.worker_id.clone(),
-            })
-            .await?;
-
-        match self.process_task(task.clone()).await {
-            Ok(()) => {
-                info!(
-                    target: "borg_exec",
-                    task_id = %task.task_id,
-                    "task execution completed successfully"
-                );
-            }
-            Err(err) => {
-                error!(
-                    target: "borg_exec",
-                    task_id = %task.task_id,
-                    error = %err,
-                    "task execution failed"
-                );
-                self.db.fail_task(&task.task_id, &err.to_string()).await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn process_task(&self, task: Task) -> Result<()> {
-        match task.kind {
-            TaskKind::UserMessage => self.process_user_message(task).await,
-            _ => {
-                warn!(
-                    target: "borg_exec",
-                    task_id = %task.task_id,
-                    "unsupported task kind in MVP, auto-completing"
-                );
-                self.db.complete_task(&task.task_id, "Ignored").await
-            }
-        }
-    }
-
-    async fn process_user_message(&self, task: Task) -> Result<()> {
-        let msg: UserMessage = serde_json::from_value(task.payload.clone())?;
-        let task_id = task.task_id.clone();
-
-        info!(
-            target: "borg_exec",
-            task_id = %task_id,
-            user_key = %msg.user_key,
-            text = msg.text,
-            "processing user message task"
-        );
-
-        let output = self.run_session_turn(&msg, Some(&task_id)).await?;
-        match output {
-            Some(output) => {
-                self.db.complete_task(&task_id, &output.reply).await?;
-            }
-            None => {
-                self.db.complete_task(&task_id, "Agent idle").await?;
-            }
-        }
-        Ok(())
-    }
-
-    async fn run_session_turn(
-        &self,
-        msg: &UserMessage,
-        task_id: Option<&Uri>,
-    ) -> Result<Option<borg_agent::SessionOutput>> {
+    async fn run_session_turn(&self, msg: &UserMessage) -> Result<Option<borg_agent::SessionOutput>> {
         let mut session = self.session_manager.session_for_task(msg).await?;
         let session_id = session.session_id.clone();
-        self.ensure_session_record(msg, &session_id, task_id, &session.agent.agent_id)
-            .await?;
+        self.ensure_session_record(msg, &session_id).await?;
         let code_mode_context = self.code_mode_context_for_turn(msg, &session_id);
         let toolchain = build_exec_toolchain_with_context(
             self.runtime.clone(),
@@ -697,32 +428,12 @@ impl BorgExecutor {
         let tools = AgentTools {
             tool_runner: &toolchain,
         };
-        let before_messages = session.read_messages(0, usize::MAX).await?;
-        if let Some(task_id) = task_id {
-            let agent_id = session.agent.agent_id.clone();
-            if before_messages.len() <= 1 {
-                self.db
-                    .log_event(Event::SessionStarted {
-                        task_id: task_id.clone(),
-                        session_id: session_id.clone(),
-                        agent_id,
-                    })
-                    .await?;
-                self.log_session_messages(task_id, &session_id, 0, &before_messages)
-                    .await?;
-            }
-        }
-
         session
             .add_message(Message::User {
                 content: msg.text.clone(),
             })
             .await?;
-        let context = session.build_context().await?;
-        if let Some(task_id) = task_id {
-            self.log_context_built(task_id, &session_id, &session.agent.model, &context)
-                .await?;
-        }
+        let _context = session.build_context().await?;
 
         let llm = self.configured_llm().await?;
 
@@ -746,52 +457,22 @@ impl BorgExecutor {
                 );
                 return Err(anyhow!("agent session error: {}", err));
             }
-            SessionResult::Idle => {
-                if let Some(task_id) = task_id {
-                    let after_messages = session.read_messages(0, usize::MAX).await?;
-                    self.log_session_messages(
-                        task_id,
-                        &session_id,
-                        before_messages.len(),
-                        &after_messages,
-                    )
-                    .await?;
-                    self.db
-                        .log_event(Event::AgentIdle {
-                            task_id: task_id.clone(),
-                        })
-                        .await?;
-                    self.db
-                        .log_event(Event::LlmResponseReceived {
-                            task_id: task_id.clone(),
-                            session_id: session_id.clone(),
-                            stop_reason: "idle".to_string(),
-                            content_blocks: 0,
-                            tool_call_count: 0,
-                        })
-                        .await?;
-                }
-                return Ok(None);
-            }
+            SessionResult::Idle => return Ok(None),
         };
 
-        if let Some(task_id) = task_id {
-            debug!(
-                target: "borg_exec",
-                task_id = %task_id,
-                tool_calls = output.tool_calls.len(),
-                "agent session completed"
-            );
-        }
-        let persisted_messages = session.read_messages(0, usize::MAX).await?;
+        debug!(
+            target: "borg_exec",
+            session_id = %session_id,
+            tool_calls = output.tool_calls.len(),
+            "agent session completed"
+        );
         for call in &output.tool_calls {
             let (success, error, duration_ms) = tool_call_outcome(&call.output);
-            let task_id_string = task_id.map(Uri::to_string);
             self.db
                 .insert_tool_call(
                     &uri!("borg", "tool_call").to_string(),
                     &session_id.to_string(),
-                    task_id_string.as_deref(),
+                    None,
                     &call.tool_name,
                     &call.arguments,
                     &serde_json::to_value(&call.output)?,
@@ -801,71 +482,16 @@ impl BorgExecutor {
                 )
                 .await?;
         }
-        if let Some(task_id) = task_id {
-            self.log_session_messages(
-                task_id,
-                &session_id,
-                before_messages.len(),
-                &persisted_messages,
-            )
-            .await?;
-            trace!(
-                target: "borg_exec",
-                task_id = %task_id,
-                messages = ?persisted_messages,
-                "persistable session messages"
-            );
-            for call in &output.tool_calls {
-                self.db
-                    .log_event(Event::AgentToolCall {
-                        task_id: task_id.clone(),
-                        name: call.tool_name.clone(),
-                        arguments: call.arguments.clone(),
-                        output: serde_json::to_value(&call.output)?,
-                    })
-                    .await?;
-            }
-
-            let reply = output.reply.clone();
-            info!(
-                target: "borg_exec",
-                task_id = %task_id,
-                reply = reply.as_str(),
-                "agent reply generated"
-            );
-            self.db
-                .log_event(Event::AgentOutput {
-                    task_id: task_id.clone(),
-                    message: reply,
-                })
-                .await?;
-            self.db
-                .log_event(Event::LlmResponseReceived {
-                    task_id: task_id.clone(),
-                    session_id: session_id.clone(),
-                    stop_reason: "completed".to_string(),
-                    content_blocks: 1,
-                    tool_call_count: output.tool_calls.len(),
-                })
-                .await?;
-        } else {
-            info!(
-                target: "borg_exec",
-                session_id = %session_id,
-                "agent session turn completed on long-lived session"
-            );
-        }
+        info!(
+            target: "borg_exec",
+            session_id = %session_id,
+            "agent session turn completed on long-lived session"
+        );
 
         Ok(Some(output))
     }
 
-    async fn ensure_session_record(
-        &self,
-        msg: &UserMessage,
-        session_id: &Uri,
-        task_id: Option<&Uri>,
-        agent_id: &Uri,
-    ) -> Result<()> {
+    async fn ensure_session_record(&self, msg: &UserMessage, session_id: &Uri) -> Result<()> {
         let existing = self.db.get_session(session_id).await?;
         let port = msg
             .metadata
@@ -897,16 +523,6 @@ impl BorgExecutor {
         }
 
         self.db.upsert_session(session_id, &users, &port).await?;
-
-        if let Some(task_id) = task_id {
-            debug!(
-                target: "borg_exec",
-                task_id = %task_id,
-                session_id = %session_id,
-                agent_id = %agent_id,
-                "ensured session record for task turn"
-            );
-        }
 
         Ok(())
     }
@@ -970,64 +586,6 @@ impl BorgExecutor {
         Ok(())
     }
 
-    async fn log_session_messages(
-        &self,
-        task_id: &Uri,
-        session_id: &Uri,
-        from_index: usize,
-        messages: &[Message],
-    ) -> Result<()> {
-        for (index, message) in messages.iter().enumerate().skip(from_index) {
-            self.db
-                .log_event(Event::SessionMessage {
-                    task_id: task_id.clone(),
-                    session_id: session_id.clone(),
-                    index,
-                    message: serde_json::to_value(message)?,
-                })
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn log_context_built(
-        &self,
-        task_id: &Uri,
-        session_id: &Uri,
-        model: &str,
-        context: &ContextWindow,
-    ) -> Result<()> {
-        let tools = context
-            .tools
-            .iter()
-            .map(to_session_tool_schema)
-            .collect::<Vec<_>>();
-        let messages = context
-            .messages
-            .iter()
-            .map(serde_json::to_value)
-            .collect::<Result<Vec<_>, _>>()?;
-        self.db
-            .log_event(Event::ContextBuilt {
-                task_id: task_id.clone(),
-                session_id: session_id.clone(),
-                context: SessionContextSnapshot {
-                    model: model.to_string(),
-                    messages,
-                    tools,
-                },
-            })
-            .await?;
-        self.db
-            .log_event(Event::LlmRequestSent {
-                task_id: task_id.clone(),
-                session_id: session_id.clone(),
-                model: model.to_string(),
-                message_count: context.messages.len(),
-                tool_count: context.tools.len(),
-            })
-            .await
-    }
 }
 
 fn tool_call_outcome(output: &borg_agent::ToolResultData) -> (bool, Option<String>, Option<u64>) {
@@ -1041,10 +599,82 @@ fn tool_call_outcome(output: &borg_agent::ToolResultData) -> (bool, Option<Strin
     }
 }
 
-fn to_session_tool_schema(tool: &ToolSpec) -> SessionToolSchema {
-    SessionToolSchema {
-        name: tool.name.clone(),
-        description: tool.description.clone(),
-        parameters: tool.parameters.clone(),
+fn is_allowed_external_user(provider: &str, settings: &Value, msg: &UserMessage) -> bool {
+    let Some(allowed_ids) = settings
+        .as_object()
+        .and_then(|map| map.get("allowed_external_user_ids"))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "telegram" => {
+            let candidates = telegram_external_user_candidates(msg);
+            if candidates.is_empty() {
+                return false;
+            }
+
+            allowed_ids
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(|raw| raw.parse::<TelegramUserId>().ok())
+                .any(|allowed| candidates.iter().any(|candidate| candidate == &allowed))
+        }
+        _ => false,
+    }
+}
+
+fn telegram_external_user_candidates(msg: &UserMessage) -> Vec<TelegramUserId> {
+    let mut out = Vec::new();
+    let Some(metadata) = msg.metadata.as_object() else {
+        return out;
+    };
+
+    if let Some(sender_id) = metadata.get("sender_id").and_then(Value::as_u64) {
+        out.push(TelegramUserId::from_sender_id(sender_id));
+    }
+    if let Some(username) = metadata.get("sender_username").and_then(Value::as_str) {
+        if let Some(parsed) = TelegramUserId::from_sender_username(username) {
+            out.push(parsed);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use borg_core::uri;
+
+    fn telegram_msg(sender_id: u64, sender_username: &str) -> UserMessage {
+        UserMessage {
+            user_key: uri!("telegram", "user", "example"),
+            text: "hello".to_string(),
+            metadata: json!({
+                "sender_id": sender_id,
+                "sender_username": sender_username,
+            }),
+            session_id: None,
+            agent_id: None,
+        }
+    }
+
+    #[test]
+    fn telegram_allowlist_accepts_numeric_and_username_and_legacy() {
+        let msg = telegram_msg(2654566, "leostera");
+        let settings = json!({
+            "allowed_external_user_ids": ["2654566", "@LEOSTERA", "telegram:user:2654566"]
+        });
+        assert!(is_allowed_external_user("telegram", &settings, &msg));
+    }
+
+    #[test]
+    fn telegram_allowlist_rejects_non_matching_values() {
+        let msg = telegram_msg(2654566, "leostera");
+        let settings = json!({
+            "allowed_external_user_ids": ["999999", "@someoneelse"]
+        });
+        assert!(!is_allowed_external_user("telegram", &settings, &msg));
     }
 }

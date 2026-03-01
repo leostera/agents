@@ -23,7 +23,6 @@ impl PortMessage {
             metadata: payload.metadata,
             session_id: requested_session_id,
             agent_id: payload.agent_id,
-            task_id: None,
             reply: None,
             tool_calls: None,
             error: None,
@@ -58,7 +57,6 @@ impl Port for HttpPort {
 
             let outbound = match self.exec.process_port_message(&message.port, inbox).await {
                 Ok(output) => PortMessage {
-                    task_id: None,
                     session_id: Some(output.session_id),
                     reply: output.reply,
                     tool_calls: Some(output.tool_calls),
@@ -66,7 +64,6 @@ impl Port for HttpPort {
                     ..message
                 },
                 Err(err) => PortMessage {
-                    task_id: None,
                     session_id: message.session_id,
                     reply: None,
                     tool_calls: None,

@@ -3,7 +3,6 @@ mod port_context;
 mod provider_config;
 mod provider_supervisor;
 mod session_manager;
-mod task_queue;
 mod tool_runner;
 mod types;
 
