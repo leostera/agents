@@ -33,8 +33,12 @@ pub struct PassthroughContextManager;
 #[async_trait]
 impl ContextManager for PassthroughContextManager {
     async fn build_context(&self, agent: &Agent, messages: &[Message]) -> Result<ContextWindow> {
-        let messages =
-            with_context_metadata(messages.to_vec(), ContextMetadataPolicy::Passthrough, None);
+        let messages = with_context_metadata(
+            messages.to_vec(),
+            ContextMetadataPolicy::Passthrough,
+            None,
+            &agent.agent_id.to_string(),
+        );
         Ok(ContextWindow {
             agent: agent.clone(),
             messages,
@@ -81,6 +85,7 @@ impl ContextManager for CompactingContextManager {
                     was_compacted: false,
                 },
                 Some(self.max_chars),
+                &agent.agent_id.to_string(),
             );
             return Ok(ContextWindow {
                 agent: agent.clone(),
@@ -129,6 +134,7 @@ impl ContextManager for CompactingContextManager {
                 was_compacted: true,
             },
             Some(self.max_chars),
+            &agent.agent_id.to_string(),
         );
         Ok(ContextWindow {
             agent: agent.clone(),
@@ -227,6 +233,7 @@ fn with_context_metadata(
     messages: Vec<Message>,
     autocompaction_policy: ContextMetadataPolicy,
     max_chars: Option<usize>,
+    current_agent_id: &str,
 ) -> Vec<Message> {
     let base_messages: Vec<Message> = messages
         .into_iter()
@@ -244,6 +251,7 @@ fn with_context_metadata(
     let metadata = json!({
         "current_datetime_utc": now.to_rfc3339(),
         "current_unix_timestamp_secs": now.timestamp(),
+        "current_agent_id": current_agent_id,
         "current_tokens_used": current_tokens_used,
         "tokens_left": tokens_left,
         "autocompaction_policy": autocompaction_policy,

@@ -42,6 +42,26 @@ pub(crate) fn app_router(state: AppState) -> Router {
             "/api/observability/llm-calls/:call_id",
             get(DbController::get_llm_call),
         )
+        .route(
+            "/api/taskgraph/tasks",
+            get(DbController::list_taskgraph_tasks),
+        )
+        .route(
+            "/api/taskgraph/tasks/:task_uri",
+            get(DbController::get_taskgraph_task),
+        )
+        .route(
+            "/api/taskgraph/tasks/:task_uri/comments",
+            get(DbController::list_taskgraph_comments),
+        )
+        .route(
+            "/api/taskgraph/tasks/:task_uri/events",
+            get(DbController::list_taskgraph_events),
+        )
+        .route(
+            "/api/taskgraph/tasks/:task_uri/children",
+            get(DbController::list_taskgraph_children),
+        )
         .route("/api/providers", get(DbController::list_providers))
         .route(
             "/api/providers/:provider",

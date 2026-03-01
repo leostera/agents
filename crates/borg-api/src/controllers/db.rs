@@ -9,6 +9,7 @@ use borg_core::TelegramUserId;
 use borg_llm::Provider;
 use borg_llm::providers::openai::OpenAiProvider;
 use borg_llm::providers::openrouter::OpenRouterProvider;
+use borg_taskgraph::{ListParams as TaskGraphListParams, TaskGraphStore};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -42,6 +43,12 @@ pub(crate) struct PortSettingsQuery {
 
 #[derive(Deserialize)]
 pub(crate) struct PortBindingsQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct TaskGraphListQuery {
+    cursor: Option<String>,
     limit: Option<usize>,
 }
 
@@ -290,6 +297,108 @@ impl DbController {
         match state.db.get_llm_call(&call_id).await {
             Ok(Some(call)) => (StatusCode::OK, Json(json!({ "llm_call": call }))).into_response(),
             Ok(None) => api_error(StatusCode::NOT_FOUND, "llm call not found".to_string()),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn list_taskgraph_tasks(
+        State(state): State<AppState>,
+        Query(query): Query<TaskGraphListQuery>,
+    ) -> impl IntoResponse {
+        let store = TaskGraphStore::new(state.db.clone());
+        let params = TaskGraphListParams {
+            cursor: query.cursor,
+            limit: query.limit.unwrap_or(200),
+        };
+        match store.list_tasks(params).await {
+            Ok((tasks, next_cursor)) => (
+                StatusCode::OK,
+                Json(json!({ "tasks": tasks, "next_cursor": next_cursor })),
+            )
+                .into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn get_taskgraph_task(
+        State(state): State<AppState>,
+        AxumPath(task_uri): AxumPath<String>,
+    ) -> impl IntoResponse {
+        let store = TaskGraphStore::new(state.db.clone());
+        match store.get_task(&task_uri).await {
+            Ok(task) => (StatusCode::OK, Json(json!({ "task": task }))).into_response(),
+            Err(err) if err.to_string().contains("task.not_found") => {
+                api_error(StatusCode::NOT_FOUND, "task not found".to_string())
+            }
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn list_taskgraph_comments(
+        State(state): State<AppState>,
+        AxumPath(task_uri): AxumPath<String>,
+        Query(query): Query<TaskGraphListQuery>,
+    ) -> impl IntoResponse {
+        let store = TaskGraphStore::new(state.db.clone());
+        let params = TaskGraphListParams {
+            cursor: query.cursor,
+            limit: query.limit.unwrap_or(200),
+        };
+        match store.list_comments(&task_uri, params).await {
+            Ok((comments, next_cursor)) => (
+                StatusCode::OK,
+                Json(json!({ "comments": comments, "next_cursor": next_cursor })),
+            )
+                .into_response(),
+            Err(err) if err.to_string().contains("task.not_found") => {
+                api_error(StatusCode::NOT_FOUND, "task not found".to_string())
+            }
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn list_taskgraph_events(
+        State(state): State<AppState>,
+        AxumPath(task_uri): AxumPath<String>,
+        Query(query): Query<TaskGraphListQuery>,
+    ) -> impl IntoResponse {
+        let store = TaskGraphStore::new(state.db.clone());
+        let params = TaskGraphListParams {
+            cursor: query.cursor,
+            limit: query.limit.unwrap_or(200),
+        };
+        match store.list_events(&task_uri, params).await {
+            Ok((events, next_cursor)) => (
+                StatusCode::OK,
+                Json(json!({ "events": events, "next_cursor": next_cursor })),
+            )
+                .into_response(),
+            Err(err) if err.to_string().contains("task.not_found") => {
+                api_error(StatusCode::NOT_FOUND, "task not found".to_string())
+            }
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn list_taskgraph_children(
+        State(state): State<AppState>,
+        AxumPath(task_uri): AxumPath<String>,
+        Query(query): Query<TaskGraphListQuery>,
+    ) -> impl IntoResponse {
+        let store = TaskGraphStore::new(state.db.clone());
+        let params = TaskGraphListParams {
+            cursor: query.cursor,
+            limit: query.limit.unwrap_or(200),
+        };
+        match store.list_task_children(&task_uri, params).await {
+            Ok((children, next_cursor)) => (
+                StatusCode::OK,
+                Json(json!({ "children": children, "next_cursor": next_cursor })),
+            )
+                .into_response(),
+            Err(err) if err.to_string().contains("task.not_found") => {
+                api_error(StatusCode::NOT_FOUND, "task not found".to_string())
+            }
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
         }
     }

@@ -1,13 +1,14 @@
 use anyhow::Result;
 use borg_db::BorgDb;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc};
 use tokio::time;
 use tracing::{debug, error, info};
 
+use crate::model::TaskStatus;
 use crate::store::TaskGraphStore;
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -16,6 +17,8 @@ const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
 pub struct TaskGraphSupervisor {
     store: TaskGraphStore,
     known_statuses: Arc<RwLock<HashMap<String, String>>>,
+    dispatched_tasks: Arc<RwLock<HashSet<String>>>,
+    dispatch_tx: Option<mpsc::Sender<TaskDispatch>>,
     poll_interval: Duration,
 }
 
@@ -29,13 +32,43 @@ pub struct TaskNotification {
     pub data: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+pub struct TaskDispatch {
+    pub task_uri: String,
+    pub title: String,
+    pub description: String,
+    pub definition_of_done: String,
+    pub assignee_session_uri: String,
+    pub assignee_agent_id: String,
+}
+
+impl From<crate::model::TaskRecord> for TaskDispatch {
+    fn from(value: crate::model::TaskRecord) -> Self {
+        Self {
+            task_uri: value.uri,
+            title: value.title,
+            description: value.description,
+            definition_of_done: value.definition_of_done,
+            assignee_session_uri: value.assignee_session_uri,
+            assignee_agent_id: value.assignee_agent_id,
+        }
+    }
+}
+
 impl TaskGraphSupervisor {
     pub fn new(db: BorgDb) -> Self {
         Self {
             store: TaskGraphStore::new(db),
             known_statuses: Arc::new(RwLock::new(HashMap::new())),
+            dispatched_tasks: Arc::new(RwLock::new(HashSet::new())),
+            dispatch_tx: None,
             poll_interval: DEFAULT_POLL_INTERVAL,
         }
+    }
+
+    pub fn with_dispatch(mut self, dispatch_tx: mpsc::Sender<TaskDispatch>) -> Self {
+        self.dispatch_tx = Some(dispatch_tx);
+        self
     }
 
     pub fn with_poll_interval(mut self, interval: Duration) -> Self {
@@ -48,6 +81,8 @@ impl TaskGraphSupervisor {
 
         let store = self.store.clone();
         let known = self.known_statuses.clone();
+        let dispatched = self.dispatched_tasks.clone();
+        let dispatch_tx = self.dispatch_tx.clone();
         let poll_interval = self.poll_interval;
 
         tokio::spawn(async move {
@@ -58,8 +93,14 @@ impl TaskGraphSupervisor {
             let mut ticker = time::interval(poll_interval);
             loop {
                 ticker.tick().await;
-                if let Err(err) = Self::check_task_status_changes(&store, &known).await {
+                if let Err(err) = Self::check_task_status_changes(&store, &known, &dispatched).await
+                {
                     error!(target: "borg_taskgraph", error = %err, "error checking pending tasks");
+                }
+                if let Err(err) =
+                    Self::dispatch_ready_tasks(&store, &dispatched, dispatch_tx.as_ref()).await
+                {
+                    error!(target: "borg_taskgraph", error = %err, "error dispatching tasks");
                 }
             }
         });
@@ -81,6 +122,7 @@ impl TaskGraphSupervisor {
     async fn check_task_status_changes(
         store: &TaskGraphStore,
         known: &Arc<RwLock<HashMap<String, String>>>,
+        dispatched: &Arc<RwLock<HashSet<String>>>,
     ) -> Result<()> {
         let current_tasks = store.list_all_task_uris().await?;
         let mut statuses = known.write().await;
@@ -102,8 +144,69 @@ impl TaskGraphSupervisor {
                     Self::notify_parent(&notification, parent_uri).await?;
                 }
 
-                statuses.insert(uri.clone(), new_status);
+                statuses.insert(uri.clone(), new_status.clone());
                 debug!(target: "borg_taskgraph", task_uri = %notification.task_uri, old_status = ?old_status, new_status = %notification.new_status, "task status changed");
+            }
+
+            if matches!(
+                TaskStatus::parse(&new_status),
+                Some(TaskStatus::Done | TaskStatus::Discarded)
+            ) {
+                let mut guard = dispatched.write().await;
+                guard.remove(&uri);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn dispatch_ready_tasks(
+        store: &TaskGraphStore,
+        dispatched: &Arc<RwLock<HashSet<String>>>,
+        dispatch_tx: Option<&mpsc::Sender<TaskDispatch>>,
+    ) -> Result<()> {
+        let Some(dispatch_tx) = dispatch_tx else {
+            return Ok(());
+        };
+
+        let sessions = store.list_assignee_sessions().await?;
+        for session_uri in sessions {
+            let tasks = store.next_task(&session_uri, 10).await?;
+            for task in tasks {
+                {
+                    let mut guard = dispatched.write().await;
+                    if guard.contains(&task.uri) {
+                        continue;
+                    }
+                    guard.insert(task.uri.clone());
+                }
+
+                if task.status == TaskStatus::Pending.as_str()
+                    && let Err(err) = store
+                        .set_task_status(&task.assignee_session_uri, &task.uri, TaskStatus::Doing)
+                        .await
+                {
+                    error!(
+                        target: "borg_taskgraph",
+                        task_uri = %task.uri,
+                        error = %err,
+                        "failed to mark task as doing before dispatch"
+                    );
+                    let mut guard = dispatched.write().await;
+                    guard.remove(&task.uri);
+                    continue;
+                }
+
+                let dispatch = TaskDispatch::from(task.clone());
+                if dispatch_tx.send(dispatch.clone()).await.is_err() {
+                    return Ok(());
+                }
+                info!(
+                    target: "borg_taskgraph",
+                    task_uri = %dispatch.task_uri,
+                    session_uri = %dispatch.assignee_session_uri,
+                    "dispatched task to runtime"
+                );
             }
         }
 
@@ -151,5 +254,19 @@ impl TaskGraphStore {
         tx.commit().await?;
 
         Ok(row.and_then(|(s,)| if s.is_empty() { None } else { Some(s) }))
+    }
+
+    pub async fn list_assignee_sessions(&self) -> Result<Vec<String>> {
+        let mut tx = self.db().pool().begin().await?;
+        let rows: Vec<(String,)> = sqlx::query_as::<_, (String,)>(
+            r#"SELECT DISTINCT assignee_session_uri
+               FROM taskgraph_tasks
+               WHERE status IN ('pending', 'doing')
+               ORDER BY assignee_session_uri ASC"#,
+        )
+        .fetch_all(tx.as_mut())
+        .await?;
+        tx.commit().await?;
+        Ok(rows.into_iter().map(|(value,)| value).collect())
     }
 }

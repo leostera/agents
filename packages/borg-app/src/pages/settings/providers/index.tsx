@@ -6,6 +6,7 @@ import {
 import {
   Badge,
   Button,
+  Link,
   Table,
   TableBody,
   TableCell,
@@ -38,6 +39,13 @@ function formatProviderName(provider: string): string {
   if (provider === "openai") return "OpenAI";
   if (provider === "openrouter") return "OpenRouter";
   return provider;
+}
+
+function formatTimestamp(value?: string | null): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.valueOf())) return "—";
+  return parsed.toLocaleString();
 }
 
 export function ProvidersPage() {
@@ -202,7 +210,10 @@ export function ProvidersPage() {
   };
 
   const providerRows = React.useMemo(
-    () => Object.values(providersByName),
+    () =>
+      Object.values(providersByName).sort((left, right) =>
+        left.provider.localeCompare(right.provider)
+      ),
     [providersByName]
   );
   const showEmptyState = !isLoading && providerRows.length === 0;
@@ -249,11 +260,11 @@ export function ProvidersPage() {
               <TableRow>
                 <TableHead className="w-[44px]">Status</TableHead>
                 <TableHead>Provider</TableHead>
+                <TableHead>Chat Model</TableHead>
+                <TableHead>Audio Model</TableHead>
                 <TableHead>Tokens Used</TableHead>
                 <TableHead>Last Used</TableHead>
                 <TableHead>Updated</TableHead>
-                <TableHead>Chat Model</TableHead>
-                <TableHead>Audio Model</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -261,26 +272,26 @@ export function ProvidersPage() {
               {providerRows.map((provider) => (
                 <TableRow key={provider.provider}>
                   <TableCell>
-                    <span
-                      className={
-                        provider.enabled
-                          ? "inline-block size-2.5 rounded-full bg-emerald-500"
-                          : "inline-block size-2.5 rounded-full bg-rose-500"
-                      }
-                      title={provider.enabled ? "Enabled" : "Disabled"}
-                    />
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    {formatProviderName(provider.provider)}
-                  </TableCell>
-                  <TableCell>{provider.tokens_used.toLocaleString()}</TableCell>
-                  <TableCell>
-                    {provider.last_used
-                      ? new Date(provider.last_used).toLocaleString()
-                      : "—"}
+                    <div className="inline-flex items-center gap-2">
+                      <span
+                        className={
+                          provider.enabled
+                            ? "inline-block size-2.5 rounded-full bg-emerald-500"
+                            : "inline-block size-2.5 rounded-full bg-rose-500"
+                        }
+                        title={provider.enabled ? "Enabled" : "Disabled"}
+                      />
+                    </div>
                   </TableCell>
                   <TableCell>
-                    {new Date(provider.updated_at).toLocaleString()}
+                    <div className="flex flex-col">
+                      <span className="font-medium">
+                        {formatProviderName(provider.provider)}
+                      </span>
+                      <span className="text-muted-foreground text-xs">
+                        {provider.provider}
+                      </span>
+                    </div>
                   </TableCell>
                   <TableCell>
                     {provider.default_text_model ? (
@@ -300,23 +311,19 @@ export function ProvidersPage() {
                       "—"
                     )}
                   </TableCell>
+                  <TableCell>{provider.tokens_used.toLocaleString()}</TableCell>
+                  <TableCell>{formatTimestamp(provider.last_used)}</TableCell>
+                  <TableCell>{formatTimestamp(provider.updated_at)}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button
-                        size="icon-sm"
-                        variant="outline"
-                        onClick={() => {
-                          window.history.pushState(
-                            null,
-                            "",
-                            `/settings/providers/${provider.provider}`
-                          );
-                          window.dispatchEvent(new PopStateEvent("popstate"));
-                        }}
-                        aria-label={`Edit ${formatProviderName(provider.provider)}`}
-                        title="Edit"
-                      >
-                        <Pencil className="size-3.5" />
+                      <Button size="icon-sm" variant="outline" asChild>
+                        <Link
+                          href={`/settings/providers/${provider.provider}`}
+                          aria-label={`Edit ${formatProviderName(provider.provider)}`}
+                          title="Edit"
+                        >
+                          <Pencil className="size-3.5" />
+                        </Link>
                       </Button>
                       <Button
                         size="icon-sm"

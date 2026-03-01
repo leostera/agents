@@ -2,6 +2,7 @@ use anyhow::Result;
 use borg_agent::ToolRunner;
 use borg_db::BorgDb;
 use serde_json::json;
+use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
 use crate::store::{CreateTaskInput, TaskGraphStore};
@@ -220,6 +221,33 @@ async fn taskgraph_supervisor_creation_and_lifecycle() -> Result<()> {
 
     supervisor.shutdown().await;
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn taskgraph_supervisor_dispatches_runnable_tasks() -> Result<()> {
+    let db = test_db().await?;
+    let store = TaskGraphStore::new(db.clone());
+    let created = store
+        .create_task(
+            "borg:session:creator",
+            "agent:creator",
+            create_input("agent:worker"),
+        )
+        .await?;
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let supervisor = crate::TaskGraphSupervisor::new(db)
+        .with_poll_interval(Duration::from_millis(50))
+        .with_dispatch(tx);
+    supervisor.start().await;
+
+    let dispatch = timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .expect("dispatch timeout")
+        .expect("dispatch message");
+    assert_eq!(dispatch.task_uri, created.uri);
+    assert_eq!(dispatch.assignee_session_uri, created.assignee_session_uri);
     Ok(())
 }
 

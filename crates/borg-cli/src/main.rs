@@ -6,10 +6,10 @@ use borg_apps::DefaultAppsCatalog;
 use borg_codemode::CodeModeRuntime;
 use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
-use borg_exec::{BorgRuntime, BorgSupervisor};
+use borg_exec::{BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, JsonPortContext};
 use borg_memory::{FactInput, MemoryStore, SearchQuery};
 use borg_shellmode::ShellModeRuntime;
-use borg_taskgraph::TaskGraphSupervisor;
+use borg_taskgraph::{TaskDispatch, TaskGraphSupervisor};
 use clap::{Parser, Subcommand};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -153,7 +153,43 @@ impl BorgCliApp {
         let runtime = BorgRuntime::new(db.clone(), memory.clone(), runtime, shell_runtime);
         let runtime = std::sync::Arc::new(runtime);
         let supervisor = BorgSupervisor::new(runtime.clone());
-        let taskgraph_supervisor = TaskGraphSupervisor::new(db.clone());
+        let (task_dispatch_tx, mut task_dispatch_rx) =
+            tokio::sync::mpsc::channel::<TaskDispatch>(128);
+        let supervisor_for_tasks = supervisor.clone();
+        tokio::spawn(async move {
+            while let Some(task) = task_dispatch_rx.recv().await {
+                let Ok(session_id) = Uri::parse(&task.assignee_session_uri) else {
+                    tracing::warn!(
+                        target: "borg_cli",
+                        session_uri = %task.assignee_session_uri,
+                        task_uri = %task.task_uri,
+                        "invalid assignee session uri for task dispatch"
+                    );
+                    continue;
+                };
+                let user_id = Uri::from_parts("borg", "user", Some("taskgraph"))
+                    .expect("valid synthetic taskgraph user uri");
+                let payload = json!({
+                    "port": "taskgraph",
+                    "task_uri": task.task_uri,
+                    "assignee_agent_id": task.assignee_agent_id,
+                });
+                let text = format!(
+                    "Task dispatch:\n- title: {}\n- description: {}\n- definition_of_done: {}",
+                    task.title, task.description, task.definition_of_done
+                );
+                supervisor_for_tasks
+                    .cast(BorgMessage {
+                        user_id,
+                        session_id,
+                        input: BorgInput::Chat { text },
+                        port_context: std::sync::Arc::new(JsonPortContext::new(payload)),
+                    })
+                    .await;
+            }
+        });
+        let taskgraph_supervisor =
+            TaskGraphSupervisor::new(db.clone()).with_dispatch(task_dispatch_tx);
         taskgraph_supervisor.start().await;
         info!(target: "borg_cli", "taskgraph supervisor started");
 

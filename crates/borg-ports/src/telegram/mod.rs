@@ -2,19 +2,30 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use borg_cmd::CommandRegistry;
 use borg_core::{TelegramUserId, Uri};
-use borg_exec::{SessionOutput, TelegramSessionContext};
+use borg_exec::{BorgCommand, SessionOutput, TelegramSessionContext};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use teloxide::prelude::*;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, warn};
 
+use crate::message::PortInput;
 use crate::{Port, PortConfig, PortMessage};
 
 const TELEGRAM_USER_ID_PREFIX: &str = "telegram";
 const TELEGRAM_CONVERSATION_PREFIX: &str = "telegram";
 const TELEGRAM_MESSAGE_LIMIT: usize = 4000;
+const TELEGRAM_START_GREETING: &str = "Borg is online. Send a message to start.";
+const MODEL_COMMAND_USAGE: &str = "Usage: /model [model_name]";
+
+#[derive(Debug, Clone)]
+enum TelegramCommandRoute {
+    Local(String),
+    LocalParticipants,
+    Forward(BorgCommand),
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TelegramConfig {
@@ -35,11 +46,13 @@ pub struct TelegramPort {
 impl TelegramPort {
     fn port_message_from_text(&self, message: &Message) -> Option<PortMessage> {
         let text = message.text()?.to_string();
+        self.port_message_from_input(message, PortInput::Chat { text })
+    }
+
+    fn port_message_from_input(&self, message: &Message, input: PortInput) -> Option<PortMessage> {
         let user_id = conversation_user_id(message)?;
         let conversation_key = conversation_routing_key(message)?;
-
         let ctx = telegram_session_context_from_message(message);
-
         if !self.allows_guests
             && !is_allowed_external_user(&self.telegram_config.allowed_external_user_ids, &ctx)
         {
@@ -50,7 +63,7 @@ impl TelegramPort {
             port_id: self.port_id.clone(),
             conversation_key,
             user_id,
-            text,
+            input,
             port_context: Arc::new(ctx),
         })
     }
@@ -121,11 +134,62 @@ impl Port for TelegramPort {
         let inbound_port = self.clone();
         let inbound_tx = inbound.clone();
         let bot = self.bot.clone();
+        let command_registry = build_telegram_command_registry()?;
 
         teloxide::repl(bot, move |_bot: Bot, message: Message| {
             let inbound_port = inbound_port.clone();
             let inbound_tx = inbound_tx.clone();
+            let command_registry = command_registry.clone();
             async move {
+                let Some(text) = message.text() else {
+                    return respond(());
+                };
+
+                if command_registry.is_command(text) {
+                    match command_registry.run(text).await {
+                        Ok(Some(TelegramCommandRoute::Local(reply))) => {
+                            if let Err(err) = inbound_port.send_text(message.chat.id, reply).await {
+                                warn!(
+                                    target: "borg_ports",
+                                    port_name = %inbound_port.port_name,
+                                    error = %err,
+                                    "failed to send local telegram command response"
+                                );
+                            }
+                        }
+                        Ok(Some(TelegramCommandRoute::LocalParticipants)) => {
+                            let reply = format_participants_for_message(&message);
+                            if let Err(err) = inbound_port.send_text(message.chat.id, reply).await {
+                                warn!(
+                                    target: "borg_ports",
+                                    port_name = %inbound_port.port_name,
+                                    error = %err,
+                                    "failed to send local participants response"
+                                );
+                            }
+                        }
+                        Ok(Some(TelegramCommandRoute::Forward(command))) => {
+                            if let Some(port_message) = inbound_port
+                                .port_message_from_input(&message, PortInput::Command(command))
+                                && inbound_tx.send(port_message).await.is_err()
+                            {
+                                warn!(
+                                    target: "borg_ports",
+                                    port_name = %inbound_port.port_name,
+                                    "port inbound channel closed"
+                                );
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            let _ = inbound_port
+                                .send_text(message.chat.id, format!("Command error: {err}"))
+                                .await;
+                        }
+                    }
+                    return respond(());
+                }
+
                 if let Some(port_message) = inbound_port.port_message_from_text(&message)
                     && inbound_tx.send(port_message).await.is_err()
                 {
@@ -143,6 +207,79 @@ impl Port for TelegramPort {
         outbound_task.abort();
         Ok(())
     }
+}
+
+fn build_telegram_command_registry() -> Result<CommandRegistry<(), TelegramCommandRoute>> {
+    CommandRegistry::build(())
+        .add_command("start", |_req| async move {
+            Ok(TelegramCommandRoute::Local(
+                TELEGRAM_START_GREETING.to_string(),
+            ))
+        })
+        .add_command("model", |req| async move {
+            match parse_model_command_action(&req.args) {
+                ModelCommandAction::Show => {
+                    Ok(TelegramCommandRoute::Forward(BorgCommand::ModelShowCurrent))
+                }
+                ModelCommandAction::Set(model) => {
+                    Ok(TelegramCommandRoute::Forward(BorgCommand::ModelSet {
+                        model,
+                    }))
+                }
+                ModelCommandAction::Usage => {
+                    Ok(TelegramCommandRoute::Local(MODEL_COMMAND_USAGE.to_string()))
+                }
+            }
+        })
+        .add_command("participants", |_req| async move {
+            Ok(TelegramCommandRoute::LocalParticipants)
+        })
+        .add_command("context", |_req| async move {
+            Ok(TelegramCommandRoute::Forward(BorgCommand::ContextDump))
+        })
+        .add_command("reset", |_req| async move {
+            Ok(TelegramCommandRoute::Forward(BorgCommand::ResetContext))
+        })
+        .add_command("compact", |_req| async move {
+            Ok(TelegramCommandRoute::Forward(BorgCommand::CompactSession))
+        })
+        .build()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ModelCommandAction {
+    Show,
+    Set(String),
+    Usage,
+}
+
+fn parse_model_command_action(args: &[String]) -> ModelCommandAction {
+    match args {
+        [] => ModelCommandAction::Show,
+        [model] if !model.trim().is_empty() => ModelCommandAction::Set(model.trim().to_string()),
+        [..] => ModelCommandAction::Usage,
+    }
+}
+
+fn format_participants_for_message(message: &Message) -> String {
+    let ctx = telegram_session_context_from_message(message);
+    if ctx.participants.is_empty() {
+        return "No participants available for this conversation.".to_string();
+    }
+
+    let mut lines = Vec::new();
+    lines.push(format!("Chat {} ({})", ctx.chat_id, ctx.chat_type));
+    lines.push("Participants:".to_string());
+    for participant in ctx.participants.values() {
+        let display = participant
+            .username
+            .as_ref()
+            .map(|username| format!("@{username}"))
+            .or_else(|| participant.first_name.clone())
+            .unwrap_or_else(|| participant.id.clone());
+        lines.push(format!("- {} [{}]", display, participant.id));
+    }
+    lines.join("\n")
 }
 
 fn split_message(message: &str) -> Vec<String> {
@@ -280,7 +417,10 @@ fn format_tool_action_message(tool_name: &str, arguments: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_allowed_external_user, routing_key_for_chat_id};
+    use super::{
+        ModelCommandAction, is_allowed_external_user, parse_model_command_action,
+        routing_key_for_chat_id,
+    };
     use borg_exec::TelegramSessionContext;
 
     #[test]
@@ -314,5 +454,26 @@ mod tests {
 
         let allowed = vec!["@leostera".to_string()];
         assert!(is_allowed_external_user(&allowed, &ctx));
+    }
+
+    #[test]
+    fn parse_model_command_action_handles_show() {
+        assert_eq!(parse_model_command_action(&[]), ModelCommandAction::Show);
+    }
+
+    #[test]
+    fn parse_model_command_action_handles_set() {
+        assert_eq!(
+            parse_model_command_action(&["openai/gpt-4.1-mini".to_string()]),
+            ModelCommandAction::Set("openai/gpt-4.1-mini".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_model_command_action_handles_usage_for_invalid_shape() {
+        assert_eq!(
+            parse_model_command_action(&["first".to_string(), "second".to_string()]),
+            ModelCommandAction::Usage
+        );
     }
 }

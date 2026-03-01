@@ -11,6 +11,7 @@ use tracing::{debug, error, info};
 
 use crate::mailbox::ActorCommand;
 use crate::message::{BorgCommand, BorgInput, BorgMessage, SessionOutput, ToolCallSummary};
+use crate::port_context::TelegramSessionContext;
 use crate::runtime::BorgRuntime;
 use crate::types::UserMessage;
 
@@ -199,7 +200,7 @@ impl Actor {
         let llm = self.runtime.llm().await?;
         let toolchain = self
             .runtime
-            .build_toolchain(&user_msg, &self.session_id)
+            .build_toolchain(&user_msg, &self.session_id, &self.agent_id)
             .await?;
         let tools = AgentTools {
             tool_runner: &toolchain,
@@ -244,11 +245,59 @@ impl Actor {
         command: &BorgCommand,
     ) -> Result<SessionOutput> {
         match command {
-            BorgCommand::CompactSession => {
-                // Placeholder for upcoming borg-cmd reintegration.
+            BorgCommand::ModelShowCurrent => {
+                let model = self.current_model().await?;
                 Ok(SessionOutput {
                     session_id: self.session_id.clone(),
-                    reply: Some("compact is not yet wired in runtime".to_string()),
+                    reply: Some(format!(
+                        "Agent: {}\nModel: {}\nSession: {}",
+                        self.agent_id, model, self.session_id
+                    )),
+                    tool_calls: Vec::new(),
+                    port_context: msg.port_context.clone(),
+                })
+            }
+            BorgCommand::ModelSet { model } => {
+                let model = model.trim();
+                if model.is_empty() {
+                    return Err(anyhow!("model cannot be empty"));
+                }
+                self.set_model(model).await?;
+                Ok(SessionOutput {
+                    session_id: self.session_id.clone(),
+                    reply: Some(format!(
+                        "Updated model to {} for agent {}.\nSession: {}",
+                        model, self.agent_id, self.session_id
+                    )),
+                    tool_calls: Vec::new(),
+                    port_context: msg.port_context.clone(),
+                })
+            }
+            BorgCommand::ParticipantsList => {
+                let participants = self.telegram_participants().await?;
+                Ok(SessionOutput {
+                    session_id: self.session_id.clone(),
+                    reply: Some(participants),
+                    tool_calls: Vec::new(),
+                    port_context: msg.port_context.clone(),
+                })
+            }
+            BorgCommand::ContextDump => {
+                let dump = self.context_dump().await?;
+                Ok(SessionOutput {
+                    session_id: self.session_id.clone(),
+                    reply: Some(dump),
+                    tool_calls: Vec::new(),
+                    port_context: msg.port_context.clone(),
+                })
+            }
+            BorgCommand::CompactSession => {
+                let kept = self.compact_session().await?;
+                Ok(SessionOutput {
+                    session_id: self.session_id.clone(),
+                    reply: Some(format!(
+                        "Compacted session. Kept {kept} context message(s)."
+                    )),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
@@ -284,4 +333,118 @@ impl Actor {
             }
         }
     }
+
+    async fn current_model(&self) -> Result<String> {
+        let maybe = self.runtime.db.get_agent_spec(&self.agent_id).await?;
+        Ok(maybe
+            .map(|spec| spec.model)
+            .unwrap_or_else(|| "unknown".to_string()))
+    }
+
+    async fn set_model(&self, model: &str) -> Result<()> {
+        let existing = self.runtime.db.get_agent_spec(&self.agent_id).await?;
+        let (name, default_provider_id, system_prompt) = if let Some(spec) = existing {
+            (spec.name, spec.default_provider_id, spec.system_prompt)
+        } else {
+            (fallback_agent_name(&self.agent_id), None, String::new())
+        };
+        self.runtime
+            .db
+            .upsert_agent_spec(
+                &self.agent_id,
+                &name,
+                default_provider_id.as_deref(),
+                model,
+                &system_prompt,
+            )
+            .await
+    }
+
+    async fn telegram_participants(&self) -> Result<String> {
+        let Some(ctx_json) = self
+            .runtime
+            .db
+            .get_port_session_context("telegram", &self.session_id)
+            .await?
+        else {
+            return Ok("No Telegram participant context found for this session.".to_string());
+        };
+        let ctx = TelegramSessionContext::from_json(ctx_json)?;
+        if ctx.participants.is_empty() {
+            return Ok("No participants tracked in Telegram session context.".to_string());
+        }
+
+        let mut lines = Vec::new();
+        lines.push(format!("Chat {} ({})", ctx.chat_id, ctx.chat_type));
+        lines.push("Participants:".to_string());
+        for participant in ctx.participants.values() {
+            let display = participant
+                .username
+                .as_ref()
+                .map(|username| format!("@{username}"))
+                .or_else(|| participant.first_name.clone())
+                .unwrap_or_else(|| participant.id.clone());
+            lines.push(format!("- {} [{}]", display, participant.id));
+        }
+        Ok(lines.join("\n"))
+    }
+
+    async fn context_dump(&self) -> Result<String> {
+        let total = self
+            .runtime
+            .db
+            .count_session_messages(&self.session_id)
+            .await?;
+        let limit = 20_usize;
+        let from = total.saturating_sub(limit);
+        let messages = self
+            .runtime
+            .db
+            .list_session_messages(&self.session_id, from, limit)
+            .await?;
+        Ok(serde_json::to_string_pretty(&messages)?)
+    }
+
+    async fn compact_session(&self) -> Result<usize> {
+        const KEEP_MESSAGES: usize = 24;
+
+        let total = self
+            .runtime
+            .db
+            .count_session_messages(&self.session_id)
+            .await?;
+        if total <= KEEP_MESSAGES {
+            return Ok(total);
+        }
+
+        let from = total.saturating_sub(KEEP_MESSAGES);
+        let tail = self
+            .runtime
+            .db
+            .list_session_messages(&self.session_id, from, KEEP_MESSAGES)
+            .await?;
+        self.runtime
+            .db
+            .clear_session_history(&self.session_id)
+            .await?;
+        for payload in &tail {
+            self.runtime
+                .db
+                .append_session_message(&self.session_id, payload)
+                .await?;
+        }
+        Ok(tail.len())
+    }
+}
+
+fn fallback_agent_name(agent_id: &Uri) -> String {
+    let raw = agent_id.as_str();
+    if raw == "borg:agent:default" {
+        return "Default Agent".to_string();
+    }
+    raw.rsplit(':')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Agent")
+        .to_string()
 }

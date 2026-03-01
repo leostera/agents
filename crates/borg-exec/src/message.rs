@@ -5,6 +5,10 @@ use crate::port_context::PortContext;
 
 #[derive(Debug, Clone)]
 pub enum BorgCommand {
+    ModelShowCurrent,
+    ModelSet { model: String },
+    ParticipantsList,
+    ContextDump,
     CompactSession,
     ResetContext,
 }

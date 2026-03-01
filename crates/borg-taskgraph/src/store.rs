@@ -224,6 +224,61 @@ impl TaskGraphStore {
         Ok(task)
     }
 
+    pub async fn list_tasks(
+        &self,
+        params: ListParams,
+    ) -> Result<(Vec<TaskRecord>, Option<String>)> {
+        let limit = normalized_limit(params.limit);
+        let mut tx = self.db.pool().begin().await?;
+
+        let (cursor_ts, cursor_id) = decode_cursor(params.cursor.as_deref())?;
+        let mut rows = if let (Some(ts), Some(id)) = (&cursor_ts, &cursor_id) {
+            sqlx::query(
+                r#"SELECT uri, created_at
+                   FROM taskgraph_tasks
+                   WHERE (created_at > ?1 OR (created_at = ?1 AND uri > ?2))
+                   ORDER BY created_at ASC, uri ASC
+                   LIMIT ?3"#,
+            )
+            .bind(ts)
+            .bind(id)
+            .bind((limit + 1) as i64)
+            .fetch_all(tx.as_mut())
+            .await?
+        } else {
+            sqlx::query(
+                r#"SELECT uri, created_at
+                   FROM taskgraph_tasks
+                   ORDER BY created_at ASC, uri ASC
+                   LIMIT ?1"#,
+            )
+            .bind((limit + 1) as i64)
+            .fetch_all(tx.as_mut())
+            .await?
+        };
+
+        let mut next_cursor = None;
+        if rows.len() > limit {
+            if let Some(last) = rows.get(limit - 1) {
+                let ts: String = last.get("created_at");
+                let id: String = last.get("uri");
+                next_cursor = Some(encode_cursor(&ts, &id));
+            }
+            rows.truncate(limit);
+        }
+
+        let mut tasks = Vec::with_capacity(rows.len());
+        for row in rows {
+            let uri: String = row.get("uri");
+            if let Some(task) = load_task_tx(&mut tx, &uri).await? {
+                tasks.push(task);
+            }
+        }
+
+        tx.commit().await?;
+        Ok((tasks, next_cursor))
+    }
+
     pub async fn update_task_fields(
         &self,
         session_uri: &str,
@@ -1148,9 +1203,6 @@ impl TaskGraphStore {
                 &subtask.assignee_agent_id,
                 "task.validation_failed: subtask assignee_agent_id",
             )?;
-            if subtask.assignee_agent_id.trim() == creator_agent_id.trim() {
-                return Err(anyhow!("task.assignee_reviewer_must_differ"));
-            }
             for label in &subtask.labels {
                 ensure_label(label)?;
             }

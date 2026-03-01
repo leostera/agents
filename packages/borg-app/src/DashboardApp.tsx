@@ -4,6 +4,7 @@ import {
   Bell,
   Bot,
   Brain,
+  GitFork,
   Hammer,
   LayoutDashboard,
   Map,
@@ -37,6 +38,9 @@ import { ObservabilityTracingPage } from "./pages/observability/tracing";
 import { OverviewPage } from "./pages/overview";
 import { ProvidersPage } from "./pages/settings/providers";
 import { ProviderDetailsPage } from "./pages/settings/providers/id";
+import { TaskGraphExplorerPage } from "./pages/taskgraph/explorer";
+import { TaskGraphKanbanPage } from "./pages/taskgraph/kanban";
+import { TaskGraphTaskDetailsPage } from "./pages/taskgraph/task";
 
 type DashboardRouteItem = {
   id: string;
@@ -154,6 +158,24 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
     ],
   },
   {
+    id: "taskgraph",
+    title: "TaskGraph",
+    items: [
+      {
+        id: "taskgraph-explorer",
+        title: "Explorer",
+        icon: GitFork,
+        path: "/taskgraph/explorer",
+      },
+      {
+        id: "taskgraph-kanban",
+        title: "Kanban",
+        icon: Workflow,
+        path: "/taskgraph/kanban",
+      },
+    ],
+  },
+  {
     id: "observability",
     title: "Observability",
     items: [
@@ -227,6 +249,7 @@ const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
   "/observability": SECTION_BY_ID["observability-overview"],
   "/memory": SECTION_BY_ID["memory-explorer"],
   "/memory/search": SECTION_BY_ID["memory-explorer"],
+  "/taskgraph": SECTION_BY_ID["taskgraph-explorer"],
 };
 const MEMORY_ENTITY_PREFIX = "/memory/entity/";
 const MEMORY_EXPLORER_PREFIX = "/memory/explorer/";
@@ -238,6 +261,7 @@ const CONTROL_PORT_PREFIX = "/control/ports/";
 const OBSERVABILITY_TRACING_PREFIX = "/observability/tracing/";
 const SETTINGS_PROVIDER_PREFIX = "/settings/providers/";
 const SETTINGS_PROVIDER_LEGACY_PREFIX = "/settings/provider/";
+const TASKGRAPH_TASK_PREFIX = "/taskgraph/tasks/";
 const borgApi = createBorgApiClient();
 
 function ControlPlaceholder({ title }: { title: string }) {
@@ -462,6 +486,31 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
     };
   }
   if (
+    normalizedPathname.startsWith(TASKGRAPH_TASK_PREFIX) &&
+    normalizedPathname.length > TASKGRAPH_TASK_PREFIX.length
+  ) {
+    const encodedTaskUri = normalizedPathname.slice(
+      TASKGRAPH_TASK_PREFIX.length
+    );
+    try {
+      return {
+        id: "taskgraph-task",
+        entityUri: decodeURIComponent(encodedTaskUri),
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    } catch {
+      return {
+        id: "taskgraph-task",
+        entityUri: encodedTaskUri,
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    }
+  }
+  if (
     normalizedPathname.startsWith(SETTINGS_PROVIDER_PREFIX) &&
     normalizedPathname.length > SETTINGS_PROVIDER_PREFIX.length
   ) {
@@ -606,6 +655,11 @@ export function DashboardApp() {
       ),
       "memory-entity": () => (
         <MemoryEntityPage entityUri={route.entityUri ?? ""} />
+      ),
+      "taskgraph-explorer": () => <TaskGraphExplorerPage />,
+      "taskgraph-kanban": () => <TaskGraphKanbanPage />,
+      "taskgraph-task": () => (
+        <TaskGraphTaskDetailsPage taskUri={route.entityUri ?? ""} />
       ),
       "settings-providers": () => <ProvidersPage />,
       "settings-provider": () => (

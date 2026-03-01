@@ -6,7 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use borg_agent::{Agent, AgentTools, Message, Session, SessionResult, ToolResultData};
 use borg_codemode::{CodeModeContext, CodeModeRuntime, default_tool_specs};
-use borg_core::{Uri, uri};
+use borg_core::uri;
 use borg_db::BorgDb;
 use borg_llm::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
@@ -173,6 +173,8 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
         CodeModeContext::default(),
         open_test_memory().await,
         open_test_db().await,
+        uri!("borg", "session", "test-runtime"),
+        uri!("borg", "agent", "test-runtime"),
     )
     .unwrap();
     let tools = AgentTools {
@@ -265,6 +267,8 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
         CodeModeContext::default(),
         open_test_memory().await,
         open_test_db().await,
+        uri!("borg", "session", "test-invalid"),
+        uri!("borg", "agent", "test-invalid"),
     )
     .unwrap();
     let tools = AgentTools {

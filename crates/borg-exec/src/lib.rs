@@ -1,4 +1,5 @@
 mod actor;
+mod admin_tools;
 mod llm_resolver;
 mod mailbox;
 mod message;

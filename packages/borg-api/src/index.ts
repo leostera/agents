@@ -181,6 +181,73 @@ export type MemoryExplorerResponse = {
   edges?: MemoryExplorerEdge[];
 };
 
+export type TaskGraphReview = {
+  submitted_at?: string | null;
+  approved_at?: string | null;
+  changes_requested_at?: string | null;
+};
+
+export type TaskGraphTask = {
+  uri: string;
+  title: string;
+  description: string;
+  definition_of_done: string;
+  status: "pending" | "doing" | "review" | "done" | "discarded";
+  assignee_agent_id: string;
+  assignee_session_uri: string;
+  reviewer_agent_id: string;
+  reviewer_session_uri: string;
+  labels: string[];
+  parent_uri?: string | null;
+  blocked_by: string[];
+  duplicate_of?: string | null;
+  references: string[];
+  review: TaskGraphReview;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskGraphComment = {
+  id: string;
+  task_uri: string;
+  author_session_uri: string;
+  body: string;
+  created_at: string;
+};
+
+export type TaskGraphEvent = {
+  id: string;
+  task_uri: string;
+  actor_session_uri: string;
+  type: string;
+  data: Record<string, unknown>;
+  created_at: string;
+};
+
+export type TaskGraphTasksResponse = {
+  tasks?: TaskGraphTask[];
+  next_cursor?: string | null;
+};
+
+export type TaskGraphTaskResponse = {
+  task?: TaskGraphTask;
+};
+
+export type TaskGraphCommentsResponse = {
+  comments?: TaskGraphComment[];
+  next_cursor?: string | null;
+};
+
+export type TaskGraphEventsResponse = {
+  events?: TaskGraphEvent[];
+  next_cursor?: string | null;
+};
+
+export type TaskGraphChildrenResponse = {
+  children?: TaskGraphTask[];
+  next_cursor?: string | null;
+};
+
 export type LlmCallRecord = {
   call_id: string;
   provider: string;
@@ -467,6 +534,107 @@ export class BorgApiClient {
   async health(): Promise<boolean> {
     const data = await this.requestJson<HealthResponse>("/health");
     return data.status === "ok";
+  }
+
+  async listTaskGraphTasks(
+    params: { limit?: number; cursor?: string | null } = {}
+  ): Promise<{ tasks: TaskGraphTask[]; nextCursor: string | null }> {
+    const searchParams = new URLSearchParams({
+      limit: String(params.limit ?? 500),
+    });
+    if (params.cursor) {
+      searchParams.set("cursor", params.cursor);
+    }
+    const data = await this.requestJson<TaskGraphTasksResponse>(
+      `/api/taskgraph/tasks?${searchParams.toString()}`
+    );
+    return {
+      tasks: Array.isArray(data.tasks) ? data.tasks : [],
+      nextCursor:
+        typeof data.next_cursor === "string" && data.next_cursor.length > 0
+          ? data.next_cursor
+          : null,
+    };
+  }
+
+  async getTaskGraphTask(taskUri: string): Promise<TaskGraphTask | null> {
+    try {
+      const data = await this.requestJson<TaskGraphTaskResponse>(
+        `/api/taskgraph/tasks/${encodeURIComponent(taskUri)}`
+      );
+      return data.task ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async listTaskGraphComments(
+    taskUri: string,
+    params: { limit?: number; cursor?: string | null } = {}
+  ): Promise<{ comments: TaskGraphComment[]; nextCursor: string | null }> {
+    const searchParams = new URLSearchParams({
+      limit: String(params.limit ?? 200),
+    });
+    if (params.cursor) {
+      searchParams.set("cursor", params.cursor);
+    }
+    const data = await this.requestJson<TaskGraphCommentsResponse>(
+      `/api/taskgraph/tasks/${encodeURIComponent(taskUri)}/comments?${searchParams.toString()}`
+    );
+    return {
+      comments: Array.isArray(data.comments) ? data.comments : [],
+      nextCursor:
+        typeof data.next_cursor === "string" && data.next_cursor.length > 0
+          ? data.next_cursor
+          : null,
+    };
+  }
+
+  async listTaskGraphEvents(
+    taskUri: string,
+    params: { limit?: number; cursor?: string | null } = {}
+  ): Promise<{ events: TaskGraphEvent[]; nextCursor: string | null }> {
+    const searchParams = new URLSearchParams({
+      limit: String(params.limit ?? 200),
+    });
+    if (params.cursor) {
+      searchParams.set("cursor", params.cursor);
+    }
+    const data = await this.requestJson<TaskGraphEventsResponse>(
+      `/api/taskgraph/tasks/${encodeURIComponent(taskUri)}/events?${searchParams.toString()}`
+    );
+    return {
+      events: Array.isArray(data.events) ? data.events : [],
+      nextCursor:
+        typeof data.next_cursor === "string" && data.next_cursor.length > 0
+          ? data.next_cursor
+          : null,
+    };
+  }
+
+  async listTaskGraphChildren(
+    taskUri: string,
+    params: { limit?: number; cursor?: string | null } = {}
+  ): Promise<{ children: TaskGraphTask[]; nextCursor: string | null }> {
+    const searchParams = new URLSearchParams({
+      limit: String(params.limit ?? 200),
+    });
+    if (params.cursor) {
+      searchParams.set("cursor", params.cursor);
+    }
+    const data = await this.requestJson<TaskGraphChildrenResponse>(
+      `/api/taskgraph/tasks/${encodeURIComponent(taskUri)}/children?${searchParams.toString()}`
+    );
+    return {
+      children: Array.isArray(data.children) ? data.children : [],
+      nextCursor:
+        typeof data.next_cursor === "string" && data.next_cursor.length > 0
+          ? data.next_cursor
+          : null,
+    };
   }
 
   async listSessions(limit = 100): Promise<SessionRecord[]> {

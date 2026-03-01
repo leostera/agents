@@ -46,14 +46,21 @@ impl BorgRuntime {
         self.llm_resolver.llm().await
     }
 
-    pub async fn build_toolchain(&self, msg: &UserMessage, session_id: &Uri) -> Result<Toolchain> {
-        let context = self.code_mode_context_for_turn(msg, session_id);
+    pub async fn build_toolchain(
+        &self,
+        msg: &UserMessage,
+        session_id: &Uri,
+        agent_id: &Uri,
+    ) -> Result<Toolchain> {
+        let context = self.code_mode_context_for_turn(msg, session_id, agent_id);
         let runtime_toolchain = build_exec_toolchain_with_context(
             self.runtime.clone(),
             self.shell_runtime.clone(),
             context,
             self.memory.clone(),
             self.db.clone(),
+            session_id.clone(),
+            agent_id.clone(),
         )?;
         let apps = BorgApps::new(self.db.clone()).await?;
         let apps_toolchain = apps.as_toolchain()?;
@@ -120,7 +127,12 @@ impl BorgRuntime {
         Ok(())
     }
 
-    fn code_mode_context_for_turn(&self, msg: &UserMessage, session_id: &Uri) -> CodeModeContext {
+    fn code_mode_context_for_turn(
+        &self,
+        msg: &UserMessage,
+        session_id: &Uri,
+        agent_id: &Uri,
+    ) -> CodeModeContext {
         let metadata = msg.metadata.as_object();
         let port_name = metadata
             .and_then(|obj| obj.get("port"))
@@ -151,6 +163,7 @@ impl BorgRuntime {
             current_port_id,
             current_message_id,
             current_session_id: Some(session_id.clone()),
+            current_agent_id: Some(agent_id.clone()),
             current_user_id: Some(msg.user_id.clone()),
         }
     }

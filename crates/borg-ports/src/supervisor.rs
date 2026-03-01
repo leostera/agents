@@ -12,6 +12,7 @@ use tokio::time;
 use tracing::{error, info, warn};
 
 use crate::PortMessage;
+use crate::message::PortInput;
 use crate::port::Provider::{Telegram, Unknown};
 use crate::telegram::TelegramPort;
 use crate::{Port, PortConfig};
@@ -252,7 +253,10 @@ async fn bridge_loop(
             .call(BorgMessage {
                 user_id: message.user_id,
                 session_id,
-                input: BorgInput::Chat { text: message.text },
+                input: match message.input {
+                    PortInput::Chat { text } => BorgInput::Chat { text },
+                    PortInput::Command(command) => BorgInput::Command(command),
+                },
                 port_context: message.port_context,
             })
             .await

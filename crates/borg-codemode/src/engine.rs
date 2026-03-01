@@ -29,6 +29,7 @@ pub struct CodeModeContext {
     pub current_port_id: Option<Uri>,
     pub current_message_id: Option<Uri>,
     pub current_session_id: Option<Uri>,
+    pub current_agent_id: Option<Uri>,
     pub current_user_id: Option<Uri>,
 }
 
@@ -53,6 +54,12 @@ impl CodeModeContext {
                 Value::String(value.to_string()),
             );
         }
+        if let Some(value) = &self.current_agent_id {
+            obj.insert(
+                "current_agent_id".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
         if let Some(value) = &self.current_user_id {
             obj.insert(
                 "current_user_id".to_string(),
@@ -70,6 +77,7 @@ impl CodeModeContext {
             current_port_id: parse_uri_field(obj, "current_port_id")?,
             current_message_id: parse_uri_field(obj, "current_message_id")?,
             current_session_id: parse_uri_field(obj, "current_session_id")?,
+            current_agent_id: parse_uri_field(obj, "current_agent_id")?,
             current_user_id: parse_uri_field(obj, "current_user_id")?,
         })
     }

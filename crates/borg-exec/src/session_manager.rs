@@ -8,6 +8,7 @@ use borg_memory::default_memory_tool_specs;
 use borg_taskgraph::default_taskgraph_tool_specs;
 use std::sync::Arc;
 
+use crate::admin_tools::default_admin_tool_specs;
 use crate::types::UserMessage;
 
 #[derive(Clone)]
@@ -89,6 +90,7 @@ fn ensure_default_tools(existing: Vec<ToolSpec>) -> Vec<ToolSpec> {
         .into_iter()
         .chain(default_memory_tool_specs().into_iter())
         .chain(default_taskgraph_tool_specs().into_iter())
+        .chain(default_admin_tool_specs().into_iter())
         .chain(default_apps_tool_specs().into_iter())
     {
         by_name.insert(tool.name.clone(), tool);

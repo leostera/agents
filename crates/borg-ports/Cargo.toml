@@ -7,6 +7,7 @@ edition = "2024"
 anyhow.workspace = true
 async-trait.workspace = true
 borg-core = { path = "../borg-core" }
+borg-cmd = { path = "../borg-cmd" }
 borg-db = { path = "../borg-db" }
 borg-exec = { path = "../borg-exec" }
 serde.workspace = true
