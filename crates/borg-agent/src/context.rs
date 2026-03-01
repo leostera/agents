@@ -8,6 +8,7 @@ use crate::{Agent, Message, ToolSpec};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextWindow {
+    pub agent: Agent,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolSpec>,
 }
@@ -35,6 +36,7 @@ impl ContextManager for PassthroughContextManager {
         let messages =
             with_context_metadata(messages.to_vec(), ContextMetadataPolicy::Passthrough, None);
         Ok(ContextWindow {
+            agent: agent.clone(),
             messages,
             tools: agent.tools.clone(),
         })
@@ -81,6 +83,7 @@ impl ContextManager for CompactingContextManager {
                 Some(self.max_chars),
             );
             return Ok(ContextWindow {
+                agent: agent.clone(),
                 messages: pinned,
                 tools: agent.tools.clone(),
             });
@@ -128,6 +131,7 @@ impl ContextManager for CompactingContextManager {
             Some(self.max_chars),
         );
         Ok(ContextWindow {
+            agent: agent.clone(),
             messages: compacted,
             tools: agent.tools.clone(),
         })
@@ -158,6 +162,7 @@ impl ContextManager for SessionContextManager {
             self.telegram_session_context.clone(),
         );
         Ok(ContextWindow {
+            agent: context.agent,
             messages,
             tools: context.tools,
         })

@@ -5,6 +5,7 @@ members = [
   "crates/borg-apps",
   "crates/borg-cli",
   "crates/borg-cmd",
+  "crates/borg-taskgraph",
   "crates/borg-core",
   "crates/borg-db",
   "crates/borg-exec",
@@ -12,6 +13,7 @@ members = [
   "crates/borg-memory",
   "crates/borg-ports",
   "crates/borg-codemode",
+  "crates/borg-shellmode",
 ]
 resolver = "2"
 

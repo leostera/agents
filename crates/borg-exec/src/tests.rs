@@ -13,6 +13,7 @@ use borg_llm::{
     TranscriptionRequest,
 };
 use borg_memory::MemoryStore;
+use borg_shellmode::ShellModeRuntime;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
@@ -67,6 +68,7 @@ async fn openrouter_exec_without_openai_transcription_fallback(
         db,
         memory,
         CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
         Uri::parse(worker).unwrap(),
     );
     {
@@ -120,6 +122,7 @@ async fn set_model_for_session_updates_existing_agent_spec_and_preserves_fields(
         db.clone(),
         memory,
         CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
         uri!("borg", "worker", "set-model-existing"),
     );
     let default_agent_id = uri!("borg", "agent", "default");
@@ -156,6 +159,7 @@ async fn set_model_for_session_creates_default_agent_spec_when_missing() {
         db.clone(),
         memory,
         CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
         uri!("borg", "worker", "set-model-new"),
     );
 
@@ -182,6 +186,7 @@ async fn set_model_for_session_rejects_empty_model() {
         db,
         memory,
         CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
         uri!("borg", "worker", "set-model-invalid"),
     );
 
@@ -304,8 +309,10 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
 
     let toolchain = build_exec_toolchain_with_context(
         CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
         CodeModeContext::default(),
         open_test_memory().await,
+        open_test_db().await,
     )
     .unwrap();
     let tools = AgentTools {
@@ -394,8 +401,10 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
 
     let toolchain = build_exec_toolchain_with_context(
         CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
         CodeModeContext::default(),
         open_test_memory().await,
+        open_test_db().await,
     )
     .unwrap();
     let tools = AgentTools {

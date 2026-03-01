@@ -1,0 +1,16 @@
+[package]
+name = "borg-shellmode"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+borg-core = { path = "../borg-core" }
+borg-agent = { path = "../borg-agent" }
+tracing.workspace = true
+tokio.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true

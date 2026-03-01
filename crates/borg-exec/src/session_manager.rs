@@ -5,6 +5,7 @@ use borg_codemode::default_tool_specs;
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 use borg_memory::default_memory_tool_specs;
+use borg_taskgraph::default_taskgraph_tool_specs;
 use std::sync::Arc;
 
 use crate::types::UserMessage;
@@ -87,6 +88,7 @@ fn ensure_default_tools(existing: Vec<ToolSpec>) -> Vec<ToolSpec> {
     for tool in default_tool_specs()
         .into_iter()
         .chain(default_memory_tool_specs().into_iter())
+        .chain(default_taskgraph_tool_specs().into_iter())
         .chain(default_apps_tool_specs().into_iter())
     {
         by_name.insert(tool.name.clone(), tool);

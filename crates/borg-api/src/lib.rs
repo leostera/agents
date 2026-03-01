@@ -123,6 +123,7 @@ mod tests {
             db.clone(),
             memory.clone(),
             CodeModeRuntime::default(),
+            borg_shellmode::ShellModeRuntime::new(),
             Uri::parse("borg:worker:test").expect("worker uri"),
         );
         let http_port = init_http_port(exec.clone()).expect("init http port");

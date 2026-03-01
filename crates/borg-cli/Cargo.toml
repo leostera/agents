@@ -16,6 +16,7 @@ borg-db = { path = "../borg-db" }
 borg-exec = { path = "../borg-exec" }
 borg-memory = { path = "../borg-memory" }
 borg-codemode = { path = "../borg-codemode" }
+borg-shellmode = { path = "../borg-shellmode" }
 clap.workspace = true
 tokio.workspace = true
 tracing.workspace = true

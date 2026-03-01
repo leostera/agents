@@ -1,16 +1,17 @@
 [package]
-name = "borg-apps"
+name = "borg-taskgraph"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
 borg-agent = { path = "../borg-agent" }
-borg-codemode = { path = "../borg-codemode" }
-borg-shellmode = { path = "../borg-shellmode" }
 borg-core = { path = "../borg-core" }
 borg-db = { path = "../borg-db" }
-borg-memory = { path = "../borg-memory" }
-borg-taskgraph = { path = "../borg-taskgraph" }
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+base64.workspace = true

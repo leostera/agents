@@ -21,4 +21,5 @@ reqwest.workspace = true
 
 [dev-dependencies]
 borg-codemode = { path = "../borg-codemode" }
+borg-shellmode = { path = "../borg-shellmode" }
 tower.workspace = true

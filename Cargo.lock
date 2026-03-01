@@ -567,6 +567,7 @@ dependencies = [
  "borg-llm",
  "borg-memory",
  "borg-ports",
+ "borg-shellmode",
  "reqwest",
  "serde",
  "serde_json",
@@ -586,6 +587,8 @@ dependencies = [
  "borg-core",
  "borg-db",
  "borg-memory",
+ "borg-shellmode",
+ "borg-taskgraph",
  "serde",
  "serde_json",
 ]
@@ -602,6 +605,7 @@ dependencies = [
  "borg-db",
  "borg-exec",
  "borg-memory",
+ "borg-shellmode",
  "clap",
  "reqwest",
  "serde",
@@ -685,6 +689,8 @@ dependencies = [
  "borg-db",
  "borg-llm",
  "borg-memory",
+ "borg-shellmode",
+ "borg-taskgraph",
  "serde",
  "serde_json",
  "tokio",
@@ -750,6 +756,37 @@ dependencies = [
  "teloxide",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "borg-shellmode"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "borg-agent",
+ "borg-core",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "borg-taskgraph"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "borg-agent",
+ "borg-core",
+ "borg-db",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

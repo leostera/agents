@@ -38,6 +38,12 @@ impl CompatConn {
     }
 }
 
+impl BorgDb {
+    pub fn pool(&self) -> &SqlitePool {
+        self.conn.pool()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentSpecRecord {
     pub agent_id: Uri,

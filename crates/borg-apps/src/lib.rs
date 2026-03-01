@@ -4,6 +4,8 @@ use borg_codemode::default_tool_specs as default_codemode_tool_specs;
 use borg_core::Uri;
 use borg_db::{AppCapabilityRecord, AppRecord, BorgDb};
 use borg_memory::default_memory_tool_specs;
+use borg_shellmode::default_tool_specs as default_shellmode_tool_specs;
+use borg_taskgraph::default_taskgraph_tool_specs;
 use serde::Serialize;
 use serde_json::json;
 
@@ -40,7 +42,12 @@ pub struct DefaultAppsCatalog {
 impl DefaultAppsCatalog {
     pub fn new() -> Self {
         Self {
-            apps: vec![build_codemode_app(), build_memory_app()],
+            apps: vec![
+                build_codemode_app(),
+                build_shellmode_app(),
+                build_memory_app(),
+                build_taskgraph_app(),
+            ],
         }
     }
 
@@ -98,6 +105,21 @@ fn build_codemode_app() -> DefaultApp {
     }
 }
 
+fn build_shellmode_app() -> DefaultApp {
+    DefaultApp {
+        app_id: "borg:app:shellmode-runtime",
+        name: "ShellMode Runtime",
+        slug: "shellmode-runtime",
+        description: "Core shell execution app for running arbitrary commands on the host system.",
+        status: "active",
+        capabilities: tool_specs_to_capabilities(
+            "shellmode-runtime",
+            "shell",
+            default_shellmode_tool_specs(),
+        ),
+    }
+}
+
 fn build_memory_app() -> DefaultApp {
     DefaultApp {
         app_id: "borg:app:memory-system",
@@ -109,6 +131,21 @@ fn build_memory_app() -> DefaultApp {
             "memory-system",
             "codemode",
             default_memory_tool_specs(),
+        ),
+    }
+}
+
+fn build_taskgraph_app() -> DefaultApp {
+    DefaultApp {
+        app_id: "borg:app:taskgraph-system",
+        name: "TaskGraph System",
+        slug: "taskgraph-system",
+        description: "Durable task DAG app with review-aware workflow, dependency management, and queue tooling.",
+        status: "active",
+        capabilities: tool_specs_to_capabilities(
+            "taskgraph-system",
+            "codemode",
+            default_taskgraph_tool_specs(),
         ),
     }
 }

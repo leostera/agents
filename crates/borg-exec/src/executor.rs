@@ -9,6 +9,7 @@ use borg_llm::TranscriptionRequest;
 use borg_llm::providers::openai::{OpenAiApiMode, OpenAiProvider};
 use borg_llm::providers::openrouter::OpenRouterProvider;
 use borg_memory::MemoryStore;
+use borg_shellmode::ShellModeRuntime;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -117,6 +118,7 @@ pub struct BorgExecutor {
     db: BorgDb,
     memory: MemoryStore,
     runtime: CodeModeRuntime,
+    shell_runtime: ShellModeRuntime,
     worker_id: Uri,
     session_manager: SessionManager,
     openai_base_url: Option<String>,
@@ -127,13 +129,20 @@ pub struct BorgExecutor {
 pub type ExecEngine = BorgExecutor;
 
 impl BorgExecutor {
-    pub fn new(db: BorgDb, memory: MemoryStore, runtime: CodeModeRuntime, worker_id: Uri) -> Self {
+    pub fn new(
+        db: BorgDb,
+        memory: MemoryStore,
+        runtime: CodeModeRuntime,
+        shell_runtime: ShellModeRuntime,
+        worker_id: Uri,
+    ) -> Self {
         let agent_model = DEFAULT_AGENT_MODEL.to_string();
         let session_manager = SessionManager::new(db.clone(), agent_model.clone());
         Self {
             db,
             memory,
             runtime,
+            shell_runtime,
             worker_id,
             session_manager,
             openai_base_url: None,
@@ -438,8 +447,10 @@ impl BorgExecutor {
         let code_mode_context = self.code_mode_context_for_turn(msg, &session_id);
         let runtime_toolchain = build_exec_toolchain_with_context(
             self.runtime.clone(),
+            self.shell_runtime.clone(),
             code_mode_context,
             self.memory.clone(),
+            self.db.clone(),
         )?;
         let apps = BorgApps::new(self.db.clone()).await?;
         let apps_toolchain = apps.as_toolchain()?;

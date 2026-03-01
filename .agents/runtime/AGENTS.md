@@ -19,6 +19,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - Agents create/manage tasks via tools.
 - Tasks may own dedicated task-sessions that close on task completion.
 - Scheduler/executor loop is for explicit tasks, not baseline chat ingress.
+- TaskGraph MCP tooling is available by default via `TaskGraph-*` tools from `borg-taskgraph`.
 
 ## Storage + Paths
 - `~/.borg/config.db` is control-plane/config DB.
@@ -34,6 +35,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - `agent_specs` includes `enabled` for soft-disabling agent definitions without deleting rows.
 - `agent_specs.default_provider_id` stores the preferred provider key for provider-first model selection in control UI.
 - `agent_specs` no longer persists per-agent `tools_json`; runtime toolchain is composed from default code+memory tools.
+- `taskgraph_*` tables in `config.db` store durable task DAG state, comments, and audit events.
 - Telegram port refreshes known session context snapshots on startup (best-effort chat/admin hydration).
 - Onboarding persists provider key via `POST /api/providers/:provider` and updates runtime preferred provider.
 - Provider precedence is env-first: `BORG_LLM_PROVIDER` overrides persisted `runtime/preferred_provider`.
@@ -49,6 +51,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - Telegram command `/model` supports:
   - `/model` to show current `agent_id` + model for the chat session.
   - `/model <model_name>` to persist model on the resolved agent spec.
+- Runtime toolchain now merges CodeMode + Memory + TaskGraph + Apps-listCapabilities in session turns.
 
 ## Runtime Safety
 - Initialize tracing before application code in `main`.

@@ -8,6 +8,7 @@ use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
 use borg_exec::ExecEngine;
 use borg_memory::{FactInput, MemoryStore, SearchQuery};
+use borg_shellmode::ShellModeRuntime;
 use clap::{Parser, Subcommand};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -148,10 +149,12 @@ impl BorgCliApp {
             .with_ffi_handler("memory__search", move |args| {
                 ffi_memory_search(memory_for_search.clone(), args)
             });
+        let shell_runtime = ShellModeRuntime::new();
         let exec = ExecEngine::new(
             db.clone(),
             memory.clone(),
             runtime,
+            shell_runtime,
             Uri::parse(&format!("borg:worker:{}", Uuid::now_v7()))?,
         );
 
