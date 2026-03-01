@@ -965,8 +965,9 @@ mod tests {
     #[test]
     fn uri_parse_validation_checks_shape() {
         assert!(Uri::parse("plex:movies:abc").is_ok());
-        assert!(Uri::parse("plex:movies").is_err());
-        assert!(Uri::parse("plex::id").is_err());
+        assert!(Uri::parse("plex:movies").is_ok());
+        assert!(Uri::parse("plex::id").is_ok());
+        assert!(Uri::parse("https://example.com/item/123").is_ok());
         assert!(Uri::parse("not a uri").is_err());
     }
 }

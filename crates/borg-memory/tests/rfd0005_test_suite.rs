@@ -365,6 +365,42 @@ async fn rfd0005_same_as_identity_contract() {
 }
 
 #[tokio::test]
+async fn rfd0005_same_as_prefers_borg_canonical_uri() {
+    let store = make_store("rfd0005-sameas-canonical").await;
+    let tools = build_memory_toolchain(store).expect("toolchain");
+    let canonical = format!("borg:person:{}", Uuid::now_v7());
+    let duplicate = format!("spotify:artist:{}", Uuid::now_v7());
+    let source = format!("borg:message:{}", Uuid::now_v7());
+
+    let _ = tools
+        .run(request(
+            "Memory-stateFacts",
+            json!({
+                "source": source,
+                "facts": [
+                    { "entity": duplicate, "field": "borg:field:sameAs", "value": { "uri": canonical } }
+                ]
+            }),
+        ))
+        .await
+        .expect("stateFacts sameAs call");
+
+    let response = tools
+        .run(request(
+            "Memory-getEntity",
+            json!({ "entityUri": duplicate }),
+        ))
+        .await
+        .expect("getEntity call");
+    let body = unwrap_text_json(response.content);
+    let resolved = body["entityUri"].as_str().expect("canonical entityUri");
+    assert!(
+        resolved.starts_with("borg:"),
+        "canonical sameAs resolution should prefer borg:* URIs"
+    );
+}
+
+#[tokio::test]
 async fn rfd0005_schema_tools_contract() {
     let store = make_store("rfd0005-schema").await;
     let tools = build_memory_toolchain(store).expect("toolchain");
@@ -433,6 +469,51 @@ async fn rfd0005_value_schema_contract() {
             .await
             .expect("stateFacts typed value");
     }
+}
+
+#[tokio::test]
+async fn rfd0005_state_facts_accepts_array_typed_values() {
+    let store = make_store("rfd0005-array-values").await;
+    let tools = build_memory_toolchain(store).expect("toolchain");
+    let entity = format!("borg:person:{}", Uuid::now_v7());
+    let source = format!("borg:message:{}", Uuid::now_v7());
+
+    let _ = tools
+        .run(request(
+            "Memory-stateFacts",
+            json!({
+                "source": source,
+                "facts": [{
+                    "entity": entity,
+                    "field": "borg:field:alias",
+                    "value": [
+                        { "string": "mariana" },
+                        { "string": "maya" }
+                    ]
+                }]
+            }),
+        ))
+        .await
+        .expect("stateFacts array value");
+
+    let listed = tools
+        .run(request(
+            "Memory-listFacts",
+            json!({
+                "entity": entity,
+                "field": "borg:field:alias",
+                "includeRetracted": false,
+                "pagination": { "limit": 10 }
+            }),
+        ))
+        .await
+        .expect("listFacts");
+    let body = unwrap_text_json(listed.content);
+    let first_value = &body["facts"][0]["value"];
+    assert!(
+        first_value.is_array(),
+        "array typed values must roundtrip through listFacts"
+    );
 }
 
 #[tokio::test]

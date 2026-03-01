@@ -17,3 +17,6 @@ sqlx.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tantivy.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+proptest = "1"

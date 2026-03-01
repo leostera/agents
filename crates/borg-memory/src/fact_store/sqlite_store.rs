@@ -130,16 +130,7 @@ impl Uri {
     pub fn parse(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
         let parsed = Url::parse(&value)?;
-        let opaque = parsed.path().trim_start_matches('/');
-        let mut parts = opaque.split(':');
-        let kind = parts
-            .next()
-            .ok_or_else(|| anyhow!("invalid uri: {}", value))?;
-        let id = parts
-            .next()
-            .ok_or_else(|| anyhow!("invalid uri: {}", value))?;
-        if parts.next().is_some() || parsed.scheme().is_empty() || kind.is_empty() || id.is_empty()
-        {
+        if parsed.scheme().is_empty() {
             return Err(anyhow!("invalid uri: {}", value));
         }
         Ok(Self(parsed))
@@ -216,6 +207,7 @@ pub struct FactRecord {
     pub value: FactValue,
     pub tx_id: Uri,
     pub stated_at: DateTime<Utc>,
+    pub is_retracted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -310,6 +302,7 @@ impl SqliteFactStore {
                 value: fact.value,
                 tx_id: tx_id.clone(),
                 stated_at,
+                is_retracted: false,
             });
         }
 
@@ -321,7 +314,7 @@ impl SqliteFactStore {
         let conn = self.open_conn().await?;
         let mut rows = conn
             .query(
-                &format!("SELECT fact_id, source, entity, field, arity, value_kind, value_text, value_int, value_float, value_bool, value_bytes, value_ref, tx_id, stated_at FROM {} WHERE fact_id = ?1", FACTS_TABLE),
+                &format!("SELECT fact_id, source, entity, field, arity, value_kind, value_text, value_int, value_float, value_bool, value_bytes, value_ref, tx_id, stated_at, retracted_at FROM {} WHERE fact_id = ?1", FACTS_TABLE),
                 (fact_id.to_string(),),
             )
             .await?;
@@ -345,6 +338,7 @@ impl SqliteFactStore {
             .query(
                 &format!(
                     "SELECT fact_id, source, entity, field, arity, value_kind, value_text, value_int, value_float, value_bool, value_bytes, value_ref, tx_id, stated_at \
+                     , retracted_at \
                      FROM {} \
                      WHERE (?1 IS NULL OR entity = ?1) \
                        AND (?2 IS NULL OR field = ?2) \
@@ -564,9 +558,9 @@ fn decode_value(
         "bool" => Ok(FactValue::Boolean(value_bool.unwrap_or_default() == 1)),
         "bytes" => Ok(FactValue::Bytes(value_bytes.unwrap_or_default())),
         "ref" => Ok(FactValue::Ref(Uri::parse(value_ref.unwrap_or_default())?)),
-        "json" => Ok(FactValue::Json(
-            serde_json::from_str(value_text.as_deref().unwrap_or("null"))?,
-        )),
+        "json" => Ok(FactValue::Json(serde_json::from_str(
+            value_text.as_deref().unwrap_or("null"),
+        )?)),
         _ => Err(anyhow!("unsupported fact value kind: {}", kind)),
     }
 }
@@ -595,6 +589,7 @@ fn row_to_fact(row: &RowView) -> Result<FactRecord> {
         value,
         tx_id: Uri::parse(row.get::<String>(12)?)?,
         stated_at,
+        is_retracted: row.get::<Option<String>>(14)?.is_some(),
     })
 }
 
@@ -621,8 +616,9 @@ mod tests {
     #[test]
     fn uri_parse_rejects_invalid_values() {
         assert!(Uri::parse("not-a-uri").is_err());
-        assert!(Uri::parse("borg:missing").is_err());
-        assert!(Uri::parse("borg::id").is_err());
+        assert!(Uri::parse("borg:missing").is_ok());
+        assert!(Uri::parse("https://example.com/some/path").is_ok());
+        assert!(Uri::parse("borg::id").is_ok());
         assert!(Uri::parse("://").is_err());
     }
 

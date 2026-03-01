@@ -1,9 +1,39 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{FactInput, FactValue, MemoryStore, SearchQuery, Uri};
+
+fn uri_schema() -> Value {
+    json!({
+        "type": "string",
+        "format": "uri"
+    })
+}
+
+fn typed_value_schema() -> Value {
+    json!({
+        "oneOf": [
+            { "type": "object", "required": ["string"], "properties": { "string": { "type": "string" } }, "additionalProperties": false },
+            { "type": "object", "required": ["number"], "properties": { "number": { "type": "number" } }, "additionalProperties": false },
+            { "type": "object", "required": ["bool"], "properties": { "bool": { "type": "boolean" } }, "additionalProperties": false },
+            { "type": "object", "required": ["date"], "properties": { "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" } }, "additionalProperties": false },
+            { "type": "object", "required": ["datetime"], "properties": { "datetime": { "type": "string", "format": "date-time" } }, "additionalProperties": false },
+            { "type": "object", "required": ["uri"], "properties": { "uri": uri_schema() }, "additionalProperties": false }
+        ]
+    })
+}
+
+fn value_schema() -> Value {
+    json!({
+        "oneOf": [
+            typed_value_schema(),
+            { "type": "array", "minItems": 1, "items": typed_value_schema() }
+        ]
+    })
+}
 
 pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![
@@ -13,16 +43,19 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "source": { "type": "string" },
+                    "source": uri_schema(),
+                    "statedAt": { "type": "string", "format": "date-time" },
                     "facts": {
                         "type": "array",
+                        "maxItems": 5000,
                         "minItems": 1,
                         "items": {
                             "type": "object",
                             "properties": {
-                                "entity": { "type": "string" },
-                                "field": { "type": "string" },
-                                "value": {}
+                                "entity": uri_schema(),
+                                "field": uri_schema(),
+                                "value": value_schema(),
+                                "statedAt": { "type": "string", "format": "date-time" }
                             },
                             "required": ["entity", "field", "value"],
                             "additionalProperties": false
@@ -40,16 +73,21 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
-                    "resultTypes": { "type": "array", "items": { "type": "string" } },
+                    "resultTypes": {
+                        "type": "array",
+                        "items": { "type": "string", "enum": ["entity", "fact", "schema"] },
+                        "default": ["entity", "schema"]
+                    },
                     "namespacePrefixes": { "type": "array", "items": { "type": "string" } },
-                    "kindUris": { "type": "array", "items": { "type": "string" } },
-                    "fieldUris": { "type": "array", "items": { "type": "string" } },
+                    "kindUris": { "type": "array", "items": uri_schema() },
+                    "fieldUris": { "type": "array", "items": uri_schema() },
                     "pagination": {
                         "type": "object",
                         "properties": {
-                            "limit": { "type": "integer", "minimum": 1 }
+                            "limit": { "type": "integer", "minimum": 1, "maximum": 5000 },
+                            "cursor": { "type": "string" }
                         },
-                        "additionalProperties": true
+                        "additionalProperties": false
                     }
                 },
                 "required": ["query"],
@@ -62,10 +100,11 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "kindUri": { "type": "string" },
-                    "entityUri": { "type": "string" },
+                    "kindUri": uri_schema(),
+                    "entityUri": uri_schema(),
                     "label": { "type": "string" },
-                    "source": { "type": "string" }
+                    "description": { "type": "string" },
+                    "source": uri_schema()
                 },
                 "required": ["kindUri", "source"],
                 "additionalProperties": false
@@ -77,14 +116,15 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "entityUri": { "type": "string" },
+                    "entityUri": uri_schema(),
                     "includeRetracted": { "type": "boolean", "default": false },
                     "factPagination": {
                         "type": "object",
                         "properties": {
-                            "limit": { "type": "integer", "minimum": 1 }
+                            "limit": { "type": "integer", "minimum": 1, "maximum": 5000 },
+                            "cursor": { "type": "string" }
                         },
-                        "additionalProperties": true
+                        "additionalProperties": false
                     }
                 },
                 "required": ["entityUri"],
@@ -93,12 +133,37 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "Memory-retractFacts".to_string(),
-            description: "Retract facts by factUri or exact pattern. Placeholder until full retraction semantics are implemented.".to_string(),
+            description: "Retract facts by factUri or exact (entity, field, value) pattern using same-shape retraction records.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "source": { "type": "string" },
-                    "targets": { "type": "array", "minItems": 1 }
+                    "source": uri_schema(),
+                    "targets": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "factUri": uri_schema(),
+                                "pattern": {
+                                    "type": "object",
+                                    "required": ["entity", "field", "value"],
+                                    "properties": {
+                                        "entity": uri_schema(),
+                                        "field": uri_schema(),
+                                        "value": value_schema()
+                                    },
+                                    "additionalProperties": false
+                                },
+                                "reason": { "type": "string" }
+                            },
+                            "oneOf": [
+                                { "required": ["factUri"] },
+                                { "required": ["pattern"] }
+                            ],
+                            "additionalProperties": false
+                        }
+                    }
                 },
                 "required": ["source", "targets"],
                 "additionalProperties": false
@@ -110,15 +175,18 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "entity": { "type": "string" },
-                    "field": { "type": "string" },
+                    "entity": uri_schema(),
+                    "field": uri_schema(),
                     "includeRetracted": { "type": "boolean", "default": false },
+                    "since": { "type": "string", "format": "date-time" },
+                    "until": { "type": "string", "format": "date-time" },
                     "pagination": {
                         "type": "object",
                         "properties": {
-                            "limit": { "type": "integer", "minimum": 1 }
+                            "limit": { "type": "integer", "minimum": 1, "maximum": 5000 },
+                            "cursor": { "type": "string" }
                         },
-                        "additionalProperties": true
+                        "additionalProperties": false
                     }
                 },
                 "additionalProperties": false
@@ -126,13 +194,15 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "Memory-Schema-defineNamespace".to_string(),
-            description: "Define a namespace schema entity. Placeholder until full schema writer is implemented.".to_string(),
+            description: "Define a namespace schema entity.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "namespaceUri": { "type": "string" },
+                    "namespaceUri": uri_schema(),
                     "prefix": { "type": "string" },
-                    "source": { "type": "string" }
+                    "label": { "type": "string" },
+                    "description": { "type": "string" },
+                    "source": uri_schema()
                 },
                 "required": ["namespaceUri", "prefix", "source"],
                 "additionalProperties": false
@@ -140,12 +210,14 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "Memory-Schema-defineKind".to_string(),
-            description: "Define a kind schema entity. Placeholder until full schema writer is implemented.".to_string(),
+            description: "Define a kind schema entity.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "kindUri": { "type": "string" },
-                    "source": { "type": "string" }
+                    "kindUri": uri_schema(),
+                    "label": { "type": "string" },
+                    "description": { "type": "string" },
+                    "source": uri_schema()
                 },
                 "required": ["kindUri", "source"],
                 "additionalProperties": false
@@ -153,15 +225,21 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "Memory-Schema-defineField".to_string(),
-            description: "Define a field schema entity. Placeholder until full schema writer is implemented.".to_string(),
+            description: "Define a field schema entity.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "fieldUri": { "type": "string" },
-                    "domain": { "type": "array", "items": { "type": "string" } },
-                    "range": { "type": "array", "items": { "type": "string" } },
+                    "fieldUri": uri_schema(),
+                    "label": { "type": "string" },
+                    "description": { "type": "string" },
+                    "domain": { "type": "array", "minItems": 1, "items": uri_schema() },
+                    "range": { "type": "array", "minItems": 1, "items": uri_schema() },
                     "allowsMany": { "type": "boolean" },
-                    "source": { "type": "string" }
+                    "isTransitive": { "type": "boolean" },
+                    "isReflexive": { "type": "boolean" },
+                    "isSymmetric": { "type": "boolean" },
+                    "inverseOf": uri_schema(),
+                    "source": uri_schema()
                 },
                 "required": ["fieldUri", "domain", "range", "allowsMany", "source"],
                 "additionalProperties": false
@@ -592,6 +670,7 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                 let out = json!({
                     "txId": result.tx_id.to_string(),
                     "factUris": result.facts.iter().map(|fact| fact.fact_id.to_string()).collect::<Vec<_>>(),
+                    "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
                     content: ToolResultData::Text(serde_json::to_string(&out)?),
@@ -606,6 +685,67 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                     .get("query")
                     .and_then(Value::as_str)
                     .ok_or_else(|| anyhow!("Memory-search tool requires query"))?;
+                let result_types: Vec<&str> = request
+                    .arguments
+                    .get("resultTypes")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().filter_map(Value::as_str).collect())
+                    .unwrap_or_else(|| vec!["entity", "schema"]);
+                if !result_types.iter().any(|kind| *kind == "entity") {
+                    let out = json!({ "results": [] });
+                    return Ok(ToolResponse {
+                        content: ToolResultData::Text(serde_json::to_string(&out)?),
+                    });
+                }
+                let ns = request
+                    .arguments
+                    .get("namespacePrefixes")
+                    .and_then(Value::as_array)
+                    .and_then(|items| items.first())
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned);
+                let kind = request
+                    .arguments
+                    .get("kindUris")
+                    .and_then(Value::as_array)
+                    .and_then(|items| items.first())
+                    .and_then(Value::as_str)
+                    .and_then(|uri| uri.rsplit(':').next())
+                    .map(ToOwned::to_owned);
+                if let Ok(query_uri) = Uri::parse(query)
+                    && result_types.iter().any(|kind| *kind == "entity")
+                {
+                    let mut exact = None;
+                    for _ in 0..40 {
+                        if let Some(entity) = memory.get_entity_uri(&query_uri).await? {
+                            exact = Some(entity);
+                            break;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                    }
+                    let out = if let Some(entity) = exact {
+                        let canonical = resolve_same_as_group(&memory, &query_uri)
+                            .await
+                            .ok()
+                            .and_then(|group| choose_canonical_uri(&group))
+                            .unwrap_or_else(|| Uri::parse(entity.entity_id.to_string()).unwrap_or(query_uri.clone()));
+                        json!({
+                            "results": [{
+                                "type": "entity",
+                                "uri": canonical.to_string(),
+                                "score": 1.0,
+                                "highlights": [],
+                                "snippetFacts": []
+                            }]
+                        })
+                    } else {
+                        json!({ "results": [] })
+                    };
+                    return Ok(ToolResponse {
+                        content: ToolResultData::Text(serde_json::to_string(&out)?),
+                    });
+                }
+
                 let limit = request
                     .arguments
                     .get("pagination")
@@ -622,23 +762,31 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                     .unwrap_or(25);
                 let results = memory
                     .search_query(SearchQuery {
-                        ns: None,
-                        kind: None,
+                        ns,
+                        kind,
                         name: None,
                         query_text: Some(query.to_string()),
                         limit: Some(limit),
                     })
                     .await?;
-                let out = json!({
-                    "results": results.entities.iter().map(|entity| {
-                        json!({
+                let mut seen = HashSet::new();
+                let mut items = Vec::new();
+                for entity in &results.entities {
+                    let entity_uri = Uri::parse(entity.entity_id.to_string())?;
+                    let group = resolve_same_as_group(&memory, &entity_uri).await?;
+                    let canonical = choose_canonical_uri(&group).unwrap_or(entity_uri);
+                    if seen.insert(canonical.to_string()) {
+                        items.push(json!({
                             "type": "entity",
-                            "uri": entity.entity_id,
+                            "uri": canonical.to_string(),
                             "score": 1.0,
                             "highlights": [],
                             "snippetFacts": []
-                        })
-                    }).collect::<Vec<_>>()
+                        }));
+                    }
+                }
+                let out = json!({
+                    "results": items
                 });
                 Ok(ToolResponse {
                     content: ToolResultData::Text(serde_json::to_string(&out)?),
@@ -659,11 +807,8 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                     .and_then(Value::as_str)
                     .ok_or_else(|| anyhow!("Memory-createEntity tool requires source"))?;
                 let source_uri = Uri::parse(source)?;
-                let label = request
-                    .arguments
-                    .get("label")
-                    .and_then(Value::as_str)
-                    .unwrap_or("entity");
+                let label = request.arguments.get("label").and_then(Value::as_str);
+                let description = request.arguments.get("description").and_then(Value::as_str);
                 let mut parts = kind_uri.split(':');
                 let ns = parts
                     .next()
@@ -687,7 +832,7 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                 } else {
                     Uri::from_parts(ns, kind, Some(&uuid::Uuid::now_v7().to_string()))?
                 };
-                let facts = vec![
+                let mut facts = vec![
                     FactInput {
                         source: source_uri.clone(),
                         entity: entity.clone(),
@@ -696,18 +841,28 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                         value: FactValue::Ref(Uri::parse(kind_uri)?),
                     },
                     FactInput {
-                        source: source_uri,
+                        source: source_uri.clone(),
                         entity: entity.clone(),
                         field: Uri::parse("borg:field:label")?,
                         arity: Default::default(),
-                        value: FactValue::Text(label.to_string()),
+                        value: FactValue::Text(label.unwrap_or(entity.as_str()).to_string()),
                     },
                 ];
+                if let Some(description) = description {
+                    facts.push(FactInput {
+                        source: source_uri,
+                        entity: entity.clone(),
+                        field: Uri::parse("borg:field:description")?,
+                        arity: Default::default(),
+                        value: FactValue::Text(description.to_string()),
+                    });
+                }
                 let result = memory.state_facts(facts).await?;
                 let out = json!({
                     "entityUri": entity.to_string(),
                     "txId": result.tx_id.to_string(),
-                    "facts": result.facts.iter().map(|fact| fact.fact_id.to_string()).collect::<Vec<_>>()
+                    "facts": result.facts.iter().map(|fact| fact.fact_id.to_string()).collect::<Vec<_>>(),
+                    "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
                     content: ToolResultData::Text(serde_json::to_string(&out)?),
@@ -722,13 +877,38 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                     .get("entityUri")
                     .and_then(Value::as_str)
                     .ok_or_else(|| anyhow!("Memory-getEntity tool requires entityUri"))?;
-                let entity_uri = Uri::parse(entity_uri)?;
-                let entity = memory.get_entity_uri(&entity_uri).await?;
+                let requested_uri = Uri::parse(entity_uri)?;
+                let same_as_group = resolve_same_as_group(&memory, &requested_uri).await?;
+                let canonical_uri = choose_canonical_uri(&same_as_group).unwrap_or(requested_uri);
+                let entity = memory.get_entity_uri(&canonical_uri).await?;
+                let include_retracted = request
+                    .arguments
+                    .get("includeRetracted")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let limit = request
+                    .arguments
+                    .get("factPagination")
+                    .and_then(|value| value.get("limit"))
+                    .and_then(Value::as_u64)
+                    .map(|value| value as usize)
+                    .unwrap_or(50);
+                let mut facts = list_facts_for_entity_group(
+                    &memory,
+                    &same_as_group,
+                    None,
+                    include_retracted,
+                    limit.max(1),
+                )
+                .await?;
+                facts.sort_by(|a, b| b.stated_at.cmp(&a.stated_at));
+                let warnings = build_fact_warnings(&memory, &facts).await?;
                 let out = json!({
-                    "entityUri": entity_uri.to_string(),
+                    "entityUri": canonical_uri.to_string(),
                     "entity": entity,
-                    "facts": [],
-                    "warnings": []
+                    "facts": facts.iter().map(tool_fact_json).collect::<Vec<_>>(),
+                    "warnings": warnings,
+                    "sameAs": same_as_group.iter().map(ToString::to_string).collect::<Vec<_>>(),
                 });
                 Ok(ToolResponse {
                     content: ToolResultData::Text(serde_json::to_string(&out)?),
@@ -753,10 +933,19 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                     return Err(anyhow!("Memory-retractFacts expects a non-empty targets array"));
                 }
 
-                let mut retract_ids: Vec<String> = Vec::new();
+                let mut retract_ids: HashSet<String> = HashSet::new();
                 for target in targets {
+                    if target.get("factUri").is_none() && target.get("pattern").is_none() {
+                        return Err(anyhow!(
+                            "Memory-retractFacts target requires factUri or pattern"
+                        ));
+                    }
                     if let Some(fact_uri) = target.get("factUri").and_then(Value::as_str) {
-                        retract_ids.push(fact_uri.to_string());
+                        if let Some(fact) = memory.get_fact(fact_uri).await?
+                            && !fact.is_retracted
+                        {
+                            retract_ids.insert(fact.fact_id.to_string());
+                        }
                         continue;
                     }
 
@@ -780,7 +969,7 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                             .await?;
                         for candidate in candidates {
                             if candidate.value == parsed_value {
-                                retract_ids.push(candidate.fact_id.to_string());
+                                retract_ids.insert(candidate.fact_id.to_string());
                             }
                         }
                     }
@@ -790,6 +979,7 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                     let out = json!({
                         "txId": Uri::parse(format!("borg:tx:{}", uuid::Uuid::now_v7()))?.to_string(),
                         "retractionFactUris": Vec::<String>::new(),
+                        "statedAt": Option::<String>::None,
                     });
                     return Ok(ToolResponse {
                         content: ToolResultData::Text(serde_json::to_string(&out)?),
@@ -797,8 +987,8 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                 }
 
                 let mut originals = Vec::new();
-                for fact_id in &retract_ids {
-                    if let Some(fact) = memory.get_fact(fact_id).await? {
+                for fact_id in retract_ids {
+                    if let Some(fact) = memory.get_fact(&fact_id).await? {
                         originals.push(fact);
                     }
                 }
@@ -825,7 +1015,8 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                 let _ = memory.mark_facts_retracted(&retraction_ids).await?;
                 let out = json!({
                     "txId": result.tx_id.to_string(),
-                    "retractionFactUris": retraction_ids
+                    "retractionFactUris": retraction_ids,
+                    "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
                     content: ToolResultData::Text(serde_json::to_string(&out)?),
@@ -859,27 +1050,42 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                     .and_then(Value::as_u64)
                     .map(|value| value as usize)
                     .unwrap_or(50);
-                let facts = memory
-                    .list_facts(
-                        entity.as_ref(),
+                let since = request
+                    .arguments
+                    .get("since")
+                    .and_then(Value::as_str)
+                    .map(parse_rfc3339)
+                    .transpose()?;
+                let until = request
+                    .arguments
+                    .get("until")
+                    .and_then(Value::as_str)
+                    .map(parse_rfc3339)
+                    .transpose()?;
+                let mut facts = memory
+                    .list_facts(None, field.as_ref(), include_retracted, limit.max(1))
+                    .await?;
+                if let Some(entity) = entity.as_ref() {
+                    let same_as_group = resolve_same_as_group(&memory, entity).await?;
+                    facts = list_facts_for_entity_group(
+                        &memory,
+                        &same_as_group,
                         field.as_ref(),
                         include_retracted,
                         limit.max(1),
                     )
                     .await?;
+                }
+                if let Some(since) = since {
+                    facts.retain(|fact| fact.stated_at >= since);
+                }
+                if let Some(until) = until {
+                    facts.retain(|fact| fact.stated_at <= until);
+                }
+                let warnings = build_fact_warnings(&memory, &facts).await?;
                 let out = json!({
-                    "facts": facts.iter().map(|fact| {
-                        json!({
-                            "factUri": fact.fact_id.to_string(),
-                            "source": fact.source.to_string(),
-                            "entity": fact.entity.to_string(),
-                            "field": fact.field.to_string(),
-                            "value": fact_value_to_tool_json(&fact.value),
-                            "txId": fact.tx_id.to_string(),
-                            "statedAt": fact.stated_at.to_rfc3339(),
-                        })
-                    }).collect::<Vec<_>>(),
-                    "warnings": Vec::<Value>::new()
+                    "facts": facts.iter().map(tool_fact_json).collect::<Vec<_>>(),
+                    "warnings": warnings
                 });
                 Ok(ToolResponse {
                     content: ToolResultData::Text(serde_json::to_string(&out)?),
@@ -957,7 +1163,8 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                     let out = json!({
                         "namespaceUri": namespace_uri.to_string(),
                         "txId": result.tx_id.to_string(),
-                        "facts": result.facts.iter().map(|fact| fact.fact_id.to_string()).collect::<Vec<_>>()
+                        "facts": result.facts.iter().map(|fact| fact.fact_id.to_string()).collect::<Vec<_>>(),
+                        "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                     });
                     Ok(ToolResponse {
                         content: ToolResultData::Text(serde_json::to_string(&out)?),
@@ -1018,7 +1225,8 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                 let out = json!({
                     "kindUri": kind_uri.to_string(),
                     "txId": result.tx_id.to_string(),
-                    "facts": result.facts.iter().map(|fact| fact.fact_id.to_string()).collect::<Vec<_>>()
+                    "facts": result.facts.iter().map(|fact| fact.fact_id.to_string()).collect::<Vec<_>>(),
+                    "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
                     content: ToolResultData::Text(serde_json::to_string(&out)?),
@@ -1162,7 +1370,8 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
                 let out = json!({
                     "fieldUri": field_uri.to_string(),
                     "txId": result.tx_id.to_string(),
-                    "facts": result.facts.iter().map(|fact| fact.fact_id.to_string()).collect::<Vec<_>>()
+                    "facts": result.facts.iter().map(|fact| fact.fact_id.to_string()).collect::<Vec<_>>(),
+                    "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
                     content: ToolResultData::Text(serde_json::to_string(&out)?),
@@ -1275,6 +1484,16 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain> {
 }
 
 fn parse_rfd_value(value: &Value) -> Result<FactValue> {
+    if let Value::Array(values) = value {
+        if values.is_empty() {
+            return Err(anyhow!("value arrays must be non-empty"));
+        }
+        for item in values {
+            validate_typed_value(item)?;
+        }
+        return Ok(FactValue::Json(value.clone()));
+    }
+    validate_typed_value(value)?;
     if let Some(text) = value.get("string").and_then(Value::as_str) {
         return Ok(FactValue::Text(text.to_string()));
     }
@@ -1284,11 +1503,8 @@ fn parse_rfd_value(value: &Value) -> Result<FactValue> {
     if let Some(boolean) = value.get("bool").and_then(Value::as_bool) {
         return Ok(FactValue::Boolean(boolean));
     }
-    if let Some(date) = value.get("date").and_then(Value::as_str) {
-        return Ok(FactValue::Text(date.to_string()));
-    }
-    if let Some(datetime) = value.get("datetime").and_then(Value::as_str) {
-        return Ok(FactValue::Text(datetime.to_string()));
+    if value.get("date").is_some() || value.get("datetime").is_some() {
+        return Ok(FactValue::Json(value.clone()));
     }
     if let Some(uri) = value.get("uri").and_then(Value::as_str) {
         return Ok(FactValue::Ref(Uri::parse(uri)?));
@@ -1321,9 +1537,7 @@ fn parse_rfd_value(value: &Value) -> Result<FactValue> {
     if let Some(uri) = value.get("Ref").and_then(Value::as_str) {
         return Ok(FactValue::Ref(Uri::parse(uri)?));
     }
-    Err(anyhow!(
-        "unsupported fact value format; expected one of string/number/bool/date/datetime/uri"
-    ))
+    Err(anyhow!("unsupported fact value format"))
 }
 
 fn fact_value_to_tool_json(value: &FactValue) -> Value {
@@ -1334,7 +1548,451 @@ fn fact_value_to_tool_json(value: &FactValue) -> Value {
         FactValue::Boolean(v) => json!({ "bool": v }),
         FactValue::Bytes(v) => json!({ "bytes": v }),
         FactValue::Ref(uri) => json!({ "uri": uri.to_string() }),
+        FactValue::Json(v) => v.clone(),
     }
+}
+
+fn validate_typed_value(value: &Value) -> Result<()> {
+    let Some(object) = value.as_object() else {
+        return Err(anyhow!("typed value must be an object"));
+    };
+    if object.len() != 1 {
+        return Err(anyhow!("typed value must contain exactly one key"));
+    }
+    let (key, inner) = object.iter().next().expect("one-key object");
+    match key.as_str() {
+        "string" => {
+            if !inner.is_string() {
+                return Err(anyhow!("string value must be a string"));
+            }
+        }
+        "number" => {
+            if !inner.is_number() {
+                return Err(anyhow!("number value must be numeric"));
+            }
+        }
+        "bool" => {
+            if !inner.is_boolean() {
+                return Err(anyhow!("bool value must be boolean"));
+            }
+        }
+        "date" => {
+            let raw = inner
+                .as_str()
+                .ok_or_else(|| anyhow!("date value must be a string"))?;
+            chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+                .map_err(|_| anyhow!("date must follow YYYY-MM-DD"))?;
+        }
+        "datetime" => {
+            let raw = inner
+                .as_str()
+                .ok_or_else(|| anyhow!("datetime value must be a string"))?;
+            let _ = DateTime::parse_from_rfc3339(raw)
+                .map_err(|_| anyhow!("datetime must be RFC3339"))?;
+        }
+        "uri" => {
+            let raw = inner
+                .as_str()
+                .ok_or_else(|| anyhow!("uri value must be a string"))?;
+            let _ = Uri::parse(raw)?;
+        }
+        "Text" | "Integer" | "Float" | "Boolean" | "Bytes" | "Ref" => {}
+        other => return Err(anyhow!("unsupported typed value key `{}`", other)),
+    }
+    Ok(())
+}
+
+fn parse_rfc3339(value: &str) -> Result<DateTime<Utc>> {
+    Ok(DateTime::parse_from_rfc3339(value)?.with_timezone(&Utc))
+}
+
+fn tool_fact_json(fact: &crate::FactRecord) -> Value {
+    json!({
+        "factUri": fact.fact_id.to_string(),
+        "source": fact.source.to_string(),
+        "entity": fact.entity.to_string(),
+        "field": fact.field.to_string(),
+        "value": fact_value_to_tool_json(&fact.value),
+        "txId": fact.tx_id.to_string(),
+        "statedAt": fact.stated_at.to_rfc3339(),
+        "isRetracted": fact.is_retracted,
+    })
+}
+
+async fn resolve_same_as_group(memory: &MemoryStore, seed: &Uri) -> Result<Vec<Uri>> {
+    let same_as_field = Uri::parse("borg:field:sameAs")?;
+    let same_as_facts = memory
+        .list_facts(None, Some(&same_as_field), false, 5000)
+        .await?;
+    let mut graph: HashMap<String, HashSet<String>> = HashMap::new();
+    for fact in same_as_facts {
+        let Some(target) = extract_uri_value(&fact.value) else {
+            continue;
+        };
+        graph
+            .entry(fact.entity.to_string())
+            .or_default()
+            .insert(target.clone());
+        graph
+            .entry(target.clone())
+            .or_default()
+            .insert(fact.entity.to_string());
+    }
+
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(seed.to_string());
+    while let Some(current) = queue.pop_front() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        if let Some(neighbors) = graph.get(&current) {
+            for neighbor in neighbors {
+                if !visited.contains(neighbor) {
+                    queue.push_back(neighbor.clone());
+                }
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for uri in visited {
+        if let Ok(parsed) = Uri::parse(uri) {
+            out.push(parsed);
+        }
+    }
+    out.sort_by_key(|uri| uri.to_string());
+    if out.is_empty() {
+        out.push(seed.clone());
+    }
+    Ok(out)
+}
+
+fn choose_canonical_uri(group: &[Uri]) -> Option<Uri> {
+    if group.is_empty() {
+        return None;
+    }
+    let mut borg_uris: Vec<&Uri> = group
+        .iter()
+        .filter(|uri| uri.as_str().starts_with("borg:"))
+        .collect();
+    borg_uris.sort_by_key(|uri| uri.to_string());
+    if let Some(uri) = borg_uris.first() {
+        return Some((*uri).clone());
+    }
+    let mut all = group.to_vec();
+    all.sort_by_key(|uri| uri.to_string());
+    all.first().cloned()
+}
+
+async fn list_facts_for_entity_group(
+    memory: &MemoryStore,
+    entities: &[Uri],
+    field: Option<&Uri>,
+    include_retracted: bool,
+    limit: usize,
+) -> Result<Vec<crate::FactRecord>> {
+    let mut all = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for entity in entities {
+        let facts = memory
+            .list_facts(Some(entity), field, include_retracted, limit.max(1))
+            .await?;
+        for fact in facts {
+            if seen.insert(fact.fact_id.to_string()) {
+                all.push(fact);
+            }
+        }
+    }
+    all.sort_by(|a, b| b.stated_at.cmp(&a.stated_at));
+    all.truncate(limit.max(1));
+    Ok(all)
+}
+
+fn extract_uri_value(value: &FactValue) -> Option<String> {
+    match value {
+        FactValue::Ref(uri) => Some(uri.to_string()),
+        FactValue::Json(Value::Object(object)) => object
+            .get("uri")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        _ => None,
+    }
+}
+
+#[derive(Default, Clone)]
+struct FieldSchema {
+    allows_many: Option<bool>,
+    domain: Vec<String>,
+    range: Vec<String>,
+}
+
+async fn build_fact_warnings(
+    memory: &MemoryStore,
+    facts: &[crate::FactRecord],
+) -> Result<Vec<Value>> {
+    let mut warnings = Vec::new();
+    if facts.is_empty() {
+        return Ok(warnings);
+    }
+
+    let mut field_schema_cache: HashMap<String, FieldSchema> = HashMap::new();
+    let mut entity_kind_cache: HashMap<String, Vec<String>> = HashMap::new();
+    let mut cardinality_counts: HashMap<(String, String), usize> = HashMap::new();
+    for fact in facts {
+        if !fact.is_retracted {
+            *cardinality_counts
+                .entry((fact.entity.to_string(), fact.field.to_string()))
+                .or_insert(0) += 1;
+        }
+    }
+
+    for fact in facts {
+        let field_key = fact.field.to_string();
+        let entity_key = fact.entity.to_string();
+        let schema = if let Some(found) = field_schema_cache.get(&field_key) {
+            found.clone()
+        } else {
+            let loaded = load_field_schema(memory, &fact.field).await?;
+            field_schema_cache.insert(field_key.clone(), loaded.clone());
+            loaded
+        };
+
+        if schema.allows_many.is_none() && schema.domain.is_empty() && schema.range.is_empty() {
+            warnings.push(warning_json(
+                "missingFieldDefinition",
+                "warn",
+                format!("field `{}` is missing schema definition", field_key),
+                Some(fact),
+            ));
+        }
+
+        if let Some(false) = schema.allows_many
+            && cardinality_counts
+                .get(&(entity_key.clone(), field_key.clone()))
+                .copied()
+                .unwrap_or(0)
+                > 1
+        {
+            warnings.push(warning_json(
+                "cardinalityMismatch",
+                "warn",
+                format!(
+                    "field `{}` is single-valued but entity `{}` has multiple active values",
+                    field_key, entity_key
+                ),
+                Some(fact),
+            ));
+        }
+
+        if !schema.domain.is_empty() {
+            let entity_kinds = if let Some(found) = entity_kind_cache.get(&entity_key) {
+                found.clone()
+            } else {
+                let loaded = load_entity_kinds(memory, &fact.entity).await?;
+                entity_kind_cache.insert(entity_key.clone(), loaded.clone());
+                loaded
+            };
+            if !entity_kinds.is_empty()
+                && !entity_kinds.iter().any(|kind| schema.domain.contains(kind))
+            {
+                warnings.push(warning_json(
+                    "domainMismatch",
+                    "warn",
+                    format!(
+                        "field `{}` domain {:?} does not include entity kinds {:?}",
+                        field_key, schema.domain, entity_kinds
+                    ),
+                    Some(fact),
+                ));
+            }
+        }
+
+        if !schema.range.is_empty() {
+            let value_ranges = infer_value_ranges(memory, &fact.value).await?;
+            if value_ranges.is_empty() {
+                warnings.push(warning_json(
+                    "unknownValueType",
+                    "warn",
+                    format!("value for field `{}` has unknown type", field_key),
+                    Some(fact),
+                ));
+            } else if !value_ranges
+                .iter()
+                .any(|actual| schema.range.iter().any(|expected| expected == actual))
+            {
+                warnings.push(warning_json(
+                    "rangeMismatch",
+                    "warn",
+                    format!(
+                        "field `{}` range {:?} does not include value type {:?}",
+                        field_key, schema.range, value_ranges
+                    ),
+                    Some(fact),
+                ));
+            }
+        } else if matches!(fact.value, FactValue::Json(_))
+            && !is_valid_typed_value_json(&fact.value)
+        {
+            warnings.push(warning_json(
+                "unknownValueType",
+                "warn",
+                format!("value for field `{}` has unknown type", field_key),
+                Some(fact),
+            ));
+        }
+    }
+
+    Ok(warnings)
+}
+
+async fn load_field_schema(memory: &MemoryStore, field_uri: &Uri) -> Result<FieldSchema> {
+    let field_facts = memory.list_facts(Some(field_uri), None, true, 5000).await?;
+    let mut schema = FieldSchema::default();
+    for fact in field_facts {
+        match fact.field.as_str() {
+            "borg:field:allowsMany" => {
+                if let FactValue::Boolean(value) = fact.value {
+                    schema.allows_many = Some(value);
+                }
+            }
+            "borg:field:domain" | "borg:field:domainKind" => {
+                if let FactValue::Ref(uri) = fact.value {
+                    schema.domain.push(uri.to_string());
+                }
+            }
+            "borg:field:range" | "borg:field:rangeKind" => {
+                if let FactValue::Ref(uri) = fact.value {
+                    schema.range.push(uri.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    schema.domain.sort();
+    schema.domain.dedup();
+    schema.range.sort();
+    schema.range.dedup();
+    Ok(schema)
+}
+
+async fn load_entity_kinds(memory: &MemoryStore, entity_uri: &Uri) -> Result<Vec<String>> {
+    let facts = memory
+        .list_facts(Some(entity_uri), None, false, 5000)
+        .await?;
+    let mut kinds = Vec::new();
+    for fact in facts {
+        if matches!(
+            fact.field.as_str(),
+            "borg:field:type" | "rdf:type" | "borg:field:isA"
+        ) && let FactValue::Ref(uri) = fact.value
+        {
+            kinds.push(uri.to_string());
+        }
+    }
+    kinds.sort();
+    kinds.dedup();
+    Ok(kinds)
+}
+
+async fn infer_value_ranges(memory: &MemoryStore, value: &FactValue) -> Result<Vec<String>> {
+    let mut ranges = Vec::new();
+    match value {
+        FactValue::Text(_) => ranges.push("borg:type:string".to_string()),
+        FactValue::Integer(_) | FactValue::Float(_) => ranges.push("borg:type:number".to_string()),
+        FactValue::Boolean(_) => ranges.push("borg:type:bool".to_string()),
+        FactValue::Ref(uri) => {
+            ranges.push("borg:type:uri".to_string());
+            ranges.extend(load_entity_kinds(memory, uri).await?);
+        }
+        FactValue::Json(value) => {
+            if let Value::Array(items) = value {
+                for item in items {
+                    ranges.extend(infer_json_typed_value_ranges(memory, item).await?);
+                }
+            } else {
+                ranges.extend(infer_json_typed_value_ranges(memory, value).await?);
+            }
+        }
+        FactValue::Bytes(_) => {}
+    }
+    ranges.sort();
+    ranges.dedup();
+    Ok(ranges)
+}
+
+async fn infer_json_typed_value_ranges(memory: &MemoryStore, value: &Value) -> Result<Vec<String>> {
+    let Some(object) = value.as_object() else {
+        return Ok(Vec::new());
+    };
+    let Some((key, inner)) = object.iter().next() else {
+        return Ok(Vec::new());
+    };
+    let mut ranges = Vec::new();
+    match key.as_str() {
+        "string" => ranges.push("borg:type:string".to_string()),
+        "date" => ranges.push("borg:type:date".to_string()),
+        "datetime" => ranges.push("borg:type:datetime".to_string()),
+        "number" => ranges.push("borg:type:number".to_string()),
+        "bool" => ranges.push("borg:type:bool".to_string()),
+        "uri" => {
+            ranges.push("borg:type:uri".to_string());
+            if let Some(uri) = inner.as_str() {
+                let uri = Uri::parse(uri)?;
+                ranges.extend(load_entity_kinds(memory, &uri).await?);
+            }
+        }
+        _ => {}
+    }
+    ranges.sort();
+    ranges.dedup();
+    Ok(ranges)
+}
+
+fn warning_json(
+    code: &str,
+    severity: &str,
+    message: String,
+    fact: Option<&crate::FactRecord>,
+) -> Value {
+    match fact {
+        Some(fact) => json!({
+            "code": code,
+            "severity": severity,
+            "message": message,
+            "factUri": fact.fact_id.to_string(),
+            "entityUri": fact.entity.to_string(),
+            "fieldUri": fact.field.to_string(),
+        }),
+        None => json!({
+            "code": code,
+            "severity": severity,
+            "message": message,
+        }),
+    }
+}
+
+fn is_valid_typed_value_json(value: &FactValue) -> bool {
+    let FactValue::Json(inner) = value else {
+        return true;
+    };
+    if let Value::Array(items) = inner {
+        return !items.is_empty() && items.iter().all(is_one_typed_value_object);
+    }
+    is_one_typed_value_object(inner)
+}
+
+fn is_one_typed_value_object(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    object.len() == 1
+        && object.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "string" | "number" | "bool" | "date" | "datetime" | "uri"
+            )
+        })
 }
 
 fn required_default_tool_spec(name: &str) -> Result<ToolSpec> {
@@ -1437,7 +2095,7 @@ hard rules (do not violate)
 memory writing procedure (always follow)
 step 0: decide if there is any durable memory.
 - durable examples: names, preferences, stable relationships, recurring folders, provider settings, canonical identifiers.
-- not durable: temporary tasks, ephemeral chat content, one-time requests unless explicitly stated as a preference/rule.
+- not durable: temporary to-dos, ephemeral chat content, one-time requests unless explicitly stated as a preference/rule.
 
 step 1: resolve entities that already exist.
 - call searchMemory with key strings (names, emails, folder paths, known ids).
