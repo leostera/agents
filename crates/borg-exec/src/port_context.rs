@@ -3,9 +3,45 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-pub trait PortContext {
+pub trait PortContext: std::fmt::Debug + Send + Sync {
     fn merge_message_metadata(&mut self, metadata: &Value) -> Result<()>;
     fn to_json(&self) -> Result<Value>;
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct JsonPortContext {
+    value: Value,
+}
+
+impl JsonPortContext {
+    pub fn new(value: Value) -> Self {
+        Self { value }
+    }
+}
+
+impl PortContext for JsonPortContext {
+    fn merge_message_metadata(&mut self, metadata: &Value) -> Result<()> {
+        match (&mut self.value, metadata) {
+            (Value::Object(target), Value::Object(incoming)) => {
+                for (key, value) in incoming {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+            _ => {
+                self.value = metadata.clone();
+            }
+        }
+        Ok(())
+    }
+
+    fn to_json(&self) -> Result<Value> {
+        Ok(self.value.clone())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -29,6 +65,35 @@ impl TelegramSessionContext {
     pub fn from_json(value: Value) -> Result<Self> {
         serde_json::from_value(value)
             .map_err(|err| anyhow!("invalid telegram session context: {err}"))
+    }
+
+    pub fn set_chat(&mut self, chat_id: i64, chat_type: impl Into<String>) {
+        self.chat_id = chat_id;
+        self.chat_type = chat_type.into();
+    }
+
+    pub fn set_last_message_refs(&mut self, message_id: Option<i64>, thread_id: Option<i64>) {
+        self.last_message_id = message_id;
+        self.last_thread_id = thread_id;
+    }
+
+    pub fn upsert_participant(
+        &mut self,
+        sender_id: u64,
+        username: Option<String>,
+        first_name: Option<String>,
+        last_name: Option<String>,
+    ) {
+        let id = sender_id.to_string();
+        self.participants.insert(
+            id.clone(),
+            TelegramParticipant {
+                id,
+                username,
+                first_name,
+                last_name,
+            },
+        );
     }
 }
 
@@ -77,5 +142,9 @@ impl PortContext for TelegramSessionContext {
 
     fn to_json(&self) -> Result<Value> {
         Ok(serde_json::to_value(self)?)
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }

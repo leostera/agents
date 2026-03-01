@@ -1,371 +1,318 @@
-use anyhow::{Result, anyhow};
+use std::sync::Arc;
+
+use anyhow::Result;
 use async_trait::async_trait;
-use borg_core::Uri;
-use borg_exec::{ExecEngine, UserMessage};
-use serde_json::json;
+use borg_core::{TelegramUserId, Uri};
+use borg_exec::{SessionOutput, TelegramSessionContext};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use teloxide::prelude::*;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::{error, warn};
 
 use crate::{Port, PortConfig, PortMessage};
 
-mod commands;
-mod context_sync;
-mod formatting;
-mod typing;
-
-use commands::build_telegram_command_registry;
-use typing::TypingLoop;
-
-const TELEGRAM_USER_KEY_PREFIX: &str = "telegram";
+const TELEGRAM_USER_ID_PREFIX: &str = "telegram";
+const TELEGRAM_CONVERSATION_PREFIX: &str = "telegram";
 const TELEGRAM_MESSAGE_LIMIT: usize = 4000;
-const TELEGRAM_START_GREETING: &str =
-    "Hi! I am Borg. Send me a message and I will reply in this chat.";
-const TELEGRAM_CONTEXT_MAX_TOKENS: usize = 128_000;
-const TELEGRAM_TYPING_REFRESH_SECS: u64 = 4;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TelegramConfig {
+    bot_token: String,
+    #[serde(default)]
+    allowed_external_user_ids: Vec<String>,
+}
 
 #[derive(Clone)]
 pub struct TelegramPort {
-    exec: ExecEngine,
+    port_id: Uri,
+    port_name: String,
+    allows_guests: bool,
     bot: Bot,
-    port_name: String,
-    bot_token: String,
-    http: reqwest::Client,
+    telegram_config: TelegramConfig,
 }
 
-#[derive(Clone)]
-struct TelegramCommandState {
-    exec: ExecEngine,
-    port_name: String,
-    message: Message,
-}
+impl TelegramPort {
+    fn port_message_from_text(&self, message: &Message) -> Option<PortMessage> {
+        let text = message.text()?.to_string();
+        let user_id = conversation_user_id(message)?;
+        let conversation_key = conversation_routing_key(message)?;
 
-impl PortMessage {
-    pub fn from_telegram_text(
-        port_name: &str,
-        message: &Message,
-        text: String,
-        input_kind: &str,
-    ) -> Option<Self> {
-        let chat_id = message.chat.id.0;
-        let user_key = TelegramPort::conversation_user_key(message)?;
-        let chat_type = if message.chat.is_private() {
-            "private"
-        } else if message.chat.is_group() {
-            "group"
-        } else if message.chat.is_supergroup() {
-            "supergroup"
-        } else if message.chat.is_channel() {
-            "channel"
-        } else {
-            "unknown"
+        let ctx = telegram_session_context_from_message(message);
+
+        if !self.allows_guests
+            && !is_allowed_external_user(&self.telegram_config.allowed_external_user_ids, &ctx)
+        {
+            return None;
+        }
+
+        Some(PortMessage {
+            port_id: self.port_id.clone(),
+            conversation_key,
+            user_id,
+            text,
+            port_context: Arc::new(ctx),
+        })
+    }
+
+    async fn send_output(&self, output: SessionOutput) -> Result<()> {
+        let Some(ctx) = output
+            .port_context
+            .as_any()
+            .downcast_ref::<TelegramSessionContext>()
+        else {
+            return Ok(());
         };
 
-        Some(Self {
-            port: port_name.to_string(),
-            user_key,
-            text,
-            metadata: json!({
-                "port": port_name,
-                "chat_id": chat_id,
-                "chat_type": chat_type,
-                "message_id": message.id.0,
-                "input_kind": input_kind,
-                "thread_id": message.thread_id.map(|thread_id| thread_id.0.0),
-                "sender_id": message.from.as_ref().map(|u| u.id.0),
-                "sender_username": message.from.as_ref().and_then(|u| u.username.clone()),
-                "sender_first_name": message.from.as_ref().map(|u| u.first_name.clone()),
-                "sender_last_name": message.from.as_ref().and_then(|u| u.last_name.clone())
-            }),
-            session_id: None,
-            agent_id: None,
-            reply: None,
-            tool_calls: None,
-            error: None,
-        })
+        let chat_id = ChatId(ctx.chat_id);
+
+        if let Some(reply) = output.reply {
+            self.send_text(chat_id, reply).await?;
+        }
+
+        for call in output.tool_calls {
+            let body = format_tool_action_message(&call.tool_name, &call.arguments);
+            self.send_text(chat_id, body).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn send_text(&self, chat_id: ChatId, message: String) -> Result<()> {
+        for chunk in split_message(&message) {
+            self.bot.send_message(chat_id, chunk).await?;
+        }
+        Ok(())
     }
 }
 
 #[async_trait]
 impl Port for TelegramPort {
-    fn init(config: PortConfig) -> Result<Self> {
-        match config {
-            PortConfig::Telegram { exec, bot_token } => Self::new(exec, "telegram", bot_token),
-            _ => Err(anyhow!("invalid config for TelegramPort")),
-        }
-    }
-
-    async fn handle_messages(&self, messages: Vec<PortMessage>) -> Vec<PortMessage> {
-        let mut out = Vec::with_capacity(messages.len());
-        for message in messages {
-            let inbox = UserMessage {
-                user_key: message.user_key.clone(),
-                text: message.text.clone(),
-                session_id: message.session_id.clone(),
-                agent_id: message.agent_id.clone(),
-                metadata: message.metadata.clone(),
-            };
-
-            let outbound = match self.exec.process_port_message(&message.port, inbox).await {
-                Ok(output) => PortMessage {
-                    session_id: Some(output.session_id),
-                    reply: output.reply,
-                    tool_calls: Some(output.tool_calls),
-                    error: None,
-                    ..message
-                },
-                Err(err) => PortMessage {
-                    session_id: message.session_id,
-                    reply: None,
-                    tool_calls: None,
-                    error: Some(err.to_string()),
-                    ..message
-                },
-            };
-            out.push(outbound);
-        }
-        out
-    }
-}
-
-impl TelegramPort {
-    pub fn new(
-        exec: ExecEngine,
-        port_name: impl Into<String>,
-        bot_token: impl Into<String>,
-    ) -> Result<Self> {
-        let bot_token = bot_token.into();
+    async fn new(port_config: PortConfig) -> Result<Self> {
+        let telegram_config: TelegramConfig = serde_json::from_value(port_config.settings.clone())?;
         Ok(Self {
-            exec,
-            bot: Bot::new(bot_token.clone()),
-            port_name: port_name.into(),
-            bot_token,
-            http: reqwest::Client::new(),
+            port_id: port_config.port_id.clone(),
+            port_name: port_config.port_name,
+            allows_guests: matches!(port_config.privacy, crate::port::Privacy::Public),
+            bot: Bot::new(telegram_config.bot_token.clone()),
+            telegram_config,
         })
     }
 
-    pub async fn run(self) -> Result<()> {
-        let port = self.clone();
-        if let Err(err) = port.refresh_session_contexts().await {
-            tracing::warn!(
-                target: "borg_ports",
-                error = %err,
-                "failed refreshing telegram session contexts at startup"
-            );
-        }
+    async fn run(
+        self,
+        inbound: Sender<PortMessage>,
+        mut outbound: Receiver<SessionOutput>,
+    ) -> Result<()> {
+        let outbound_port = self.clone();
+        let outbound_task = tokio::spawn(async move {
+            while let Some(output) = outbound.recv().await {
+                if let Err(err) = outbound_port.send_output(output).await {
+                    error!(
+                        target: "borg_ports",
+                        port_name = %outbound_port.port_name,
+                        error = %err,
+                        "failed to send telegram output"
+                    );
+                }
+            }
+        });
 
-        teloxide::repl(self.bot.clone(), move |bot: Bot, message: Message| {
-            let command_port = port.clone();
-            let exec = command_port.exec.clone();
+        let inbound_port = self.clone();
+        let inbound_tx = inbound.clone();
+        let bot = self.bot.clone();
+
+        teloxide::repl(bot, move |_bot: Bot, message: Message| {
+            let inbound_port = inbound_port.clone();
+            let inbound_tx = inbound_tx.clone();
             async move {
-                let _typing = TypingLoop::start(bot.clone(), message.chat.id);
-
-                if let Some(text) = message.text() {
-                    let command_state = TelegramCommandState {
-                        exec: exec.clone(),
-                        port_name: command_port.port_name.clone(),
-                        message: message.clone(),
-                    };
-                    let commands = match build_telegram_command_registry(command_state) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            bot.send_message(
-                                message.chat.id,
-                                format!("Failed to load command registry: {err}"),
-                            )
-                            .await?;
-                            return Ok(());
-                        }
-                    };
-                    if commands.is_command(text) {
-                        if let Some(inbound) = PortMessage::from_telegram_text(
-                            &command_port.port_name,
-                            &message,
-                            text.to_string(),
-                            "text",
-                        ) && let Some(session_id) = inbound.session_id
-                            && let Err(err) = exec
-                                .merge_port_message_metadata(
-                                    &command_port.port_name,
-                                    &session_id,
-                                    &inbound.metadata,
-                                )
-                                .await
-                        {
-                            bot.send_message(
-                                message.chat.id,
-                                format!("Failed to update session context: {err}"),
-                            )
-                            .await?;
-                            return Ok(());
-                        }
-                        let response = if Self::is_help_command(text) {
-                            commands.help()
-                        } else {
-                            match commands.run(text).await {
-                                Ok(Some(value)) => value,
-                                Ok(None) => String::new(),
-                                Err(err) => format!("Command error: {err}"),
-                            }
-                        };
-                        if !response.is_empty() {
-                            command_port.send_text(message.chat.id, response).await?;
-                        }
-                        return Ok(());
-                    }
+                if let Some(port_message) = inbound_port.port_message_from_text(&message)
+                    && inbound_tx.send(port_message).await.is_err()
+                {
+                    warn!(
+                        target: "borg_ports",
+                        port_name = %inbound_port.port_name,
+                        "port inbound channel closed"
+                    );
                 }
-
-                let inbound = match command_port.inbound_from_telegram_message(&message).await {
-                    Ok(Some(inbound)) => inbound,
-                    Ok(None) => return Ok(()),
-                    Err(err) => {
-                        bot.send_message(
-                            message.chat.id,
-                            format!("Failed to process inbound message: {err}"),
-                        )
-                        .await?;
-                        return Ok(());
-                    }
-                };
-
-                let port = TelegramPort {
-                    exec,
-                    bot: bot.clone(),
-                    port_name: command_port.port_name.clone(),
-                    bot_token: command_port.bot_token.clone(),
-                    http: command_port.http.clone(),
-                };
-
-                let mut outbound = port.handle_messages(vec![inbound]).await;
-                if let Some(response) = outbound.pop() {
-                    if let Some(error) = response.error {
-                        bot.send_message(
-                            message.chat.id,
-                            format!("Failed to process message: {error}"),
-                        )
-                        .await?;
-                        return Ok(());
-                    }
-
-                    if let Some(tool_calls) = response.tool_calls {
-                        for call in tool_calls {
-                            let formatted = port.format_tool_action_message(&call);
-                            port.send_text(message.chat.id, formatted).await?;
-                            if call.is_error() {
-                                let output = format!("Result:\n{}", call.output_message().trim());
-                                port.send_text(message.chat.id, output).await?;
-                            }
-                        }
-                    }
-
-                    let reply = response
-                        .reply
-                        .unwrap_or_else(|| "Message processed, no reply generated.".to_string());
-                    port.send_text(message.chat.id, reply).await?;
-
-                    if let Some(session_id) = response.session_id
-                        && let Ok(percent) = port
-                            .exec
-                            .estimate_session_context_usage_percent(
-                                &session_id,
-                                TELEGRAM_CONTEXT_MAX_TOKENS,
-                            )
-                            .await
-                    {
-                        let usage_line = format!("Context: ~{}% used", percent);
-                        bot.send_message(message.chat.id, usage_line).await?;
-                    }
-                }
-
-                Ok(())
+                respond(())
             }
         })
         .await;
 
+        outbound_task.abort();
         Ok(())
     }
+}
 
-    async fn inbound_from_telegram_message(
-        &self,
-        message: &Message,
-    ) -> Result<Option<PortMessage>> {
-        if let Some(text) = message.text() {
-            return Ok(PortMessage::from_telegram_text(
-                &self.port_name,
-                message,
-                text.to_string(),
-                "text",
-            ));
-        }
-
-        if let Some(voice) = message.voice() {
-            let mime_type = voice
-                .mime_type
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "audio/ogg".to_string());
-            let audio = self
-                .download_telegram_file_bytes(voice.file.id.to_string().as_str())
-                .await?;
-            let transcript = self.exec.transcribe_audio(audio, mime_type.clone()).await?;
-            let transcript = transcript.trim();
-            if transcript.is_empty() {
-                return Err(anyhow!("voice transcription returned empty text"));
-            }
-
-            let text = format!("Voice message transcript:\n{}", transcript);
-            let mut inbound =
-                PortMessage::from_telegram_text(&self.port_name, message, text, "voice")
-                    .ok_or_else(|| anyhow!("failed to build inbound telegram voice message"))?;
-            if let Some(metadata) = inbound.metadata.as_object_mut() {
-                metadata.insert(
-                    "voice_duration_secs".to_string(),
-                    json!(voice.duration.seconds()),
-                );
-                metadata.insert("voice_mime_type".to_string(), json!(mime_type));
-            }
-            return Ok(Some(inbound));
-        }
-
-        Ok(None)
+fn split_message(message: &str) -> Vec<String> {
+    if message.is_empty() {
+        return Vec::new();
     }
 
-    async fn download_telegram_file_bytes(&self, file_id: &str) -> Result<Vec<u8>> {
-        let file = self
-            .bot
-            .get_file(teloxide::types::FileId(file_id.to_string()))
-            .await?;
-        let file_url = format!(
-            "https://api.telegram.org/file/bot{}/{}",
-            self.bot_token, file.path
+    let mut out = Vec::new();
+    let mut current = String::new();
+    for line in message.lines() {
+        if current.len() + line.len() + 1 > TELEGRAM_MESSAGE_LIMIT {
+            out.push(current.trim_end().to_string());
+            current.clear();
+        }
+        current.push_str(line);
+        current.push('\n');
+    }
+    if !current.trim().is_empty() {
+        out.push(current.trim_end().to_string());
+    }
+    out
+}
+
+fn conversation_user_id(message: &Message) -> Option<Uri> {
+    let chat_id = message.chat.id.0;
+    let user_id = message
+        .from
+        .as_ref()
+        .map(|user| user.id.0)
+        .unwrap_or(chat_id as u64);
+    Uri::from_parts(TELEGRAM_USER_ID_PREFIX, "user", Some(&user_id.to_string())).ok()
+}
+
+fn conversation_routing_key(message: &Message) -> Option<Uri> {
+    let chat_id = message.chat.id.0;
+    routing_key_for_chat_id(chat_id)
+}
+
+fn telegram_session_context_from_message(message: &Message) -> TelegramSessionContext {
+    let mut ctx = TelegramSessionContext::default();
+    ctx.set_chat(message.chat.id.0, chat_type_label(message));
+    ctx.set_last_message_refs(
+        Some(i64::from(message.id.0)),
+        message.thread_id.map(|thread_id| i64::from(thread_id.0.0)),
+    );
+
+    if let Some(sender) = &message.from {
+        ctx.upsert_participant(
+            sender.id.0,
+            sender.username.clone(),
+            Some(sender.first_name.clone()),
+            sender.last_name.clone(),
         );
-        let response = self.http.get(file_url).send().await?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(anyhow!(
-                "telegram file download failed with status {}",
-                status
-            ));
-        }
-        Ok(response.bytes().await?.to_vec())
     }
 
-    fn is_help_command(input: &str) -> bool {
-        let Some(first_token) = input.split_whitespace().next() else {
-            return false;
-        };
-        if !first_token.starts_with('/') {
-            return false;
-        }
-        let command = first_token.trim_start_matches('/').split('@').next();
-        matches!(command, Some("help"))
+    ctx
+}
+
+fn chat_type_label(message: &Message) -> &'static str {
+    if message.chat.is_private() {
+        "private"
+    } else if message.chat.is_group() {
+        "group"
+    } else if message.chat.is_supergroup() {
+        "supergroup"
+    } else if message.chat.is_channel() {
+        "channel"
+    } else {
+        "unknown"
+    }
+}
+
+fn routing_key_for_chat_id(chat_id: i64) -> Option<Uri> {
+    Uri::from_parts(
+        TELEGRAM_CONVERSATION_PREFIX,
+        "conversation",
+        Some(&chat_id.to_string()),
+    )
+    .ok()
+}
+
+fn is_allowed_external_user(
+    allowed_external_user_ids: &[String],
+    ctx: &TelegramSessionContext,
+) -> bool {
+    if allowed_external_user_ids.is_empty() {
+        return false;
     }
 
-    fn conversation_user_key(message: &Message) -> Option<Uri> {
-        let chat_id = message.chat.id.0;
-        let user_id = message
-            .from
-            .as_ref()
-            .map(|user| user.id.0)
-            .unwrap_or(chat_id as u64);
-        Uri::from_parts(TELEGRAM_USER_KEY_PREFIX, "user", Some(&user_id.to_string())).ok()
+    let candidates = telegram_candidates(ctx);
+    if candidates.is_empty() {
+        return false;
+    }
+
+    allowed_external_user_ids
+        .iter()
+        .filter_map(|raw| raw.parse::<TelegramUserId>().ok())
+        .any(|allowed| candidates.iter().any(|candidate| candidate == &allowed))
+}
+
+fn telegram_candidates(ctx: &TelegramSessionContext) -> Vec<TelegramUserId> {
+    let mut out = Vec::new();
+    for participant in ctx.participants.values() {
+        if let Ok(id) = participant.id.parse::<u64>() {
+            out.push(TelegramUserId::from_sender_id(id));
+        }
+        if let Some(username) = &participant.username
+            && let Some(parsed) = TelegramUserId::from_sender_username(username)
+        {
+            out.push(parsed);
+        }
+    }
+    out
+}
+
+fn format_tool_action_message(tool_name: &str, arguments: &Value) -> String {
+    let label = match tool_name {
+        "CodeMode-executeCode" => "Running code",
+        "CodeMode-searchApis" => "Searching APIs",
+        "Memory-getSchema" => "Loading memory schema",
+        "Memory-searchMemory" => "Searching memory",
+        "Memory-storeFacts" => "Storing memory",
+        "TaskGraph-createTask" => "Creating task",
+        "TaskGraph-updateTask" => "Updating task",
+        "TaskGraph-setTaskStatus" => "Updating task status",
+        "TaskGraph-submitReview" => "Submitting review",
+        "TaskGraph-approveReview" => "Approving review",
+        "TaskGraph-requestReviewChanges" => "Requesting review changes",
+        _ => "Running tool",
+    };
+    let pretty_args =
+        serde_json::to_string_pretty(arguments).unwrap_or_else(|_| arguments.to_string());
+    format!("Action: {label}\n{}", pretty_args.trim())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_allowed_external_user, routing_key_for_chat_id};
+    use borg_exec::TelegramSessionContext;
+
+    #[test]
+    fn routing_key_uses_chat_id() {
+        let key = routing_key_for_chat_id(12345).expect("routing key");
+        assert_eq!(key.as_str(), "telegram:conversation:12345");
+    }
+
+    #[test]
+    fn allowlist_matches_numeric_id() {
+        let mut ctx = TelegramSessionContext::default();
+        ctx.set_chat(1, "private");
+        ctx.set_last_message_refs(Some(10), None);
+        ctx.upsert_participant(2_654_566, None, Some("Leo".to_string()), None);
+
+        let allowed = vec!["2654566".to_string()];
+        assert!(is_allowed_external_user(&allowed, &ctx));
+    }
+
+    #[test]
+    fn allowlist_matches_username() {
+        let mut ctx = TelegramSessionContext::default();
+        ctx.set_chat(1, "private");
+        ctx.set_last_message_refs(Some(11), None);
+        ctx.upsert_participant(
+            123,
+            Some("leostera".to_string()),
+            Some("Leo".to_string()),
+            None,
+        );
+
+        let allowed = vec!["@leostera".to_string()];
+        assert!(is_allowed_external_user(&allowed, &ctx));
     }
 }

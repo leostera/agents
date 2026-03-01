@@ -1,13 +1,16 @@
 mod controllers;
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use anyhow::Result;
 use borg_db::BorgDb;
-use borg_exec::{ExecEngine, ProviderConfigSupervisor};
+use borg_exec::{BorgRuntime, BorgSupervisor};
 use borg_memory::MemoryStore;
-use borg_ports::{BorgPortsSupervisor, HttpPort, init_http_port};
+use borg_ports::BorgPortsSupervisor;
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
+use tokio::time::{self, Duration};
 use tracing::info;
 
 use crate::controllers::routes::app_router;
@@ -18,10 +21,8 @@ pub(crate) use crate::controllers::system::{HttpPortRequest, validate_port_reque
 #[derive(Clone)]
 pub(crate) struct AppState {
     pub(crate) db: BorgDb,
-    pub(crate) http_port: HttpPort,
     pub(crate) memory: MemoryStore,
-    pub(crate) ports_supervisor: BorgPortsSupervisor,
-    pub(crate) provider_supervisor: ProviderConfigSupervisor,
+    pub(crate) ports_supervisor: Arc<Mutex<BorgPortsSupervisor>>,
 }
 
 pub struct BorgApiServer {
@@ -30,26 +31,34 @@ pub struct BorgApiServer {
 }
 
 impl BorgApiServer {
-    pub fn new(bind: String, db: BorgDb, exec: ExecEngine, memory: MemoryStore) -> Self {
-        let provider_supervisor =
-            ProviderConfigSupervisor::new(db.clone(), exec.provider_settings_handle());
+    pub fn new(bind: String, runtime: Arc<BorgRuntime>, supervisor: BorgSupervisor) -> Self {
+        let ports_supervisor =
+            BorgPortsSupervisor::new(runtime.clone(), Arc::new(supervisor.clone()));
         Self {
             bind,
             state: AppState {
-                db: db.clone(),
-                http_port: init_http_port(exec.clone()).expect("failed to initialize http port"),
-                memory,
-                ports_supervisor: BorgPortsSupervisor::new(db, exec.clone()),
-                provider_supervisor,
+                db: runtime.db.clone(),
+                memory: runtime.memory.clone(),
+                ports_supervisor: Arc::new(Mutex::new(ports_supervisor)),
             },
         }
     }
 
     pub async fn run(self) -> Result<()> {
         let ports_supervisor = self.state.ports_supervisor.clone();
-        let provider_supervisor = self.state.provider_supervisor.clone();
-        let ports_task = ports_supervisor.clone().start();
-        let provider_task = provider_supervisor.clone().start();
+        let ports_task = tokio::spawn(async move {
+            let mut ticker = time::interval(Duration::from_millis(300));
+            loop {
+                ticker.tick().await;
+                let result = {
+                    let mut supervisor = ports_supervisor.lock().await;
+                    supervisor.reconcile_now().await
+                };
+                if let Err(err) = result {
+                    tracing::error!(target: "borg_api", error = %err, "ports reconcile tick failed");
+                }
+            }
+        });
         let router = app_router(self.state);
 
         let addr: SocketAddr = self.bind.parse()?;
@@ -67,9 +76,6 @@ impl BorgApiServer {
             .with_graceful_shutdown(shutdown)
             .await?;
         ports_task.abort();
-        provider_task.abort();
-        ports_supervisor.shutdown().await;
-        provider_supervisor.shutdown().await;
 
         Ok(())
     }
@@ -77,21 +83,19 @@ impl BorgApiServer {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AppState, BorgPortsSupervisor, HttpPortRequest, ProviderConfigSupervisor, app_router,
-        validate_port_request,
-    };
+    use super::{AppState, HttpPortRequest, app_router, validate_port_request};
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode, header};
     use borg_codemode::CodeModeRuntime;
-    use borg_core::Uri;
     use borg_db::BorgDb;
-    use borg_exec::ExecEngine;
+    use borg_exec::{BorgRuntime, BorgSupervisor};
     use borg_memory::MemoryStore;
-    use borg_ports::init_http_port;
+    use borg_ports::BorgPortsSupervisor;
     use serde_json::{Value, json};
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::sync::Mutex;
     use tower::ServiceExt;
 
     fn test_root(name: &str) -> PathBuf {
@@ -119,23 +123,20 @@ mod tests {
         let memory = MemoryStore::new(&memory_path, &search_path).expect("new memory store");
         memory.migrate().await.expect("migrate memory");
 
-        let exec = ExecEngine::new(
+        let runtime = BorgRuntime::new(
             db.clone(),
             memory.clone(),
             CodeModeRuntime::default(),
             borg_shellmode::ShellModeRuntime::new(),
-            Uri::parse("borg:worker:test").expect("worker uri"),
         );
-        let http_port = init_http_port(exec.clone()).expect("init http port");
+        let runtime = Arc::new(runtime);
+        let supervisor = BorgSupervisor::new(runtime.clone());
+        let ports_supervisor =
+            BorgPortsSupervisor::new(runtime.clone(), Arc::new(supervisor.clone()));
         let state = AppState {
             db: db.clone(),
-            http_port,
             memory,
-            ports_supervisor: BorgPortsSupervisor::disabled(db.clone(), exec.clone()),
-            provider_supervisor: ProviderConfigSupervisor::disabled(
-                db.clone(),
-                exec.provider_settings_handle(),
-            ),
+            ports_supervisor: Arc::new(Mutex::new(ports_supervisor)),
         };
         app_router(state)
     }
@@ -220,7 +221,7 @@ mod tests {
             metadata: Some(json!({"a":"b"})),
         };
         let parsed = validate_port_request(request).unwrap();
-        assert_eq!(parsed.user_key.as_str(), "borg:user:test");
+        assert_eq!(parsed.user_id.as_str(), "borg:user:test");
         assert_eq!(parsed.session_id.unwrap().as_str(), "borg:session:123");
         assert_eq!(parsed.agent_id.unwrap().as_str(), "borg:agent:default");
     }

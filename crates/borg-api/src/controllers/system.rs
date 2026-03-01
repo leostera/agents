@@ -7,10 +7,9 @@ use axum::{
 use borg_core::{Entity, Uri};
 use borg_exec::UserMessage;
 use borg_memory::{FactArity, FactValue, Uri as MemoryUri};
-use borg_ports::{BORG_SESSION_ID_HEADER, Port, PortMessage};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tracing::{debug, info};
+use tracing::debug;
 
 use crate::AppState;
 use crate::controllers::common::{ApiFieldError, ApiValidationError, api_error};
@@ -32,16 +31,16 @@ pub(crate) struct MemoryExplorerQuery {
     max_nodes: Option<usize>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct HttpPortRequest {
-    pub(crate) user_key: String,
-    pub(crate) text: String,
+    pub user_key: String,
+    pub text: String,
     #[serde(default)]
-    pub(crate) session_id: Option<String>,
+    pub session_id: Option<String>,
     #[serde(default)]
-    pub(crate) agent_id: Option<String>,
+    pub agent_id: Option<String>,
     #[serde(default)]
-    pub(crate) metadata: Option<Value>,
+    pub metadata: Option<Value>,
 }
 
 pub(crate) struct SystemController;
@@ -61,48 +60,6 @@ impl SystemController {
             .map(|v| v.len())
             .unwrap_or(0);
         Html(Self::render_dashboard(entities_count))
-    }
-
-    pub(crate) async fn ports_http(
-        State(state): State<AppState>,
-        headers: HeaderMap,
-        Json(payload): Json<HttpPortRequest>,
-    ) -> impl IntoResponse {
-        let payload = match validate_port_request(payload) {
-            Ok(value) => value,
-            Err(err) => return err,
-        };
-        info!(target: "borg_api", user_key = %payload.user_key, text = payload.text, "received HTTP port event");
-        let inbound = PortMessage::from_http(&headers, payload);
-        let mut messages = state.http_port.handle_messages(vec![inbound]).await;
-        match messages.pop() {
-            Some(message) if message.error.is_none() => {
-                let mut response = (
-                    StatusCode::OK,
-                    Json(json!({
-                        "session_id": message.session_id,
-                        "reply": message.reply
-                    })),
-                )
-                    .into_response();
-                if let Some(session_id) = message.session_id
-                    && let Ok(value) = session_id.to_string().parse()
-                {
-                    response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
-                }
-                response
-            }
-            Some(message) => api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                message
-                    .error
-                    .unwrap_or_else(|| "port adapter failed".to_string()),
-            ),
-            None => api_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "empty port response".to_string(),
-            ),
-        }
     }
 
     pub(crate) async fn memory_search(
@@ -190,6 +147,20 @@ impl SystemController {
         }
     }
 
+    pub(crate) async fn ports_http(
+        State(_state): State<AppState>,
+        _headers: HeaderMap,
+        Json(payload): Json<HttpPortRequest>,
+    ) -> impl IntoResponse {
+        match validate_port_request(payload) {
+            Ok(_validated) => api_error(
+                StatusCode::NOT_IMPLEMENTED,
+                "ports/http is temporarily unavailable during refactor".to_string(),
+            ),
+            Err(err) => err,
+        }
+    }
+
     fn render_dashboard(entities_count: usize) -> String {
         format!(
             "<!doctype html><html><head><meta charset=\"utf-8\"><title>Borg Dashboard</title></head><body><h1>Borg Dashboard</h1><ul><li>Memory entities: {entities_count}</li></ul></body></html>"
@@ -253,7 +224,7 @@ pub(crate) fn validate_port_request(
     payload: HttpPortRequest,
 ) -> Result<UserMessage, axum::response::Response> {
     let mut details = Vec::new();
-    let user_key = match Uri::parse(&payload.user_key) {
+    let user_id = match Uri::parse(&payload.user_key) {
         Ok(value) => Some(value),
         Err(_) => {
             details.push(ApiFieldError {
@@ -304,7 +275,7 @@ pub(crate) fn validate_port_request(
     }
 
     Ok(UserMessage {
-        user_key: user_key.expect("validated user_key"),
+        user_id: user_id.expect("validated user_key"),
         text: payload.text,
         session_id,
         agent_id,
