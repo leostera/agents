@@ -1,3 +1,4 @@
+mod actor_bindings;
 mod actors;
 mod agents;
 mod apps;
