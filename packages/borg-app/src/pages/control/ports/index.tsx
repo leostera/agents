@@ -1,4 +1,8 @@
-import { createBorgApiClient, type PortRecord } from "@borg/api";
+import {
+  createBorgApiClient,
+  type ActorRecord,
+  type PortRecord,
+} from "@borg/api";
 import {
   Badge,
   Button,
@@ -70,6 +74,7 @@ function allowedUserIds(port: PortRecord): string[] {
 
 export function PortsPage() {
   const [ports, setPorts] = React.useState<PortRecord[]>([]);
+  const [actors, setActors] = React.useState<ActorRecord[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState(
@@ -82,10 +87,15 @@ export function PortsPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const rows = await borgApi.listPorts(1000);
-      setPorts(rows);
+      const [loadedPorts, loadedActors] = await Promise.all([
+        borgApi.listPorts(1000),
+        borgApi.listActors(1000),
+      ]);
+      setPorts(loadedPorts);
+      setActors(loadedActors);
     } catch (loadError) {
       setPorts([]);
+      setActors([]);
       setError(
         loadError instanceof Error ? loadError.message : "Unable to load ports"
       );
@@ -153,6 +163,7 @@ export function PortsPage() {
           provider: input.portKind,
           enabled: true,
           allows_guests: true,
+          default_agent_id: input.assignedActorId ?? null,
           settings,
         });
         setIsDialogOpen(false);
@@ -365,6 +376,7 @@ export function PortsPage() {
       </SectionContent>
 
       <AddPortForm
+        actors={actors}
         open={isDialogOpen}
         onOpenChange={setIsDialogOpen}
         isSaving={isSaving}

@@ -1,6 +1,6 @@
 import { type ActorRecord, createBorgApiClient } from "@borg/api";
-import { Button, EntityLink, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@borg/ui";
-import { Bot, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import { Badge, Button, EntityLink, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@borg/ui";
+import { Bot, LoaderCircle, Pause, Play, Plus, Trash2 } from "lucide-react";
 import React from "react";
 import { Section, SectionContent, SectionEmpty, SectionToolbar } from "../../../components/Section";
 import { AddActorForm, type AddActorInput } from "./AddActorForm";
@@ -126,9 +126,8 @@ export function ActorsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Actor</TableHead>
-                <TableHead>URI</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Actor</TableHead>
                 <TableHead>Updated</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
@@ -136,7 +135,7 @@ export function ActorsPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-muted-foreground text-center">
+                  <TableCell colSpan={4} className="text-muted-foreground text-center">
                     <span className="inline-flex items-center gap-2">
                       <LoaderCircle className="size-4 animate-spin" />
                       Loading actors...
@@ -147,29 +146,40 @@ export function ActorsPage() {
                 filteredActors.map((actor) => (
                   <TableRow key={actor.actor_id}>
                     <TableCell>
+                      <Badge
+                        className={
+                          actor.status === "RUNNING"
+                            ? "border-emerald-300 bg-emerald-100 text-emerald-900"
+                            : "border-rose-300 bg-rose-100 text-rose-900"
+                        }
+                      >
+                        {actor.status === "RUNNING" ? "Running" : "Stopped"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
                       <EntityLink uri={actor.actor_id} name={actor.name} className="inline-flex items-center gap-1" />
                     </TableCell>
-                    <TableCell className="font-mono text-[11px]">{actor.actor_id}</TableCell>
-                    <TableCell className="font-mono text-xs">{actor.status}</TableCell>
                     <TableCell>{new Date(actor.updated_at).toLocaleString()}</TableCell>
                     <TableCell className="space-x-2">
                       <Button
-                        size="sm"
+                        size="icon-sm"
                         variant="outline"
                         onClick={() => void handleSetActorStatus(actor, "RUNNING")}
                         disabled={actor.status === "RUNNING"}
                         title="Start actor"
+                        aria-label={`Start ${actor.name}`}
                       >
-                        |&gt;
+                        <Play className="size-3.5" />
                       </Button>
                       <Button
-                        size="sm"
+                        size="icon-sm"
                         variant="outline"
                         onClick={() => void handleSetActorStatus(actor, "STOPPED")}
                         disabled={actor.status === "STOPPED"}
                         title="Stop actor"
+                        aria-label={`Stop ${actor.name}`}
                       >
-                        ||
+                        <Pause className="size-3.5" />
                       </Button>
                       <Button
                         size="icon-sm"

@@ -1,6 +1,5 @@
 import {
   type ActorRecord,
-  type AgentSpecRecord,
   createBorgApiClient,
   type PortActorBinding,
   type PortBinding,
@@ -28,7 +27,6 @@ import React from "react";
 import { resolvePortFromRoute } from "../utils";
 
 const borgApi = createBorgApiClient();
-const NO_AGENT = "__none__";
 const NO_ACTOR = "__none__";
 
 type PortDetailsPageProps = {
@@ -75,7 +73,6 @@ function isValidDiscordAllowedUserId(value: string): boolean {
 
 export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
   const [port, setPort] = React.useState<PortRecord | null>(null);
-  const [agents, setAgents] = React.useState<AgentSpecRecord[]>([]);
   const [actors, setActors] = React.useState<ActorRecord[]>([]);
   const [bindings, setBindings] = React.useState<PortBinding[]>([]);
   const [actorBindings, setActorBindings] = React.useState<
@@ -91,7 +88,7 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
 
   const [enabled, setEnabled] = React.useState(true);
   const [mode, setMode] = React.useState<"public" | "private">("public");
-  const [defaultAgentId, setDefaultAgentId] = React.useState(NO_AGENT);
+  const [assignedActorId, setAssignedActorId] = React.useState(NO_ACTOR);
   const [botToken, setBotToken] = React.useState("");
   const [allowedExternalUserIds, setAllowedExternalUserIds] = React.useState<
     string[]
@@ -107,7 +104,6 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
       setActorBindings({});
       setActorSelection({});
       setSessions([]);
-      setAgents([]);
       setActors([]);
       setIsLoading(false);
       return;
@@ -116,10 +112,9 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
     setIsLoading(true);
     setError(null);
     try {
-      const [loadedPorts, loadedAgents, loadedActors, loadedSessions] =
+      const [loadedPorts, loadedActors, loadedSessions] =
         await Promise.all([
           borgApi.listPorts(1000),
-          borgApi.listAgentSpecs(1000),
           borgApi.listActors(1000),
           borgApi.listSessions(10000),
         ]);
@@ -147,7 +142,6 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
       }, {});
 
       setPort(selectedPort);
-      setAgents(loadedAgents);
       setActors(loadedActors);
       setBindings(loadedBindings);
       setActorBindings(actorByConversation);
@@ -159,7 +153,7 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
       const settings = selectedPort.settings ?? {};
       setEnabled(Boolean(selectedPort.enabled));
       setMode(selectedPort.allows_guests ? "public" : "private");
-      setDefaultAgentId(selectedPort.default_agent_id ?? NO_AGENT);
+      setAssignedActorId(selectedPort.default_agent_id ?? NO_ACTOR);
       setBotToken(
         typeof settings.bot_token === "string" ? settings.bot_token : ""
       );
@@ -173,7 +167,6 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
       setActorBindings({});
       setActorSelection({});
       setSessions([]);
-      setAgents([]);
       setActors([]);
       setError(
         loadError instanceof Error
@@ -234,12 +227,11 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
           nextSettings.bot_token = botToken.trim();
           nextSettings.allowed_external_user_ids = allowedExternalUserIds;
         }
-
         await borgApi.upsertPort(port.port_id, {
           provider: port.provider,
           enabled,
           allows_guests: mode === "public",
-          default_agent_id: defaultAgentId === NO_AGENT ? null : defaultAgentId,
+          default_agent_id: assignedActorId === NO_ACTOR ? null : assignedActorId,
           settings: nextSettings,
         });
         await load();
@@ -253,8 +245,8 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
     },
     [
       allowedExternalUserIds,
+      assignedActorId,
       botToken,
-      defaultAgentId,
       enabled,
       isDiscordPort,
       isTelegramPort,
@@ -352,16 +344,16 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
               </Select>
             </div>
             <div className="space-y-1">
-              <p className="text-muted-foreground text-xs">Default agent</p>
-              <Select value={defaultAgentId} onValueChange={setDefaultAgentId}>
+              <p className="text-muted-foreground text-xs">Assigned Actor</p>
+              <Select value={assignedActorId} onValueChange={setAssignedActorId}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select agent" />
+                  <SelectValue placeholder="Select actor" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={NO_AGENT}>No default agent</SelectItem>
-                  {agents.map((agent) => (
-                    <SelectItem key={agent.agent_id} value={agent.agent_id}>
-                      {agent.name || agent.agent_id}
+                  <SelectItem value={NO_ACTOR}>No assigned actor</SelectItem>
+                  {actors.map((actor) => (
+                    <SelectItem key={actor.actor_id} value={actor.actor_id}>
+                      {actor.name || actor.actor_id}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -455,7 +447,7 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
         <p className="text-sm font-semibold">Conversation Bindings</p>
         <p className="text-muted-foreground text-xs">
           A binding maps an external conversation key (for example a Telegram
-          chat id) to a Borg session and optional agent.
+          chat id) to a Borg session and optional actor binding.
         </p>
         <Table>
           <TableHeader>
