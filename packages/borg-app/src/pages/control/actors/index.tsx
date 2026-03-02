@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@borg/ui";
-import { Bot, LoaderCircle, Pause, Play, Plus, Trash2 } from "lucide-react";
+import { Bot, LoaderCircle, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import React from "react";
 import { Section, SectionContent, SectionEmpty, SectionToolbar } from "../../../components/Section";
 import { AddActorForm, type AddActorInput } from "./AddActorForm";
@@ -206,6 +206,17 @@ export function ActorsPage() {
                     </TableCell>
                     <TableCell>{new Date(actor.updated_at).toLocaleString()}</TableCell>
                     <TableCell className="space-x-2">
+                      <Button
+                        size="icon-sm"
+                        variant="outline"
+                        asChild
+                        aria-label={`Edit ${actor.name}`}
+                        title="Edit actor"
+                      >
+                        <Link href={`/control/actors/${encodeURIComponent(actor.actor_id)}`}>
+                          <Pencil className="size-3.5" />
+                        </Link>
+                      </Button>
                       <Button
                         size="icon-sm"
                         variant="outline"
