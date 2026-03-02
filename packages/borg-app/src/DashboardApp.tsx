@@ -19,6 +19,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { AppSidebar } from "./AppSidebar";
 import { CommandK, type CommandSectionGroup } from "./CommandK";
 import { AgentsPage } from "./pages/control/agents";
+import { ActorsPage } from "./pages/control/actors";
 import { AgentDetailsPage } from "./pages/control/agents/id";
 import { AgentSkillsPage } from "./pages/control/agents/skills";
 import { AppsPage } from "./pages/control/apps";
@@ -66,18 +67,6 @@ type ResolvedDashboardRoute = {
 
 const SECTION_GROUPS: DashboardRouteGroup[] = [
   {
-    id: "overview",
-    title: "Overview",
-    items: [
-      {
-        id: "overview-home",
-        title: "Overview",
-        icon: LayoutDashboard,
-        path: "/",
-      },
-    ],
-  },
-  {
     id: "control",
     title: "Control",
     items: [
@@ -100,6 +89,12 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
             path: "/control/agents/skills",
           },
         ],
+      },
+      {
+        id: "control-actors",
+        title: "Actors",
+        icon: Bot,
+        path: "/control/actors",
       },
       {
         id: "control-apps",
@@ -146,20 +141,8 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
     ],
   },
   {
-    id: "settings",
-    title: "Settings",
-    items: [
-      {
-        id: "settings-providers",
-        title: "Providers",
-        icon: Settings2,
-        path: "/settings/providers",
-      },
-    ],
-  },
-  {
     id: "taskgraph",
-    title: "TaskGraph",
+    title: "Task Graph",
     items: [
       {
         id: "taskgraph-explorer",
@@ -172,6 +155,18 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
         title: "Kanban",
         icon: Workflow,
         path: "/taskgraph/kanban",
+      },
+    ],
+  },
+  {
+    id: "settings",
+    title: "Settings",
+    items: [
+      {
+        id: "settings-providers",
+        title: "Providers",
+        icon: Settings2,
+        path: "/settings/providers",
       },
     ],
   },
@@ -213,7 +208,22 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
       },
     ],
   },
+  {
+    id: "overview",
+    title: "Overview",
+    items: [
+      {
+        id: "overview-home",
+        title: "Overview",
+        icon: LayoutDashboard,
+        path: "/",
+      },
+    ],
+  },
 ];
+const NAVIGATION_GROUPS = SECTION_GROUPS.filter(
+  (group) => group.id !== "overview"
+);
 
 function flattenRouteItems(items: DashboardRouteItem[]): DashboardRouteItem[] {
   return items.flatMap((item) =>
@@ -631,6 +641,7 @@ export function DashboardApp() {
         <SessionDetailsPage sessionId={route.sessionId ?? ""} />
       ),
       "control-agents": () => <AgentsPage />,
+      "control-actors": () => <ActorsPage />,
       "control-agents-skills": () => <AgentSkillsPage />,
       "control-apps": () => <AppsPage />,
       "control-app": () => <AppDetailsPage appId={route.entityUri ?? ""} />,
@@ -747,7 +758,7 @@ export function DashboardApp() {
     activeId === "memory-graph" || activeId === "memory-explorer";
   const commandGroups = React.useMemo<CommandSectionGroup[]>(
     () =>
-      SECTION_GROUPS.map((group) => ({
+      NAVIGATION_GROUPS.map((group) => ({
         id: group.id,
         title: group.title,
         items: flattenRouteItems(group.items).map(({ id, title, icon }) => ({
@@ -766,7 +777,7 @@ export function DashboardApp() {
           activeId={activeId}
           onSelect={handleSelectSection}
           onOpenCommandMenu={() => setIsCommandMenuOpen(true)}
-          groups={SECTION_GROUPS}
+          groups={NAVIGATION_GROUPS}
           username={username}
           initials={initials}
         />

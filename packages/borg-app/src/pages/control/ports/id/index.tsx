@@ -1,6 +1,8 @@
 import {
+  type ActorRecord,
   type AgentSpecRecord,
   createBorgApiClient,
+  type PortActorBinding,
   type PortBinding,
   type PortRecord,
   type SessionRecord,
@@ -27,6 +29,7 @@ import { resolvePortFromRoute } from "../utils";
 
 const borgApi = createBorgApiClient();
 const NO_AGENT = "__none__";
+const NO_ACTOR = "__none__";
 
 type PortDetailsPageProps = {
   portUri: string;
@@ -73,7 +76,14 @@ function isValidDiscordAllowedUserId(value: string): boolean {
 export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
   const [port, setPort] = React.useState<PortRecord | null>(null);
   const [agents, setAgents] = React.useState<AgentSpecRecord[]>([]);
+  const [actors, setActors] = React.useState<ActorRecord[]>([]);
   const [bindings, setBindings] = React.useState<PortBinding[]>([]);
+  const [actorBindings, setActorBindings] = React.useState<
+    Record<string, string>
+  >({});
+  const [actorSelection, setActorSelection] = React.useState<
+    Record<string, string>
+  >({});
   const [sessions, setSessions] = React.useState<SessionRecord[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -94,8 +104,11 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
       setError("Missing port name");
       setPort(null);
       setBindings([]);
+      setActorBindings({});
+      setActorSelection({});
       setSessions([]);
       setAgents([]);
+      setActors([]);
       setIsLoading(false);
       return;
     }
@@ -103,11 +116,13 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
     setIsLoading(true);
     setError(null);
     try {
-      const [loadedPorts, loadedAgents, loadedSessions] = await Promise.all([
-        borgApi.listPorts(1000),
-        borgApi.listAgentSpecs(1000),
-        borgApi.listSessions(10000),
-      ]);
+      const [loadedPorts, loadedAgents, loadedActors, loadedSessions] =
+        await Promise.all([
+          borgApi.listPorts(1000),
+          borgApi.listAgentSpecs(1000),
+          borgApi.listActors(1000),
+          borgApi.listSessions(10000),
+        ]);
 
       const selectedPort = resolvePortFromRoute(normalizedPortUri, loadedPorts);
       if (!selectedPort) {
@@ -118,10 +133,25 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
         selectedPort.port_id,
         1000
       );
+      const loadedActorBindings = await borgApi.listPortActorBindings(
+        selectedPort.port_id,
+        1000
+      );
+      const actorByConversation = loadedActorBindings.reduce<
+        Record<string, string>
+      >((acc, item: PortActorBinding) => {
+        if (item.actor_id) {
+          acc[item.conversation_key] = item.actor_id;
+        }
+        return acc;
+      }, {});
 
       setPort(selectedPort);
       setAgents(loadedAgents);
+      setActors(loadedActors);
       setBindings(loadedBindings);
+      setActorBindings(actorByConversation);
+      setActorSelection(actorByConversation);
       setSessions(
         loadedSessions.filter((session) => session.port === normalizedPortUri)
       );
@@ -140,8 +170,11 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
     } catch (loadError) {
       setPort(null);
       setBindings([]);
+      setActorBindings({});
+      setActorSelection({});
       setSessions([]);
       setAgents([]);
+      setActors([]);
       setError(
         loadError instanceof Error
           ? loadError.message
@@ -169,9 +202,7 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
       return;
     }
     if (isDiscordPort && !isValidDiscordAllowedUserId(next)) {
-      setError(
-        "Allowed user must be a numeric Discord user ID (snowflake)."
-      );
+      setError("Allowed user must be a numeric Discord user ID (snowflake).");
       return;
     }
     setAllowedExternalUserIds((current) => {
@@ -231,6 +262,35 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
       mode,
       port,
     ]
+  );
+
+  const handleActorBindingSave = React.useCallback(
+    async (conversationKey: string) => {
+      if (!port) return;
+      const selectedActor = actorSelection[conversationKey] ?? NO_ACTOR;
+      setError(null);
+      try {
+        if (selectedActor === NO_ACTOR) {
+          await borgApi.deletePortActorBinding(port.port_id, conversationKey, {
+            ignoreNotFound: true,
+          });
+        } else {
+          await borgApi.upsertPortActorBinding(
+            port.port_id,
+            conversationKey,
+            selectedActor
+          );
+        }
+        await load();
+      } catch (saveError) {
+        setError(
+          saveError instanceof Error
+            ? saveError.message
+            : "Unable to save actor binding"
+        );
+      }
+    },
+    [actorSelection, load, port]
   );
 
   if (isLoading) {
@@ -342,7 +402,9 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
                         setAllowedUserInput(event.currentTarget.value)
                       }
                       placeholder={
-                        isTelegramPort ? "2654566 or @leostera" : "123456789012345678"
+                        isTelegramPort
+                          ? "2654566 or @leostera"
+                          : "123456789012345678"
                       }
                       aria-label="Allowed user id"
                     />
@@ -401,13 +463,15 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
               <TableHead>Conversation</TableHead>
               <TableHead>Session</TableHead>
               <TableHead>Agent</TableHead>
+              <TableHead>Actor</TableHead>
+              <TableHead>Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {bindings.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={3}
+                  colSpan={5}
                   className="text-muted-foreground text-center"
                 >
                   No bindings.
@@ -434,6 +498,59 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
                     ) : (
                       "—"
                     )}
+                  </TableCell>
+                  <TableCell>
+                    <Select
+                      value={
+                        actorSelection[binding.conversation_key] ??
+                        actorBindings[binding.conversation_key] ??
+                        NO_ACTOR
+                      }
+                      onValueChange={(value) =>
+                        setActorSelection((current) => ({
+                          ...current,
+                          [binding.conversation_key]: value,
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="max-w-[26rem] font-mono text-[11px]">
+                        <SelectValue placeholder="No actor binding" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NO_ACTOR}>No actor binding</SelectItem>
+                        {actors.map((actor) => (
+                          <SelectItem key={actor.actor_id} value={actor.actor_id}>
+                            {actor.name} ({actor.actor_id})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
+                  <TableCell className="space-x-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        void handleActorBindingSave(binding.conversation_key)
+                      }
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setActorSelection((current) => ({
+                          ...current,
+                          [binding.conversation_key]: NO_ACTOR,
+                        }));
+                        void handleActorBindingSave(binding.conversation_key);
+                      }}
+                    >
+                      Clear
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))
