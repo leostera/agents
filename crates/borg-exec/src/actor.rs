@@ -1,9 +1,8 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{
-    AgentTools, Message, Session, SessionContextManager, SessionEventPayload, SessionResult,
+    AgentTools, Message, Session, SessionContextManager, SessionResult,
 };
-use borg_core::{Uri, uri};
-use borg_db::BorgDb;
+use borg_core::Uri;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -48,33 +47,12 @@ impl ActorHandle {
         })
     }
 
-    async fn resolve_agent_id(db: &BorgDb, session_id: &Uri) -> Result<Uri> {
-        let messages = db.list_session_messages(session_id, 0, 64).await?;
-        for message in messages {
-            let Ok(message) = serde_json::from_value::<Message>(message) else {
-                continue;
-            };
-            if let Message::SessionEvent {
-                payload: SessionEventPayload::Started { agent_id },
-                ..
-            } = message
-            {
-                return Ok(agent_id);
-            }
-        }
-
-        let specs = db.list_agent_specs(1).await?;
-        if let Some(first) = specs.into_iter().next() {
-            return Ok(first.agent_id);
-        }
-
-        Ok(uri!("borg", "agent", "default"))
-    }
 }
 
 struct SessionState {
     session: Session,
     agent_id: Uri,
+    behavior_id: Option<Uri>,
 }
 
 struct Actor {
@@ -151,10 +129,16 @@ impl Actor {
 
     async fn process_message(&mut self, msg: BorgMessage) -> Result<SessionOutput> {
         if !self.sessions.contains_key(&msg.session_id) {
-            let agent_id = ActorHandle::resolve_agent_id(&self.runtime.db, &msg.session_id).await?;
+            let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
             let session = self.create_session(&msg.session_id, &agent_id).await?;
-            self.sessions
-                .insert(msg.session_id.clone(), SessionState { session, agent_id });
+            self.sessions.insert(
+                msg.session_id.clone(),
+                SessionState {
+                    session,
+                    agent_id,
+                    behavior_id,
+                },
+            );
         }
 
         let drop_after = matches!(&msg.input, BorgInput::Command(BorgCommand::ResetContext));
@@ -287,8 +271,15 @@ impl Actor {
                 Ok(SessionOutput {
                     session_id: msg.session_id.clone(),
                     reply: Some(format!(
-                        "Agent: {}\nModel: {}\nSession: {}",
-                        state.agent_id, model, msg.session_id
+                        "Actor: {}\nBehavior: {}\nModel: {}\nSession: {}",
+                        self.actor_id,
+                        state
+                            .behavior_id
+                            .as_ref()
+                            .map(Uri::as_str)
+                            .unwrap_or("unknown"),
+                        model,
+                        msg.session_id
                     )),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
@@ -303,8 +294,8 @@ impl Actor {
                 Ok(SessionOutput {
                     session_id: msg.session_id.clone(),
                     reply: Some(format!(
-                        "Updated model to {} for agent {}.\nSession: {}",
-                        model, state.agent_id, msg.session_id
+                        "Updated model to {} for actor {}.\nSession: {}",
+                        model, self.actor_id, msg.session_id
                     )),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
@@ -394,6 +385,82 @@ impl Actor {
                 &system_prompt,
             )
             .await
+    }
+
+    async fn resolve_execution_agent_id(&self) -> Result<(Uri, Option<Uri>)> {
+        let actor = self
+            .runtime
+            .db
+            .get_actor(&self.actor_id)
+            .await?
+            .ok_or_else(|| anyhow!("actor not found: {}", self.actor_id))?;
+        let behavior = self
+            .runtime
+            .db
+            .get_behavior(&actor.default_behavior_id)
+            .await?;
+
+        let agent_id = self.actor_id.clone();
+        let existing = self.runtime.db.get_agent_spec(&agent_id).await?;
+        let model = if let Some(spec) = existing {
+            spec.model
+        } else {
+            self.resolve_behavior_default_model(
+                behavior
+                    .as_ref()
+                    .and_then(|record| record.preferred_provider_id.as_deref()),
+            )
+            .await
+        };
+
+        let system_prompt = behavior
+            .as_ref()
+            .map(|record| record.system_prompt.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(actor.system_prompt.as_str());
+        let default_provider_id = behavior
+            .as_ref()
+            .and_then(|record| record.preferred_provider_id.as_deref());
+        let agent_name = actor.name.clone();
+
+        self.runtime
+            .db
+            .upsert_agent_spec(
+                &agent_id,
+                &agent_name,
+                default_provider_id,
+                &model,
+                system_prompt,
+            )
+            .await?;
+
+        Ok((agent_id, Some(actor.default_behavior_id)))
+    }
+
+    async fn resolve_behavior_default_model(&self, preferred_provider_id: Option<&str>) -> String {
+        if let Some(provider_id) = preferred_provider_id
+            && let Ok(Some(provider)) = self.runtime.db.get_provider(provider_id).await
+            && provider.enabled
+            && let Some(model) = provider.default_text_model
+            && !model.trim().is_empty()
+        {
+            return model;
+        }
+
+        if let Ok(providers) = self.runtime.db.list_providers(128).await {
+            for provider in providers {
+                if !provider.enabled {
+                    continue;
+                }
+                if let Some(model) = provider.default_text_model
+                    && !model.trim().is_empty()
+                {
+                    return model;
+                }
+            }
+        }
+
+        "gpt-4o-mini".to_string()
     }
 
     async fn telegram_participants(&self, session_id: &Uri) -> Result<String> {
