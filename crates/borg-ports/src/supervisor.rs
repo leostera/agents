@@ -269,17 +269,22 @@ async fn bridge_loop(
             }
         };
         let bound_actor_id = match db
-            .get_port_actor_binding(&port_name, &message.conversation_key)
+            .resolve_port_actor(
+                &port_name,
+                &message.conversation_key,
+                None,
+                default_agent_id.as_ref(),
+            )
             .await
         {
-            Ok(value) => value,
+            Ok(value) => Some(value),
             Err(err) => {
                 warn!(
                     target: "borg_ports",
                     error = %err,
                     port_name = %port_name,
                     conversation_key = %message.conversation_key,
-                    "failed to query actor binding; falling back"
+                    "failed to resolve actor binding; falling back"
                 );
                 None
             }
@@ -317,7 +322,11 @@ async fn bridge_loop(
     }
 }
 
-fn select_actor_id(session_id: Uri, bound_actor_id: Option<Uri>, legacy_actor_id: Option<Uri>) -> Uri {
+fn select_actor_id(
+    session_id: Uri,
+    bound_actor_id: Option<Uri>,
+    legacy_actor_id: Option<Uri>,
+) -> Uri {
     if let Some(actor_id) = bound_actor_id {
         return actor_id;
     }
