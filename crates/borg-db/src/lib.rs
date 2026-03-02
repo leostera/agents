@@ -1,3 +1,4 @@
+mod actors;
 mod agents;
 mod apps;
 mod core;
@@ -176,4 +177,30 @@ pub struct AppCapabilityRecord {
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ActorRecord {
+    pub actor_id: Uri,
+    pub name: String,
+    pub system_prompt: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ActorMailboxRecord {
+    pub actor_message_id: Uri,
+    pub actor_id: Uri,
+    pub kind: String,
+    pub session_id: Option<Uri>,
+    pub payload: Value,
+    pub status: String,
+    pub reply_to_actor_id: Option<Uri>,
+    pub reply_to_message_id: Option<Uri>,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
 }
