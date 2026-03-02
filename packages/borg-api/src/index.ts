@@ -153,6 +153,10 @@ export type ActorResponse = {
   actor?: ActorRecord;
 };
 
+export type ActorSessionsResponse = {
+  sessions?: string[];
+};
+
 export type BehaviorRecord = {
   behavior_id: string;
   name: string;
@@ -964,7 +968,6 @@ export class BorgApiClient {
     kind: ClockworkJobKind | string;
     actorId: string;
     sessionId: string;
-    messageType: string;
     messagePayload: unknown;
     messageHeaders?: Record<string, unknown>;
     scheduleSpec: Record<string, unknown>;
@@ -980,7 +983,6 @@ export class BorgApiClient {
           kind: payload.kind,
           actor_id: payload.actorId,
           session_id: payload.sessionId,
-          message_type: payload.messageType,
           payload: payload.messagePayload,
           headers: payload.messageHeaders ?? {},
           schedule_spec: payload.scheduleSpec,
@@ -998,7 +1000,6 @@ export class BorgApiClient {
       kind?: ClockworkJobKind | string;
       actorId?: string;
       sessionId?: string;
-      messageType?: string;
       messagePayload?: unknown;
       messageHeaders?: Record<string, unknown>;
       scheduleSpec?: Record<string, unknown>;
@@ -1014,7 +1015,6 @@ export class BorgApiClient {
           kind: payload.kind,
           actor_id: payload.actorId,
           session_id: payload.sessionId,
-          message_type: payload.messageType,
           payload: payload.messagePayload,
           headers: payload.messageHeaders,
           schedule_spec: payload.scheduleSpec,
@@ -1219,6 +1219,13 @@ export class BorgApiClient {
       }
       throw error;
     }
+  }
+
+  async listActorSessions(actorId: string, limit = 100): Promise<string[]> {
+    const data = await this.requestJson<ActorSessionsResponse>(
+      `/api/actors/${encodeURIComponent(actorId)}/sessions?limit=${limit}`
+    );
+    return Array.isArray(data.sessions) ? data.sessions : [];
   }
 
   async listBehaviors(limit = 100): Promise<BehaviorRecord[]> {

@@ -189,6 +189,10 @@ pub(crate) fn app_router(state: AppState) -> Router {
                 .delete(ActorsController::delete_actor),
         )
         .route(
+            "/api/actors/:actor_id/sessions",
+            get(ActorsController::list_actor_sessions),
+        )
+        .route(
             "/api/agents/specs/:agent_id/enabled",
             put(DbController::set_agent_spec_enabled),
         )

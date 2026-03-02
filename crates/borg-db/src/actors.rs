@@ -109,6 +109,31 @@ impl BorgDb {
         Ok(deleted)
     }
 
+    pub async fn list_actor_sessions(&self, actor_id: &Uri, limit: usize) -> Result<Vec<Uri>> {
+        let limit = i64::try_from(limit).unwrap_or(100);
+        let rows = sqlx::query(
+            r#"
+            SELECT session_id
+            FROM actor_mailbox
+            WHERE actor_id = ?1
+              AND session_id IS NOT NULL
+            GROUP BY session_id
+            ORDER BY MAX(created_at) DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(actor_id.to_string())
+        .bind(limit)
+        .fetch_all(self.conn.pool())
+        .await
+        .context("failed to list actor sessions")?;
+
+        rows.into_iter()
+            .filter_map(|row| row.try_get::<Option<String>, _>("session_id").ok().flatten())
+            .map(|value| Uri::parse(&value))
+            .collect::<Result<Vec<_>, _>>()
+    }
+
     pub async fn enqueue_actor_message(
         &self,
         actor_id: &Uri,
@@ -462,6 +487,58 @@ mod tests {
         let status: String = row.try_get("status")?;
         assert_eq!(status, "FAILED");
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_actor_sessions_returns_distinct_recent() -> Result<()> {
+        let path = tmp_db_path("list_sessions");
+        let db = BorgDb::open_local(
+            path.to_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid temp db path"))?,
+        )
+        .await?;
+        db.migrate().await?;
+
+        let actor_id = Uri::from_parts("devmode", "actor", Some("a3"))?;
+        let behavior_id = Uri::from_parts("borg", "behavior", Some("default"))?;
+        db.upsert_actor(&actor_id, "A3", "prompt", &behavior_id, "RUNNING")
+            .await?;
+
+        let session_a = Uri::from_parts("borg", "session", Some("one"))?;
+        let session_b = Uri::from_parts("borg", "session", Some("two"))?;
+        db.enqueue_actor_message(
+            &actor_id,
+            "CAST",
+            Some(&session_a),
+            &serde_json::json!({"a":1}),
+            None,
+            None,
+        )
+        .await?;
+        db.enqueue_actor_message(
+            &actor_id,
+            "CAST",
+            Some(&session_b),
+            &serde_json::json!({"b":1}),
+            None,
+            None,
+        )
+        .await?;
+        db.enqueue_actor_message(
+            &actor_id,
+            "CAST",
+            Some(&session_a),
+            &serde_json::json!({"a":2}),
+            None,
+            None,
+        )
+        .await?;
+
+        let sessions = db.list_actor_sessions(&actor_id, 10).await?;
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.contains(&session_a));
+        assert!(sessions.contains(&session_b));
         Ok(())
     }
 }

@@ -54,6 +54,22 @@ impl ActorsController {
         }
     }
 
+    pub(crate) async fn list_actor_sessions(
+        State(state): State<AppState>,
+        AxumPath(actor_id): AxumPath<String>,
+        Query(query): Query<LimitQuery>,
+    ) -> impl IntoResponse {
+        let actor_id = match parse_uri_field("actor_id", &actor_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        let limit = query.limit.unwrap_or(100);
+        match state.db.list_actor_sessions(&actor_id, limit).await {
+            Ok(sessions) => (StatusCode::OK, Json(json!({ "sessions": sessions }))).into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    }
+
     pub(crate) async fn upsert_actor(
         State(state): State<AppState>,
         AxumPath(actor_id): AxumPath<String>,

@@ -2,8 +2,8 @@ import { type BehaviorRecord, createBorgApiClient } from "@borg/api";
 import {
   Badge,
   Button,
-  EntityLink,
   Input,
+  Link,
   Table,
   TableBody,
   TableCell,
@@ -212,11 +212,11 @@ export function BehaviorsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <EntityLink
-                        uri={behavior.behavior_id}
-                        name={behavior.name}
-                        className="inline-flex items-center gap-1"
-                      />
+                      <Link
+                        href={`/control/behaviors/${encodeURIComponent(behavior.behavior_id)}`}
+                      >
+                        {behavior.name}
+                      </Link>
                     </TableCell>
                     <TableCell>{behavior.preferred_provider_id ?? "—"}</TableCell>
                     <TableCell>

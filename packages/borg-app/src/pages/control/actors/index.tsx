@@ -68,6 +68,13 @@ export function ActorsPage() {
     () => behaviors.some((behavior) => behavior.status === "ACTIVE"),
     [behaviors]
   );
+  const behaviorNameById = React.useMemo(() => {
+    const mapping = new Map<string, string>();
+    for (const behavior of behaviors) {
+      mapping.set(behavior.behavior_id, behavior.name);
+    }
+    return mapping;
+  }, [behaviors]);
 
   const hasNoActors = !isLoading && actors.length === 0;
 
@@ -171,6 +178,7 @@ export function ActorsPage() {
               <TableRow>
                 <TableHead>Status</TableHead>
                 <TableHead>Actor</TableHead>
+                <TableHead>Default Behavior</TableHead>
                 <TableHead>Updated</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
@@ -178,7 +186,7 @@ export function ActorsPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-muted-foreground text-center">
+                  <TableCell colSpan={5} className="text-muted-foreground text-center">
                     <span className="inline-flex items-center gap-2">
                       <LoaderCircle className="size-4 animate-spin" />
                       Loading actors...
@@ -202,6 +210,14 @@ export function ActorsPage() {
                     <TableCell>
                       <Link href={`/control/actors/${encodeURIComponent(actor.actor_id)}`}>
                         {actor.name}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      <Link
+                        href={`/control/behaviors/${encodeURIComponent(actor.default_behavior_id)}`}
+                      >
+                        {behaviorNameById.get(actor.default_behavior_id) ??
+                          actor.default_behavior_id}
                       </Link>
                     </TableCell>
                     <TableCell>{new Date(actor.updated_at).toLocaleString()}</TableCell>

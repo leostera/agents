@@ -659,6 +659,15 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert!(body["actors"].as_array().is_some_and(|v| !v.is_empty()));
 
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/actors/devmode:actor:default/sessions",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["sessions"].as_array().is_some());
+
         let (status, _) =
             request_no_body(&app, Method::DELETE, "/api/actors/devmode:actor:default").await;
         assert_eq!(status, StatusCode::NO_CONTENT);

@@ -25,6 +25,7 @@ import { AppsPage } from "./pages/control/apps";
 import { ClockworkPage } from "./pages/control/clockwork";
 import { AppDetailsPage } from "./pages/control/apps/id";
 import { BehaviorsPage } from "./pages/control/behaviors";
+import { BehaviorDetailsPage } from "./pages/control/behaviors/id";
 import { PortsPage } from "./pages/control/ports";
 import { PortDetailsPage } from "./pages/control/ports/id";
 import { SessionPage } from "./pages/control/sessions";
@@ -266,6 +267,7 @@ const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
 const MEMORY_ENTITY_PREFIX = "/memory/entity/";
 const MEMORY_EXPLORER_PREFIX = "/memory/explorer/";
 const CONTROL_SESSION_PREFIX = "/control/sessions/";
+const CONTROL_BEHAVIOR_PREFIX = "/control/behaviors/";
 const CONTROL_ACTOR_PREFIX = "/control/actors/";
 const CONTROL_APP_PREFIX = "/control/apps/";
 const CONTROL_USER_PREFIX = "/control/users/";
@@ -358,6 +360,32 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
         entityUri: null,
         explorerUri: null,
         sessionId: encodedSessionId,
+        portName: null,
+      };
+    }
+  }
+  if (
+    normalizedPathname.startsWith(CONTROL_BEHAVIOR_PREFIX) &&
+    normalizedPathname.length > CONTROL_BEHAVIOR_PREFIX.length &&
+    !SECTION_BY_PATH[normalizedPathname]
+  ) {
+    const encodedBehaviorId = normalizedPathname.slice(
+      CONTROL_BEHAVIOR_PREFIX.length
+    );
+    try {
+      return {
+        id: "control-behavior",
+        entityUri: decodeURIComponent(encodedBehaviorId),
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    } catch {
+      return {
+        id: "control-behavior",
+        entityUri: encodedBehaviorId,
+        explorerUri: null,
+        sessionId: null,
         portName: null,
       };
     }
@@ -641,6 +669,9 @@ export function DashboardApp() {
         <SessionDetailsPage sessionId={route.sessionId ?? ""} />
       ),
       "control-behaviors": () => <BehaviorsPage />,
+      "control-behavior": () => (
+        <BehaviorDetailsPage behaviorId={route.entityUri ?? ""} />
+      ),
       "control-actors": () => <ActorsPage />,
       "control-actor": () => <ActorDetailsPage actorId={route.entityUri ?? ""} />,
       "control-apps": () => <AppsPage />,
