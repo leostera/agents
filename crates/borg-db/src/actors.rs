@@ -158,6 +158,37 @@ impl BorgDb {
         row.map(actor_mailbox_from_row).transpose()
     }
 
+    pub async fn list_queued_actor_messages(&self, limit: usize) -> Result<Vec<ActorMailboxRecord>> {
+        let limit = i64::try_from(limit).unwrap_or(1_000);
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                actor_message_id,
+                actor_id,
+                kind,
+                session_id,
+                payload_json,
+                status,
+                reply_to_actor_id,
+                reply_to_message_id,
+                error,
+                created_at,
+                started_at,
+                finished_at
+            FROM actor_mailbox
+            WHERE status = 'QUEUED'
+            ORDER BY created_at ASC
+            LIMIT ?1
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(self.conn.pool())
+        .await
+        .context("failed to list queued actor mailbox messages")?;
+
+        rows.into_iter().map(actor_mailbox_from_row).collect()
+    }
+
     pub async fn ack_actor_message(&self, actor_message_id: &Uri) -> Result<u64> {
         let now = Utc::now().to_rfc3339();
         let updated = sqlx::query(

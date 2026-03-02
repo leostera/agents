@@ -24,6 +24,7 @@ use tokio::time::{Duration, sleep};
 use tracing_subscriber::EnvFilter;
 
 use crate::BorgSupervisor;
+use crate::mailbox_envelope::ActorMailboxEnvelope;
 use crate::tool_runner::build_exec_toolchain_with_context;
 
 fn temp_db_path() -> PathBuf {
@@ -499,4 +500,64 @@ async fn borg_supervisor_start_fails_stale_in_progress_mailbox_rows() {
             .try_get("status")
             .unwrap();
     assert_eq!(status, "FAILED");
+}
+
+#[tokio::test]
+async fn borg_supervisor_start_replays_queued_mailbox_rows() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let runtime = crate::BorgRuntime::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
+    );
+    let runtime = std::sync::Arc::new(runtime);
+    let supervisor = BorgSupervisor::new(runtime);
+
+    let actor_id = uri!("devmode", "actor", "replay-queued");
+    db.upsert_actor(&actor_id, "replay-queued", "prompt", "RUNNING")
+        .await
+        .unwrap();
+    let msg = crate::BorgMessage {
+        actor_id: actor_id.clone(),
+        user_id: uri!("borg", "user", "tester"),
+        session_id: uri!("borg", "session", "replay"),
+        input: crate::BorgInput::Command(crate::BorgCommand::ContextDump),
+        port_context: std::sync::Arc::new(crate::JsonPortContext::new(json!({}))),
+    };
+    let payload = ActorMailboxEnvelope::from_borg_message(&msg)
+        .to_json()
+        .unwrap();
+    let msg_id = db
+        .enqueue_actor_message(
+            &actor_id,
+            "CAST",
+            Some(&msg.session_id),
+            &payload,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    supervisor.start().await.unwrap();
+
+    let mut status = String::new();
+    for _ in 0..25 {
+        status = sqlx::query("SELECT status FROM actor_mailbox WHERE actor_message_id = ?1 LIMIT 1")
+            .bind(msg_id.to_string())
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+            .try_get::<String, _>("status")
+            .unwrap();
+        if status == "ACKED" {
+            break;
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(status, "ACKED");
+
+    supervisor.shutdown().await;
 }

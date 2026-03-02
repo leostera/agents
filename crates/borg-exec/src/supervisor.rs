@@ -1,14 +1,14 @@
 use crate::actor::ActorHandle;
 use crate::mailbox::ActorCommand;
+use crate::mailbox_envelope::ActorMailboxEnvelope;
 use crate::message::{BorgMessage, SessionOutput};
 use crate::runtime::BorgRuntime;
 use anyhow::anyhow;
 use borg_core::Uri;
-use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, warn};
 
 const STALE_IN_PROGRESS_SECONDS: u64 = 300;
 
@@ -40,6 +40,7 @@ impl BorgSupervisor {
                 "failed stale in-progress actor mailbox rows on startup"
             );
         }
+        self.replay_queued_actor_messages().await?;
         Ok(())
     }
 
@@ -51,7 +52,7 @@ impl BorgSupervisor {
                 &msg.actor_id,
                 "CALL",
                 Some(&msg.session_id),
-                &mailbox_payload(&msg),
+                &ActorMailboxEnvelope::from_borg_message(&msg).to_json()?,
                 None,
                 None,
             )
@@ -86,7 +87,7 @@ impl BorgSupervisor {
                 &msg.actor_id,
                 "CAST",
                 Some(&msg.session_id),
-                &mailbox_payload(&msg),
+                &ActorMailboxEnvelope::from_borg_message(&msg).to_json()?,
                 None,
                 None,
             )
@@ -132,16 +133,73 @@ impl BorgSupervisor {
             actor.task.abort();
         }
     }
-}
 
-fn mailbox_payload(msg: &BorgMessage) -> Value {
-    json!({
-        "actor_id": msg.actor_id.to_string(),
-        "user_id": msg.user_id.to_string(),
-        "session_id": msg.session_id.to_string(),
-        "input": match &msg.input {
-            crate::message::BorgInput::Chat { text } => json!({ "kind": "chat", "text": text }),
-            crate::message::BorgInput::Command(command) => json!({ "kind": "command", "name": format!("{command:?}") }),
+    async fn replay_queued_actor_messages(&self) -> anyhow::Result<()> {
+        let queued = self.runtime.db.list_queued_actor_messages(1000).await?;
+        if queued.is_empty() {
+            return Ok(());
         }
-    })
+        info!(
+            target: "borg_exec",
+            queued = queued.len(),
+            "replaying queued actor mailbox messages on startup"
+        );
+        for row in queued {
+            let env = match ActorMailboxEnvelope::from_json(&row.payload) {
+                Ok(env) => env,
+                Err(err) => {
+                    let _ = self
+                        .runtime
+                        .db
+                        .fail_actor_message(&row.actor_message_id, &format!("decode error: {err}"))
+                        .await;
+                    continue;
+                }
+            };
+            let msg = match env.to_borg_message() {
+                Ok(msg) => msg,
+                Err(err) => {
+                    let _ = self
+                        .runtime
+                        .db
+                        .fail_actor_message(&row.actor_message_id, &format!("decode error: {err}"))
+                        .await;
+                    continue;
+                }
+            };
+            let actor = match self.ensure_actor(&row.actor_id).await {
+                Ok(actor) => actor,
+                Err(err) => {
+                    let _ = self
+                        .runtime
+                        .db
+                        .fail_actor_message(&row.actor_message_id, &format!("ensure actor failed: {err}"))
+                        .await;
+                    continue;
+                }
+            };
+            if let Err(err) = actor
+                .mailbox
+                .send(ActorCommand::Cast {
+                    actor_message_id: row.actor_message_id.clone(),
+                    msg,
+                })
+                .await
+            {
+                warn!(
+                    target: "borg_exec",
+                    actor_message_id = %row.actor_message_id,
+                    actor_id = %row.actor_id,
+                    error = %err,
+                    "failed to send replayed mailbox message"
+                );
+                let _ = self
+                    .runtime
+                    .db
+                    .fail_actor_message(&row.actor_message_id, "mailbox send failed during replay")
+                    .await;
+            }
+        }
+        Ok(())
+    }
 }

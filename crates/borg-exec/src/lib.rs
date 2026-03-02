@@ -1,6 +1,7 @@
 mod actor;
 mod llm_resolver;
 mod mailbox;
+mod mailbox_envelope;
 mod message;
 mod runtime;
 mod supervisor;
