@@ -500,6 +500,73 @@ async fn borg_supervisor_missing_actor_spec_keeps_message_queued() {
 }
 
 #[tokio::test]
+async fn borg_supervisor_replays_queued_after_actor_spec_is_created() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let runtime = crate::BorgRuntime::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
+    );
+    let runtime = std::sync::Arc::new(runtime);
+    let supervisor = BorgSupervisor::new(runtime);
+    supervisor.start().await.unwrap();
+
+    let actor_id = uri!("devmode", "actor", "late-created");
+    let user_id = uri!("borg", "user", "tester");
+    let session_id = uri!("borg", "session", "late-created");
+    let pctx = std::sync::Arc::new(crate::JsonPortContext::new(json!({})));
+
+    let queued_err = supervisor
+        .cast(crate::BorgMessage {
+            actor_id: actor_id.clone(),
+            user_id: user_id.clone(),
+            session_id: session_id.clone(),
+            input: crate::BorgInput::Command(crate::BorgCommand::ContextDump),
+            port_context: pctx.clone(),
+        })
+        .await
+        .expect_err("cast should fail before actor spec exists");
+    assert!(queued_err.to_string().contains("actor spec not found"));
+
+    db.upsert_actor(&actor_id, "late-created", "prompt", "RUNNING")
+        .await
+        .unwrap();
+
+    supervisor
+        .cast(crate::BorgMessage {
+            actor_id: actor_id.clone(),
+            user_id,
+            session_id,
+            input: crate::BorgInput::Command(crate::BorgCommand::ContextDump),
+            port_context: pctx,
+        })
+        .await
+        .unwrap();
+
+    let mut queued = 2_i64;
+    for _ in 0..50 {
+        queued = sqlx::query(
+            "SELECT COUNT(*) as n FROM actor_mailbox WHERE actor_id = ?1 AND status = 'QUEUED'",
+        )
+        .bind(actor_id.to_string())
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+        .try_get::<i64, _>("n")
+        .unwrap();
+        if queued == 0 {
+            break;
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(queued, 0);
+
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
 async fn borg_supervisor_start_fails_stale_in_progress_mailbox_rows() {
     let db = open_test_db().await;
     let memory = open_test_memory().await;

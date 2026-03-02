@@ -5,7 +5,7 @@ use crate::message::{BorgMessage, SessionOutput};
 use crate::runtime::BorgRuntime;
 use anyhow::anyhow;
 use borg_core::Uri;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -126,6 +126,9 @@ impl BorgSupervisor {
 
         let actor = ActorHandle::spawn(actor_id.clone(), self.runtime.clone()).await?;
         actors.insert(actor_id.clone(), actor.clone());
+        drop(actors);
+
+        self.dispatch_queued_actor_messages(actor_id, &actor).await?;
 
         Ok(actor)
     }
@@ -144,12 +147,44 @@ impl BorgSupervisor {
         if queued.is_empty() {
             return Ok(());
         }
+        let actor_ids: HashSet<Uri> = queued.into_iter().map(|row| row.actor_id).collect();
         info!(
             target: "borg_exec",
-            queued = queued.len(),
-            "replaying queued actor mailbox messages on startup"
+            actors = actor_ids.len(),
+            "replaying queued actor mailbox messages on startup by ensuring actors"
         );
-        for row in queued {
+        for actor_id in actor_ids {
+            if self.runtime.db.get_actor(&actor_id).await?.is_none() {
+                warn!(
+                    target: "borg_exec",
+                    actor_id = %actor_id,
+                    "actor spec missing for queued mailbox messages; leaving queued"
+                );
+                continue;
+            }
+
+            if let Err(err) = self.ensure_actor(&actor_id).await {
+                warn!(
+                    target: "borg_exec",
+                    actor_id = %actor_id,
+                    error = %err,
+                    "failed to ensure actor during queued replay"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    async fn dispatch_queued_actor_messages(
+        &self,
+        actor_id: &Uri,
+        actor: &ActorHandle,
+    ) -> anyhow::Result<()> {
+        loop {
+            let Some(row) = self.runtime.db.claim_next_actor_message(actor_id).await? else {
+                return Ok(());
+            };
+
             let env = match ActorMailboxEnvelope::from_json(&row.payload) {
                 Ok(env) => env,
                 Err(err) => {
@@ -168,20 +203,6 @@ impl BorgSupervisor {
                         .runtime
                         .db
                         .fail_actor_message(&row.actor_message_id, &format!("decode error: {err}"))
-                        .await;
-                    continue;
-                }
-            };
-            let actor = match self.ensure_actor(&row.actor_id).await {
-                Ok(actor) => actor,
-                Err(err) => {
-                    let _ = self
-                        .runtime
-                        .db
-                        .fail_actor_message(
-                            &row.actor_message_id,
-                            &format!("ensure actor failed: {err}"),
-                        )
                         .await;
                     continue;
                 }
@@ -208,6 +229,5 @@ impl BorgSupervisor {
                     .await;
             }
         }
-        Ok(())
     }
 }
