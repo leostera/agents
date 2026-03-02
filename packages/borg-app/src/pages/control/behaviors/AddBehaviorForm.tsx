@@ -16,49 +16,47 @@ import {
 } from "@borg/ui";
 import React from "react";
 
-export type AddActorInput = {
-  actorId: string;
+export type AddBehaviorInput = {
+  behaviorId: string;
   name: string;
   systemPrompt: string;
-  defaultBehaviorId: string;
+  preferredProviderId?: string;
 };
 
-type AddActorFormProps = {
-  behaviors: { behavior_id: string; name: string; status: string }[];
+type AddBehaviorFormProps = {
+  providers: { provider: string; enabled: boolean }[];
   open: boolean;
   isSaving: boolean;
   onOpenChange: (open: boolean) => void;
-  onSubmit: (input: AddActorInput) => Promise<void>;
+  onSubmit: (input: AddBehaviorInput) => Promise<void>;
 };
 
 type FormState = {
   name: string;
   systemPrompt: string;
-  defaultBehaviorId: string;
+  preferredProviderId: string;
 };
 
 const DEFAULT_FORM: FormState = {
   name: "",
-  systemPrompt: "You are a helpful long-running actor.",
-  defaultBehaviorId: "",
+  systemPrompt: "You are a helpful actor behavior.",
+  preferredProviderId: "",
 };
 
-function createActorUri(): string {
+function createBehaviorUri(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `borg:actor:${crypto.randomUUID()}`;
+    return `borg:behavior:${crypto.randomUUID()}`;
   }
-  return `borg:actor:${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  return `borg:behavior:${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 
-const NO_BEHAVIOR = "__none__";
-
-export function AddActorForm({
-  behaviors,
+export function AddBehaviorForm({
+  providers,
   open,
   isSaving,
   onOpenChange,
   onSubmit,
-}: AddActorFormProps) {
+}: AddBehaviorFormProps) {
   const [form, setForm] = React.useState<FormState>(DEFAULT_FORM);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -83,16 +81,12 @@ export function AddActorForm({
       setError("System prompt is required");
       return;
     }
-    if (!form.defaultBehaviorId.trim()) {
-      setError("Default behavior is required");
-      return;
-    }
 
     await onSubmit({
-      actorId: createActorUri(),
+      behaviorId: createBehaviorUri(),
       name,
       systemPrompt,
-      defaultBehaviorId: form.defaultBehaviorId.trim(),
+      preferredProviderId: form.preferredProviderId.trim() || undefined,
     });
   };
 
@@ -100,26 +94,26 @@ export function AddActorForm({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Add Actor</DialogTitle>
+          <DialogTitle>Add Behavior</DialogTitle>
         </DialogHeader>
         <form className="space-y-3" onSubmit={handleSubmit}>
           <div className="space-y-1">
-            <Label htmlFor="actor-name">Name</Label>
+            <Label htmlFor="behavior-name">Name</Label>
             <Input
-              id="actor-name"
+              id="behavior-name"
               value={form.name}
               onChange={(event) =>
                 setForm((current) => ({ ...current, name: event.currentTarget.value }))
               }
-              placeholder="DevMode Integrator"
+              placeholder="Prototyping"
               required
             />
           </div>
 
           <div className="space-y-1">
-            <Label htmlFor="actor-system-prompt">System Prompt</Label>
+            <Label htmlFor="behavior-system-prompt">System Prompt</Label>
             <Textarea
-              id="actor-system-prompt"
+              id="behavior-system-prompt"
               rows={6}
               value={form.systemPrompt}
               onChange={(event) =>
@@ -128,39 +122,32 @@ export function AddActorForm({
                   systemPrompt: event.currentTarget.value,
                 }))
               }
-              placeholder="You are an actor that handles many sessions concurrently."
+              placeholder="You optimize for rapid iteration."
               required
             />
           </div>
 
           <div className="space-y-1">
-            <Label>Default Behavior</Label>
+            <Label>Preferred Provider (optional)</Label>
             <Select
-              value={form.defaultBehaviorId || NO_BEHAVIOR}
+              value={form.preferredProviderId || "__none__"}
               onValueChange={(value) =>
                 setForm((current) => ({
                   ...current,
-                  defaultBehaviorId: value === NO_BEHAVIOR ? "" : value,
+                  preferredProviderId: value === "__none__" ? "" : value,
                 }))
               }
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select default behavior" />
+                <SelectValue placeholder="No preferred provider" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={NO_BEHAVIOR} disabled>
-                  Select default behavior
-                </SelectItem>
-                {behaviors
-                  .filter((behavior) => behavior.status === "ACTIVE")
-                  .map((behavior) => (
-                    <SelectItem
-                      key={behavior.behavior_id}
-                      value={behavior.behavior_id}
-                    >
-                      {behavior.name} ({behavior.behavior_id})
-                    </SelectItem>
-                  ))}
+                <SelectItem value="__none__">No preferred provider</SelectItem>
+                {providers.map((provider) => (
+                  <SelectItem key={provider.provider} value={provider.provider}>
+                    {provider.provider}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -172,7 +159,7 @@ export function AddActorForm({
               Cancel
             </Button>
             <Button type="submit" disabled={isSaving}>
-              {isSaving ? "Creating..." : "Create Actor"}
+              {isSaving ? "Creating..." : "Create Behavior"}
             </Button>
           </DialogFooter>
         </form>

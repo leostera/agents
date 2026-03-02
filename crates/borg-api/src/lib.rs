@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
+use axum::extract::FromRef;
 use borg_db::BorgDb;
 use borg_exec::{BorgRuntime, BorgSupervisor};
 use borg_memory::MemoryStore;
@@ -20,6 +21,12 @@ pub(crate) use crate::controllers::system::{HttpPortRequest, validate_port_reque
 pub(crate) struct AppState {
     pub(crate) db: BorgDb,
     pub(crate) memory: MemoryStore,
+}
+
+impl FromRef<AppState> for BorgDb {
+    fn from_ref(state: &AppState) -> Self {
+        state.db.clone()
+    }
 }
 
 pub struct BorgApiServer {
@@ -451,6 +458,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oauth_start_endpoint_returns_authorize_url_for_oauth_apps() {
+        let app = test_app("apps-oauth-start").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/apps/borg:app:github-custom",
+            json!({
+                "name":"GitHub Custom",
+                "slug":"github-custom",
+                "description":"OAuth app",
+                "status":"active",
+                "source":"custom",
+                "auth_strategy":"oauth2",
+                "auth_config_json":{
+                    "authorize_url":"https://github.com/login/oauth/authorize",
+                    "token_url":"https://github.com/login/oauth/access_token",
+                    "client_id":"test-client-id",
+                    "client_secret":"test-client-secret",
+                    "scopes":["read:user","repo"],
+                    "redirect_uri":"http://127.0.0.1:8080/oauth/github-custom/callback"
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_json(
+            &app,
+            Method::POST,
+            "/api/apps/borg:app:github-custom/oauth/start",
+            json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"], true);
+        let authorize_url = body["authorize_url"].as_str().unwrap_or_default();
+        assert!(authorize_url.starts_with("https://github.com/login/oauth/authorize"));
+        assert!(authorize_url.contains("client_id=test-client-id"));
+        assert!(authorize_url.contains("state="));
+    }
+
+    #[tokio::test]
     async fn cors_allows_localhost_origins() {
         let app = test_app("cors-localhost").await;
         let response = app
@@ -589,6 +638,7 @@ mod tests {
             "/api/actors/devmode:actor:default",
             json!({
                 "system_prompt":"you are actor borg",
+                "default_behavior_id":"borg:behavior:default",
                 "status":"RUNNING"
             }),
         )
@@ -600,6 +650,10 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["actor"]["status"], "RUNNING");
         assert_eq!(body["actor"]["system_prompt"], "you are actor borg");
+        assert_eq!(
+            body["actor"]["default_behavior_id"],
+            "borg:behavior:default"
+        );
 
         let (status, body) = request_no_body(&app, Method::GET, "/api/actors").await;
         assert_eq!(status, StatusCode::OK);
@@ -607,6 +661,48 @@ mod tests {
 
         let (status, _) =
             request_no_body(&app, Method::DELETE, "/api/actors/devmode:actor:default").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn behaviors_crud_endpoints_work() {
+        let app = test_app("behaviors").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/behaviors/borg:behavior:prototyping",
+            json!({
+                "name":"Prototyping",
+                "system_prompt":"You prototype quickly.",
+                "preferred_provider_id":"lmstudio",
+                "required_capabilities_json":["tool_calling"],
+                "session_turn_concurrency":"serial",
+                "status":"ACTIVE"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/behaviors/borg:behavior:prototyping",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["behavior"]["name"], "Prototyping");
+        assert_eq!(body["behavior"]["preferred_provider_id"], "lmstudio");
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/behaviors").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["behaviors"].as_array().is_some_and(|v| !v.is_empty()));
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::DELETE,
+            "/api/behaviors/borg:behavior:prototyping",
+        )
+        .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
     }
 
@@ -856,7 +952,11 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert!(body["bindings"].as_array().is_some_and(|items| !items.is_empty()));
+        assert!(
+            body["bindings"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        );
 
         let (status, _) = request_no_body(
             &app,

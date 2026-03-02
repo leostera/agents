@@ -20,6 +20,7 @@ pub(crate) struct UpsertActorRequest {
     #[serde(default)]
     name: Option<String>,
     system_prompt: String,
+    default_behavior_id: String,
     #[serde(default)]
     status: Option<String>,
 }
@@ -62,6 +63,11 @@ impl ActorsController {
             Ok(v) => v,
             Err(err) => return err,
         };
+        let default_behavior_id =
+            match parse_uri_field("default_behavior_id", &payload.default_behavior_id) {
+                Ok(v) => v,
+                Err(err) => return err,
+            };
         let name = payload
             .name
             .as_deref()
@@ -77,7 +83,13 @@ impl ActorsController {
             .unwrap_or("RUNNING");
         match state
             .db
-            .upsert_actor(&actor_id, &name, &payload.system_prompt, status)
+            .upsert_actor(
+                &actor_id,
+                &name,
+                &payload.system_prompt,
+                &default_behavior_id,
+                status,
+            )
             .await
         {
             Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),

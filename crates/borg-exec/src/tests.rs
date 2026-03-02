@@ -336,9 +336,16 @@ async fn borg_supervisor_actor_can_serve_multiple_sessions() {
     supervisor.start().await.unwrap();
 
     let actor_id = uri!("devmode", "actor", "multi-session");
-    db.upsert_actor(&actor_id, "multi-session", "prompt", "RUNNING")
-        .await
-        .unwrap();
+    let behavior_id = uri!("borg", "behavior", "default");
+    db.upsert_actor(
+        &actor_id,
+        "multi-session",
+        "prompt",
+        &behavior_id,
+        "RUNNING",
+    )
+    .await
+    .unwrap();
     let user_id = uri!("borg", "user", "tester");
     let pctx = std::sync::Arc::new(crate::JsonPortContext::new(json!({})));
     let session_a = uri!("borg", "session", "a");
@@ -387,9 +394,16 @@ async fn borg_supervisor_persists_call_and_cast_to_actor_mailbox() {
     supervisor.start().await.unwrap();
 
     let actor_id = uri!("devmode", "actor", "mailbox-persist");
-    db.upsert_actor(&actor_id, "mailbox-persist", "prompt", "RUNNING")
-        .await
-        .unwrap();
+    let behavior_id = uri!("borg", "behavior", "default");
+    db.upsert_actor(
+        &actor_id,
+        "mailbox-persist",
+        "prompt",
+        &behavior_id,
+        "RUNNING",
+    )
+    .await
+    .unwrap();
     let user_id = uri!("borg", "user", "tester");
     let pctx = std::sync::Arc::new(crate::JsonPortContext::new(json!({})));
     let session_id = uri!("borg", "session", "persist");
@@ -530,7 +544,8 @@ async fn borg_supervisor_replays_queued_after_actor_spec_is_created() {
         .expect_err("cast should fail before actor spec exists");
     assert!(queued_err.to_string().contains("actor spec not found"));
 
-    db.upsert_actor(&actor_id, "late-created", "prompt", "RUNNING")
+    let behavior_id = uri!("borg", "behavior", "default");
+    db.upsert_actor(&actor_id, "late-created", "prompt", &behavior_id, "RUNNING")
         .await
         .unwrap();
 
@@ -580,7 +595,8 @@ async fn borg_supervisor_start_fails_stale_in_progress_mailbox_rows() {
     let supervisor = BorgSupervisor::new(runtime);
 
     let actor_id = uri!("devmode", "actor", "stale-fail");
-    db.upsert_actor(&actor_id, "stale-fail", "prompt", "RUNNING")
+    let behavior_id = uri!("borg", "behavior", "default");
+    db.upsert_actor(&actor_id, "stale-fail", "prompt", &behavior_id, "RUNNING")
         .await
         .unwrap();
 
@@ -629,9 +645,16 @@ async fn borg_supervisor_start_replays_queued_mailbox_rows() {
     let supervisor = BorgSupervisor::new(runtime);
 
     let actor_id = uri!("devmode", "actor", "replay-queued");
-    db.upsert_actor(&actor_id, "replay-queued", "prompt", "RUNNING")
-        .await
-        .unwrap();
+    let behavior_id = uri!("borg", "behavior", "default");
+    db.upsert_actor(
+        &actor_id,
+        "replay-queued",
+        "prompt",
+        &behavior_id,
+        "RUNNING",
+    )
+    .await
+    .unwrap();
     let msg = crate::BorgMessage {
         actor_id: actor_id.clone(),
         user_id: uri!("borg", "user", "tester"),

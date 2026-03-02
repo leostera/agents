@@ -30,6 +30,9 @@ export type AppRecord = {
   description: string;
   status: string;
   built_in: boolean;
+  source?: string;
+  auth_strategy?: string;
+  auth_config_json?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 };
@@ -60,6 +63,46 @@ export type AppCapabilitiesResponse = {
 
 export type AppCapabilityResponse = {
   capability?: AppCapabilityRecord;
+};
+
+export type AppOAuthStartResponse = {
+  ok: boolean;
+  app_id: string;
+  provider: string;
+  connection_id: string;
+  state: string;
+  authorize_url: string;
+};
+
+export type AppConnectionRecord = {
+  connection_id: string;
+  app_id: string;
+  owner_user_id?: string | null;
+  provider_account_id?: string | null;
+  external_user_id?: string | null;
+  status: string;
+  connection_json: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppSecretRecord = {
+  secret_id: string;
+  app_id: string;
+  connection_id?: string | null;
+  key: string;
+  value: string;
+  kind: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppConnectionsResponse = {
+  connections?: AppConnectionRecord[];
+};
+
+export type AppSecretsResponse = {
+  secrets?: AppSecretRecord[];
 };
 
 export type HealthResponse = {
@@ -96,6 +139,7 @@ export type ActorRecord = {
   actor_id: string;
   name: string;
   system_prompt: string;
+  default_behavior_id: string;
   status: string;
   created_at: string;
   updated_at: string;
@@ -107,6 +151,26 @@ export type ActorsResponse = {
 
 export type ActorResponse = {
   actor?: ActorRecord;
+};
+
+export type BehaviorRecord = {
+  behavior_id: string;
+  name: string;
+  system_prompt: string;
+  preferred_provider_id?: string | null;
+  required_capabilities_json: unknown;
+  session_turn_concurrency: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BehaviorsResponse = {
+  behaviors?: BehaviorRecord[];
+};
+
+export type BehaviorResponse = {
+  behavior?: BehaviorRecord;
 };
 
 export type UserRecord = {
@@ -278,6 +342,38 @@ export type TaskGraphEventsResponse = {
 export type TaskGraphChildrenResponse = {
   children?: TaskGraphTask[];
   next_cursor?: string | null;
+};
+
+export type ClockworkJobStatus =
+  | "active"
+  | "paused"
+  | "cancelled"
+  | "completed";
+
+export type ClockworkJobKind = "once" | "cron";
+
+export type ClockworkJobRecord = {
+  job_id: string;
+  kind: ClockworkJobKind | string;
+  status: ClockworkJobStatus | string;
+  target_actor_id: string;
+  target_session_id: string;
+  message_type: string;
+  payload: unknown;
+  headers: Record<string, unknown>;
+  schedule_spec: Record<string, unknown>;
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ClockworkJobsResponse = {
+  jobs?: ClockworkJobRecord[];
+};
+
+export type ClockworkJobResponse = {
+  job?: ClockworkJobRecord;
 };
 
 export type LlmCallRecord = {
@@ -563,6 +659,90 @@ export class BorgApiClient {
     }
   }
 
+  async startAppOAuth(
+    appId: string,
+    payload: { owner_user_id?: string; return_to?: string } = {}
+  ): Promise<AppOAuthStartResponse> {
+    return this.requestJson<AppOAuthStartResponse>(
+      `/api/apps/${encodeURIComponent(appId)}/oauth/start`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
+  }
+
+  async listAppConnections(
+    appId: string,
+    limit = 100
+  ): Promise<AppConnectionRecord[]> {
+    const data = await this.requestJson<AppConnectionsResponse>(
+      `/api/apps/${encodeURIComponent(appId)}/connections?limit=${limit}`
+    );
+    return Array.isArray(data.connections) ? data.connections : [];
+  }
+
+  async deleteAppConnection(
+    appId: string,
+    connectionId: string,
+    options: { ignoreNotFound?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.request(
+        `/api/apps/${encodeURIComponent(appId)}/connections/${encodeURIComponent(connectionId)}`,
+        { method: "DELETE" }
+      );
+    } catch (error) {
+      if (
+        options.ignoreNotFound &&
+        error instanceof BorgApiError &&
+        error.status === 404
+      ) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async listAppSecrets(
+    appId: string,
+    params: { limit?: number; connectionId?: string } = {}
+  ): Promise<AppSecretRecord[]> {
+    const query = new URLSearchParams({
+      limit: String(params.limit ?? 100),
+    });
+    if (params.connectionId?.trim()) {
+      query.set("connection_id", params.connectionId.trim());
+    }
+    const data = await this.requestJson<AppSecretsResponse>(
+      `/api/apps/${encodeURIComponent(appId)}/secrets?${query.toString()}`
+    );
+    return Array.isArray(data.secrets) ? data.secrets : [];
+  }
+
+  async deleteAppSecret(
+    appId: string,
+    secretId: string,
+    options: { ignoreNotFound?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.request(
+        `/api/apps/${encodeURIComponent(appId)}/secrets/${encodeURIComponent(secretId)}`,
+        { method: "DELETE" }
+      );
+    } catch (error) {
+      if (
+        options.ignoreNotFound &&
+        error instanceof BorgApiError &&
+        error.status === 404
+      ) {
+        return;
+      }
+      throw error;
+    }
+  }
+
   async health(): Promise<boolean> {
     const data = await this.requestJson<HealthResponse>("/health");
     return data.status === "ok";
@@ -749,6 +929,129 @@ export class BorgApiClient {
     };
   }
 
+  async listClockworkJobs(params: {
+    limit?: number;
+    status?: ClockworkJobStatus | string;
+  } = {}): Promise<ClockworkJobRecord[]> {
+    const searchParams = new URLSearchParams({
+      limit: String(params.limit ?? 200),
+    });
+    if (params.status) {
+      searchParams.set("status", params.status);
+    }
+    const data = await this.requestJson<ClockworkJobsResponse>(
+      `/api/clockwork/jobs?${searchParams.toString()}`
+    );
+    return Array.isArray(data.jobs) ? data.jobs : [];
+  }
+
+  async getClockworkJob(jobId: string): Promise<ClockworkJobRecord | null> {
+    try {
+      const data = await this.requestJson<ClockworkJobResponse>(
+        `/api/clockwork/jobs/${encodeURIComponent(jobId)}`
+      );
+      return data.job ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async createClockworkJob(payload: {
+    jobId: string;
+    kind: ClockworkJobKind | string;
+    actorId: string;
+    sessionId: string;
+    messageType: string;
+    messagePayload: unknown;
+    messageHeaders?: Record<string, unknown>;
+    scheduleSpec: Record<string, unknown>;
+    nextRunAt?: string | null;
+  }): Promise<ClockworkJobRecord> {
+    const data = await this.requestJson<ClockworkJobResponse>(
+      `/api/clockwork/jobs`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          job_id: payload.jobId,
+          kind: payload.kind,
+          actor_id: payload.actorId,
+          session_id: payload.sessionId,
+          message_type: payload.messageType,
+          payload: payload.messagePayload,
+          headers: payload.messageHeaders ?? {},
+          schedule_spec: payload.scheduleSpec,
+          next_run_at: payload.nextRunAt ?? null,
+        }),
+      }
+    );
+    if (!data.job) throw new BorgApiError("Clockwork job create failed");
+    return data.job;
+  }
+
+  async updateClockworkJob(
+    jobId: string,
+    payload: {
+      kind?: ClockworkJobKind | string;
+      actorId?: string;
+      sessionId?: string;
+      messageType?: string;
+      messagePayload?: unknown;
+      messageHeaders?: Record<string, unknown>;
+      scheduleSpec?: Record<string, unknown>;
+      nextRunAt?: string | null;
+    }
+  ): Promise<ClockworkJobRecord> {
+    const data = await this.requestJson<ClockworkJobResponse>(
+      `/api/clockwork/jobs/${encodeURIComponent(jobId)}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: payload.kind,
+          actor_id: payload.actorId,
+          session_id: payload.sessionId,
+          message_type: payload.messageType,
+          payload: payload.messagePayload,
+          headers: payload.messageHeaders,
+          schedule_spec: payload.scheduleSpec,
+          next_run_at: payload.nextRunAt,
+        }),
+      }
+    );
+    if (!data.job) throw new BorgApiError("Clockwork job update failed");
+    return data.job;
+  }
+
+  private async setClockworkJobStatus(
+    jobId: string,
+    action: "pause" | "resume" | "cancel"
+  ): Promise<ClockworkJobRecord> {
+    const data = await this.requestJson<ClockworkJobResponse>(
+      `/api/clockwork/jobs/${encodeURIComponent(jobId)}/${action}`,
+      {
+        method: "PUT",
+      }
+    );
+    if (!data.job) throw new BorgApiError("Clockwork job status update failed");
+    return data.job;
+  }
+
+  async pauseClockworkJob(jobId: string): Promise<ClockworkJobRecord> {
+    return this.setClockworkJobStatus(jobId, "pause");
+  }
+
+  async resumeClockworkJob(jobId: string): Promise<ClockworkJobRecord> {
+    return this.setClockworkJobStatus(jobId, "resume");
+  }
+
+  async cancelClockworkJob(jobId: string): Promise<ClockworkJobRecord> {
+    return this.setClockworkJobStatus(jobId, "cancel");
+  }
+
   async listSessions(limit = 100): Promise<SessionRecord[]> {
     const data = await this.requestJson<SessionsResponse>(
       `/api/sessions?limit=${limit}`
@@ -883,6 +1186,7 @@ export class BorgApiClient {
     actorId: string;
     name?: string | null;
     systemPrompt: string;
+    defaultBehaviorId: string;
     status?: string | null;
   }): Promise<void> {
     await this.request(`/api/actors/${encodeURIComponent(payload.actorId)}`, {
@@ -891,6 +1195,7 @@ export class BorgApiClient {
       body: JSON.stringify({
         name: payload.name ?? null,
         system_prompt: payload.systemPrompt,
+        default_behavior_id: payload.defaultBehaviorId,
         status: payload.status ?? null,
       }),
     });
@@ -902,6 +1207,73 @@ export class BorgApiClient {
   ): Promise<void> {
     try {
       await this.request(`/api/actors/${encodeURIComponent(actorId)}`, {
+        method: "DELETE",
+      });
+    } catch (error) {
+      if (
+        options.ignoreNotFound &&
+        error instanceof BorgApiError &&
+        error.status === 404
+      ) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async listBehaviors(limit = 100): Promise<BehaviorRecord[]> {
+    const data = await this.requestJson<BehaviorsResponse>(
+      `/api/behaviors?limit=${limit}`
+    );
+    return Array.isArray(data.behaviors) ? data.behaviors : [];
+  }
+
+  async getBehavior(behaviorId: string): Promise<BehaviorRecord | null> {
+    try {
+      const data = await this.requestJson<BehaviorResponse>(
+        `/api/behaviors/${encodeURIComponent(behaviorId)}`
+      );
+      return data.behavior ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async upsertBehavior(payload: {
+    behaviorId: string;
+    name?: string | null;
+    systemPrompt: string;
+    preferredProviderId?: string | null;
+    requiredCapabilitiesJson?: unknown;
+    sessionTurnConcurrency?: string | null;
+    status?: string | null;
+  }): Promise<void> {
+    await this.request(
+      `/api/behaviors/${encodeURIComponent(payload.behaviorId)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: payload.name ?? null,
+          system_prompt: payload.systemPrompt,
+          preferred_provider_id: payload.preferredProviderId ?? null,
+          required_capabilities_json: payload.requiredCapabilitiesJson ?? [],
+          session_turn_concurrency: payload.sessionTurnConcurrency ?? "serial",
+          status: payload.status ?? "ACTIVE",
+        }),
+      }
+    );
+  }
+
+  async deleteBehavior(
+    behaviorId: string,
+    options: { ignoreNotFound?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.request(`/api/behaviors/${encodeURIComponent(behaviorId)}`, {
         method: "DELETE",
       });
     } catch (error) {

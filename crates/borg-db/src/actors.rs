@@ -13,16 +13,26 @@ impl BorgDb {
         actor_id: &Uri,
         name: &str,
         system_prompt: &str,
+        default_behavior_id: &Uri,
         status: &str,
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query(
             r#"
-            INSERT INTO actors(actor_id, name, system_prompt, status, created_at, updated_at)
-            VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+            INSERT INTO actors(
+                actor_id,
+                name,
+                system_prompt,
+                default_behavior_id,
+                status,
+                created_at,
+                updated_at
+            )
+            VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(actor_id) DO UPDATE SET
               name = excluded.name,
               system_prompt = excluded.system_prompt,
+              default_behavior_id = excluded.default_behavior_id,
               status = excluded.status,
               updated_at = excluded.updated_at
             "#,
@@ -30,6 +40,7 @@ impl BorgDb {
         .bind(actor_id.to_string())
         .bind(name)
         .bind(system_prompt)
+        .bind(default_behavior_id.to_string())
         .bind(status)
         .bind(now.clone())
         .bind(now)
@@ -42,7 +53,14 @@ impl BorgDb {
     pub async fn get_actor(&self, actor_id: &Uri) -> Result<Option<ActorRecord>> {
         let row = sqlx::query(
             r#"
-            SELECT actor_id, name, system_prompt, status, created_at, updated_at
+            SELECT
+                actor_id,
+                name,
+                system_prompt,
+                default_behavior_id,
+                status,
+                created_at,
+                updated_at
             FROM actors
             WHERE actor_id = ?1
             LIMIT 1
@@ -60,7 +78,14 @@ impl BorgDb {
         let limit = i64::try_from(limit).unwrap_or(100);
         let rows = sqlx::query(
             r#"
-            SELECT actor_id, name, system_prompt, status, created_at, updated_at
+            SELECT
+                actor_id,
+                name,
+                system_prompt,
+                default_behavior_id,
+                status,
+                created_at,
+                updated_at
             FROM actors
             ORDER BY updated_at DESC
             LIMIT ?1
@@ -275,6 +300,7 @@ fn actor_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ActorRecord> {
         actor_id: Uri::parse(&row.try_get::<String, _>("actor_id")?)?,
         name: row.try_get("name")?,
         system_prompt: row.try_get("system_prompt")?,
+        default_behavior_id: Uri::parse(&row.try_get::<String, _>("default_behavior_id")?)?,
         status: row.try_get("status")?,
         created_at: parse_ts(&row.try_get::<String, _>("created_at")?)?,
         updated_at: parse_ts(&row.try_get::<String, _>("updated_at")?)?,
@@ -349,7 +375,8 @@ mod tests {
         db.migrate().await?;
 
         let actor_id = Uri::from_parts("devmode", "actor", Some("a1"))?;
-        db.upsert_actor(&actor_id, "A1", "prompt", "RUNNING")
+        let behavior_id = Uri::from_parts("borg", "behavior", Some("default"))?;
+        db.upsert_actor(&actor_id, "A1", "prompt", &behavior_id, "RUNNING")
             .await?;
 
         let m1 = db
@@ -403,7 +430,8 @@ mod tests {
         db.migrate().await?;
 
         let actor_id = Uri::from_parts("devmode", "actor", Some("a2"))?;
-        db.upsert_actor(&actor_id, "A2", "prompt", "RUNNING")
+        let behavior_id = Uri::from_parts("borg", "behavior", Some("default"))?;
+        db.upsert_actor(&actor_id, "A2", "prompt", &behavior_id, "RUNNING")
             .await?;
         let msg_id = db
             .enqueue_actor_message(

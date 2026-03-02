@@ -1,4 +1,8 @@
-import { type ActorRecord, createBorgApiClient } from "@borg/api";
+import {
+  type ActorRecord,
+  type BehaviorRecord,
+  createBorgApiClient,
+} from "@borg/api";
 import { Badge, Button, EntityLink, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@borg/ui";
 import { Bot, LoaderCircle, Pause, Play, Plus, Trash2 } from "lucide-react";
 import React from "react";
@@ -9,6 +13,7 @@ const borgApi = createBorgApiClient();
 
 export function ActorsPage() {
   const [actors, setActors] = React.useState<ActorRecord[]>([]);
+  const [behaviors, setBehaviors] = React.useState<BehaviorRecord[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
@@ -19,10 +24,15 @@ export function ActorsPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const rows = await borgApi.listActors(500);
-      setActors(rows);
+      const [actorRows, behaviorRows] = await Promise.all([
+        borgApi.listActors(500),
+        borgApi.listBehaviors(500),
+      ]);
+      setActors(actorRows);
+      setBehaviors(behaviorRows);
     } catch (loadError) {
       setActors([]);
+      setBehaviors([]);
       setError(loadError instanceof Error ? loadError.message : "Unable to load actors");
     } finally {
       setIsLoading(false);
@@ -43,6 +53,10 @@ export function ActorsPage() {
         .includes(term)
     );
   }, [actors, query]);
+  const hasActiveBehaviors = React.useMemo(
+    () => behaviors.some((behavior) => behavior.status === "ACTIVE"),
+    [behaviors]
+  );
 
   const hasNoActors = !isLoading && actors.length === 0;
 
@@ -54,6 +68,7 @@ export function ActorsPage() {
         actorId: input.actorId,
         name: input.name,
         systemPrompt: input.systemPrompt,
+        defaultBehaviorId: input.defaultBehaviorId,
         status: "STOPPED",
       });
       setIsDialogOpen(false);
@@ -82,6 +97,7 @@ export function ActorsPage() {
         actorId: actor.actor_id,
         name: actor.name,
         systemPrompt: actor.system_prompt,
+        defaultBehaviorId: actor.default_behavior_id,
         status,
       });
       await loadActors();
@@ -105,7 +121,11 @@ export function ActorsPage() {
             aria-label="Search actors"
             className="max-w-md"
           />
-          <Button variant="outline" onClick={() => setIsDialogOpen(true)}>
+          <Button
+            variant="outline"
+            onClick={() => setIsDialogOpen(true)}
+            disabled={!hasActiveBehaviors}
+          >
             <Plus className="size-4" />
             Add Actor
           </Button>
@@ -113,6 +133,11 @@ export function ActorsPage() {
       )}
 
       {error ? <p className="text-destructive text-xs">{error}</p> : null}
+      {!hasActiveBehaviors ? (
+        <p className="text-muted-foreground text-xs">
+          Create an active behavior before creating actors.
+        </p>
+      ) : null}
 
       <SectionContent>
         {hasNoActors ? (
@@ -120,7 +145,14 @@ export function ActorsPage() {
             icon={Bot}
             title="No Actors Found"
             description="Create an actor so ports can bind conversations to it."
-            action={<Button onClick={() => setIsDialogOpen(true)}>+ Add Actor</Button>}
+            action={
+              <Button
+                onClick={() => setIsDialogOpen(true)}
+                disabled={!hasActiveBehaviors}
+              >
+                + Add Actor
+              </Button>
+            }
           />
         ) : (
           <Table>
@@ -200,6 +232,7 @@ export function ActorsPage() {
       </SectionContent>
 
       <AddActorForm
+        behaviors={behaviors}
         open={isDialogOpen}
         onOpenChange={setIsDialogOpen}
         isSaving={isSaving}

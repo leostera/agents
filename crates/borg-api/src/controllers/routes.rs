@@ -9,6 +9,7 @@ use tracing::Level;
 
 use super::actors::ActorsController;
 use super::apps::AppsController;
+use super::behaviors::BehaviorsController;
 use super::db::DbController;
 use super::port_actor_bindings::PortActorBindingsController;
 use super::providers::ProvidersController;
@@ -70,6 +71,26 @@ pub(crate) fn app_router(state: AppState) -> Router {
             "/api/taskgraph/tasks/:task_uri/children",
             get(DbController::list_taskgraph_children),
         )
+        .route(
+            "/api/clockwork/jobs",
+            get(DbController::list_clockwork_jobs).post(DbController::create_clockwork_job),
+        )
+        .route(
+            "/api/clockwork/jobs/:job_id",
+            get(DbController::get_clockwork_job).patch(DbController::update_clockwork_job),
+        )
+        .route(
+            "/api/clockwork/jobs/:job_id/pause",
+            put(DbController::pause_clockwork_job),
+        )
+        .route(
+            "/api/clockwork/jobs/:job_id/resume",
+            put(DbController::resume_clockwork_job),
+        )
+        .route(
+            "/api/clockwork/jobs/:job_id/cancel",
+            put(DbController::cancel_clockwork_job),
+        )
         .route("/api/providers", get(ProvidersController::list_providers))
         .route(
             "/api/providers/:provider",
@@ -119,6 +140,14 @@ pub(crate) fn app_router(state: AppState) -> Router {
                 .delete(AppsController::delete_app_secret),
         )
         .route(
+            "/api/apps/:app_id/oauth/start",
+            post(borg_apps::oauth_start::<AppState>),
+        )
+        .route(
+            "/oauth/:provider/callback",
+            get(borg_apps::oauth_provider_callback::<AppState>),
+        )
+        .route(
             "/api/providers/openai/device-code/start",
             post(ProvidersController::start_openai_device_code),
         )
@@ -139,6 +168,13 @@ pub(crate) fn app_router(state: AppState) -> Router {
                 .delete(DbController::detach_policy_from_entity),
         )
         .route("/api/agents/specs", get(DbController::list_agent_specs))
+        .route("/api/behaviors", get(BehaviorsController::list_behaviors))
+        .route(
+            "/api/behaviors/:behavior_id",
+            get(BehaviorsController::get_behavior)
+                .put(BehaviorsController::upsert_behavior)
+                .delete(BehaviorsController::delete_behavior),
+        )
         .route("/api/actors", get(ActorsController::list_actors))
         .route(
             "/api/agents/specs/:agent_id",

@@ -1,5 +1,6 @@
 pub(crate) mod actors;
 pub(crate) mod apps;
+pub(crate) mod behaviors;
 pub(crate) mod common;
 pub(crate) mod db;
 pub(crate) mod port_actor_bindings;

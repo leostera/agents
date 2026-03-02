@@ -2,6 +2,8 @@ mod actor_bindings;
 mod actors;
 mod agents;
 mod apps;
+mod behaviors;
+mod clockwork;
 mod core;
 mod llm_calls;
 mod migrations;
@@ -19,6 +21,7 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 
 use borg_core::Uri;
+pub use clockwork::{CreateClockworkJobInput, UpdateClockworkJobInput};
 
 #[derive(Clone)]
 pub struct BorgDb {
@@ -167,6 +170,7 @@ pub struct AppRecord {
     pub built_in: bool,
     pub source: String,
     pub auth_strategy: String,
+    pub auth_config_json: Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -214,6 +218,7 @@ pub struct ActorRecord {
     pub actor_id: Uri,
     pub name: String,
     pub system_prompt: String,
+    pub default_behavior_id: Uri,
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -233,4 +238,46 @@ pub struct ActorMailboxRecord {
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ClockworkJobRecord {
+    pub job_id: String,
+    pub kind: String,
+    pub status: String,
+    pub target_actor_id: String,
+    pub target_session_id: String,
+    pub message_type: String,
+    pub payload: Value,
+    pub headers: Value,
+    pub schedule_spec: Value,
+    pub next_run_at: Option<DateTime<Utc>>,
+    pub last_run_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ClockworkJobRunRecord {
+    pub run_id: String,
+    pub job_id: String,
+    pub scheduled_for: DateTime<Utc>,
+    pub fired_at: DateTime<Utc>,
+    pub target_actor_id: String,
+    pub target_session_id: String,
+    pub message_id: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct BehaviorRecord {
+    pub behavior_id: Uri,
+    pub name: String,
+    pub system_prompt: String,
+    pub preferred_provider_id: Option<String>,
+    pub required_capabilities_json: Value,
+    pub session_turn_concurrency: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }

@@ -183,11 +183,14 @@ mod tests {
         .await?;
         db.migrate().await?;
 
+        let behavior = Uri::from_parts("borg", "behavior", Some("default"))?;
         let actor_a = Uri::from_parts("devmode", "actor", Some("bind-a"))?;
         let actor_b = Uri::from_parts("devmode", "actor", Some("bind-b"))?;
         let key = Uri::from_parts("borg", "conversation", Some("c1"))?;
-        db.upsert_actor(&actor_a, "A", "prompt", "RUNNING").await?;
-        db.upsert_actor(&actor_b, "B", "prompt", "RUNNING").await?;
+        db.upsert_actor(&actor_a, "A", "prompt", &behavior, "RUNNING")
+            .await?;
+        db.upsert_actor(&actor_b, "B", "prompt", &behavior, "RUNNING")
+            .await?;
 
         let resolved = db
             .resolve_port_actor("telegram", &key, Some(&actor_a), None)
@@ -217,9 +220,11 @@ mod tests {
         .await?;
         db.migrate().await?;
 
+        let behavior = Uri::from_parts("borg", "behavior", Some("default"))?;
         let actor = Uri::from_parts("devmode", "actor", Some("default-a"))?;
         let key = Uri::from_parts("borg", "conversation", Some("c2"))?;
-        db.upsert_actor(&actor, "A", "prompt", "RUNNING").await?;
+        db.upsert_actor(&actor, "A", "prompt", &behavior, "RUNNING")
+            .await?;
 
         let resolved = db
             .resolve_port_actor("http", &key, None, Some(&actor))
@@ -245,9 +250,11 @@ mod tests {
         .await?;
         db.migrate().await?;
 
+        let behavior = Uri::from_parts("borg", "behavior", Some("default"))?;
         let actor = Uri::from_parts("devmode", "actor", Some("clear-a"))?;
         let key = Uri::from_parts("borg", "conversation", Some("clear-c"))?;
-        db.upsert_actor(&actor, "A", "prompt", "RUNNING").await?;
+        db.upsert_actor(&actor, "A", "prompt", &behavior, "RUNNING")
+            .await?;
         db.upsert_port_actor_binding("telegram", &key, &actor)
             .await?;
         assert_eq!(
@@ -271,10 +278,13 @@ mod tests {
         .await?;
         db.migrate().await?;
 
+        let behavior = Uri::from_parts("borg", "behavior", Some("default"))?;
         let actor = Uri::from_parts("devmode", "actor", Some("list-a"))?;
         let key = Uri::from_parts("borg", "conversation", Some("list-c"))?;
-        db.upsert_actor(&actor, "A", "prompt", "RUNNING").await?;
-        db.upsert_port_actor_binding("telegram", &key, &actor).await?;
+        db.upsert_actor(&actor, "A", "prompt", &behavior, "RUNNING")
+            .await?;
+        db.upsert_port_actor_binding("telegram", &key, &actor)
+            .await?;
 
         let rows = db.list_port_actor_bindings("telegram", 10).await?;
         assert_eq!(rows.len(), 1);
