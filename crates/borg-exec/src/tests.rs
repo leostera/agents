@@ -317,3 +317,51 @@ async fn borg_supervisor_creation_and_lifecycle() {
     supervisor.start().await.unwrap();
     supervisor.shutdown().await;
 }
+
+#[tokio::test]
+async fn borg_supervisor_actor_can_serve_multiple_sessions() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let runtime = crate::BorgRuntime::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
+    );
+    let runtime = std::sync::Arc::new(runtime);
+    let supervisor = BorgSupervisor::new(runtime);
+    supervisor.start().await.unwrap();
+
+    let actor_id = uri!("devmode", "actor", "multi-session");
+    let user_id = uri!("borg", "user", "tester");
+    let pctx = std::sync::Arc::new(crate::JsonPortContext::new(json!({})));
+    let session_a = uri!("borg", "session", "a");
+    let session_b = uri!("borg", "session", "b");
+
+    let out_a = supervisor
+        .call(crate::BorgMessage {
+            actor_id: actor_id.clone(),
+            user_id: user_id.clone(),
+            session_id: session_a.clone(),
+            input: crate::BorgInput::Command(crate::BorgCommand::ContextDump),
+            port_context: pctx.clone(),
+        })
+        .await
+        .unwrap();
+
+    let out_b = supervisor
+        .call(crate::BorgMessage {
+            actor_id,
+            user_id,
+            session_id: session_b.clone(),
+            input: crate::BorgInput::Command(crate::BorgCommand::ContextDump),
+            port_context: pctx,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(out_a.session_id, session_a);
+    assert_eq!(out_b.session_id, session_b);
+
+    supervisor.shutdown().await;
+}

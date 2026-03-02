@@ -12,14 +12,14 @@ use tracing::info;
 #[derive(Clone)]
 pub struct BorgSupervisor {
     runtime: Arc<BorgRuntime>,
-    sessions: Arc<RwLock<HashMap<Uri, ActorHandle>>>,
+    actors: Arc<RwLock<HashMap<Uri, ActorHandle>>>,
 }
 
 impl BorgSupervisor {
     pub fn new(runtime: Arc<BorgRuntime>) -> Self {
         Self {
             runtime,
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            actors: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -29,7 +29,7 @@ impl BorgSupervisor {
     }
 
     pub async fn call(&self, msg: BorgMessage) -> anyhow::Result<SessionOutput> {
-        let actor = self.ensure_actor(&msg.session_id).await?;
+        let actor = self.ensure_actor(&msg.actor_id).await?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         actor
             .mailbox
@@ -40,28 +40,28 @@ impl BorgSupervisor {
     }
 
     pub async fn cast(&self, msg: BorgMessage) {
-        if let Ok(actor) = self.ensure_actor(&msg.session_id).await {
+        if let Ok(actor) = self.ensure_actor(&msg.actor_id).await {
             let _ = actor.mailbox.send(ActorCommand::Cast(msg)).await;
         }
     }
 
-    async fn ensure_actor(&self, session_id: &Uri) -> anyhow::Result<ActorHandle> {
-        let mut sessions = self.sessions.write().await;
+    async fn ensure_actor(&self, actor_id: &Uri) -> anyhow::Result<ActorHandle> {
+        let mut actors = self.actors.write().await;
 
-        if let Some(actor) = sessions.get(session_id) {
+        if let Some(actor) = actors.get(actor_id) {
             return Ok(actor.clone());
         }
 
-        let actor = ActorHandle::spawn(session_id.clone(), self.runtime.clone()).await?;
-        sessions.insert(session_id.clone(), actor.clone());
+        let actor = ActorHandle::spawn(actor_id.clone(), self.runtime.clone()).await?;
+        actors.insert(actor_id.clone(), actor.clone());
 
         Ok(actor)
     }
 
     pub async fn shutdown(&self) {
         info!("BorgSupervisor shutting down");
-        let mut sessions = self.sessions.write().await;
-        for (_, actor) in sessions.drain() {
+        let mut actors = self.actors.write().await;
+        for (_, actor) in actors.drain() {
             let _ = actor.mailbox.send(ActorCommand::Terminate).await;
             actor.task.abort();
         }

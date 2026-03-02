@@ -248,7 +248,7 @@ async fn bridge_loop(
     outbound_tx: Sender<SessionOutput>,
 ) {
     while let Some(message) = inbound_rx.recv().await {
-        let (session_id, _agent_id) = match db
+        let (session_id, maybe_actor_id) = match db
             .resolve_port_session(
                 &port_name,
                 &message.conversation_key,
@@ -268,9 +268,11 @@ async fn bridge_loop(
                 continue;
             }
         };
+        let actor_id = maybe_actor_id.unwrap_or_else(|| session_id.clone());
 
         let output = match sup
             .call(BorgMessage {
+                actor_id,
                 user_id: message.user_id,
                 session_id,
                 input: match message.input {

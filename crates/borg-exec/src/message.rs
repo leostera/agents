@@ -21,6 +21,7 @@ pub enum BorgInput {
 
 #[derive(Debug, Clone)]
 pub struct BorgMessage {
+    pub actor_id: Uri,
     pub user_id: Uri,
     pub session_id: Uri,
     pub input: BorgInput,
