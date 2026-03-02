@@ -119,6 +119,11 @@ impl BorgSupervisor {
             return Ok(actor.clone());
         }
 
+        let exists = self.runtime.db.get_actor(actor_id).await?.is_some();
+        if !exists {
+            return Err(anyhow!("actor spec not found for actor_id {}", actor_id));
+        }
+
         let actor = ActorHandle::spawn(actor_id.clone(), self.runtime.clone()).await?;
         actors.insert(actor_id.clone(), actor.clone());
 
@@ -173,7 +178,10 @@ impl BorgSupervisor {
                     let _ = self
                         .runtime
                         .db
-                        .fail_actor_message(&row.actor_message_id, &format!("ensure actor failed: {err}"))
+                        .fail_actor_message(
+                            &row.actor_message_id,
+                            &format!("ensure actor failed: {err}"),
+                        )
                         .await;
                     continue;
                 }

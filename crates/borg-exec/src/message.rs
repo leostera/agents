@@ -1,9 +1,10 @@
 use borg_core::Uri;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::port_context::PortContext;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BorgCommand {
     ModelShowCurrent,
     ModelSet { model: String },

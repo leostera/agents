@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use borg_core::Uri;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,6 +12,7 @@ pub struct ActorMailboxEnvelope {
     pub actor_id: String,
     pub user_id: String,
     pub session_id: String,
+    pub port_context: Value,
     pub input: ActorMailboxInput,
 }
 
@@ -19,19 +20,24 @@ pub struct ActorMailboxEnvelope {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActorMailboxInput {
     Chat { text: String },
-    Command { name: String },
+    Command { command: BorgCommand },
 }
 
 impl ActorMailboxEnvelope {
     pub fn from_borg_message(msg: &BorgMessage) -> Self {
+        let port_context = msg
+            .port_context
+            .to_json()
+            .unwrap_or_else(|_| serde_json::json!({}));
         Self {
             actor_id: msg.actor_id.to_string(),
             user_id: msg.user_id.to_string(),
             session_id: msg.session_id.to_string(),
+            port_context,
             input: match &msg.input {
                 BorgInput::Chat { text } => ActorMailboxInput::Chat { text: text.clone() },
                 BorgInput::Command(command) => ActorMailboxInput::Command {
-                    name: command_name(command).to_string(),
+                    command: command.clone(),
                 },
             },
         }
@@ -51,42 +57,15 @@ impl ActorMailboxEnvelope {
         let session_id = Uri::parse(&self.session_id)?;
         let input = match &self.input {
             ActorMailboxInput::Chat { text } => BorgInput::Chat { text: text.clone() },
-            ActorMailboxInput::Command { name } => {
-                BorgInput::Command(parse_command(name)?)
-            }
+            ActorMailboxInput::Command { command } => BorgInput::Command(command.clone()),
         };
         Ok(BorgMessage {
             actor_id,
             user_id,
             session_id,
             input,
-            port_context: Arc::new(JsonPortContext::new(serde_json::json!({}))),
+            port_context: Arc::new(JsonPortContext::new(self.port_context.clone())),
         })
-    }
-}
-
-fn command_name(command: &BorgCommand) -> &'static str {
-    match command {
-        BorgCommand::ModelShowCurrent => "ModelShowCurrent",
-        BorgCommand::ModelSet { .. } => "ModelSet",
-        BorgCommand::ParticipantsList => "ParticipantsList",
-        BorgCommand::ContextDump => "ContextDump",
-        BorgCommand::CompactSession => "CompactSession",
-        BorgCommand::ResetContext => "ResetContext",
-    }
-}
-
-fn parse_command(name: &str) -> Result<BorgCommand> {
-    match name {
-        "ModelShowCurrent" => Ok(BorgCommand::ModelShowCurrent),
-        "ParticipantsList" => Ok(BorgCommand::ParticipantsList),
-        "ContextDump" => Ok(BorgCommand::ContextDump),
-        "CompactSession" => Ok(BorgCommand::CompactSession),
-        "ResetContext" => Ok(BorgCommand::ResetContext),
-        "ModelSet" => Ok(BorgCommand::ModelSet {
-            model: String::new(),
-        }),
-        other => Err(anyhow!("unsupported mailbox command name: {other}")),
     }
 }
 
@@ -97,6 +76,7 @@ mod tests {
 
     #[test]
     fn mailbox_envelope_roundtrip_chat() {
+        let port_ctx = serde_json::json!({"port":"test"});
         let msg = BorgMessage {
             actor_id: uri!("devmode", "actor", "a1"),
             user_id: uri!("borg", "user", "u1"),
@@ -104,7 +84,7 @@ mod tests {
             input: BorgInput::Chat {
                 text: "hello".to_string(),
             },
-            port_context: Arc::new(JsonPortContext::new(serde_json::json!({}))),
+            port_context: Arc::new(JsonPortContext::new(port_ctx.clone())),
         };
 
         let env = ActorMailboxEnvelope::from_borg_message(&msg);
@@ -117,9 +97,41 @@ mod tests {
         assert_eq!(decoded.actor_id, msg.actor_id);
         assert_eq!(decoded.user_id, msg.user_id);
         assert_eq!(decoded.session_id, msg.session_id);
+        assert_eq!(decoded.port_context.to_json().expect("ctx"), port_ctx);
         match decoded.input {
             BorgInput::Chat { text } => assert_eq!(text, "hello"),
             _ => panic!("expected chat input"),
         }
+    }
+
+    #[test]
+    fn mailbox_envelope_roundtrip_model_set() {
+        let msg = BorgMessage {
+            actor_id: uri!("devmode", "actor", "a2"),
+            user_id: uri!("borg", "user", "u2"),
+            session_id: uri!("borg", "session", "s2"),
+            input: BorgInput::Command(BorgCommand::ModelSet {
+                model: "gpt-5-mini".to_string(),
+            }),
+            port_context: Arc::new(JsonPortContext::new(serde_json::json!({"chat_id":123}))),
+        };
+
+        let env = ActorMailboxEnvelope::from_borg_message(&msg);
+        let json = env.to_json().expect("to_json");
+        let decoded = ActorMailboxEnvelope::from_json(&json)
+            .expect("from_json")
+            .to_borg_message()
+            .expect("to_borg");
+
+        match decoded.input {
+            BorgInput::Command(BorgCommand::ModelSet { model }) => {
+                assert_eq!(model, "gpt-5-mini")
+            }
+            _ => panic!("expected model-set command"),
+        }
+        assert_eq!(
+            decoded.port_context.to_json().expect("ctx"),
+            serde_json::json!({"chat_id":123})
+        );
     }
 }

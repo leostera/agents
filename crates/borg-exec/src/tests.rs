@@ -336,6 +336,9 @@ async fn borg_supervisor_actor_can_serve_multiple_sessions() {
     supervisor.start().await.unwrap();
 
     let actor_id = uri!("devmode", "actor", "multi-session");
+    db.upsert_actor(&actor_id, "multi-session", "prompt", "RUNNING")
+        .await
+        .unwrap();
     let user_id = uri!("borg", "user", "tester");
     let pctx = std::sync::Arc::new(crate::JsonPortContext::new(json!({})));
     let session_a = uri!("borg", "session", "a");
@@ -384,6 +387,9 @@ async fn borg_supervisor_persists_call_and_cast_to_actor_mailbox() {
     supervisor.start().await.unwrap();
 
     let actor_id = uri!("devmode", "actor", "mailbox-persist");
+    db.upsert_actor(&actor_id, "mailbox-persist", "prompt", "RUNNING")
+        .await
+        .unwrap();
     let user_id = uri!("borg", "user", "tester");
     let pctx = std::sync::Arc::new(crate::JsonPortContext::new(json!({})));
     let session_id = uri!("borg", "session", "persist");
@@ -449,6 +455,46 @@ async fn borg_supervisor_persists_call_and_cast_to_actor_mailbox() {
         sleep(Duration::from_millis(20)).await;
     }
     assert!(acked >= 2);
+
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
+async fn borg_supervisor_missing_actor_spec_keeps_message_queued() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let runtime = crate::BorgRuntime::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
+    );
+    let runtime = std::sync::Arc::new(runtime);
+    let supervisor = BorgSupervisor::new(runtime);
+    supervisor.start().await.unwrap();
+
+    let actor_id = uri!("devmode", "actor", "missing-spec");
+    let result = supervisor
+        .cast(crate::BorgMessage {
+            actor_id: actor_id.clone(),
+            user_id: uri!("borg", "user", "tester"),
+            session_id: uri!("borg", "session", "missing-spec"),
+            input: crate::BorgInput::Command(crate::BorgCommand::ContextDump),
+            port_context: std::sync::Arc::new(crate::JsonPortContext::new(json!({}))),
+        })
+        .await;
+    assert!(result.is_err());
+
+    let status: String = sqlx::query(
+        "SELECT status FROM actor_mailbox WHERE actor_id = ?1 ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(actor_id.to_string())
+    .fetch_one(db.pool())
+    .await
+    .unwrap()
+    .try_get("status")
+    .unwrap();
+    assert_eq!(status, "QUEUED");
 
     supervisor.shutdown().await;
 }
@@ -545,13 +591,14 @@ async fn borg_supervisor_start_replays_queued_mailbox_rows() {
 
     let mut status = String::new();
     for _ in 0..25 {
-        status = sqlx::query("SELECT status FROM actor_mailbox WHERE actor_message_id = ?1 LIMIT 1")
-            .bind(msg_id.to_string())
-            .fetch_one(db.pool())
-            .await
-            .unwrap()
-            .try_get::<String, _>("status")
-            .unwrap();
+        status =
+            sqlx::query("SELECT status FROM actor_mailbox WHERE actor_message_id = ?1 LIMIT 1")
+                .bind(msg_id.to_string())
+                .fetch_one(db.pool())
+                .await
+                .unwrap()
+                .try_get::<String, _>("status")
+                .unwrap();
         if status == "ACKED" {
             break;
         }
