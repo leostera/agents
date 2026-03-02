@@ -928,6 +928,7 @@ mod tests {
             json!({
                 "name": "Default Actor",
                 "system_prompt": "You are the default actor.",
+                "default_behavior_id":"borg:behavior:default",
                 "status": "RUNNING"
             }),
         )
@@ -1078,7 +1079,7 @@ mod tests {
 
         let (status, _) =
             request_json(&app, Method::PUT, "/api/providers/not-real", json!({})).await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

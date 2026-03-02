@@ -128,7 +128,8 @@ impl BorgSupervisor {
         actors.insert(actor_id.clone(), actor.clone());
         drop(actors);
 
-        self.dispatch_queued_actor_messages(actor_id, &actor).await?;
+        self.dispatch_queued_actor_messages(actor_id, &actor)
+            .await?;
 
         Ok(actor)
     }

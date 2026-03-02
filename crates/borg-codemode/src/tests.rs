@@ -1,4 +1,5 @@
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{CodeModeContext, CodeModeRuntime};
@@ -81,6 +82,74 @@ fn me_returns_current_user_uri_from_context() {
         )
         .unwrap();
     assert_eq!(result.result_json, json!("borg:user:leostera"));
+}
+
+#[test]
+fn env_get_and_keys_are_available_via_sdk() {
+    let rt = CodeModeRuntime::default();
+    let mut env = HashMap::new();
+    env.insert(
+        "APP_GITHUB_ACCESS_TOKEN".to_string(),
+        "token-123".to_string(),
+    );
+    env.insert("APP_GITHUB_SCOPE".to_string(), "read:user".to_string());
+    let result = rt
+        .execute(
+            "async () => { return { keys: Borg.env.keys(), token: Borg.env.get('APP_GITHUB_ACCESS_TOKEN'), missing: Borg.env.get('APP_GITHUB_MISSING', 'fallback') }; }",
+            CodeModeContext {
+                env,
+                ..CodeModeContext::default()
+            },
+        )
+        .unwrap();
+
+    let keys = result
+        .result_json
+        .get("keys")
+        .and_then(Value::as_array)
+        .expect("keys array");
+    assert!(
+        keys.iter()
+            .any(|value| value.as_str() == Some("APP_GITHUB_ACCESS_TOKEN"))
+    );
+    assert_eq!(
+        result.result_json.get("token").and_then(Value::as_str),
+        Some("token-123")
+    );
+    assert_eq!(
+        result.result_json.get("missing").and_then(Value::as_str),
+        Some("fallback")
+    );
+}
+
+#[test]
+fn context_current_exposes_only_env_keys_not_values() {
+    let rt = CodeModeRuntime::default();
+    let mut env = HashMap::new();
+    env.insert(
+        "APP_GITHUB_ACCESS_TOKEN".to_string(),
+        "super-secret-token".to_string(),
+    );
+    let result = rt
+        .execute(
+            "async () => { return ffi('context__current', []); }",
+            CodeModeContext {
+                env,
+                ..CodeModeContext::default()
+            },
+        )
+        .unwrap();
+    assert!(result.result_json.get("env").is_none());
+    let available = result
+        .result_json
+        .get("available_env_keys")
+        .and_then(Value::as_array)
+        .expect("available env keys");
+    assert!(
+        available
+            .iter()
+            .any(|value| value.as_str() == Some("APP_GITHUB_ACCESS_TOKEN"))
+    );
 }
 
 #[test]

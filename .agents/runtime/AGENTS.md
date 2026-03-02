@@ -37,6 +37,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - `agent_specs.default_provider_id` stores the preferred provider key for provider-first model selection in control UI.
 - `agent_specs` no longer persists per-agent `tools_json`; runtime toolchain is composed from default code+memory tools.
 - `taskgraph_*` tables in `config.db` store durable task DAG state, comments, and audit events.
+- `clockwork_jobs` and `clockwork_job_runs` in `config.db` store durable scheduler jobs/runs.
 - Telegram port refreshes known session context snapshots on startup (best-effort chat/admin hydration).
 - Onboarding persists provider key via `POST /api/providers/:provider` and updates runtime preferred provider.
 - Provider precedence is env-first: `BORG_LLM_PROVIDER` overrides persisted `runtime/preferred_provider`.
@@ -47,6 +48,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - `X-Borg-Session-Id` header should be set on successful response.
 - Invalid URI inputs at API boundary must fail with structured 400.
 - Agent soft-disable endpoint is `PUT /api/agents/specs/:agent_id/enabled` with `{ "enabled": boolean }`.
+- Clockwork CRUD endpoints are rooted at `/api/clockwork/jobs`.
 - Code-mode filesystem API is `Borg.OS.ls(...)` (not `BorgOs.ls(...)`).
 - Code-mode module resolution is embedded (no host `node` dependency): dynamic imports may use `npm:` and `jsr:` specifiers, with cache/state under `~/.borg/codemode` and `node_modules` in `~/.borg/codemode/node_modules`.
 - Telegram command `/model` supports:
@@ -54,6 +56,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
   - `/model <model_name>` to persist model on the resolved agent spec.
 - Runtime toolchain now merges CodeMode + ShellMode + Memory + TaskGraph + Apps-listCapabilities in session turns.
 - Agent-visible tool specs now include active DB app capabilities (in addition to default runtime tools), so the LLM can call those capability tools directly by name.
+- `borg start` launches a Clockwork supervisor loop (1s poll cadence) as scheduler runtime scaffolding.
 
 ## Runtime Safety
 - Initialize tracing before application code in `main`.

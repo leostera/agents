@@ -13,6 +13,7 @@ use borg_taskgraph::{TaskDispatch, TaskGraphStore, TaskGraphSupervisor};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::fs;
+use tokio::time::{Duration, interval};
 use tracing::info;
 
 pub(crate) const DEFAULT_HTTP_BIND: &str = "127.0.0.1:8080";
@@ -126,8 +127,39 @@ impl BorgCliApp {
         taskgraph_supervisor.start().await;
         info!(target: "borg_cli", "taskgraph supervisor started");
 
+        self.start_clockwork_supervisor(db.clone());
+        info!(target: "borg_cli", "clockwork supervisor started");
+
         let api_server = BorgApiServer::new(bind, runtime, supervisor);
         api_server.run().await
+    }
+
+    fn start_clockwork_supervisor(&self, db: BorgDb) {
+        tokio::spawn(async move {
+            let mut ticker = interval(Duration::from_secs(1));
+            loop {
+                ticker.tick().await;
+                let now = chrono::Utc::now().to_rfc3339();
+                match db.list_due_clockwork_jobs(&now, 100).await {
+                    Ok(due_jobs) => {
+                        if !due_jobs.is_empty() {
+                            tracing::debug!(
+                                target: "borg_cli",
+                                due_count = due_jobs.len(),
+                                "clockwork scaffold loop found due jobs"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "borg_cli",
+                            error = %error,
+                            "clockwork supervisor poll failed"
+                        );
+                    }
+                }
+            }
+        });
     }
 
     async fn initialize_storage(&self) -> Result<()> {

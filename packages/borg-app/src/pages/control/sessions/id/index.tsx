@@ -1,5 +1,5 @@
 import { createBorgApiClient, type SessionRecord } from "@borg/api";
-import { Badge } from "@borg/ui";
+import { Badge, ChatThread, type ChatMessageItem } from "@borg/ui";
 import React from "react";
 
 const borgApi = createBorgApiClient();
@@ -13,6 +13,12 @@ export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
   const [messages, setMessages] = React.useState<Record<string, unknown>[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+
+  const chatMessages = React.useMemo<ChatMessageItem[]>(() => {
+    return messages.map((message, index) =>
+      mapSessionMessageToChatItem(message, index)
+    );
+  }, [messages]);
 
   React.useEffect(() => {
     if (!sessionId.trim()) {
@@ -107,28 +113,14 @@ export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
       </section>
 
       <section className="space-y-2">
-        <p className="text-sm font-semibold">
-          Session Messages (Chronological)
-        </p>
-        {messages.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No messages found.</p>
-        ) : (
-          <div className="space-y-2">
-            {messages.map((message, index) => (
-              <article
-                key={`${session.session_id}-${index}`}
-                className="rounded-lg border p-3"
-              >
-                <p className="text-muted-foreground mb-2 text-[11px]">
-                  #{index + 1}
-                </p>
-                <pre className="bg-muted/30 overflow-x-auto rounded-lg border p-3 text-xs leading-relaxed">
-                  {JSON.stringify(message, null, 2)}
-                </pre>
-              </article>
-            ))}
-          </div>
-        )}
+        <p className="text-sm font-semibold">Session Messages</p>
+        <div className="h-[420px] rounded-xl border">
+          <ChatThread
+            messages={chatMessages}
+            emptyTitle="No messages found"
+            emptyDescription="This session has no chat history yet."
+          />
+        </div>
       </section>
 
       <section className="space-y-2">
@@ -139,4 +131,183 @@ export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
       </section>
     </section>
   );
+}
+
+function mapSessionMessageToChatItem(
+  payload: Record<string, unknown>,
+  index: number
+): ChatMessageItem {
+  const role = detectMessageRole(payload);
+  const text = extractMessageText(payload);
+  const timestamp = formatMessageTimestamp(payload);
+  const id = `session-message-${index}`;
+  return { id, role, text: text.trim() || JSON.stringify(payload, null, 2), timestamp };
+}
+
+function detectMessageRole(
+  payload: Record<string, unknown>
+): ChatMessageItem["role"] {
+  const typeCandidate = payload.type;
+  if (typeof typeCandidate === "string") {
+    const normalized = typeCandidate.trim().toLowerCase();
+    if (normalized === "assistant") return "assistant";
+    if (normalized === "user") return "user";
+    if (normalized === "system") return "system";
+    if (
+      normalized === "tool_call" ||
+      normalized === "tool_result" ||
+      normalized === "session_event"
+    ) {
+      return "system";
+    }
+  }
+
+  const candidates = [
+    payload.role,
+    payload.author,
+    getNested(payload, ["message", "role"]),
+    getNested(payload, ["payload", "role"]),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const normalized = candidate.trim().toLowerCase();
+    if (normalized === "assistant" || normalized === "agent")
+      return "assistant";
+    if (normalized === "user") return "user";
+    if (normalized === "system") return "system";
+  }
+
+  const variantCandidates: Array<[string, ChatMessageItem["role"]]> = [
+    ["assistant", "assistant"],
+    ["user", "user"],
+    ["system", "system"],
+    ["toolcall", "system"],
+    ["toolresult", "system"],
+    ["sessionevent", "system"],
+  ];
+  for (const [variant, role] of variantCandidates) {
+    if (hasTopLevelVariant(payload, variant)) return role;
+  }
+
+  return "system";
+}
+
+function extractMessageText(payload: Record<string, unknown>): string {
+  const typeCandidate = payload.type;
+  if (typeof typeCandidate === "string") {
+    const normalized = typeCandidate.trim().toLowerCase();
+    if (normalized === "tool_call") {
+      const name = typeof payload.name === "string" ? payload.name : "tool";
+      const argumentsValue = payload.arguments;
+      const renderedArguments =
+        argumentsValue === undefined ? "" : ` ${safeJson(argumentsValue)}`;
+      return `Tool call: ${name}${renderedArguments}`;
+    }
+    if (normalized === "tool_result") {
+      const name = typeof payload.name === "string" ? payload.name : "tool";
+      const content = payload.content;
+      if (typeof content === "string" && content.trim()) {
+        return `Tool result: ${name}\n${content}`;
+      }
+      return `Tool result: ${name}\n${safeJson(content)}`;
+    }
+    if (normalized === "session_event") {
+      const name = typeof payload.name === "string" ? payload.name : "event";
+      return `Session event: ${name}\n${safeJson(payload.payload)}`;
+    }
+  }
+
+  const candidates = [
+    payload.content,
+    payload.text,
+    getNested(payload, ["message", "content"]),
+    getNested(payload, ["payload", "text"]),
+    getNested(payload, ["input", "text"]),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate;
+    }
+  }
+
+  const namedVariantText = extractFromVariantPayload(payload);
+  if (namedVariantText) return namedVariantText;
+
+  return JSON.stringify(payload, null, 2);
+}
+
+function formatMessageTimestamp(payload: Record<string, unknown>): string | null {
+  const candidates = [
+    payload.created_at,
+    payload.timestamp,
+    getNested(payload, ["message", "created_at"]),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const date = new Date(candidate);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toLocaleString();
+    }
+  }
+  return null;
+}
+
+function getNested(
+  payload: Record<string, unknown>,
+  path: string[]
+): unknown {
+  let current: unknown = payload;
+  for (const segment of path) {
+    if (!current || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+function hasTopLevelVariant(
+  payload: Record<string, unknown>,
+  variantName: string
+): boolean {
+  const normalizedVariant = variantName.trim().toLowerCase();
+  return Object.keys(payload).some(
+    (key) => key.trim().toLowerCase() === normalizedVariant
+  );
+}
+
+function extractFromVariantPayload(payload: Record<string, unknown>): string | null {
+  const variantMap: Array<[string, string]> = [
+    ["user", "User"],
+    ["assistant", "Assistant"],
+    ["system", "System"],
+    ["toolcall", "Tool call"],
+    ["toolresult", "Tool result"],
+    ["sessionevent", "Session event"],
+  ];
+
+  for (const [variant, label] of variantMap) {
+    const key = Object.keys(payload).find(
+      (candidate) => candidate.trim().toLowerCase() === variant
+    );
+    if (!key) continue;
+    const value = payload[key];
+    if (value === undefined) return label;
+    if (typeof value === "string") return value;
+    if (value && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      if (typeof obj.content === "string" && obj.content.trim()) {
+        return obj.content;
+      }
+      return `${label}\n${safeJson(obj)}`;
+    }
+    return `${label}\n${String(value)}`;
+  }
+  return null;
+}
+
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }

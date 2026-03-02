@@ -1,4 +1,4 @@
-# RFD0014 - Actors and Behaviors
+# RFD0015 - Actors and Behaviors
 
 - Feature Name: `actors_behaviors_model`
 - Start Date: `2026-03-02`
@@ -22,6 +22,13 @@ actors.
 This RFD also defines how current `agent_specs` are treated during migration:
 compatibility inputs mapped into behavior semantics, not the long-term runtime
  identity boundary.
+
+Normative core:
+
+1. Actors are addressed by `actor_id`.
+2. Session lanes are addressed by `session_id`.
+3. Ongoing conversational addressing is always `actor_id + session_id`.
+4. Actors MUST be created with a non-null `default_behavior_id`.
 
 ## Motivation
 [motivation]: #motivation
@@ -105,9 +112,9 @@ Actor keeps ownership of:
 4. port binding target identity
 5. runtime concurrency limits
 
-Actor must have:
+Actor MUST have:
 
-1. `default_behavior_id`
+1. non-null `default_behavior_id`
 
 ### Behavior contract
 
@@ -117,29 +124,27 @@ Behavior owns execution policy:
 2. capability surface (tools/apps/skills references)
 3. model/provider policy
 4. optional latency/cost profile metadata
+5. session turn concurrency policy (`serial | parallel`)
+
+Behaviors are policy only. Behaviors MUST NOT own mutable runtime state.
 
 #### Behavior model policy
 
 Minimum v0.1 fields:
 
-1. `preferred_model` (nullable)
-2. `preferred_provider_id` (nullable)
-3. `fallback_strategy` (enum), initial value:
-   - `PREFERRED_MODEL_THEN_PROVIDER_DEFAULT_THEN_RUNTIME_DEFAULT`
+1. `required_capabilities` (for example: tool-calling support)
+2. optional `preferred_provider_id` (nullable)
 
 Resolution algorithm:
 
-1. If `preferred_model` is set and available in any enabled provider, use it.
-2. Else if `preferred_provider_id` is set, use that provider's default text
-   model.
-3. Else use runtime default provider/model.
-
-Example:
-
-1. Behavior prefers `kimi-k2` and provider `lmstudio`.
-2. If `kimi-k2` exists in any enabled provider, use it.
-3. If not, use `lmstudio` default text model.
-4. If `lmstudio` unavailable, use runtime default provider/model.
+1. Runtime resolves provider/model at turn-time from enabled providers and their
+   default models.
+2. Candidate model MUST satisfy `required_capabilities`.
+3. If `preferred_provider_id` is set and its default model satisfies
+   requirements, pick it.
+4. Otherwise pick the first satisfying provider in deterministic provider order.
+5. If no satisfying provider default model exists, fail the turn with a clear
+   capability-resolution error.
 
 ### Data model
 
@@ -148,9 +153,9 @@ Example:
 - `behavior_id` (pk, URI-like)
 - `name`
 - `system_prompt`
-- `preferred_model` (nullable)
 - `preferred_provider_id` (nullable)
-- `fallback_strategy`
+- `required_capabilities_json`
+- `session_turn_concurrency` (`serial | parallel`)
 - `status` (`ACTIVE | ARCHIVED`)
 - `created_at`
 - `updated_at`
@@ -163,11 +168,20 @@ Example:
 - `position` (ordering)
 - `created_at`
 
+Capability merge rules:
+
+1. Merge is deterministic by `(position, capability_id)`.
+2. Duplicate capability references are deduplicated by identity.
+
 #### actor linkage
 
 Add to actors table/model:
 
-- `default_behavior_id` (nullable initially, required after migration)
+- `default_behavior_id` (NOT NULL)
+
+Add session linkage:
+
+- `session_behavior_overrides(actor_id, session_id, behavior_id, updated_at)`
 
 ### Runtime execution contract
 
@@ -176,9 +190,52 @@ For each actor turn:
 1. Resolve actor by `actor_id`.
 2. Resolve session lane by `session_id`.
 3. Resolve active behavior:
-   - v0.1: actor default behavior only.
-4. Resolve provider/model via behavior policy algorithm.
-5. Execute turn with behavior prompt + capability set.
+   - session override, if present
+   - else actor `default_behavior_id`
+4. Resolve capabilities and prompt fragments at turn-time.
+5. Resolve provider/model via capability-driven algorithm.
+6. Execute turn.
+
+Prompt composition order is deterministic:
+
+1. `behavior.system_prompt`
+2. runtime fixed prelude
+3. ordered prompt fragments from behavior capabilities
+4. session context
+5. user message
+
+Tool descriptions are injected after runtime prelude and before prompt fragments.
+
+Behavior changes:
+
+1. Changing `actor.default_behavior_id` affects only future turns.
+2. In-flight turns continue with the behavior resolved at turn start.
+3. Mid-turn behavior swaps are not allowed.
+
+Concurrency and ordering:
+
+1. Different sessions may run concurrently.
+2. Per-session ordering guarantees depend on behavior policy:
+   - `serial`: in-order execution
+   - `parallel`: no in-order guarantee; out-of-order replies are allowed
+3. Parallel mode requires correlation IDs in replies for client-side pairing.
+
+Backpressure and fairness:
+
+1. Mailbox persistence is durable enqueue; queue growth is unbounded in v0.1.
+2. If DB enqueue fails, request fails immediately.
+3. Scheduler SHOULD apply fair session scheduling (round-robin or equivalent)
+   to avoid hot-session starvation.
+
+Observability:
+
+Each turn SHOULD record:
+
+1. `actor_id`, `session_id`, `resolved_behavior_id`
+2. `provider_id`, `model_id`
+3. resolved capability/tool references
+4. correlation_id
+5. start/end timestamps and outcome
 
 ### Compatibility with `agent_specs`
 
@@ -200,8 +257,9 @@ End-state goal:
 ### Phase 1 - Foundation
 
 1. Add behavior tables and API CRUD.
-2. Add `default_behavior_id` to actors.
+2. Add non-null `default_behavior_id` to actors.
 3. Keep current `agent_specs` execution as compatibility fallback.
+4. Add session behavior override table.
 
 ### Phase 2 - Runtime adoption
 
@@ -211,9 +269,9 @@ End-state goal:
 
 ### Phase 3 - Policy richness
 
-1. Session-level behavior override (optional).
+1. Session-level behavior override UX and APIs.
 2. Message-level "effort/profile" hints.
-3. Richer fallback strategies and cost-aware routing.
+3. Cost-aware routing and richer model-selection constraints.
 
 ## Drawbacks
 [drawbacks]: #drawbacks
@@ -248,7 +306,7 @@ Alternatives considered:
 
 1. Should behavior override be allowed mid-session in v0.x?
 2. Should capability references be immutable snapshots or live references?
-3. How should behavior versioning be represented for reproducibility?
+3. How should behavior version metadata be exposed in debugging surfaces?
 4. When should `agent_specs` be formally deprecated?
 
 ## Future possibilities

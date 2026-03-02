@@ -163,7 +163,7 @@ export function PortsPage() {
           provider: input.portKind,
           enabled: true,
           allows_guests: true,
-          default_agent_id: input.assignedActorId ?? null,
+          assigned_actor_id: input.assignedActorId ?? null,
           settings,
         });
         setIsDialogOpen(false);
@@ -189,7 +189,7 @@ export function PortsPage() {
           provider: port.provider,
           enabled: !port.enabled,
           allows_guests: port.allows_guests,
-          default_agent_id: port.default_agent_id ?? null,
+          assigned_actor_id: port.assigned_actor_id ?? null,
           settings: port.settings,
         });
         await reload();

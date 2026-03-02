@@ -3,10 +3,11 @@ use borg_agent::Toolchain;
 use borg_apps::BorgApps;
 use borg_codemode::{CodeModeContext, CodeModeRuntime};
 use borg_core::{Uri, uri};
-use borg_db::BorgDb;
+use borg_db::{AppConnectionRecord, BorgDb};
 use borg_memory::MemoryStore;
 use borg_shellmode::ShellModeRuntime;
 use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::llm_resolver::BorgLLMResolver;
 use crate::port_context::{PortContext, TelegramSessionContext};
@@ -52,7 +53,9 @@ impl BorgRuntime {
         session_id: &Uri,
         agent_id: &Uri,
     ) -> Result<Toolchain> {
-        let context = self.code_mode_context_for_turn(msg, session_id, agent_id);
+        let context = self
+            .code_mode_context_for_turn(msg, session_id, agent_id)
+            .await?;
         let allow_task_creation = !is_task_worker_message(msg);
         let runtime_toolchain = build_exec_toolchain_with_context(
             self.runtime.clone(),
@@ -129,12 +132,12 @@ impl BorgRuntime {
         Ok(())
     }
 
-    fn code_mode_context_for_turn(
+    async fn code_mode_context_for_turn(
         &self,
         msg: &UserMessage,
         session_id: &Uri,
         agent_id: &Uri,
-    ) -> CodeModeContext {
+    ) -> Result<CodeModeContext> {
         let metadata = msg.metadata.as_object();
         let port_name = metadata
             .and_then(|obj| obj.get("port"))
@@ -161,14 +164,100 @@ impl BorgRuntime {
             _ => None,
         };
 
-        CodeModeContext {
+        Ok(CodeModeContext {
             current_port_id,
             current_message_id,
             current_session_id: Some(session_id.clone()),
             current_agent_id: Some(agent_id.clone()),
             current_user_id: Some(msg.user_id.clone()),
+            env: self.app_env_for_session(&msg.user_id).await?,
+        })
+    }
+
+    async fn app_env_for_session(&self, current_user_id: &Uri) -> Result<HashMap<String, String>> {
+        let mut env = HashMap::new();
+        let apps = self.db.list_apps(500).await?;
+
+        for app in apps
+            .into_iter()
+            .filter(|app| app.status.trim().eq_ignore_ascii_case("active"))
+        {
+            let connections = self.db.list_app_connections(&app.app_id, 500).await?;
+            let Some(connection) = select_connection_for_user(&connections, current_user_id) else {
+                continue;
+            };
+            let secrets = self
+                .db
+                .list_app_secrets(&app.app_id, Some(&connection.connection_id), 500)
+                .await?;
+            let available_secrets = app
+                .available_secrets
+                .into_iter()
+                .filter(|name| !name.trim().is_empty())
+                .collect::<Vec<_>>();
+            if available_secrets.is_empty() {
+                continue;
+            }
+            for available_secret in available_secrets {
+                if let Some(secret_value) =
+                    resolve_available_secret_value(&available_secret, &secrets)
+                {
+                    env.insert(available_secret, secret_value.to_string());
+                }
+            }
+        }
+
+        Ok(env)
+    }
+}
+
+fn select_connection_for_user<'a>(
+    connections: &'a [AppConnectionRecord],
+    current_user_id: &Uri,
+) -> Option<&'a AppConnectionRecord> {
+    let mut owned = None;
+    let mut shared = None;
+    for connection in connections
+        .iter()
+        .filter(|connection| connection.status.trim().eq_ignore_ascii_case("connected"))
+    {
+        match connection.owner_user_id.as_ref() {
+            Some(owner) if owner == current_user_id => {
+                if owned.is_none() {
+                    owned = Some(connection);
+                }
+            }
+            None => {
+                if shared.is_none() {
+                    shared = Some(connection);
+                }
+            }
+            _ => {}
         }
     }
+    owned.or(shared)
+}
+
+fn resolve_available_secret_value<'a>(
+    available_secret: &str,
+    secrets: &'a [borg_db::AppSecretRecord],
+) -> Option<&'a str> {
+    if let Some(secret) = secrets.iter().find(|secret| secret.key == available_secret) {
+        return Some(secret.value.as_str());
+    }
+    let normalized_suffix = available_secret_to_secret_key(available_secret)?;
+    secrets
+        .iter()
+        .find(|secret| secret.key.eq_ignore_ascii_case(&normalized_suffix))
+        .map(|secret| secret.value.as_str())
+}
+
+fn available_secret_to_secret_key(available_secret: &str) -> Option<String> {
+    let segments = available_secret.split('_').collect::<Vec<_>>();
+    if segments.len() >= 3 && segments.first().is_some_and(|segment| *segment == "APP") {
+        return Some(segments[2..].join("_").to_ascii_lowercase());
+    }
+    None
 }
 
 fn is_task_worker_message(msg: &UserMessage) -> bool {

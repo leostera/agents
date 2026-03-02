@@ -8,6 +8,7 @@ anyhow.workspace = true
 axum.workspace = true
 borg-db = { path = "../borg-db" }
 borg-core = { path = "../borg-core" }
+borg-apps = { path = "../borg-apps" }
 borg-exec = { path = "../borg-exec" }
 borg-llm = { path = "../borg-llm" }
 borg-memory = { path = "../borg-memory" }

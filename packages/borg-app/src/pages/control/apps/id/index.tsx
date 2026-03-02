@@ -1,4 +1,5 @@
 import {
+  type AppConnectionRecord,
   type AppCapabilityRecord,
   type AppRecord,
   createBorgApiClient,
@@ -42,9 +43,13 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
   const [capabilities, setCapabilities] = React.useState<AppCapabilityRecord[]>(
     []
   );
+  const [connections, setConnections] = React.useState<AppConnectionRecord[]>(
+    []
+  );
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSavingApp, setIsSavingApp] = React.useState(false);
   const [isSavingCapability, setIsSavingCapability] = React.useState(false);
+  const [isChangingConnection, setIsChangingConnection] = React.useState(false);
   const [isAddCapabilityOpen, setIsAddCapabilityOpen] = React.useState(false);
   const [isEditCapabilityOpen, setIsEditCapabilityOpen] = React.useState(false);
   const [editingCapability, setEditingCapability] =
@@ -68,6 +73,7 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
       setLoadError("Missing app id");
       setApp(null);
       setCapabilities([]);
+      setConnections([]);
       setIsLoading(false);
       return;
     }
@@ -75,14 +81,16 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [loadedApp, loadedCapabilities] = await Promise.all([
+      const [loadedApp, loadedCapabilities, loadedConnections] = await Promise.all([
         borgApi.getApp(normalizedAppId),
         borgApi.listAppCapabilities(normalizedAppId, 500),
+        borgApi.listAppConnections(normalizedAppId, 500),
       ]);
       if (!loadedApp) {
         setLoadError("App not found");
         setApp(null);
         setCapabilities([]);
+        setConnections([]);
         return;
       }
 
@@ -94,9 +102,11 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
         status: loadedApp.status,
       });
       setCapabilities(loadedCapabilities);
+      setConnections(loadedConnections);
     } catch (loadError) {
       setApp(null);
       setCapabilities([]);
+      setConnections([]);
       setLoadError(
         loadError instanceof Error ? loadError.message : "Unable to load app"
       );
@@ -116,6 +126,67 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
       ),
     [capabilities]
   );
+
+  const hasActiveConnection = React.useMemo(
+    () =>
+      connections.some(
+        (connection) =>
+          connection.status.trim().toLowerCase() === "connected" ||
+          connection.status.trim().toLowerCase() === "pending_oauth"
+      ),
+    [connections]
+  );
+
+  const handleConnectOauth = async () => {
+    if (!app) return;
+    setActionError(null);
+    setIsChangingConnection(true);
+    try {
+      const returnTo = `${window.location.origin}/control/apps/${encodeURIComponent(app.app_id)}`;
+      const response = await borgApi.startAppOAuth(app.app_id, {
+        return_to: returnTo,
+      });
+      window.location.assign(response.authorize_url);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Unable to start OAuth sign-in"
+      );
+      setIsChangingConnection(false);
+    }
+  };
+
+  const handleDisconnectOauth = async () => {
+    if (!app) return;
+    setActionError(null);
+    setIsChangingConnection(true);
+    try {
+      for (const connection of connections) {
+        const secrets = await borgApi.listAppSecrets(app.app_id, {
+          limit: 500,
+          connectionId: connection.connection_id,
+        });
+        await Promise.all(
+          secrets.map((secret) =>
+            borgApi.deleteAppSecret(app.app_id, secret.secret_id, {
+              ignoreNotFound: true,
+            })
+          )
+        );
+        await borgApi.deleteAppConnection(app.app_id, connection.connection_id, {
+          ignoreNotFound: true,
+        });
+      }
+      await load();
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Unable to disconnect app connection"
+      );
+    } finally {
+      setIsChangingConnection(false);
+    }
+  };
 
   const handleAddCapability = async (input: AddCapabilityInput) => {
     const normalizedAppId = appId.trim();
@@ -331,6 +402,36 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
               {isSavingApp ? "Saving..." : "Save"}
             </Button>
           </div>
+          {app.auth_strategy?.trim().toLowerCase() === "oauth2" ? (
+            <div className="rounded-md border p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">Connection</p>
+                <Badge variant={hasActiveConnection ? "default" : "outline"}>
+                  {hasActiveConnection ? "Connected" : "Not connected"}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isChangingConnection}
+                  onClick={() => void handleConnectOauth()}
+                >
+                  {hasActiveConnection ? "Reconnect" : "Sign in with GitHub"}
+                </Button>
+                {hasActiveConnection ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={isChangingConnection}
+                    onClick={() => void handleDisconnectOauth()}
+                  >
+                    Disconnect
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="space-y-3 rounded-md border p-4">

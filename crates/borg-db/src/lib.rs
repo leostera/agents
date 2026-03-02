@@ -107,6 +107,8 @@ pub struct PortRecord {
     pub port_name: String,
     pub enabled: bool,
     pub allows_guests: bool,
+    pub assigned_actor_id: Option<Uri>,
+    // Legacy compatibility field; prefer assigned_actor_id for all new flows.
     pub default_agent_id: Option<Uri>,
     pub settings: Value,
     pub active_sessions: u64,
@@ -171,6 +173,7 @@ pub struct AppRecord {
     pub source: String,
     pub auth_strategy: String,
     pub auth_config_json: Value,
+    pub available_secrets: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

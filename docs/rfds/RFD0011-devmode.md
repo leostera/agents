@@ -10,7 +10,7 @@
 
 This RFD introduces **DevMode**, a local subsystem that turns Borg into a
 multi-actor development runtime for real repository contribution. DevMode runs
-many agentic developers in parallel, each inside an isolated Git worktree under
+many actor workers in parallel, each inside an isolated Git worktree under
 the project root, and integrates work onto `origin/main` through an optimistic
 push/rebase retry loop.
 
@@ -20,17 +20,33 @@ repository contribution and publish orchestration.
 
 This RFD builds on RFD0009 (Actor Model and Lifecycle) for actor
 lifecycle, mailbox semantics, and runtime registry expectations.
+It also builds on RFD0015 (Actors and Behaviors) for execution policy
+resolution (`default_behavior_id` on actors).
+
+## Updates
+[updates]: #updates
+
+### 2026-03-02
+
+This revision aligns DevMode with the current actor/behavior runtime:
+
+1. `agent_id` references are replaced with behavior-aware provenance
+   (`behavior_id`, `default_behavior_id`).
+2. `BLOCKED` is no longer treated as a core actor lifecycle state; it is
+   modeled as a DevMode worker status for project workflow control.
+3. Actor-runtime `call` response durability is unchanged from RFD0009:
+   responses are in-memory runtime responses; DevMode durability remains in
+   `devmode_actions` and Git history.
 
 The design is explicitly provenance-first. Every meaningful action is captured
 in an append-only audit log, and every commit must carry DevMode identity
-trailers linking commit history back to actor, Borg agent spec, session, and
-message.
+trailers linking commit history back to actor, behavior, session, and message.
 
 ## Motivation
 [motivation]: #motivation
 
 Borg currently has strong runtime/task primitives, but it does not define a
-native operating model for high-volume repository contribution by many agents
+native operating model for high-volume repository contribution by many actors
 working concurrently on one codebase.
 
 The runtime already uses an actor registry pattern for session execution;
@@ -39,7 +55,7 @@ operational model for DevMode contributors, rather than replacing it.
 
 We need a design that:
 
-1. Allows many agents to edit in parallel without stepping on each other.
+1. Allows many actors to edit in parallel without stepping on each other.
 2. Preserves trunk-based integration instead of long-lived merge workflows.
 3. Keeps attribution and auditability strong enough for operational and
    compliance debugging.
@@ -58,7 +74,7 @@ ambiguous ownership, and weak failure recovery.
 DevMode introduces **actors** as long-lived developer identities:
 
 - `actor_id`: stable DevMode identity (`devmode:actor:<uuid>`)
-- `agent_id`: Borg agent spec identity (prompt/tools profile)
+- `behavior_id`: execution policy identity (from actor default behavior)
 - `session_id` and `message_id`: runtime attribution for specific operations
 
 In the actor model from RFD0009, one DevMode actor is long-lived and may own
@@ -83,14 +99,14 @@ deletes actor branches.
 
 ### Day-to-day flow
 
-1. Agent edits files in its own worktree only.
-2. Agent decides when to commit.
+1. Actor edits files in its own worktree only.
+2. Actor decides when to commit.
 3. DevMode commits with required metadata trailers.
 4. DevMode publishes to `origin/main`:
    - push
    - if rejected, fetch + rebase + retry
-   - on conflict or retry exhaustion, actor is BLOCKED
-5. Human/operator unblocks actor when required.
+   - on conflict or retry exhaustion, worker is BLOCKED
+5. Human/operator unblocks worker when required.
 
 ```mermaid
 flowchart TD
@@ -102,7 +118,7 @@ flowchart TD
   F --> G[git rebase origin/main]
   G --> H{Rebase clean?}
   H -->|Yes| C
-  H -->|No| I[Set actor BLOCKED REBASE_CONFLICT]
+  H -->|No| I[Set worker BLOCKED REBASE_CONFLICT]
 ```
 
 ### Required commit trailers
@@ -110,7 +126,7 @@ flowchart TD
 Every actor commit must include:
 
 - `DevMode-Actor-Id: <devmode:actor:...>`
-- `DevMode-Agent-Id: <borg-agent-id>`
+- `DevMode-Behavior-Id: <borg-behavior-id>`
 - `DevMode-Session-Id: <borg-session-id>`
 - `DevMode-Message-Id: <borg-message-id>`
 
@@ -120,7 +136,7 @@ Every actor commit must include:
 - No policy gates beyond existing repository Git hooks.
 - No periodic background fetch loop.
 - No persisted stdout/stderr capture for Git commands.
-- No automatic multi-agent conflict escalation.
+- No automatic multi-actor conflict escalation.
 
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -136,7 +152,7 @@ DevMode MUST:
    records.
 5. Apply edits atomically via whole-file rewrite + atomic replace.
 6. Preserve permissions/ownership on rewritten files.
-7. Allow commit timing to be agent-driven, with optional amend.
+7. Allow commit timing to be actor-driven, with optional amend.
 
 ### Non-goals
 
@@ -190,8 +206,8 @@ Both are actor-backed subsystems using the same runtime lifecycle concepts.
 
 - `actor_id` (pk, `devmode:actor:<uuid>`)
 - `project_id` (fk)
-- `agent_id`
-- `status` (`RUNNING | BLOCKED | STOPPED`)
+- `behavior_id` (resolved behavior for commit/publish provenance)
+- `status` (`READY | BLOCKED | STOPPED`) (DevMode worker status; not actor runtime lifecycle)
 - `blocked_reason` (nullable)
 - `blocked_at` (nullable timestamp)
 - `created_at`
@@ -202,13 +218,13 @@ Both are actor-backed subsystems using the same runtime lifecycle concepts.
 - `action_id` (uuid)
 - `project_id`
 - `actor_id`
-- `agent_id`
+- `behavior_id`
 - `session_id`
 - `message_id`
 - `timestamp_start`
 - `timestamp_end` (or `duration_ms`)
 - `kind` (`EDIT_FILE`, `GIT_COMMIT`, `GIT_PUSH`, `GIT_FETCH`, `GIT_REBASE`,
-  `BLOCK_ACTOR`, etc.)
+  `BLOCK_WORKER`, etc.)
 - `status` (`STARTED | SUCCEEDED | FAILED | SKIPPED`)
 - `repo_root`
 - `worktree_path`
@@ -248,13 +264,13 @@ Optional durability hardening (`fsync`) is deferred.
 
 ### Commit protocol
 
-DevMode provides commit primitives; agent decides when to call them:
+DevMode provides commit primitives; actor decides when to call them:
 
 1. Stage (`git add`).
 2. Commit (`git commit`, optional `--amend`).
 3. Ensure required trailers are present in final message.
 
-If hooks fail, commit fails; agent must remediate or stop.
+If hooks fail, commit fails; actor must remediate or stop.
 
 ### Publish protocol
 
@@ -268,16 +284,16 @@ For actor branch `devmode/<actor-id>`:
    - if rebase succeeds, retry push
 4. If rebase conflicts:
    - preserve conflict state
-   - set actor `BLOCKED` with `REBASE_CONFLICT`
+   - set worker `BLOCKED` with `REBASE_CONFLICT`
    - record failure and blocking actions
 5. Retry limit: 5 retries per publish loop on push rejection.
-6. On retry exhaustion: set `BLOCKED` with `PUSH_RETRY_EXHAUSTED`.
+6. On retry exhaustion: set worker `BLOCKED` with `PUSH_RETRY_EXHAUSTED`.
 
-### Actor state machine
+### DevMode worker state machine
 
 States:
 
-- `RUNNING`
+- `READY`
 - `BLOCKED`
 - `STOPPED`
 
@@ -290,10 +306,10 @@ Initial blocked reasons:
 
 ```mermaid
 stateDiagram-v2
-  [*] --> RUNNING
-  RUNNING --> BLOCKED: rebase conflict / push retries exhausted / git error
-  BLOCKED --> RUNNING: operator unblock
-  RUNNING --> STOPPED: runtime stop
+  [*] --> READY
+  READY --> BLOCKED: rebase conflict / push retries exhausted / git error
+  BLOCKED --> READY: operator unblock
+  READY --> STOPPED: runtime stop
   BLOCKED --> STOPPED: runtime stop
 ```
 
@@ -303,7 +319,7 @@ On restart:
 
 1. Rehydrate projects/actors.
 2. Ensure worktrees and branches.
-3. If actor worktree is mid-rebase/conflicted, mark `BLOCKED` with
+3. If actor worktree is mid-rebase/conflicted, mark worker `BLOCKED` with
    `REBASE_CONFLICT`.
 4. Otherwise resume actor loop.
 
@@ -312,18 +328,18 @@ On restart:
 Suggested internal API surface:
 
 - `EnsureProject(root_path) -> project_id`
-- `EnsureActor(actor_id, project_id, agent_id)`
+- `EnsureWorker(actor_id, project_id)`
 - `EnsureWorktree(project_id, actor_id)`
 - `EditFile(actor_id, session_id, message_id, path, new_content)`
 - `Commit(actor_id, session_id, message_id, commit_message, allow_amend)`
 - `Publish(actor_id, session_id, message_id)`
-- `SetActorStatus(actor_id, status, reason?)`
+- `SetWorkerStatus(actor_id, status, reason?)`
 
 ### Security and trust model
 
 1. Pushes use host user credentials.
 2. Commits carry actor authorship identity and required DevMode trailers.
-3. This preserves host accountability while retaining agent-level provenance.
+3. This preserves host accountability while retaining actor-level provenance.
 
 ## Drawbacks
 [drawbacks]: #drawbacks
@@ -347,7 +363,7 @@ Alternatives considered:
    - Rejected: violates linear-history trunk requirement.
 3. Shared branch for all actors.
    - Rejected: incompatible with Git multi-worktree branch checkout constraints.
-4. Auto-conflict resolution agents.
+4. Auto-conflict resolution actors.
    - Deferred: requires robust escalation/review controls not yet defined.
 
 ## Prior art
@@ -363,7 +379,7 @@ Alternatives considered:
 1. Should `devmode_actions` include a normalized error taxonomy table instead of
    freeform payload classification?
 2. Should commit retries (hook failure loops) be capped at the runtime level, or
-   left entirely to agent policy?
+   left entirely to actor policy?
 3. Should actor branch naming escape/sanitize `actor_id` delimiters (`:`), or
    keep verbatim branch names as specified?
 4. Should manual unblock be DB-only in v0.1, or require a CLI/API command path?
@@ -371,7 +387,7 @@ Alternatives considered:
 ## Future possibilities
 [future-possibilities]: #future-possibilities
 
-1. Automated conflict escalation sessions involving specialized reviewer agents.
+1. Automated conflict escalation sessions involving specialized reviewer actors.
 2. Multi-host actor scheduling with lease-based ownership for actor loops.
 3. Structured multi-file transactional edit primitives.
 4. Optional `fsync` durability profile for file replacement.

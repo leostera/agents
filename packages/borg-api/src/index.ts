@@ -33,6 +33,7 @@ export type AppRecord = {
   source?: string;
   auth_strategy?: string;
   auth_config_json?: Record<string, unknown>;
+  available_secrets?: string[];
   created_at: string;
   updated_at: string;
 };
@@ -207,7 +208,7 @@ export type PortRecord = {
   port_name: string;
   enabled: boolean;
   allows_guests: boolean;
-  default_agent_id?: string | null;
+  assigned_actor_id?: string | null;
   settings: Record<string, unknown>;
   active_sessions: number;
   updated_at?: string | null;
@@ -557,6 +558,10 @@ export class BorgApiClient {
       slug: string;
       description?: string;
       status?: string;
+      source?: string;
+      auth_strategy?: string;
+      auth_config_json?: Record<string, unknown>;
+      available_secrets?: string[];
     }
   ): Promise<void> {
     await this.request(`/api/apps/${encodeURIComponent(appId)}`, {
@@ -1378,7 +1383,7 @@ export class BorgApiClient {
       provider: string;
       enabled: boolean;
       allows_guests: boolean;
-      default_agent_id?: string | null;
+      assigned_actor_id?: string | null;
       settings?: Record<string, unknown>;
     }
   ): Promise<void> {

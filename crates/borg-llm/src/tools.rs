@@ -73,15 +73,11 @@ pub async fn run_provider_admin_tool(db: &BorgDb, name: &str, arguments: &Value)
         }
         "Providers-createProvider" => {
             let provider = normalize_provider_id(req_str(arguments, "provider")?)?;
-            let provider_kind = opt_trimmed_str(arguments, "provider_kind")
-                .unwrap_or_else(|| provider.to_string());
+            let provider_kind =
+                opt_trimmed_str(arguments, "provider_kind").unwrap_or_else(|| provider.to_string());
             let api_key = opt_trimmed_str(arguments, "api_key");
             let base_url = opt_trimmed_str(arguments, "base_url");
-            validate_provider_config(
-                &provider_kind,
-                api_key.as_deref(),
-                base_url.as_deref(),
-            )?;
+            validate_provider_config(&provider_kind, api_key.as_deref(), base_url.as_deref())?;
             if db.get_provider(provider).await?.is_some() {
                 return Err(anyhow!("provider.already_exists"));
             }

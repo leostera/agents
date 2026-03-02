@@ -97,6 +97,38 @@ interface BorgFetchResponse {
   json: unknown | null;
 }
 
+/**
+ * Environment variables injected for the current session/app context.
+ *
+ * Keys are discoverable with `Borg.env.keys()`.
+ * Values are read with `Borg.env.get(name, fallback)`.
+ */
+interface BorgEnv {
+  /**
+   * List available environment variable keys.
+   *
+   * Example:
+   * ```ts
+   * const keys = Borg.env.keys()
+   * ```
+   */
+  keys(): string[];
+  /**
+   * Read one environment variable value.
+   *
+   * Example:
+   * ```ts
+   * const token = Borg.env.get("APP_GITHUB_ACCESS_TOKEN")
+   * ```
+   *
+   * Example:
+   * ```ts
+   * const region = Borg.env.get("APP_AWS_REGION", "us-east-1")
+   * ```
+   */
+  get(name: string, defaultValue?: string | null): string | null;
+}
+
 interface BorgOS {
   /**
    * List files and directories under a path.
@@ -155,6 +187,8 @@ interface BorgUser {
  * Root Borg SDK available in Code Mode runtime.
  */
 interface BorgSdk {
+  /** Session-scoped environment variables derived from enabled app connections. */
+  env: BorgEnv;
   /** Operating-system helpers. */
   OS: BorgOS;
   /** Current message context helpers. */

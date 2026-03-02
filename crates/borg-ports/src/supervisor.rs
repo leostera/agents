@@ -285,9 +285,7 @@ async fn bridge_loop(
                 None
             }
         };
-        if let Err(err) =
-            ensure_session_row(&db, &session_id, &message.user_id, &port_id).await
-        {
+        if let Err(err) = ensure_session_row(&db, &session_id, &message.user_id, &port_id).await {
             error!(
                 target: "borg_ports",
                 error = %err,
@@ -331,7 +329,12 @@ async fn bridge_loop(
     }
 }
 
-async fn ensure_session_row(db: &BorgDb, session_id: &Uri, user_id: &Uri, port_id: &Uri) -> Result<()> {
+async fn ensure_session_row(
+    db: &BorgDb,
+    session_id: &Uri,
+    user_id: &Uri,
+    port_id: &Uri,
+) -> Result<()> {
     let mut users = db
         .get_session(session_id)
         .await?
@@ -356,7 +359,7 @@ fn select_actor_id(
     if let Some(actor_id) = bound_actor_id {
         return actor_id;
     }
-    if let Some(actor_id) = legacy_actor_id {
+    if let Some(actor_id) = legacy_actor_id.filter(|value| value.as_str().contains(":actor:")) {
         return actor_id;
     }
     session_id
@@ -364,8 +367,8 @@ fn select_actor_id(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::collections::HashMap;
+    use std::path::PathBuf;
 
     use borg_core::Uri;
     use borg_db::BorgDb;
@@ -389,7 +392,6 @@ mod tests {
             status: Status::Enabled,
             privacy: Privacy::Public,
             assigned_actor_id: None,
-            default_agent_id: None,
             settings: json!({"bot_token":"test"}),
         }
     }
@@ -401,15 +403,18 @@ mod tests {
             .as_nanos();
         let pid = std::process::id();
         let mut path = std::env::temp_dir();
-        path.push(format!("borg-ports-supervisor-{test_name}-{pid}-{nanos}.db"));
+        path.push(format!(
+            "borg-ports-supervisor-{test_name}-{pid}-{nanos}.db"
+        ));
         path
     }
 
     #[test]
-    fn select_actor_id_prefers_bound_actor_then_legacy_then_session() {
+    fn select_actor_id_prefers_bound_actor_then_legacy_actor_then_session() {
         let session = uri("borg:session:s1");
         let bound = uri("devmode:actor:bound");
         let legacy = uri("devmode:actor:legacy");
+        let legacy_agent = uri("borg:agent:default");
 
         assert_eq!(
             select_actor_id(session.clone(), Some(bound.clone()), Some(legacy.clone())),
@@ -418,6 +423,10 @@ mod tests {
         assert_eq!(
             select_actor_id(session.clone(), None, Some(legacy.clone())),
             legacy
+        );
+        assert_eq!(
+            select_actor_id(session.clone(), None, Some(legacy_agent)),
+            session
         );
         assert_eq!(select_actor_id(session.clone(), None, None), session);
     }

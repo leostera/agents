@@ -1,0 +1,1 @@
+ALTER TABLE apps ADD COLUMN secrets_json TEXT NOT NULL DEFAULT '[]';

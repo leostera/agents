@@ -1,7 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{
-    AgentTools, Message, Session, SessionContextManager, SessionResult,
-};
+use borg_agent::{AgentTools, Message, Session, SessionContextManager, SessionResult};
 use borg_core::Uri;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,7 +44,6 @@ impl ActorHandle {
             task,
         })
     }
-
 }
 
 struct SessionState {

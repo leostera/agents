@@ -212,7 +212,10 @@ impl ProvidersController {
             );
         };
         let Some(kind) = Self::parse_provider_kind(&provider_kind) else {
-            return api_error(StatusCode::BAD_REQUEST, "unsupported provider_kind".to_string());
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "unsupported provider_kind".to_string(),
+            );
         };
 
         let api_key = Self::normalize_optional_field(payload.api_key.as_deref()).or_else(|| {
@@ -338,7 +341,10 @@ impl ProvidersController {
         }
 
         let Some(kind) = Self::parse_provider_kind(&configured_provider.provider_kind) else {
-            return api_error(StatusCode::BAD_REQUEST, "unsupported provider_kind".to_string());
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "unsupported provider_kind".to_string(),
+            );
         };
 
         let api_key = Self::normalize_existing_api_key(&configured_provider.api_key);

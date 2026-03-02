@@ -21,7 +21,9 @@ impl FfiBridge {
 
     fn call(&self, op_name: &str, args: Vec<Value>) -> Result<Value> {
         match op_name {
-            "context__current" => Ok(self.ctx.to_json()),
+            "context__current" => Ok(self.ctx.to_public_json()),
+            "env__keys" => self.env_keys(),
+            "env__get" => self.env_get(args),
             "memory__state_facts" => {
                 let args = self.with_default_fact_sources(args)?;
                 self.dispatch(op_name, args)
@@ -65,6 +67,29 @@ impl FfiBridge {
         }
 
         Ok(args)
+    }
+
+    fn env_keys(&self) -> Result<Value> {
+        Ok(Value::Array(
+            self.ctx
+                .available_env_keys()
+                .into_iter()
+                .map(Value::String)
+                .collect(),
+        ))
+    }
+
+    fn env_get(&self, args: Vec<Value>) -> Result<Value> {
+        let key = args
+            .first()
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("env__get requires a non-empty key string"))?;
+        if let Some(value) = self.ctx.env.get(key) {
+            return Ok(Value::String(value.clone()));
+        }
+        Ok(args.get(1).cloned().unwrap_or(Value::Null))
     }
 }
 

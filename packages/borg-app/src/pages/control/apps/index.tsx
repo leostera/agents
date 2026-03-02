@@ -223,6 +223,27 @@ export function AppsPage() {
     }
   };
 
+  const handleStartGithubOAuth = async () => {
+    setError(null);
+    setIsSaving(true);
+    try {
+      const appId = "borg:app:github";
+      const returnTo = `${window.location.origin}/control/apps/${encodeURIComponent(appId)}`;
+      const response = await borgApi.startAppOAuth(appId, {
+        return_to: returnTo,
+      });
+      window.location.assign(response.authorize_url);
+    } catch (oauthError) {
+      setError(
+        oauthError instanceof Error
+          ? oauthError.message
+          : "Unable to start GitHub sign-in"
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleEditSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
@@ -470,6 +491,7 @@ export function AppsPage() {
         onOpenChange={setIsAddDialogOpen}
         isSaving={isSaving}
         onSubmit={handleCreateSubmit}
+        onStartGithubOAuth={handleStartGithubOAuth}
       />
 
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>

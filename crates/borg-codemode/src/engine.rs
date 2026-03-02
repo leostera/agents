@@ -31,6 +31,7 @@ pub struct CodeModeContext {
     pub current_session_id: Option<Uri>,
     pub current_agent_id: Option<Uri>,
     pub current_user_id: Option<Uri>,
+    pub env: HashMap<String, String>,
 }
 
 impl CodeModeContext {
@@ -66,6 +67,63 @@ impl CodeModeContext {
                 Value::String(value.to_string()),
             );
         }
+        if !self.env.is_empty() {
+            let env_obj = self
+                .env
+                .iter()
+                .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+                .collect();
+            obj.insert("env".to_string(), Value::Object(env_obj));
+        }
+        let env_keys = self.available_env_keys();
+        if !env_keys.is_empty() {
+            obj.insert(
+                "available_env_keys".to_string(),
+                Value::Array(env_keys.into_iter().map(Value::String).collect()),
+            );
+        }
+        Value::Object(obj)
+    }
+
+    pub fn to_public_json(&self) -> Value {
+        let mut obj = serde_json::Map::new();
+        if let Some(value) = &self.current_port_id {
+            obj.insert(
+                "current_port_id".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        if let Some(value) = &self.current_message_id {
+            obj.insert(
+                "current_message_id".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        if let Some(value) = &self.current_session_id {
+            obj.insert(
+                "current_session_id".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        if let Some(value) = &self.current_agent_id {
+            obj.insert(
+                "current_agent_id".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        if let Some(value) = &self.current_user_id {
+            obj.insert(
+                "current_user_id".to_string(),
+                Value::String(value.to_string()),
+            );
+        }
+        let env_keys = self.available_env_keys();
+        if !env_keys.is_empty() {
+            obj.insert(
+                "available_env_keys".to_string(),
+                Value::Array(env_keys.into_iter().map(Value::String).collect()),
+            );
+        }
         Value::Object(obj)
     }
 
@@ -79,7 +137,14 @@ impl CodeModeContext {
             current_session_id: parse_uri_field(obj, "current_session_id")?,
             current_agent_id: parse_uri_field(obj, "current_agent_id")?,
             current_user_id: parse_uri_field(obj, "current_user_id")?,
+            env: parse_env_field(obj)?,
         })
+    }
+
+    pub fn available_env_keys(&self) -> Vec<String> {
+        let mut keys = self.env.keys().cloned().collect::<Vec<_>>();
+        keys.sort();
+        keys
     }
 }
 
@@ -242,6 +307,23 @@ fn parse_uri_field(obj: &serde_json::Map<String, Value>, field: &str) -> Result<
         .as_str()
         .ok_or_else(|| anyhow!("context field `{field}` must be a string"))?;
     Ok(Some(Uri::parse(text)?))
+}
+
+fn parse_env_field(obj: &serde_json::Map<String, Value>) -> Result<HashMap<String, String>> {
+    let Some(raw) = obj.get("env") else {
+        return Ok(HashMap::new());
+    };
+    let env_obj = raw
+        .as_object()
+        .ok_or_else(|| anyhow!("context field `env` must be an object"))?;
+    let mut env = HashMap::with_capacity(env_obj.len());
+    for (key, value) in env_obj {
+        let value = value
+            .as_str()
+            .ok_or_else(|| anyhow!("context field `env.{key}` must be a string"))?;
+        env.insert(key.clone(), value.to_string());
+    }
+    Ok(env)
 }
 
 fn runtime_execution_lock() -> &'static Mutex<()> {

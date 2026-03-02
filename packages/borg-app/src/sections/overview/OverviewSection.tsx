@@ -155,9 +155,9 @@ export function OverviewSection() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <Card>
           <CardHeader>
-            <CardDescription>Busiest Agent</CardDescription>
+            <CardDescription>Busiest Actor</CardDescription>
             <CardTitle className="text-xl font-semibold">
-              `borg:agent:default`
+              `borg:actor:default`
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
@@ -171,7 +171,7 @@ export function OverviewSection() {
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Bot className="h-3.5 w-3.5" />
-              13% more load than next agent
+              13% more load than next actor
             </div>
           </CardContent>
         </Card>

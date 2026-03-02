@@ -8,6 +8,7 @@ const DASHBOARD_PATH = "/dashboard";
 const DASHBOARD_TYPO_PATH = "/dashbaord";
 const DASHBOARD_PREFIXES = [
   "/control",
+  "/clockwork",
   "/observability",
   "/memory",
   "/settings",

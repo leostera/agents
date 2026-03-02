@@ -153,7 +153,7 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
       const settings = selectedPort.settings ?? {};
       setEnabled(Boolean(selectedPort.enabled));
       setMode(selectedPort.allows_guests ? "public" : "private");
-      setAssignedActorId(selectedPort.default_agent_id ?? NO_ACTOR);
+      setAssignedActorId(selectedPort.assigned_actor_id ?? NO_ACTOR);
       setBotToken(
         typeof settings.bot_token === "string" ? settings.bot_token : ""
       );
@@ -231,7 +231,7 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
           provider: port.provider,
           enabled,
           allows_guests: mode === "public",
-          default_agent_id: assignedActorId === NO_ACTOR ? null : assignedActorId,
+          assigned_actor_id: assignedActorId === NO_ACTOR ? null : assignedActorId,
           settings: nextSettings,
         });
         await load();

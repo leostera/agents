@@ -20,6 +20,7 @@ borg-codemode = { path = "../borg-codemode" }
 borg-shellmode = { path = "../borg-shellmode" }
 borg-taskgraph = { path = "../borg-taskgraph" }
 clap.workspace = true
+chrono.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -27,3 +28,4 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+dotenvy.workspace = true

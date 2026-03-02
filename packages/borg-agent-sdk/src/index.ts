@@ -42,6 +42,11 @@ interface BorgFetchResponse {
   json: unknown | null;
 }
 
+interface BorgEnv {
+  keys(): string[];
+  get(name: string, defaultValue?: string | null): string | null;
+}
+
 interface BorgOS {
   ls(path?: PathLike, options?: BorgLsOptions): BorgLsResult;
 }
@@ -59,6 +64,7 @@ interface BorgUser {
 }
 
 interface BorgSdk {
+  env: BorgEnv;
   OS: BorgOS;
   Message: BorgMessage;
   me(): BorgUser;
@@ -104,6 +110,15 @@ const OS: BorgOS = {
   },
 };
 
+const env: BorgEnv = {
+  keys(): string[] {
+    return ffiInvoke<string[]>("env__keys", []);
+  },
+  get(name: string, defaultValue?: string | null): string | null {
+    return ffiInvoke<string | null>("env__get", [name, defaultValue ?? null]);
+  },
+};
+
 const Message: BorgMessage = {
   currentMessage(): BorgCurrentMessage {
     const context = currentContext();
@@ -121,6 +136,7 @@ const Message: BorgMessage = {
 };
 
 const Borg: BorgSdk = Object.freeze({
+  env,
   OS,
   Message,
   me(): BorgUser {

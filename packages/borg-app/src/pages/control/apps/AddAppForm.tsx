@@ -21,6 +21,7 @@ import {
   Blocks,
   Bot,
   Code2,
+  Github,
   type LucideIcon,
   Puzzle,
   TerminalSquare,
@@ -63,6 +64,7 @@ type CapabilityModeOption = {
 
 const APP_KIND_OPTIONS: AppKindOption[] = [
   { id: "codemode", label: "CodeMode", icon: Code2 },
+  { id: "github", label: "GitHub", icon: Github },
   { id: "mcp", label: "MCP", icon: Puzzle },
   { id: "workflow", label: "Workflow", icon: Blocks },
   { id: "agent", label: "Agent", icon: Bot },
@@ -79,6 +81,7 @@ type AddAppFormProps = {
   onOpenChange: (open: boolean) => void;
   isSaving: boolean;
   onSubmit: (input: AddAppInput) => Promise<void>;
+  onStartGithubOAuth: () => Promise<void>;
 };
 
 const DEFAULT_SECRET: AppSecretInput = { key: "", value: "" };
@@ -104,9 +107,10 @@ export function AddAppForm({
   onOpenChange,
   isSaving,
   onSubmit,
+  onStartGithubOAuth,
 }: AddAppFormProps) {
   const [dialogStep, setDialogStep] = React.useState<
-    "kind" | "details" | "capability"
+    "kind" | "details" | "capability" | "oauth"
   >("kind");
   const [selectedAppKind, setSelectedAppKind] = React.useState("codemode");
   const [appId, setAppId] = React.useState(nextAppId);
@@ -115,6 +119,7 @@ export function AddAppForm({
   const [status, setStatus] = React.useState("active");
   const [secrets, setSecrets] = React.useState<AppSecretInput[]>([]);
   const [capability, setCapability] = React.useState(DEFAULT_CAPABILITY);
+  const [isStartingOAuth, setIsStartingOAuth] = React.useState(false);
 
   React.useEffect(() => {
     if (!open) {
@@ -126,6 +131,7 @@ export function AddAppForm({
       setStatus("active");
       setSecrets([]);
       setCapability(DEFAULT_CAPABILITY);
+      setIsStartingOAuth(false);
     }
   }, [open]);
 
@@ -179,6 +185,15 @@ export function AddAppForm({
     });
   };
 
+  const handleStartGithubOAuth = async () => {
+    setIsStartingOAuth(true);
+    try {
+      await onStartGithubOAuth();
+    } finally {
+      setIsStartingOAuth(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
@@ -196,7 +211,8 @@ export function AddAppForm({
             <div className="grid grid-cols-2 gap-2">
               {APP_KIND_OPTIONS.map((option) => {
                 const Icon = option.icon;
-                const isEnabled = option.id === "codemode";
+                const isEnabled =
+                  option.id === "codemode" || option.id === "github";
                 return (
                   <Button
                     key={option.id}
@@ -207,7 +223,9 @@ export function AddAppForm({
                     onClick={() => {
                       if (!isEnabled) return;
                       setSelectedAppKind(option.id);
-                      setDialogStep("details");
+                      setDialogStep(
+                        option.id === "github" ? "oauth" : "details"
+                      );
                     }}
                   >
                     <Icon className="size-5" />
@@ -222,6 +240,38 @@ export function AddAppForm({
                   </Button>
                 );
               })}
+            </div>
+          </div>
+        ) : null}
+
+        {dialogStep === "oauth" ? (
+          <div className="space-y-3">
+            <div className="rounded-md border p-4">
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                <Github className="size-4" />
+                GitHub App Connection
+              </div>
+              <p className="text-muted-foreground text-sm">
+                Connect this Borg instance to GitHub using Borg's managed GitHub
+                OAuth app.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDialogStep("kind")}
+                disabled={isStartingOAuth}
+              >
+                Back
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void handleStartGithubOAuth()}
+                disabled={isStartingOAuth}
+              >
+                {isStartingOAuth ? "Starting..." : "Sign in with GitHub"}
+              </Button>
             </div>
           </div>
         ) : null}

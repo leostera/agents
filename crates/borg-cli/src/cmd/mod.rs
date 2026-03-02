@@ -1,3 +1,4 @@
+mod clockwork;
 mod ports;
 mod providers;
 pub mod tools;
@@ -65,6 +66,11 @@ enum Command {
     Ports {
         #[command(subcommand)]
         cmd: ports::PortsCommand,
+    },
+    #[command(about = "Clockwork jobs CRUD commands")]
+    Clockwork {
+        #[command(subcommand)]
+        cmd: clockwork::ClockworkCommand,
     },
 }
 
@@ -166,6 +172,15 @@ pub async fn run(app: BorgCliApp, cli: Cli) -> Result<()> {
         }
         Command::Ports { cmd } => {
             if let Err(err) = ports::run(&app, cmd).await {
+                println!(
+                    "{}",
+                    serde_json::to_string(&json!({ "ok": false, "error": err.to_string() }))?
+                );
+            }
+            Ok(())
+        }
+        Command::Clockwork { cmd } => {
+            if let Err(err) = clockwork::run(&app, cmd).await {
                 println!(
                     "{}",
                     serde_json::to_string(&json!({ "ok": false, "error": err.to_string() }))?

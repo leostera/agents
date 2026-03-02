@@ -129,7 +129,11 @@ impl BorgDb {
         .context("failed to list actor sessions")?;
 
         rows.into_iter()
-            .filter_map(|row| row.try_get::<Option<String>, _>("session_id").ok().flatten())
+            .filter_map(|row| {
+                row.try_get::<Option<String>, _>("session_id")
+                    .ok()
+                    .flatten()
+            })
             .map(|value| Uri::parse(&value))
             .collect::<Result<Vec<_>, _>>()
     }

@@ -13,6 +13,26 @@ fn default_provider_for_port_name(port_name: &str) -> String {
     }
 }
 
+fn is_actor_uri(uri: &Uri) -> bool {
+    uri.as_str().contains(":actor:")
+}
+
+fn parse_assigned_actor_id(settings: &Value, default_agent_id: Option<Uri>) -> Result<Option<Uri>> {
+    if let Some(raw) = settings
+        .as_object()
+        .and_then(|map| map.get("actor_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+    {
+        return Uri::parse(raw)
+            .map(Some)
+            .context("invalid actor_id uri in ports.settings_json");
+    }
+
+    Ok(default_agent_id.filter(is_actor_uri))
+}
+
 impl BorgDb {
     pub async fn list_ports(&self, limit: usize) -> Result<Vec<PortRecord>> {
         let limit = i64::try_from(limit).unwrap_or(200);
@@ -85,6 +105,10 @@ impl BorgDb {
                     port_name: row.port_name,
                     enabled: row.enabled != 0,
                     allows_guests: row.allows_guests != 0,
+                    assigned_actor_id: parse_assigned_actor_id(
+                        &settings,
+                        default_agent_id.clone(),
+                    )?,
                     default_agent_id,
                     settings,
                     active_sessions: row.active_sessions.max(0) as u64,
@@ -145,6 +169,7 @@ impl BorgDb {
             port_name: row.port_name,
             enabled: row.enabled != 0,
             allows_guests: row.allows_guests != 0,
+            assigned_actor_id: parse_assigned_actor_id(&settings, default_agent_id.clone())?,
             default_agent_id,
             settings,
             active_sessions: 0,
@@ -203,6 +228,7 @@ impl BorgDb {
             port_name: row.port_name,
             enabled: row.enabled != 0,
             allows_guests: row.allows_guests != 0,
+            assigned_actor_id: parse_assigned_actor_id(&settings, default_agent_id.clone())?,
             default_agent_id,
             settings,
             active_sessions: 0,
@@ -287,6 +313,7 @@ impl BorgDb {
             port_name: port_name.to_string(),
             enabled: true,
             allows_guests: true,
+            assigned_actor_id: None,
             default_agent_id: None,
             settings: serde_json::json!({}),
             active_sessions: 0,

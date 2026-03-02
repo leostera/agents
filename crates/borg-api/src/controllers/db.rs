@@ -6,6 +6,7 @@ use axum::{
 };
 use borg_core::Config;
 use borg_core::TelegramUserId;
+use borg_db::{CreateClockworkJobInput, UpdateClockworkJobInput};
 use borg_llm::Provider;
 use borg_llm::providers::openai::OpenAiProvider;
 use borg_llm::providers::openrouter::OpenRouterProvider;
@@ -89,12 +90,51 @@ pub(crate) struct SetTaskGraphTaskStatusRequest {
 }
 
 #[derive(Deserialize)]
+pub(crate) struct ClockworkJobsQuery {
+    limit: Option<usize>,
+    status: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CreateClockworkJobRequest {
+    job_id: String,
+    kind: String,
+    actor_id: String,
+    session_id: String,
+    payload: Value,
+    #[serde(default)]
+    headers: Option<Value>,
+    schedule_spec: Value,
+    #[serde(default)]
+    next_run_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct UpdateClockworkJobRequest {
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    actor_id: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    payload: Option<Value>,
+    #[serde(default)]
+    headers: Option<Value>,
+    #[serde(default)]
+    schedule_spec: Option<Value>,
+    #[serde(default)]
+    next_run_at: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub(crate) struct UpsertPortRequest {
     provider: String,
     enabled: bool,
     allows_guests: bool,
     #[serde(default)]
-    default_agent_id: Option<String>,
+    #[serde(alias = "default_agent_id")]
+    assigned_actor_id: Option<String>,
     #[serde(default)]
     settings: Option<Value>,
 }
@@ -595,6 +635,133 @@ impl DbController {
             Err(err) if err.to_string().contains("task.not_found") => {
                 api_error(StatusCode::NOT_FOUND, "task not found".to_string())
             }
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn list_clockwork_jobs(
+        State(state): State<AppState>,
+        Query(query): Query<ClockworkJobsQuery>,
+    ) -> impl IntoResponse {
+        let limit = query.limit.unwrap_or(200);
+        match state
+            .db
+            .list_clockwork_jobs(limit, query.status.as_deref())
+            .await
+        {
+            Ok(jobs) => (StatusCode::OK, Json(json!({ "jobs": jobs }))).into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn create_clockwork_job(
+        State(state): State<AppState>,
+        Json(payload): Json<CreateClockworkJobRequest>,
+    ) -> impl IntoResponse {
+        if payload.session_id.trim().is_empty() || payload.actor_id.trim().is_empty() {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "actor_id and session_id are required".to_string(),
+            );
+        }
+        let input = CreateClockworkJobInput {
+            job_id: payload.job_id,
+            kind: payload.kind,
+            target_actor_id: payload.actor_id,
+            target_session_id: payload.session_id,
+            message_type: "BorgMessage".to_string(),
+            payload: payload.payload,
+            headers: payload.headers.unwrap_or_else(|| json!({})),
+            schedule_spec: payload.schedule_spec,
+            next_run_at: payload.next_run_at,
+        };
+
+        match state.db.create_clockwork_job(&input).await {
+            Ok(()) => match state.db.get_clockwork_job(&input.job_id).await {
+                Ok(Some(job)) => (StatusCode::OK, Json(json!({ "job": job }))).into_response(),
+                Ok(None) => api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "clockwork job persisted but not found".to_string(),
+                ),
+                Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+            },
+            Err(err) => api_error(StatusCode::BAD_REQUEST, err.to_string()),
+        }
+    }
+
+    pub(crate) async fn get_clockwork_job(
+        State(state): State<AppState>,
+        AxumPath(job_id): AxumPath<String>,
+    ) -> impl IntoResponse {
+        match state.db.get_clockwork_job(&job_id).await {
+            Ok(Some(job)) => (StatusCode::OK, Json(json!({ "job": job }))).into_response(),
+            Ok(None) => api_error(StatusCode::NOT_FOUND, "clockwork job not found".to_string()),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+        }
+    }
+
+    pub(crate) async fn update_clockwork_job(
+        State(state): State<AppState>,
+        AxumPath(job_id): AxumPath<String>,
+        Json(payload): Json<UpdateClockworkJobRequest>,
+    ) -> impl IntoResponse {
+        let patch = UpdateClockworkJobInput {
+            kind: payload.kind,
+            target_actor_id: payload.actor_id,
+            target_session_id: payload.session_id,
+            message_type: None,
+            payload: payload.payload,
+            headers: payload.headers,
+            schedule_spec: payload.schedule_spec,
+            next_run_at: payload.next_run_at.map(Some),
+        };
+
+        match state.db.update_clockwork_job(&job_id, &patch).await {
+            Ok(0) => api_error(
+                StatusCode::BAD_REQUEST,
+                "clockwork job is terminal or not updatable".to_string(),
+            ),
+            Ok(_) => match state.db.get_clockwork_job(&job_id).await {
+                Ok(Some(job)) => (StatusCode::OK, Json(json!({ "job": job }))).into_response(),
+                Ok(None) => api_error(StatusCode::NOT_FOUND, "clockwork job not found".to_string()),
+                Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+            },
+            Err(err) if err.to_string().contains("not found") => {
+                api_error(StatusCode::NOT_FOUND, "clockwork job not found".to_string())
+            }
+            Err(err) => api_error(StatusCode::BAD_REQUEST, err.to_string()),
+        }
+    }
+
+    pub(crate) async fn pause_clockwork_job(
+        State(state): State<AppState>,
+        AxumPath(job_id): AxumPath<String>,
+    ) -> impl IntoResponse {
+        Self::set_clockwork_status(state, job_id, "paused").await
+    }
+
+    pub(crate) async fn resume_clockwork_job(
+        State(state): State<AppState>,
+        AxumPath(job_id): AxumPath<String>,
+    ) -> impl IntoResponse {
+        Self::set_clockwork_status(state, job_id, "active").await
+    }
+
+    pub(crate) async fn cancel_clockwork_job(
+        State(state): State<AppState>,
+        AxumPath(job_id): AxumPath<String>,
+    ) -> impl IntoResponse {
+        Self::set_clockwork_status(state, job_id, "cancelled").await
+    }
+
+    async fn set_clockwork_status(state: AppState, job_id: String, status: &str) -> Response {
+        match state.db.set_clockwork_job_status(&job_id, status).await {
+            Ok(0) => api_error(StatusCode::NOT_FOUND, "clockwork job not found".to_string()),
+            Ok(_) => match state.db.get_clockwork_job(&job_id).await {
+                Ok(Some(job)) => (StatusCode::OK, Json(json!({ "job": job }))).into_response(),
+                Ok(None) => api_error(StatusCode::NOT_FOUND, "clockwork job not found".to_string()),
+                Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
+            },
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
         }
     }
@@ -1454,15 +1621,25 @@ impl DbController {
             Ok(port_name) => port_name,
             Err(err) => return err,
         };
-        let default_agent_id = match payload.default_agent_id {
+        let assigned_actor_id = match payload.assigned_actor_id {
             Some(raw) if raw.trim().is_empty() => None,
-            Some(raw) => match parse_uri_field("default_agent_id", raw.trim()) {
+            Some(raw) => match parse_uri_field("assigned_actor_id", raw.trim()) {
                 Ok(uri) => Some(uri),
                 Err(err) => return err,
             },
             None => None,
         };
-        let settings = payload.settings.unwrap_or_else(|| json!({}));
+        let mut settings = payload.settings.unwrap_or_else(|| json!({}));
+        if let Some(map) = settings.as_object_mut() {
+            match assigned_actor_id.as_ref() {
+                Some(actor_id) => {
+                    map.insert("actor_id".to_string(), Value::String(actor_id.to_string()));
+                }
+                None => {
+                    map.remove("actor_id");
+                }
+            }
+        }
         if let Err(err) = Self::validate_port_settings(&payload.provider, &settings) {
             return err;
         }
@@ -1474,7 +1651,7 @@ impl DbController {
                 &payload.provider,
                 payload.enabled,
                 payload.allows_guests,
-                default_agent_id.as_ref(),
+                assigned_actor_id.as_ref(),
                 &settings,
             )
             .await

@@ -4,6 +4,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use borg_db::AppRecord;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -47,6 +48,10 @@ pub(crate) struct UpsertAppRequest {
     source: String,
     #[serde(default = "default_app_auth_strategy")]
     auth_strategy: String,
+    #[serde(default)]
+    auth_config_json: Value,
+    #[serde(default)]
+    available_secrets: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -101,7 +106,11 @@ impl AppsController {
     ) -> impl IntoResponse {
         let limit = query.limit.unwrap_or(100);
         match state.db.list_apps(limit).await {
-            Ok(apps) => (StatusCode::OK, Json(json!({ "apps": apps }))).into_response(),
+            Ok(apps) => (
+                StatusCode::OK,
+                Json(json!({ "apps": apps.into_iter().map(redacted_app_record).collect::<Vec<_>>() })),
+            )
+                .into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
         }
     }
@@ -115,7 +124,11 @@ impl AppsController {
             Err(err) => return err,
         };
         match state.db.get_app(&app_id).await {
-            Ok(Some(app)) => (StatusCode::OK, Json(json!({ "app": app }))).into_response(),
+            Ok(Some(app)) => (
+                StatusCode::OK,
+                Json(json!({ "app": redacted_app_record(app) })),
+            )
+                .into_response(),
             Ok(None) => api_error(StatusCode::NOT_FOUND, "app not found".to_string()),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}")),
         }
@@ -155,6 +168,8 @@ impl AppsController {
                 false,
                 payload.source.trim(),
                 payload.auth_strategy.trim(),
+                &payload.auth_config_json,
+                &payload.available_secrets,
             )
             .await
         {
@@ -517,4 +532,25 @@ impl AppsController {
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }
+}
+
+fn redacted_app_record(app: AppRecord) -> Value {
+    let mut auth_config_json = app.auth_config_json;
+    if let Some(object) = auth_config_json.as_object_mut() {
+        object.remove("client_secret");
+    }
+    json!({
+        "app_id": app.app_id,
+        "name": app.name,
+        "slug": app.slug,
+        "description": app.description,
+        "status": app.status,
+        "built_in": app.built_in,
+        "source": app.source,
+        "auth_strategy": app.auth_strategy,
+        "auth_config_json": auth_config_json,
+        "available_secrets": app.available_secrets,
+        "created_at": app.created_at,
+        "updated_at": app.updated_at,
+    })
 }
