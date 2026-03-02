@@ -17,6 +17,13 @@ requires reviewer-mediated completion for every task.
 Identity model is session-first: a `session_uri` identifies one Agent+Task
 execution context. Work execution and review each run in fresh sessions.
 
+## Updates
+
+### 2026-03-02
+
+1. Assignee and reviewer are allowed to be the same identity.
+2. Removed `auth.unknown_session` from the v0 error model.
+
 ## Motivation
 [motivation]: #motivation
 
@@ -99,8 +106,7 @@ Rules:
 1. The structural graph is always a DAG.
 2. `assignee_agent_id`, `reviewer_agent_id`, `assignee_session_uri`, and
    `reviewer_session_uri` are always required.
-3. `assignee_agent_id != reviewer_agent_id`.
-4. `assignee_session_uri != reviewer_session_uri`.
+3. Assignee and reviewer may be the same identity.
 5. `reviewer_agent_id` and `reviewer_session_uri` are immutable after create.
 6. `assignee_session_uri` can be changed only by reviewer via
    `TaskGraph-reassignAssignee`.
@@ -162,7 +168,6 @@ existing runtime/toolchain assembly path similarly to other tool crates.
 `reviewer_agent_id` is set to creator agent by default in v0.
 Server allocates fresh `assignee_session_uri` and a distinct fresh
 `reviewer_session_uri` for this task.
-`TaskGraph-createTask` must reject `assignee_agent_id == reviewer_agent_id`.
 
 `TaskGraph-updateTaskFields` supports patching only:
 `title | description | definition_of_done`.
@@ -173,7 +178,6 @@ It must not patch assignee/reviewer.
 1. only reviewer may call it
 2. input provides new `assignee_agent_id`
 3. creates a new `assignee_session_uri` for the new assignee
-4. must reject new assignee equal to reviewer
 5. clears review timestamps (`submitted_at`, `approved_at`,
    `changes_requested_at`)
 6. sets `status = pending`
@@ -285,7 +289,6 @@ Behavior:
 2. requires each subtask to provide non-null `assignee_agent_id`
 3. each subtask reviewer agent is set to caller agent
 4. server allocates fresh assignee/reviewer sessions for each subtask
-5. each subtask must satisfy `assignee_agent_id != reviewer_agent_id`
 6. sets parent status to `doing`
 7. creates `n` child tasks with explicit input fields and no metadata
    inheritance by default (except parent linkage)
@@ -357,12 +360,10 @@ Server errors should map to structured codes:
 3. `task.validation_failed`
 4. `task.cycle_detected`
 5. `task.children_incomplete`
-6. `task.assignee_reviewer_must_differ`
-7. `task.reviewer_immutable`
-8. `task.reassign_forbidden`
+6. `task.reviewer_immutable`
+7. `task.reassign_forbidden`
 9. `auth.session_required`
 10. `auth.forbidden`
-11. `auth.unknown_session` (optional if caller session must pre-exist)
 12. `review.session_mismatch`
 13. `review.note_required`
 
@@ -417,7 +418,7 @@ Why this shape:
 
 1. Keep status explicit (`pending|doing|review|done|discarded`) and encode
    review history via timestamps.
-2. Require reviewer for every task and force assignee/reviewer separation.
+2. Require reviewer for every task while allowing assignee/reviewer overlap.
 3. Keep queue read-only and selection-only, with global topo availability.
 4. Keep references non-structural.
 5. Use session identity (`borg:session:...`) for auth/audit, aligned with Borg runtime.
@@ -439,9 +440,7 @@ resolution and topological availability queues.
 [unresolved-questions]: #unresolved-questions
 
 1. Do we want optimistic concurrency fields (e.g., `version`) on mutable writes?
-2. Should `auth.unknown_session` be enforced against a session registry, or left
-   to caller-side validation in v0?
-3. Should `TaskGraph-nextTask` return only one task in v0, or allow small `limit` batches?
+2. Should `TaskGraph-nextTask` return only one task in v0, or allow small `limit` batches?
 
 ## Future possibilities
 [future-possibilities]: #future-possibilities

@@ -31,6 +31,12 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = r#"You are Borg's default agent, and thi
 1. When using the `CodeMode-executeCode` tool, try to generate a single piece of code that does all the work you need
 2. Returned values in the code you pass to `CodeMode-executeCode` will be returned to you as JSON
 
+## Rules for Apps and Capabilities
+
+0. Use `Apps-listCapabilities` to discover available app capabilities.
+1. Call discovered capabilities directly by tool name, using the capability's mode-specific input shape.
+2. Prefer app capabilities over generating raw runtime code when a matching capability exists.
+
 ## Rules about the Memory System
 
 0. Use the memory tools directly (`Memory-getSchema`, `Memory-searchMemory`, `Memory-newEntity`, `Memory-saveFacts`) instead of code execution for routine memory operations.

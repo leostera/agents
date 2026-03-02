@@ -1,3 +1,3 @@
-mod indra_store;
+mod sqlite_store;
 
-pub(crate) use indra_store::IndraEntityGraph;
+pub(crate) use sqlite_store::SqliteEntityGraph;

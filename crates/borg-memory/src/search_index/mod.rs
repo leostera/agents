@@ -1,3 +1,3 @@
-mod tantivy_store;
+mod sqlite_store;
 
-pub(crate) use tantivy_store::TantivySearchIndex;
+pub(crate) use sqlite_store::SqliteSearchIndex;

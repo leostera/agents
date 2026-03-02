@@ -47,12 +47,23 @@ pub struct PortConfig {
     pub provider: Provider,
     pub status: Status,
     pub privacy: Privacy,
+    pub assigned_actor_id: Option<Uri>,
     pub default_agent_id: Option<Uri>,
     pub settings: Value,
 }
 
 impl PortConfig {
     pub fn from_record(port_record: borg_db::PortRecord) -> Result<Self> {
+        let assigned_actor_id = port_record
+            .settings
+            .as_object()
+            .and_then(|settings| settings.get("actor_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|raw| !raw.is_empty())
+            .map(Uri::parse)
+            .transpose()?
+            .or(port_record.default_agent_id.clone());
         Ok(Self {
             port_id: port_record.port_id,
             port_name: port_record.port_name,
@@ -67,6 +78,7 @@ impl PortConfig {
             } else {
                 Privacy::Private
             },
+            assigned_actor_id,
             default_agent_id: port_record.default_agent_id,
             settings: port_record.settings,
         })

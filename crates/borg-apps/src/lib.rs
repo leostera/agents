@@ -189,17 +189,17 @@ struct AppCatalogEntry {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CapabilityCatalogItem {
-    app_id: String,
-    app_name: String,
-    app_slug: String,
-    app_status: String,
-    app_built_in: bool,
-    capability_id: String,
-    capability_name: String,
-    capability_hint: String,
-    capability_mode: String,
-    capability_instructions: String,
-    capability_status: String,
+    pub app_id: String,
+    pub app_name: String,
+    pub app_slug: String,
+    pub app_status: String,
+    pub app_built_in: bool,
+    pub capability_id: String,
+    pub capability_name: String,
+    pub capability_hint: String,
+    pub capability_mode: String,
+    pub capability_instructions: String,
+    pub capability_status: String,
 }
 
 impl BorgApps {
@@ -252,6 +252,30 @@ impl BorgApps {
             }
         }
         items
+    }
+
+    pub fn capability_tool_specs(&self) -> Vec<ToolSpec> {
+        self.list_capabilities()
+            .into_iter()
+            .filter(|capability| {
+                capability.app_status.eq_ignore_ascii_case("active")
+                    && capability.capability_status.eq_ignore_ascii_case("active")
+            })
+            .map(|capability| ToolSpec {
+                name: capability.capability_name,
+                description: format!(
+                    "App capability from {} (mode: {}). {}\n\n{}",
+                    capability.app_name,
+                    capability.capability_mode,
+                    capability.capability_hint,
+                    capability.capability_instructions
+                ),
+                parameters: json!({
+                    "type": "object",
+                    "additionalProperties": true
+                }),
+            })
+            .collect()
     }
 }
 

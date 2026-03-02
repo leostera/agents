@@ -13,11 +13,11 @@ mod fact_store;
 mod search_index;
 mod tools;
 
-use entity_graph::IndraEntityGraph;
+use entity_graph::SqliteEntityGraph;
 pub use fact_store::FactArity;
 use fact_store::SqliteFactStore;
 pub use fact_store::{FactInput, FactRecord, FactValue, StateFactsResult, Uri};
-use search_index::TantivySearchIndex;
+use search_index::SqliteSearchIndex;
 pub use tools::{build_memory_toolchain, default_tool_specs as default_memory_tool_specs};
 
 const CONSOLIDATION_BATCH_SIZE: usize = 128;
@@ -40,8 +40,8 @@ macro_rules! uri {
 #[derive(Clone)]
 pub struct MemoryStore {
     fact_store: SqliteFactStore,
-    entity_graph: IndraEntityGraph,
-    search_index: TantivySearchIndex,
+    entity_graph: SqliteEntityGraph,
+    search_index: SqliteSearchIndex,
     consolidate_tx: mpsc::Sender<FactRecord>,
     shutdown_tx: std::sync::Arc<watch::Sender<bool>>,
 }
@@ -50,12 +50,12 @@ impl MemoryStore {
     pub fn new(path: impl AsRef<Path>, search_path: impl AsRef<Path>) -> Result<Self> {
         let root = path.as_ref().to_path_buf();
         let search_root = search_path.as_ref().to_path_buf();
-        std::fs::create_dir_all(&root)?;
-        std::fs::create_dir_all(&search_root)?;
+        ensure_path_parent_exists(&root)?;
+        ensure_path_parent_exists(&search_root)?;
 
         let fact_store = SqliteFactStore::new(&root)?;
-        let entity_graph = IndraEntityGraph::new(&root)?;
-        let search_index = TantivySearchIndex::new(&search_root)?;
+        let entity_graph = SqliteEntityGraph::new(&root)?;
+        let search_index = SqliteSearchIndex::new(&root)?;
         let (consolidate_tx, consolidate_rx) = mpsc::channel(CONSOLIDATION_BUFFER);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let shutdown_tx = std::sync::Arc::new(shutdown_tx);
@@ -73,7 +73,7 @@ impl MemoryStore {
             target: "borg_memory",
             root = %root.display(),
             search_root = %search_root.display(),
-            "initialized memory store with fact_store=sqlite entity_graph=indradb search_index=tantivy"
+            "initialized memory store with single sqlite backend for facts/entities/schemas/search"
         );
         Ok(store)
     }
@@ -82,6 +82,19 @@ impl MemoryStore {
         self.fact_store.migrate().await?;
         self.entity_graph.migrate().await?;
         self.search_index.migrate().await?;
+        if self.entity_graph.is_empty().await? {
+            let queued = self
+                .fact_store
+                .enqueue_non_retracted_facts_for_reprojection()
+                .await?;
+            if queued > 0 {
+                info!(
+                    target: "borg_memory",
+                    queued,
+                    "queued facts for sqlite projection bootstrap"
+                );
+            }
+        }
         self.replay_pending_projection().await?;
         Ok(())
     }
@@ -323,6 +336,18 @@ impl MemoryStore {
     }
 }
 
+fn ensure_path_parent_exists(path: &Path) -> Result<()> {
+    if path.extension().and_then(|ext| ext.to_str()) == Some("db") {
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow!("invalid storage path"))?;
+        std::fs::create_dir_all(parent)?;
+    } else {
+        std::fs::create_dir_all(path)?;
+    }
+    Ok(())
+}
+
 impl Drop for MemoryStore {
     fn drop(&mut self) {
         if std::sync::Arc::strong_count(&self.shutdown_tx) == 1 {
@@ -500,8 +525,8 @@ enum Command {
 }
 
 async fn apply_projection(
-    graph: &IndraEntityGraph,
-    index: &TantivySearchIndex,
+    graph: &SqliteEntityGraph,
+    index: &SqliteSearchIndex,
     facts: &SqliteFactStore,
     fact: FactRecord,
 ) -> Result<()> {
@@ -909,23 +934,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let mut maybe_search_index = None;
-        for _ in 0..60 {
-            match super::search_index::TantivySearchIndex::new(&search) {
-                Ok(index) => {
-                    maybe_search_index = Some(index);
-                    break;
-                }
-                Err(err) => {
-                    if err.to_string().contains("LockBusy") {
-                        tokio::time::sleep(Duration::from_millis(50)).await;
-                        continue;
-                    }
-                    panic!("failed to reopen search index: {err:#}");
-                }
-            }
-        }
-        let search_index = maybe_search_index.expect("search index lock did not clear in time");
+        let search_index = super::search_index::SqliteSearchIndex::new(&root).unwrap();
         search_index.migrate().await.unwrap();
         let mut after_restart: Vec<String> = Vec::new();
         for _ in 0..30 {

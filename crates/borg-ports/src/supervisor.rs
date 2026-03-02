@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::future::pending;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,6 +12,7 @@ use tokio::time;
 use tracing::{error, info, warn};
 
 use crate::PortMessage;
+use crate::discord::DiscordPort;
 use crate::message::PortInput;
 use crate::port::Provider::{Discord, Telegram, Unknown};
 use crate::telegram::TelegramPort;
@@ -118,11 +118,9 @@ impl BorgPortsSupervisor {
     }
 
     async fn spawn_port(&mut self, port_id: Uri, config: PortConfig) -> Result<()> {
-        if matches!(config.provider, Discord | Unknown) {
+        if matches!(config.provider, Unknown) {
             let provider = format!("{:?}", config.provider);
-            let task = tokio::spawn(async move {
-                pending::<()>().await;
-            });
+            let task = tokio::spawn(async move { std::future::pending::<()>().await });
             self.ports.insert(port_id.clone(), (config, task));
             warn!(
                 target: "borg_ports",
@@ -141,13 +139,13 @@ impl BorgPortsSupervisor {
         let sup = self.sup.clone();
         let db = self.rt.db.clone();
         let port_name = config.port_name.clone();
-        let default_agent_id = config.default_agent_id.clone();
+        let assigned_actor_id = config.assigned_actor_id.clone();
         let bridge_task = tokio::spawn(async move {
             bridge_loop(
                 db,
                 sup,
                 port_name,
-                default_agent_id,
+                assigned_actor_id,
                 inbound_rx,
                 outbound_tx,
             )
@@ -158,10 +156,10 @@ impl BorgPortsSupervisor {
         let port_id_for_port_task = port_id.clone();
         let port_task = tokio::spawn(async move {
             match config_for_port_task.provider {
-                Discord => {
-                    warn!(target: "borg_ports", port_id = %port_id_for_port_task, "discord provider should have been skipped before startup");
-                    Ok(())
-                }
+                Discord => match DiscordPort::new(config_for_port_task.clone()).await {
+                    Ok(port) => port.run(inbound_tx, outbound_rx).await,
+                    Err(err) => Err(err),
+                },
                 Telegram => match TelegramPort::new(config_for_port_task.clone()).await {
                     Ok(port) => port.run(inbound_tx, outbound_rx).await,
                     Err(err) => Err(err),
@@ -243,7 +241,7 @@ async fn bridge_loop(
     db: BorgDb,
     sup: Arc<BorgSupervisor>,
     port_name: String,
-    default_agent_id: Option<Uri>,
+    assigned_actor_id: Option<Uri>,
     mut inbound_rx: Receiver<PortMessage>,
     outbound_tx: Sender<SessionOutput>,
 ) {
@@ -253,7 +251,7 @@ async fn bridge_loop(
                 &port_name,
                 &message.conversation_key,
                 None,
-                default_agent_id.as_ref(),
+                None,
             )
             .await
         {
@@ -273,7 +271,7 @@ async fn bridge_loop(
                 &port_name,
                 &message.conversation_key,
                 None,
-                default_agent_id.as_ref(),
+                assigned_actor_id.as_ref(),
             )
             .await
         {
@@ -357,6 +355,7 @@ mod tests {
             provider,
             status: Status::Enabled,
             privacy: Privacy::Public,
+            assigned_actor_id: None,
             default_agent_id: None,
             settings: json!({"bot_token":"test"}),
         }

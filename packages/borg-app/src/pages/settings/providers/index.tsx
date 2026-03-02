@@ -54,6 +54,29 @@ function formatTimestamp(value?: string | null): string {
   return parsed.toLocaleString();
 }
 
+function formatProviderName(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "—";
+
+  if (trimmed.startsWith("borg:provider:")) {
+    return trimmed.slice("borg:provider:".length) || trimmed;
+  }
+
+  if (trimmed.includes("://")) {
+    try {
+      const parsed = new URL(trimmed);
+      const pathParts = parsed.pathname.split("/").filter(Boolean);
+      const lastPathPart = pathParts[pathParts.length - 1];
+      if (lastPathPart) return lastPathPart;
+      return parsed.hostname || trimmed;
+    } catch {
+      return trimmed;
+    }
+  }
+
+  return trimmed;
+}
+
 export function ProvidersPage() {
   const [providersByName, setProvidersByName] = React.useState<
     Record<string, ProviderRecord>
@@ -279,7 +302,9 @@ export function ProvidersPage() {
                     {formatProviderKind(provider.provider_kind)}
                   </TableCell>
                   <TableCell>
-                    <span className="font-medium">{provider.provider}</span>
+                    <span className="font-medium">
+                      {formatProviderName(provider.provider)}
+                    </span>
                   </TableCell>
                   <TableCell>
                     {provider.default_text_model ? (

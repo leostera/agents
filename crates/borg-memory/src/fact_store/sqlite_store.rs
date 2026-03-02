@@ -17,8 +17,9 @@ use tracing::info;
 use url::Url;
 use uuid::Uuid;
 
-const FACTS_DB_FILE: &str = "facts.db";
-const FACTS_TABLE: &str = "ltm_facts";
+const FACTS_DB_FILE: &str = "memory.db";
+const FACTS_TABLE: &str = "facts";
+const PROJECTION_QUEUE_TABLE: &str = "projection_queue";
 const QUEUED_STATUS: &str = "queued";
 
 struct Connection {
@@ -224,9 +225,12 @@ pub(crate) struct SqliteFactStore {
 }
 
 impl SqliteFactStore {
-    pub(crate) fn new(root: &Path) -> Result<Self> {
-        std::fs::create_dir_all(root)?;
-        let db_path = root.join(FACTS_DB_FILE);
+    pub(crate) fn new(path: &Path) -> Result<Self> {
+        let db_path = resolve_db_path(path);
+        let parent = db_path
+            .parent()
+            .ok_or_else(|| anyhow!("invalid sqlite db path"))?;
+        std::fs::create_dir_all(parent)?;
         Ok(Self {
             db_path,
             schema_ready: Arc::new(AtomicBool::new(false)),
@@ -288,8 +292,15 @@ impl SqliteFactStore {
             .await?;
 
             conn.execute(
-                "INSERT OR REPLACE INTO ltm_projection_queue(fact_id, status, enqueued_at) VALUES (?1, ?2, ?3)",
-                (fact_id.to_string(), QUEUED_STATUS.to_string(), enqueued_at.clone()),
+                &format!(
+                    "INSERT OR REPLACE INTO {}(fact_id, status, enqueued_at) VALUES (?1, ?2, ?3)",
+                    PROJECTION_QUEUE_TABLE
+                ),
+                (
+                    fact_id.to_string(),
+                    QUEUED_STATUS.to_string(),
+                    enqueued_at.clone(),
+                ),
             )
             .await?;
 
@@ -389,8 +400,14 @@ impl SqliteFactStore {
         let conn = self.open_conn().await?;
         let mut rows = conn
             .query(
-                "SELECT fact_id FROM ltm_projection_queue WHERE status = ?1 ORDER BY enqueued_at ASC LIMIT ?2",
-                (QUEUED_STATUS.to_string(), i64::try_from(limit).unwrap_or(128)),
+                &format!(
+                    "SELECT fact_id FROM {} WHERE status = ?1 ORDER BY enqueued_at ASC LIMIT ?2",
+                    PROJECTION_QUEUE_TABLE
+                ),
+                (
+                    QUEUED_STATUS.to_string(),
+                    i64::try_from(limit).unwrap_or(128),
+                ),
             )
             .await?;
 
@@ -408,11 +425,32 @@ impl SqliteFactStore {
         self.ensure_migrated().await?;
         let conn = self.open_conn().await?;
         conn.execute(
-            "DELETE FROM ltm_projection_queue WHERE fact_id = ?1",
+            &format!("DELETE FROM {} WHERE fact_id = ?1", PROJECTION_QUEUE_TABLE),
             (fact_id.to_string(),),
         )
         .await?;
         Ok(())
+    }
+
+    pub(crate) async fn enqueue_non_retracted_facts_for_reprojection(&self) -> Result<u64> {
+        self.ensure_migrated().await?;
+        let conn = self.open_conn().await?;
+        let enqueued_at = Utc::now().to_rfc3339();
+        let inserted = conn
+            .execute(
+                &format!(
+                    r#"
+                    INSERT OR IGNORE INTO {}(fact_id, status, enqueued_at)
+                    SELECT fact_id, ?1, ?2
+                    FROM {}
+                    WHERE retracted_at IS NULL
+                    "#,
+                    PROJECTION_QUEUE_TABLE, FACTS_TABLE
+                ),
+                (QUEUED_STATUS.to_string(), enqueued_at),
+            )
+            .await?;
+        Ok(inserted)
     }
 
     async fn ensure_migrated(&self) -> Result<()> {
@@ -438,7 +476,7 @@ impl SqliteFactStore {
         let conn = self.open_conn().await?;
         conn.execute_batch(
             r#"
-            CREATE TABLE IF NOT EXISTS ltm_facts (
+            CREATE TABLE IF NOT EXISTS facts (
                 fact_id TEXT PRIMARY KEY,
                 source TEXT NOT NULL,
                 entity TEXT NOT NULL,
@@ -455,19 +493,20 @@ impl SqliteFactStore {
                 retracted_at TEXT
             );
 
-            CREATE INDEX IF NOT EXISTS idx_ltm_facts_entity ON ltm_facts(entity);
-            CREATE INDEX IF NOT EXISTS idx_ltm_facts_source ON ltm_facts(source);
-            CREATE INDEX IF NOT EXISTS idx_ltm_facts_tx ON ltm_facts(tx_id);
-            CREATE INDEX IF NOT EXISTS idx_ltm_facts_field ON ltm_facts(field);
+            CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity);
+            CREATE INDEX IF NOT EXISTS idx_facts_source ON facts(source);
+            CREATE INDEX IF NOT EXISTS idx_facts_tx ON facts(tx_id);
+            CREATE INDEX IF NOT EXISTS idx_facts_field ON facts(field);
 
-            CREATE TABLE IF NOT EXISTS ltm_projection_queue (
+            CREATE TABLE IF NOT EXISTS projection_queue (
                 fact_id TEXT PRIMARY KEY,
                 status TEXT NOT NULL,
                 enqueued_at TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_ltm_projection_queue_status ON ltm_projection_queue(status);
-            "#
-        ).await?;
+            CREATE INDEX IF NOT EXISTS idx_projection_queue_status ON projection_queue(status);
+            "#,
+        )
+        .await?;
         self.ensure_arity_column(&conn).await?;
 
         info!(target: "borg_memory", "fact-store migrations completed");
@@ -477,7 +516,7 @@ impl SqliteFactStore {
     async fn ensure_arity_column(&self, conn: &Connection) -> Result<()> {
         match conn
             .execute(
-                "ALTER TABLE ltm_facts ADD COLUMN arity TEXT NOT NULL DEFAULT 'one'",
+                "ALTER TABLE facts ADD COLUMN arity TEXT NOT NULL DEFAULT 'one'",
                 (),
             )
             .await
@@ -503,6 +542,14 @@ impl SqliteFactStore {
             .execute(&pool)
             .await?;
         Ok(Connection { pool })
+    }
+}
+
+fn resolve_db_path(path: &Path) -> PathBuf {
+    if path.extension().and_then(|ext| ext.to_str()) == Some("db") {
+        path.to_path_buf()
+    } else {
+        path.join(FACTS_DB_FILE)
     }
 }
 

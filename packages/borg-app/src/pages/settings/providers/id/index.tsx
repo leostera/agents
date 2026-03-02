@@ -15,7 +15,7 @@ import {
   Input,
   Label,
 } from "@borg/ui";
-import { ArrowLeft, LoaderCircle, Save, Settings2 } from "lucide-react";
+import { ArrowLeft, LoaderCircle, Pause, Play, Save, Settings2 } from "lucide-react";
 import React from "react";
 import {
   Section,
@@ -319,8 +319,14 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
                       : current
                   )
                 }
+                aria-label={form.enabled ? "Disable provider" : "Enable provider"}
+                title={form.enabled ? "Disable provider" : "Enable provider"}
               >
-                {form.enabled ? "Disable" : "Enable"}
+                {form.enabled ? (
+                  <Pause className="size-4" />
+                ) : (
+                  <Play className="size-4" />
+                )}
               </Button>
             </div>
           </section>

@@ -8,6 +8,11 @@ import {
   DialogTitle,
   Input,
   Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@borg/ui";
 import {
   AtSign,
@@ -22,6 +27,7 @@ import React from "react";
 export type AddPortInput = {
   portKind: string;
   portName: string;
+  assignedActorId?: string;
   telegramBotToken?: string;
   discordBotToken?: string;
 };
@@ -42,13 +48,17 @@ const PORT_KIND_OPTIONS: PortKindOption[] = [
 ];
 
 type AddPortFormProps = {
+  actors: { actor_id: string; name: string }[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   isSaving: boolean;
   onSubmit: (input: AddPortInput) => Promise<void>;
 };
 
+const NO_ACTOR = "__none__";
+
 export function AddPortForm({
+  actors,
   open,
   onOpenChange,
   isSaving,
@@ -57,6 +67,7 @@ export function AddPortForm({
   const [dialogStep, setDialogStep] = React.useState<"kind" | "config">("kind");
   const [selectedPortKind, setSelectedPortKind] = React.useState("telegram");
   const [portName, setPortName] = React.useState("");
+  const [assignedActorId, setAssignedActorId] = React.useState(NO_ACTOR);
   const [telegramBotToken, setTelegramBotToken] = React.useState("");
   const [discordBotToken, setDiscordBotToken] = React.useState("");
 
@@ -65,6 +76,7 @@ export function AddPortForm({
       setDialogStep("kind");
       setSelectedPortKind("telegram");
       setPortName("");
+      setAssignedActorId(NO_ACTOR);
       setTelegramBotToken("");
       setDiscordBotToken("");
     }
@@ -75,6 +87,7 @@ export function AddPortForm({
     await onSubmit({
       portKind: selectedPortKind,
       portName,
+      assignedActorId: assignedActorId === NO_ACTOR ? undefined : assignedActorId,
       telegramBotToken,
       discordBotToken,
     });
@@ -137,6 +150,22 @@ export function AddPortForm({
                 aria-label="Port name"
               />
             </div>
+            <div className="space-y-2">
+              <Label>Assigned Actor</Label>
+              <Select value={assignedActorId} onValueChange={setAssignedActorId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="No assigned actor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_ACTOR}>No assigned actor</SelectItem>
+                  {actors.map((actor) => (
+                    <SelectItem key={actor.actor_id} value={actor.actor_id}>
+                      {actor.name} ({actor.actor_id})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             {selectedPortKind === "telegram" ? (
               <div className="space-y-2">
                 <Label htmlFor="telegram-bot-token">Telegram bot token</Label>
@@ -190,9 +219,7 @@ export function AddPortForm({
                   <p>
                     2. Add a Bot user under <code>Bot</code>.
                   </p>
-                  <p>
-                    3. Copy the bot token and paste it here.
-                  </p>
+                  <p>3. Copy the bot token and paste it here.</p>
                 </div>
               </div>
             ) : null}

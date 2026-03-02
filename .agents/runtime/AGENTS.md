@@ -52,7 +52,8 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - Telegram command `/model` supports:
   - `/model` to show current `agent_id` + model for the chat session.
   - `/model <model_name>` to persist model on the resolved agent spec.
-- Runtime toolchain now merges CodeMode + Memory + TaskGraph + Apps-listCapabilities in session turns.
+- Runtime toolchain now merges CodeMode + ShellMode + Memory + TaskGraph + Apps-listCapabilities in session turns.
+- Agent-visible tool specs now include active DB app capabilities (in addition to default runtime tools), so the LLM can call those capability tools directly by name.
 
 ## Runtime Safety
 - Initialize tracing before application code in `main`.
