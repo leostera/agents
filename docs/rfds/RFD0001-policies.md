@@ -42,6 +42,19 @@ Turn flow:
 
 This keeps behavior explainable to users while guaranteeing enforcement even when model output is wrong.
 
+```mermaid
+sequenceDiagram
+  participant Port
+  participant Runtime
+  participant PolicyStore
+  participant ToolExec
+  Port->>Runtime: inbound message + sender metadata
+  Runtime->>PolicyStore: resolve user + session bindings
+  PolicyStore-->>Runtime: effective allow/deny constraints
+  Runtime->>ToolExec: execute only if allowed
+  ToolExec-->>Runtime: result or permission_denied
+```
+
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 

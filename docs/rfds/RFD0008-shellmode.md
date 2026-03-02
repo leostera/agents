@@ -23,6 +23,16 @@ Shell Mode is to CLI what Code Mode is to JavaScript. It provides direct access 
 - Build tools: `cargo`, `npm`, `make`
 - System info: `uname`, `df`, `free`
 
+```mermaid
+flowchart TD
+  A[ShellMode-executeCommand request] --> B[Parse args command/hint/timeout/cwd]
+  B --> C[Resolve working directory]
+  C --> D[Run std::process::Command]
+  D --> E[Apply timeout]
+  E --> F[Capture stdout/stderr/exit_code]
+  F --> G[Return structured result]
+```
+
 ### Tool interface
 
 ```

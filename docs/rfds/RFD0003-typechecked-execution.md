@@ -32,6 +32,16 @@ Example:
 - Input: `Borg.LTM.store("leo", "realName", "leandro")`
 - Result: pre-execution type error, no runtime invocation.
 
+```mermaid
+flowchart TD
+  A[CodeMode snippet] --> B[Shape validation]
+  B --> C[Typecheck against borg.d.ts]
+  C --> D{Diagnostics?}
+  D -->|Yes| E[Return stage=typecheck error]
+  D -->|No| F[Execute snippet]
+  F --> G[Return runtime result]
+```
+
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 

@@ -37,6 +37,17 @@ Example flow for Telegram:
 
 Unknown commands fall back to standard message processing.
 
+```mermaid
+flowchart TD
+  A[Incoming port message] --> B{Matches command syntax?}
+  B -->|No| C[Normal agent turn path]
+  B -->|Yes| D[PortCommand router]
+  D --> E{Known command?}
+  E -->|No| F[Command error response]
+  E -->|Yes| G[ExecEngine.handle_port_command]
+  G --> H[Port sends command reply]
+```
+
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 

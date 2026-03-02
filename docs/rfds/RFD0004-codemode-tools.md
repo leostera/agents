@@ -144,6 +144,22 @@ conversation, including tool calls:
   > tool resp(uTorrent / Get Torrent Status): { progress: 0.37, state: "downloading" }
 ```
 
+```mermaid
+sequenceDiagram
+  participant User
+  participant Agent
+  participant CapReg as Capability Registry
+  participant Runtime
+  participant Toolchain
+  User->>Agent: request outcome
+  Agent->>CapReg: findCapability(query)
+  CapReg-->>Agent: App/Capability candidates
+  Agent->>Runtime: invoke selected capability
+  Runtime->>Toolchain: dispatch by execution_mode
+  Toolchain-->>Runtime: structured output
+  Runtime-->>Agent: capability result
+```
+
 ### Adding a new app without source access
 
 This model is explicitly designed so a Borg user can add integrations without touching Borg source code. The user flow is: create an App record, define its secrets, define one or more capabilities with clear instructions, connect the app in their workspace, and grant those capabilities to the target agent. After that, the agent discovers those capabilities through `findCapability(...)` and invokes them like any other capability.
@@ -182,6 +198,15 @@ Creating a new integration without source changes should follow a fixed order so
 5. Create `agent_capability_grants` row(s) for each agent that should use the capability.
 
 Once those rows exist, the capability is live for granted agents. No Borg source code or deploy is required for codemode/shell capabilities.
+
+```mermaid
+flowchart LR
+  A[apps] --> B[app_secrets]
+  B --> C[capabilities]
+  C --> D[app_connections]
+  D --> E[agent_capability_grants]
+  E --> F[Capability is invokable]
+```
 
 ### Dispatch and execution
 

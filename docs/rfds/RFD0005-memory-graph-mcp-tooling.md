@@ -68,6 +68,19 @@ Multi-valued fields may be encoded as either:
 3. Never delete; retract via `Memory-retractFacts`.
 4. Link duplicates with `sameAs` facts via `Memory-stateFacts`.
 
+```mermaid
+flowchart TD
+  A[Memory-search] --> B{Entity exists?}
+  B -->|No| C[Memory-createEntity]
+  B -->|Yes| D[Memory-getEntity]
+  C --> E[Memory-stateFacts]
+  D --> E
+  E --> F{Need correction?}
+  F -->|Yes| G[Memory-retractFacts]
+  F -->|No| H[Done]
+  G --> H
+```
+
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
@@ -256,6 +269,19 @@ Bootstrap rule: bootstrap is asserted through one `Memory-stateFacts` call; impl
 4. Write fact batch via `Memory-stateFacts`.
 5. Write `sameAs` fact edges via `Memory-stateFacts` when duplicates are found.
 6. Retract incorrect facts via `Memory-retractFacts`.
+
+```mermaid
+sequenceDiagram
+  participant Agent
+  participant Memory
+  Agent->>Memory: Memory-Schema-define*
+  Agent->>Memory: Memory-search / Memory-getEntity
+  Agent->>Memory: Memory-createEntity (if missing)
+  Agent->>Memory: Memory-stateFacts
+  Agent->>Memory: Memory-stateFacts (sameAs when needed)
+  Agent->>Memory: Memory-retractFacts (if corrections needed)
+  Memory-->>Agent: txId per write call
+```
 
 ## Observability and quality gates
 

@@ -35,6 +35,16 @@ Explain the proposal as if it was already included in Borg and you were teaching
 
 For implementation-oriented RFDs (for runtime internals, ports, memory, scheduling, etc.), this section should focus on how Borg contributors should think about the change, and give examples of its concrete impact. For policy RFDs, this section should provide an example-driven introduction to the policy and explain its impact in concrete terms.
 
+### Diagram template (when relevant)
+
+```mermaid
+flowchart TD
+  A[Trigger or Input] --> B[Runtime Decision Point]
+  B --> C[Primary Action]
+  C --> D[Stored/Audited Outcome]
+  D --> E[User/Operator Visible Effect]
+```
+
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 

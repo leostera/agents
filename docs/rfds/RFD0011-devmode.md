@@ -92,6 +92,19 @@ deletes actor branches.
    - on conflict or retry exhaustion, actor is BLOCKED
 5. Human/operator unblocks actor when required.
 
+```mermaid
+flowchart TD
+  A[Actor worktree edit] --> B[git add + git commit with trailers]
+  B --> C[git push origin HEAD:main]
+  C --> D{Push accepted?}
+  D -->|Yes| E[Publish complete]
+  D -->|No| F[git fetch origin main]
+  F --> G[git rebase origin/main]
+  G --> H{Rebase clean?}
+  H -->|Yes| C
+  H -->|No| I[Set actor BLOCKED REBASE_CONFLICT]
+```
+
 ### Required commit trailers
 
 Every actor commit must include:
@@ -274,6 +287,15 @@ Initial blocked reasons:
 - `PUSH_RETRY_EXHAUSTED`
 - `GIT_ERROR`
 - `HOOK_FAILURE_LOOP` (optional)
+
+```mermaid
+stateDiagram-v2
+  [*] --> RUNNING
+  RUNNING --> BLOCKED: rebase conflict / push retries exhausted / git error
+  BLOCKED --> RUNNING: operator unblock
+  RUNNING --> STOPPED: runtime stop
+  BLOCKED --> STOPPED: runtime stop
+```
 
 ### Crash recovery
 

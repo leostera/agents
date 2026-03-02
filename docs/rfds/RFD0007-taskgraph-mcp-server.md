@@ -121,6 +121,20 @@ Rules:
 4. Reviewer session calls `TaskGraph-approveReview`, which sets `done`.
 5. Parent becomes completable when all children are `complete`.
 
+```mermaid
+sequenceDiagram
+  participant Creator
+  participant TaskGraph
+  participant Assignee
+  participant Reviewer
+  Creator->>TaskGraph: TaskGraph-createTask(assignee_agent_id)
+  TaskGraph-->>Creator: task + assignee_session_uri + reviewer_session_uri
+  Assignee->>TaskGraph: TaskGraph-setTaskStatus(doing)
+  Assignee->>TaskGraph: TaskGraph-submitReview
+  Reviewer->>TaskGraph: TaskGraph-approveReview
+  TaskGraph-->>Reviewer: status=done
+```
+
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
@@ -307,6 +321,16 @@ Queue behavior:
 in-progress candidates; it does not mutate task status.
 
 No queue pagination contract in v0.
+
+```mermaid
+flowchart TD
+  A[All tasks] --> B[Exclude discarded]
+  B --> C[Filter status pending|doing]
+  C --> D[Filter assignee_session_uri == input.session_uri]
+  D --> E[Check blockers complete explicit+derived]
+  E --> F[Kahn-style topo availability]
+  F --> G[TaskGraph-nextTask result]
+```
 
 ### 11. Mutation auth requirement
 

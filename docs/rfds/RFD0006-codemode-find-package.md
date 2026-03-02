@@ -67,6 +67,16 @@ The response includes:
 > agent: I'll use npm:serpapi and generate capability instructions from these examples.
 ```
 
+```mermaid
+flowchart TD
+  A[Capability intent/query] --> B[CodeMode.findPackage]
+  B --> C[Search npm/jsr candidates]
+  C --> D[Resolve types]
+  D --> E[Extract runnable examples]
+  E --> F[Rank and return package/types/examples]
+  F --> G[Agent generates capability instructions/code]
+```
+
 ### Why only one tool?
 
 We intentionally keep this as one tool for now. The goal is to unlock dynamic
