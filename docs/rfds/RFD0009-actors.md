@@ -18,6 +18,28 @@ that pattern as a runtime contract rather than subsystem-local behavior.
 Mailbox durability is primary: message delivery means durable enqueue into
 `actor_mailbox`.
 
+## Updates
+[updates]: #updates
+
+### 2026-03-02
+
+This revision updates two v0.1 contracts to match implementation and intended
+operational behavior:
+
+1. `call` responses are in-memory runtime responses (oneshot/channel) and are
+   not durably persisted in `actor_mailbox`.
+2. Actor lifecycle surface is simplified to `RUNNING | STOPPED`; `CRASHED` is
+   not a canonical state in v0.1.
+
+Rationale:
+
+1. Durable enqueue remains the source of truth for request delivery and
+   processing audit (`QUEUED -> IN_PROGRESS -> ACKED|FAILED`), while `call`
+   response payload durability adds write overhead without clear value for v0.1.
+2. Crash behavior is already represented through mailbox failure transitions,
+   startup stale-row handling, and runtime logs; a separate persisted `CRASHED`
+   actor state adds ambiguity without improving control flow.
+
 ## Motivation
 [motivation]: #motivation
 
@@ -70,14 +92,14 @@ Single-mailbox rule:
 
 Use two interaction types:
 
-1. `call`: durable enqueue + await one terminal response message in v0.
+1. `call`: durable enqueue + await one in-memory terminal response in v0.
 2. `cast`: durable enqueue without waiting for a response.
 
 Response transport:
 
-1. Responses are mailbox messages, not in-memory-only return channels.
-2. Ports may be implemented as actors with their own mailbox and act as response
-   receivers for `call`.
+1. `call` responses are returned via in-memory response channels.
+2. Durable mailbox state tracks request lifecycle and terminal status
+   (`ACKED`/`FAILED`), not response payload persistence.
 
 `Terminate` is a control command used by runtime shutdown logic.
 
@@ -92,7 +114,7 @@ flowchart LR
     A -->|claim| I[Set IN_PROGRESS]
     I -->|success| K[Set ACKED]
     I -->|failure| F[Set FAILED]
-    K --> P[Emit response mailbox message]
+    K --> P[Return in-memory call response]
     F --> P
 ```
 
@@ -221,7 +243,7 @@ Required behavior:
 
 1. Actor registry is keyed by `actor_key`.
 2. `call` creates actor if missing, persists mailbox message, notifies actor
-   channel, then awaits a terminal response message.
+   channel, then awaits an in-memory terminal response.
 3. `cast` persists mailbox message and must not drop; enqueue failure surfaces
    as error.
 4. `shutdown` drains actor registry and terminates all actors.
@@ -241,7 +263,6 @@ Canonical states:
 
 1. `RUNNING`: actor loop active and mailbox servicing.
 2. `STOPPED`: actor not running.
-3. `CRASHED`: optional observational state for diagnostics.
 
 Not every subsystem must expose all states externally, but subsystems should map their
 local lifecycle to this canonical model for observability.
