@@ -1,4 +1,4 @@
-use std::{io, io::Write};
+use std::{collections::BTreeMap, io, io::Write};
 
 use anyhow::Result;
 use borg_api::BorgApiServer;
@@ -73,6 +73,17 @@ enum Command {
         /// Admin subcommand.
         #[command(subcommand)]
         cmd: AdminCommand,
+    },
+    /// Invoke subsystem tools directly.
+    Tools {
+        /// Tool namespace (for example: memory, codemode, shell, taskgraph, list).
+        namespace: String,
+        /// Command and optional inline JSON payload.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+        /// Optional JSON payload (overrides inline payload when provided).
+        #[arg(long)]
+        payload: Option<String>,
     },
 }
 
@@ -419,6 +430,135 @@ impl BorgCliApp {
         println!("cleared {} task(s) from taskgraph", deleted);
         Ok(())
     }
+
+    async fn tools(
+        &self,
+        namespace: String,
+        args: Vec<String>,
+        payload: Option<String>,
+    ) -> Result<()> {
+        let namespace = namespace.trim().to_ascii_lowercase();
+        if namespace == "list" {
+            println!("{}", serde_json::to_string(&build_tools_catalog())?);
+            return Ok(());
+        }
+
+        if args.is_empty() {
+            anyhow::bail!("missing tools command; use `borg tools list`");
+        }
+        if args.len() == 1 && args[0] == "list" {
+            let commands = namespace_commands(&namespace)?;
+            let output = json!({
+                "ok": true,
+                "namespace": namespace,
+                "commands": commands,
+            });
+            println!("{}", serde_json::to_string(&output)?);
+            return Ok(());
+        }
+
+        let known_commands = namespace_commands(&namespace)?;
+        let (command, payload_value) = resolve_tools_command_and_payload(
+            &namespace,
+            &known_commands,
+            &args,
+            payload.as_deref(),
+        )?;
+
+        let result = match namespace.as_str() {
+            "codemode" => borg_codemode::cli::run(&command, payload_value).await?,
+            "shell" => borg_shellmode::cli::run(&command, payload_value).await?,
+            "memory" => {
+                let memory = MemoryStore::new(self.borg_dir.ltm_db(), self.borg_dir.search_db())?;
+                memory.migrate().await?;
+                borg_memory::cli::run(memory, &command, payload_value).await?
+            }
+            "taskgraph" => {
+                let db = self.open_config_db().await?;
+                db.migrate().await?;
+                borg_taskgraph::cli::run(db, &command, payload_value).await?
+            }
+            other => anyhow::bail!("unknown tools namespace `{}`; use `borg tools list`", other),
+        };
+
+        println!("{}", serde_json::to_string(&result)?);
+        Ok(())
+    }
+}
+
+fn build_tools_catalog() -> Value {
+    let mut namespaces = BTreeMap::new();
+    namespaces.insert("codemode", borg_codemode::cli::command_names());
+    namespaces.insert("memory", borg_memory::cli::command_names());
+    namespaces.insert("shell", borg_shellmode::cli::command_names());
+    namespaces.insert("taskgraph", borg_taskgraph::cli::command_names());
+    json!({
+        "ok": true,
+        "namespaces": namespaces,
+    })
+}
+
+fn namespace_commands(namespace: &str) -> Result<Vec<&'static str>> {
+    let commands = match namespace {
+        "codemode" => borg_codemode::cli::command_names(),
+        "memory" => borg_memory::cli::command_names(),
+        "shell" => borg_shellmode::cli::command_names(),
+        "taskgraph" => borg_taskgraph::cli::command_names(),
+        other => anyhow::bail!("unknown tools namespace `{}`; use `borg tools list`", other),
+    };
+    Ok(commands)
+}
+
+fn resolve_tools_command_and_payload(
+    namespace: &str,
+    known_commands: &[&str],
+    args: &[String],
+    payload_flag: Option<&str>,
+) -> Result<(String, Value)> {
+    if args.is_empty() {
+        anyhow::bail!("missing {} command", namespace);
+    }
+
+    if let Some(payload_text) = payload_flag {
+        let command = args.join(" ");
+        if !known_commands.iter().any(|candidate| *candidate == command) {
+            anyhow::bail!(
+                "unknown {} command `{}`; use `borg tools {} list`",
+                namespace,
+                command,
+                namespace
+            );
+        }
+        let payload = parse_payload_json(payload_text)?;
+        return Ok((command, payload));
+    }
+
+    for index in (1..=args.len()).rev() {
+        let candidate = args[..index].join(" ");
+        if !known_commands.iter().any(|known| *known == candidate) {
+            continue;
+        }
+
+        if index == args.len() {
+            return Ok((candidate, json!({})));
+        }
+
+        let payload_text = args[index..].join(" ");
+        let payload_value = parse_payload_json(&payload_text)?;
+        return Ok((candidate, payload_value));
+    }
+
+    anyhow::bail!(
+        "unknown {} command `{}`; use `borg tools {} list`",
+        namespace,
+        args.join(" "),
+        namespace
+    )
+}
+
+fn parse_payload_json(payload_text: &str) -> Result<Value> {
+    serde_json::from_str::<Value>(payload_text)
+        .map_err(|err| anyhow::anyhow!("invalid JSON payload: {} (payload={})", err, payload_text))
 }
 
 fn parse_single_arg<T: DeserializeOwned>(args: Vec<Value>, op_name: &str) -> Result<T> {
@@ -513,5 +653,19 @@ async fn main() -> Result<()> {
                 AdminTasksCommand::ClearAllTasks { yes } => app.admin_tasks_clear_all(yes).await,
             },
         },
+        Command::Tools {
+            namespace,
+            args,
+            payload,
+        } => {
+            if let Err(err) = app.tools(namespace, args, payload).await {
+                println!(
+                    "{}",
+                    serde_json::to_string(&json!({ "ok": false, "error": err.to_string() }))?
+                );
+                return Ok(());
+            }
+            Ok(())
+        }
     }
 }

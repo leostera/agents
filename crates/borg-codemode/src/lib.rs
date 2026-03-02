@@ -1,3 +1,5 @@
+pub mod cli;
+
 mod engine;
 mod ffi;
 mod module_loader;

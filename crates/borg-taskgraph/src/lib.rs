@@ -1,3 +1,5 @@
+pub mod cli;
+
 mod model;
 mod store;
 mod supervisor;

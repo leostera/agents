@@ -1,3 +1,5 @@
+pub mod cli;
+
 use std::path::Path;
 
 use anyhow::{Result, anyhow};

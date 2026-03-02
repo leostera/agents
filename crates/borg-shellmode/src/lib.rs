@@ -1,3 +1,5 @@
+pub mod cli;
+
 mod engine;
 mod tools;
 mod types;
