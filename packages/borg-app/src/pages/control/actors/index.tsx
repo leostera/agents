@@ -3,7 +3,18 @@ import {
   type BehaviorRecord,
   createBorgApiClient,
 } from "@borg/api";
-import { Badge, Button, EntityLink, Input, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@borg/ui";
+import {
+  Badge,
+  Button,
+  Input,
+  Link,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@borg/ui";
 import { Bot, LoaderCircle, Pause, Play, Plus, Trash2 } from "lucide-react";
 import React from "react";
 import { Section, SectionContent, SectionEmpty, SectionToolbar } from "../../../components/Section";
@@ -189,7 +200,9 @@ export function ActorsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <EntityLink uri={actor.actor_id} name={actor.name} className="inline-flex items-center gap-1" />
+                      <Link href={`/control/actors/${encodeURIComponent(actor.actor_id)}`}>
+                        {actor.name}
+                      </Link>
                     </TableCell>
                     <TableCell>{new Date(actor.updated_at).toLocaleString()}</TableCell>
                     <TableCell className="space-x-2">

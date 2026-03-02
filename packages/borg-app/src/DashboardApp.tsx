@@ -4,6 +4,7 @@ import {
   Bell,
   Bot,
   Brain,
+  Clock3,
   GitFork,
   Hammer,
   LayoutDashboard,
@@ -19,7 +20,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { AppSidebar } from "./AppSidebar";
 import { CommandK, type CommandSectionGroup } from "./CommandK";
 import { ActorsPage } from "./pages/control/actors";
+import { ActorDetailsPage } from "./pages/control/actors/id";
 import { AppsPage } from "./pages/control/apps";
+import { ClockworkPage } from "./pages/control/clockwork";
 import { AppDetailsPage } from "./pages/control/apps/id";
 import { BehaviorsPage } from "./pages/control/behaviors";
 import { PortsPage } from "./pages/control/ports";
@@ -91,6 +94,12 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
         title: "Apps",
         icon: Hammer,
         path: "/control/apps",
+      },
+      {
+        id: "control-clockwork",
+        title: "Clockwork",
+        icon: Clock3,
+        path: "/control/clockwork",
       },
       {
         id: "control-users",
@@ -237,6 +246,7 @@ const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
   "/dashboard": SECTION_BY_ID["overview-home"],
   "/dashbaord": SECTION_BY_ID["overview-home"],
   "/control": SECTION_BY_ID["control-sessions"],
+  "/clockwork": SECTION_BY_ID["control-clockwork"],
   "/control/agents/tools": SECTION_BY_ID["control-apps"],
   "/control/agents": SECTION_BY_ID["control-actors"],
   "/control/agents/skills": SECTION_BY_ID["control-behaviors"],
@@ -256,6 +266,7 @@ const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
 const MEMORY_ENTITY_PREFIX = "/memory/entity/";
 const MEMORY_EXPLORER_PREFIX = "/memory/explorer/";
 const CONTROL_SESSION_PREFIX = "/control/sessions/";
+const CONTROL_ACTOR_PREFIX = "/control/actors/";
 const CONTROL_APP_PREFIX = "/control/apps/";
 const CONTROL_USER_PREFIX = "/control/users/";
 const CONTROL_PORT_PREFIX = "/control/ports/";
@@ -347,6 +358,30 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
         entityUri: null,
         explorerUri: null,
         sessionId: encodedSessionId,
+        portName: null,
+      };
+    }
+  }
+  if (
+    normalizedPathname.startsWith(CONTROL_ACTOR_PREFIX) &&
+    normalizedPathname.length > CONTROL_ACTOR_PREFIX.length &&
+    !SECTION_BY_PATH[normalizedPathname]
+  ) {
+    const encodedActorId = normalizedPathname.slice(CONTROL_ACTOR_PREFIX.length);
+    try {
+      return {
+        id: "control-actor",
+        entityUri: decodeURIComponent(encodedActorId),
+        explorerUri: null,
+        sessionId: null,
+        portName: null,
+      };
+    } catch {
+      return {
+        id: "control-actor",
+        entityUri: encodedActorId,
+        explorerUri: null,
+        sessionId: null,
         portName: null,
       };
     }
@@ -607,7 +642,9 @@ export function DashboardApp() {
       ),
       "control-behaviors": () => <BehaviorsPage />,
       "control-actors": () => <ActorsPage />,
+      "control-actor": () => <ActorDetailsPage actorId={route.entityUri ?? ""} />,
       "control-apps": () => <AppsPage />,
+      "control-clockwork": () => <ClockworkPage />,
       "control-app": () => <AppDetailsPage appId={route.entityUri ?? ""} />,
       "control-users": () => <UsersPage />,
       "control-user": () => (
