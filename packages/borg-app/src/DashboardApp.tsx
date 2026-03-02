@@ -18,12 +18,10 @@ import {
 import React, { useEffect, useMemo, useState } from "react";
 import { AppSidebar } from "./AppSidebar";
 import { CommandK, type CommandSectionGroup } from "./CommandK";
-import { AgentsPage } from "./pages/control/agents";
 import { ActorsPage } from "./pages/control/actors";
-import { AgentDetailsPage } from "./pages/control/agents/id";
-import { AgentSkillsPage } from "./pages/control/agents/skills";
 import { AppsPage } from "./pages/control/apps";
 import { AppDetailsPage } from "./pages/control/apps/id";
+import { BehaviorsPage } from "./pages/control/behaviors";
 import { PortsPage } from "./pages/control/ports";
 import { PortDetailsPage } from "./pages/control/ports/id";
 import { SessionPage } from "./pages/control/sessions";
@@ -77,18 +75,10 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
         path: "/control/sessions",
       },
       {
-        id: "control-agents",
-        title: "Agents",
-        icon: Bot,
-        path: "/control/agents",
-        children: [
-          {
-            id: "control-agents-skills",
-            title: "Skills",
-            icon: Brain,
-            path: "/control/agents/skills",
-          },
-        ],
+        id: "control-behaviors",
+        title: "Behaviors",
+        icon: Brain,
+        path: "/control/behaviors",
       },
       {
         id: "control-actors",
@@ -248,6 +238,8 @@ const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
   "/dashbaord": SECTION_BY_ID["overview-home"],
   "/control": SECTION_BY_ID["control-sessions"],
   "/control/agents/tools": SECTION_BY_ID["control-apps"],
+  "/control/agents": SECTION_BY_ID["control-actors"],
+  "/control/agents/skills": SECTION_BY_ID["control-behaviors"],
   "/control/tools": SECTION_BY_ID["control-apps"],
   "/settings": SECTION_BY_ID["settings-providers"],
   "/observability/overview": SECTION_BY_ID["observability-overview"],
@@ -264,7 +256,6 @@ const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
 const MEMORY_ENTITY_PREFIX = "/memory/entity/";
 const MEMORY_EXPLORER_PREFIX = "/memory/explorer/";
 const CONTROL_SESSION_PREFIX = "/control/sessions/";
-const CONTROL_AGENT_PREFIX = "/control/agents/";
 const CONTROL_APP_PREFIX = "/control/apps/";
 const CONTROL_USER_PREFIX = "/control/users/";
 const CONTROL_PORT_PREFIX = "/control/ports/";
@@ -356,32 +347,6 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
         entityUri: null,
         explorerUri: null,
         sessionId: encodedSessionId,
-        portName: null,
-      };
-    }
-  }
-  if (
-    normalizedPathname.startsWith(CONTROL_AGENT_PREFIX) &&
-    normalizedPathname.length > CONTROL_AGENT_PREFIX.length &&
-    !SECTION_BY_PATH[normalizedPathname]
-  ) {
-    const encodedAgentId = normalizedPathname.slice(
-      CONTROL_AGENT_PREFIX.length
-    );
-    try {
-      return {
-        id: "control-agent",
-        entityUri: decodeURIComponent(encodedAgentId),
-        explorerUri: null,
-        sessionId: null,
-        portName: null,
-      };
-    } catch {
-      return {
-        id: "control-agent",
-        entityUri: encodedAgentId,
-        explorerUri: null,
-        sessionId: null,
         portName: null,
       };
     }
@@ -640,14 +605,10 @@ export function DashboardApp() {
       "control-session": () => (
         <SessionDetailsPage sessionId={route.sessionId ?? ""} />
       ),
-      "control-agents": () => <AgentsPage />,
+      "control-behaviors": () => <BehaviorsPage />,
       "control-actors": () => <ActorsPage />,
-      "control-agents-skills": () => <AgentSkillsPage />,
       "control-apps": () => <AppsPage />,
       "control-app": () => <AppDetailsPage appId={route.entityUri ?? ""} />,
-      "control-agent": () => (
-        <AgentDetailsPage agentId={route.entityUri ?? ""} />
-      ),
       "control-users": () => <UsersPage />,
       "control-user": () => (
         <UserDetailsPage userKey={route.explorerUri ?? ""} />
