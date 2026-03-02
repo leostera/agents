@@ -451,3 +451,52 @@ async fn borg_supervisor_persists_call_and_cast_to_actor_mailbox() {
 
     supervisor.shutdown().await;
 }
+
+#[tokio::test]
+async fn borg_supervisor_start_fails_stale_in_progress_mailbox_rows() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let runtime = crate::BorgRuntime::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
+    );
+    let runtime = std::sync::Arc::new(runtime);
+    let supervisor = BorgSupervisor::new(runtime);
+
+    let actor_id = uri!("devmode", "actor", "stale-fail");
+    db.upsert_actor(&actor_id, "stale-fail", "prompt", "RUNNING")
+        .await
+        .unwrap();
+
+    let msg_id = db
+        .enqueue_actor_message(&actor_id, "CAST", None, &json!({"x":1}), None, None)
+        .await
+        .unwrap();
+    let _claimed = db
+        .claim_next_actor_message(&actor_id)
+        .await
+        .unwrap()
+        .expect("claimed");
+
+    sqlx::query(
+        "UPDATE actor_mailbox SET started_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour') WHERE actor_message_id = ?1",
+    )
+        .bind(msg_id.to_string())
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    supervisor.start().await.unwrap();
+
+    let status: String =
+        sqlx::query("SELECT status FROM actor_mailbox WHERE actor_message_id = ?1 LIMIT 1")
+            .bind(msg_id.to_string())
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+            .try_get("status")
+            .unwrap();
+    assert_eq!(status, "FAILED");
+}

@@ -10,6 +10,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
+const STALE_IN_PROGRESS_SECONDS: u64 = 300;
+
 #[derive(Clone)]
 pub struct BorgSupervisor {
     runtime: Arc<BorgRuntime>,
@@ -26,6 +28,18 @@ impl BorgSupervisor {
 
     pub async fn start(&self) -> anyhow::Result<()> {
         info!("BorgSupervisor starting");
+        let failed = self
+            .runtime
+            .db
+            .fail_stale_in_progress_messages(STALE_IN_PROGRESS_SECONDS)
+            .await?;
+        if failed > 0 {
+            info!(
+                target: "borg_exec",
+                failed,
+                "failed stale in-progress actor mailbox rows on startup"
+            );
+        }
         Ok(())
     }
 
