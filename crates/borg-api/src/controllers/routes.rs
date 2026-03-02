@@ -10,6 +10,7 @@ use tracing::Level;
 use super::actors::ActorsController;
 use super::apps::AppsController;
 use super::db::DbController;
+use super::providers::ProvidersController;
 use super::system::SystemController;
 use crate::AppState;
 
@@ -68,16 +69,16 @@ pub(crate) fn app_router(state: AppState) -> Router {
             "/api/taskgraph/tasks/:task_uri/children",
             get(DbController::list_taskgraph_children),
         )
-        .route("/api/providers", get(DbController::list_providers))
+        .route("/api/providers", get(ProvidersController::list_providers))
         .route(
             "/api/providers/:provider",
-            get(DbController::get_provider)
-                .put(DbController::upsert_provider)
-                .delete(DbController::delete_provider),
+            get(ProvidersController::get_provider)
+                .put(ProvidersController::upsert_provider)
+                .delete(ProvidersController::delete_provider),
         )
         .route(
             "/api/providers/:provider/models",
-            get(DbController::list_provider_models),
+            get(ProvidersController::list_provider_models),
         )
         .route("/api/apps", get(AppsController::list_apps))
         .route(
@@ -118,7 +119,7 @@ pub(crate) fn app_router(state: AppState) -> Router {
         )
         .route(
             "/api/providers/openai/device-code/start",
-            post(DbController::start_openai_device_code),
+            post(ProvidersController::start_openai_device_code),
         )
         .route("/api/policies", get(DbController::list_policies))
         .route(

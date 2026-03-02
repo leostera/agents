@@ -20,10 +20,9 @@ pub(crate) const DEFAULT_ONBOARD_PORT: u16 = 3777;
 pub(crate) const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
 const OPENAI_PROVIDER: &str = "openai";
 const OPENROUTER_PROVIDER: &str = "openrouter";
-const LMSTUDIO_PROVIDER: &str = "lmstudio";
-const OLLAMA_PROVIDER: &str = "ollama";
 const RUNTIME_SETTINGS_PORT: &str = "runtime";
 const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
+const RUNTIME_PREFERRED_PROVIDER_ID_KEY: &str = "preferred_provider_id";
 
 #[derive(Clone)]
 pub(crate) struct BorgCliApp {
@@ -182,19 +181,18 @@ impl BorgCliApp {
             }
             "providers.default" => {
                 let provider = value.trim().to_ascii_lowercase();
-                if provider != OPENAI_PROVIDER
-                    && provider != OPENROUTER_PROVIDER
-                    && provider != LMSTUDIO_PROVIDER
-                    && provider != OLLAMA_PROVIDER
-                {
-                    anyhow::bail!(
-                        "unsupported providers.default `{}` (expected `openai`, `openrouter`, `lmstudio`, or `ollama`)",
-                        provider
-                    );
+                if provider.is_empty() {
+                    anyhow::bail!("providers.default must not be empty");
                 }
                 db.upsert_port_setting(
                     RUNTIME_SETTINGS_PORT,
                     RUNTIME_PREFERRED_PROVIDER_KEY,
+                    provider.as_str(),
+                )
+                .await?;
+                db.upsert_port_setting(
+                    RUNTIME_SETTINGS_PORT,
+                    RUNTIME_PREFERRED_PROVIDER_ID_KEY,
                     provider.as_str(),
                 )
                 .await?;

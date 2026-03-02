@@ -1,8 +1,12 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use borg_db::BorgDb;
 use borg_llm::BorgLLM;
 use borg_llm::providers::openai::{OpenAiApiMode, OpenAiProvider};
 use borg_llm::providers::openrouter::OpenRouterProvider;
+
+const RUNTIME_PORT: &str = "runtime";
+const PREFERRED_PROVIDER_ID_KEY: &str = "preferred_provider_id";
+const LEGACY_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 
 pub struct BorgLLMResolver {
     db: BorgDb,
@@ -17,16 +21,26 @@ impl BorgLLMResolver {
         let settings = self.load_provider_settings().await?;
 
         let mut builder = BorgLLM::build();
-        for name in ordered_provider_names(&settings) {
-            match name.as_str() {
+        for provider in ordered_providers(&settings) {
+            match provider.provider_kind.as_str() {
                 "openai" => {
-                    if let Some(openai) = self.build_openai_provider(&settings)? {
+                    if let Some(openai) = self.build_openai_provider(provider)? {
                         builder = builder.add_provider(openai);
                     }
                 }
                 "openrouter" => {
-                    if let Some(openrouter) = self.build_openrouter_provider(&settings)? {
+                    if let Some(openrouter) = self.build_openrouter_provider(provider)? {
                         builder = builder.add_provider(openrouter);
+                    }
+                }
+                "lmstudio" => {
+                    if let Some(lmstudio) = self.build_lmstudio_provider(provider)? {
+                        builder = builder.add_provider(lmstudio);
+                    }
+                }
+                "ollama" => {
+                    if let Some(ollama) = self.build_ollama_provider(provider)? {
+                        builder = builder.add_provider(ollama);
                     }
                 }
                 _ => {}
@@ -37,61 +51,56 @@ impl BorgLLMResolver {
     }
 
     async fn load_provider_settings(&self) -> Result<ProviderSettings> {
-        let mut settings = ProviderSettings::default();
-
-        let providers = self.db.list_providers(16).await?;
-        for provider in providers {
-            if !provider.enabled {
-                continue;
-            }
-            match provider.provider.as_str() {
-                "openai" => {
-                    settings.openai_api_key = Some(provider.api_key);
-                    settings.openai_default_text_model = provider.default_text_model;
-                    settings.openai_default_audio_model = provider.default_audio_model;
-                }
-                "openrouter" => {
-                    settings.openrouter_api_key = Some(provider.api_key);
-                    settings.openrouter_default_text_model = provider.default_text_model;
-                    settings.openrouter_default_audio_model = provider.default_audio_model;
-                }
-                _ => {}
-            }
-        }
-
-        settings.preferred_provider = self
+        let preferred_provider_id = self
             .db
-            .get_port_setting("runtime", "preferred_provider")
-            .await?;
+            .get_port_setting(RUNTIME_PORT, PREFERRED_PROVIDER_ID_KEY)
+            .await?
+            .or(self
+                .db
+                .get_port_setting(RUNTIME_PORT, LEGACY_PREFERRED_PROVIDER_KEY)
+                .await?);
 
-        Ok(settings)
+        let providers = self
+            .db
+            .list_providers(64)
+            .await?
+            .into_iter()
+            .filter(|provider| provider.enabled)
+            .filter_map(|provider| {
+                Some(ProviderSetting {
+                    provider_id: provider.provider,
+                    provider_kind: provider.provider_kind.trim().to_ascii_lowercase(),
+                    api_key: normalize_optional_text(Some(provider.api_key)),
+                    base_url: normalize_optional_text(provider.base_url),
+                    default_text_model: provider.default_text_model,
+                    default_audio_model: provider.default_audio_model,
+                })
+            })
+            .filter(|provider| !provider.provider_kind.is_empty())
+            .collect::<Vec<_>>();
+
+        Ok(ProviderSettings {
+            providers,
+            preferred_provider_id: normalize_optional_text(preferred_provider_id),
+        })
     }
 
-    fn build_openai_provider(&self, settings: &ProviderSettings) -> Result<Option<OpenAiProvider>> {
-        let Some(api_key) = &settings.openai_api_key else {
+    fn build_openai_provider(&self, provider: &ProviderSetting) -> Result<Option<OpenAiProvider>> {
+        let Some(api_key) = &provider.api_key else {
             return Ok(None);
-        };
-
-        let api_mode = settings
-            .openai_api_mode
-            .clone()
-            .unwrap_or_else(|| "chat".to_string());
-
-        let api_mode = match api_mode.to_lowercase().as_str() {
-            "chat" | "chat_completions" => OpenAiApiMode::ChatCompletions,
-            "completions" => OpenAiApiMode::Completions,
-            _ => return Err(anyhow!("unsupported openai api mode: {}", api_mode)),
         };
 
         let mut builder = OpenAiProvider::build()
             .api_key(api_key.clone())
-            .api_mode(api_mode);
-
-        if let Some(model) = &settings.openai_default_text_model {
+            .provider_name("openai")
+            .api_mode(OpenAiApiMode::ChatCompletions);
+        if let Some(base_url) = &provider.base_url {
+            builder = builder.base_url(base_url.clone());
+        }
+        if let Some(model) = &provider.default_text_model {
             builder = builder.chat_completions_model(model.clone());
         }
-
-        if let Some(model) = &settings.openai_default_audio_model {
+        if let Some(model) = &provider.default_audio_model {
             builder = builder.audio_transcriptions_model(model.clone());
         }
 
@@ -100,19 +109,71 @@ impl BorgLLMResolver {
 
     fn build_openrouter_provider(
         &self,
-        settings: &ProviderSettings,
+        provider: &ProviderSetting,
     ) -> Result<Option<OpenRouterProvider>> {
-        let Some(api_key) = &settings.openrouter_api_key else {
+        let Some(api_key) = &provider.api_key else {
             return Ok(None);
         };
 
         let mut builder = OpenRouterProvider::build().api_key(api_key.clone());
-
-        if let Some(model) = &settings.openrouter_default_text_model {
+        if let Some(base_url) = &provider.base_url {
+            builder = builder.base_url(base_url.clone());
+        }
+        if let Some(model) = &provider.default_text_model {
             builder = builder.chat_completions_model(model.clone());
         }
+        if let Some(model) = &provider.default_audio_model {
+            builder = builder.audio_transcriptions_model(model.clone());
+        }
 
-        if let Some(model) = &settings.openrouter_default_audio_model {
+        Ok(Some(builder.build()?))
+    }
+
+    fn build_lmstudio_provider(
+        &self,
+        provider: &ProviderSetting,
+    ) -> Result<Option<OpenAiProvider>> {
+        let Some(base_url) = &provider.base_url else {
+            return Ok(None);
+        };
+
+        let api_key = provider
+            .api_key
+            .clone()
+            .unwrap_or_else(|| "local-lmstudio".to_string());
+        let mut builder = OpenAiProvider::build()
+            .api_key(api_key)
+            .provider_name("lmstudio")
+            .base_url(base_url.clone())
+            .api_mode(OpenAiApiMode::ChatCompletions);
+        if let Some(model) = &provider.default_text_model {
+            builder = builder.chat_completions_model(model.clone());
+        }
+        if let Some(model) = &provider.default_audio_model {
+            builder = builder.audio_transcriptions_model(model.clone());
+        }
+
+        Ok(Some(builder.build()?))
+    }
+
+    fn build_ollama_provider(&self, provider: &ProviderSetting) -> Result<Option<OpenAiProvider>> {
+        let Some(base_url) = &provider.base_url else {
+            return Ok(None);
+        };
+
+        let api_key = provider
+            .api_key
+            .clone()
+            .unwrap_or_else(|| "local-ollama".to_string());
+        let mut builder = OpenAiProvider::build()
+            .api_key(api_key)
+            .provider_name("ollama")
+            .base_url(base_url.clone())
+            .api_mode(OpenAiApiMode::ChatCompletions);
+        if let Some(model) = &provider.default_text_model {
+            builder = builder.chat_completions_model(model.clone());
+        }
+        if let Some(model) = &provider.default_audio_model {
             builder = builder.audio_transcriptions_model(model.clone());
         }
 
@@ -122,36 +183,48 @@ impl BorgLLMResolver {
 
 #[derive(Clone, Default)]
 struct ProviderSettings {
-    openai_api_key: Option<String>,
-    openai_api_mode: Option<String>,
-    openai_default_text_model: Option<String>,
-    openai_default_audio_model: Option<String>,
-    openrouter_api_key: Option<String>,
-    openrouter_default_text_model: Option<String>,
-    openrouter_default_audio_model: Option<String>,
-    preferred_provider: Option<String>,
+    providers: Vec<ProviderSetting>,
+    preferred_provider_id: Option<String>,
 }
 
-fn ordered_provider_names(settings: &ProviderSettings) -> Vec<String> {
-    let mut available = Vec::new();
-    if settings.openai_api_key.is_some() {
-        available.push("openai".to_string());
-    }
-    if settings.openrouter_api_key.is_some() {
-        available.push("openrouter".to_string());
-    }
+#[derive(Clone, Debug)]
+struct ProviderSetting {
+    provider_id: String,
+    provider_kind: String,
+    api_key: Option<String>,
+    base_url: Option<String>,
+    default_text_model: Option<String>,
+    default_audio_model: Option<String>,
+}
 
-    let preferred = settings.preferred_provider.as_deref().unwrap_or("openai");
-
+fn ordered_providers(settings: &ProviderSettings) -> Vec<&ProviderSetting> {
     let mut ordered = Vec::new();
-    if available.iter().any(|value| value == preferred) {
-        ordered.push(preferred.to_string());
+    let mut seen = std::collections::HashSet::new();
+
+    if let Some(preferred_provider_id) = settings.preferred_provider_id.as_deref() {
+        for provider in &settings.providers {
+            let preferred_matches_id = provider.provider_id == preferred_provider_id;
+            let preferred_matches_kind = provider.provider_kind == preferred_provider_id;
+            if preferred_matches_id || preferred_matches_kind {
+                ordered.push(provider);
+                seen.insert(provider.provider_id.as_str());
+                break;
+            }
+        }
     }
-    for name in available {
-        if !ordered.iter().any(|value| value == &name) {
-            ordered.push(name);
+
+    for provider in &settings.providers {
+        if !seen.contains(provider.provider_id.as_str()) {
+            ordered.push(provider);
+            seen.insert(provider.provider_id.as_str());
         }
     }
 
     ordered
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|raw| raw.trim().to_string())
+        .filter(|raw| !raw.is_empty())
 }

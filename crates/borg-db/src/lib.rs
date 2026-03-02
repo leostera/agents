@@ -85,7 +85,9 @@ pub struct UserRecord {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProviderRecord {
     pub provider: String,
+    pub provider_kind: String,
     pub api_key: String,
+    pub base_url: Option<String>,
     pub enabled: bool,
     pub tokens_used: u64,
     pub last_used: Option<DateTime<Utc>>,
@@ -163,6 +165,8 @@ pub struct AppRecord {
     pub description: String,
     pub status: String,
     pub built_in: bool,
+    pub source: String,
+    pub auth_strategy: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -176,6 +180,31 @@ pub struct AppCapabilityRecord {
     pub mode: String,
     pub instructions: String,
     pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AppConnectionRecord {
+    pub connection_id: Uri,
+    pub app_id: Uri,
+    pub owner_user_id: Option<Uri>,
+    pub provider_account_id: Option<String>,
+    pub external_user_id: Option<String>,
+    pub status: String,
+    pub connection_json: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AppSecretRecord {
+    pub secret_id: Uri,
+    pub app_id: Uri,
+    pub connection_id: Option<Uri>,
+    pub key: String,
+    pub value: String,
+    pub kind: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

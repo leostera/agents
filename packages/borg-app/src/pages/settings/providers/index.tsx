@@ -31,14 +31,20 @@ import {
   SectionEmpty,
   SectionToolbar,
 } from "../../../components/Section";
-import { ConnectProviderForm } from "./ConnectProviderForm";
+import { ConnectProviderForm, type ConnectProviderInput } from "./ConnectProviderForm";
 
 const borgApi = createBorgApiClient();
 
-function formatProviderName(provider: string): string {
-  if (provider === "openai") return "OpenAI";
-  if (provider === "openrouter") return "OpenRouter";
-  return provider;
+function formatProviderKind(kind: string): string {
+  if (kind === "openai") return "OpenAI";
+  if (kind === "openrouter") return "OpenRouter";
+  if (kind === "lmstudio") return "LM Studio";
+  if (kind === "ollama") return "Ollama";
+  return kind;
+}
+
+function isLocalProvider(providerKind: string): boolean {
+  return providerKind === "lmstudio" || providerKind === "ollama";
 }
 
 function formatTimestamp(value?: string | null): string {
@@ -54,10 +60,7 @@ export function ProvidersPage() {
   >({});
   const [isLoading, setIsLoading] = React.useState(true);
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
-  const [openAiApiKey, setOpenAiApiKey] = React.useState("");
-  const [openRouterApiKey, setOpenRouterApiKey] = React.useState("");
-  const [isSavingOpenAi, setIsSavingOpenAi] = React.useState(false);
-  const [isSavingOpenRouter, setIsSavingOpenRouter] = React.useState(false);
+  const [isSavingConnect, setIsSavingConnect] = React.useState(false);
   const [isStartingOpenAi, setIsStartingOpenAi] = React.useState(false);
   const [statusMessage, setStatusMessage] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
@@ -91,57 +94,42 @@ export function ProvidersPage() {
       window.removeEventListener("providers:open-connect", handleOpenConnect);
   }, []);
 
-  const handleSaveOpenRouter = async (
-    event: React.FormEvent<HTMLFormElement>
-  ) => {
-    event.preventDefault();
-    const apiKey = openRouterApiKey.trim();
-    if (apiKey.length === 0) {
-      setErrorMessage("OpenRouter API key is required");
+  const handleConnectProvider = async (input: ConnectProviderInput) => {
+    const apiKey = input.apiKey?.trim();
+    const baseUrl = input.baseUrl?.trim();
+    if (!input.providerId.trim()) {
+      setErrorMessage("Provider ID is required");
+      return;
+    }
+    if (!isLocalProvider(input.providerKind) && !apiKey) {
+      setErrorMessage(`${formatProviderKind(input.providerKind)} API key is required`);
+      return;
+    }
+    if (isLocalProvider(input.providerKind) && !baseUrl) {
+      setErrorMessage(`${formatProviderKind(input.providerKind)} base URL is required`);
       return;
     }
 
-    setIsSavingOpenRouter(true);
+    setIsSavingConnect(true);
     setErrorMessage(null);
     setStatusMessage(null);
     try {
-      await borgApi.upsertProviderApiKey("openrouter", apiKey);
-      setOpenRouterApiKey("");
-      setStatusMessage("OpenRouter API key saved");
+      await borgApi.upsertProvider({
+        provider: input.providerId,
+        providerKind: input.providerKind,
+        apiKey,
+        baseUrl,
+        enabled: true,
+      });
+      setStatusMessage(`${formatProviderKind(input.providerKind)} provider saved`);
       await loadProviders();
       setIsDialogOpen(false);
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "Unable to save OpenRouter key"
+        error instanceof Error ? error.message : "Unable to save provider"
       );
     } finally {
-      setIsSavingOpenRouter(false);
-    }
-  };
-
-  const handleSaveOpenAi = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const apiKey = openAiApiKey.trim();
-    if (apiKey.length === 0) {
-      setErrorMessage("OpenAI API key is required");
-      return;
-    }
-
-    setIsSavingOpenAi(true);
-    setErrorMessage(null);
-    setStatusMessage(null);
-    try {
-      await borgApi.upsertProviderApiKey("openai", apiKey);
-      setOpenAiApiKey("");
-      setStatusMessage("OpenAI API key saved");
-      await loadProviders();
-      setIsDialogOpen(false);
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "Unable to save OpenAI key"
-      );
-    } finally {
-      setIsSavingOpenAi(false);
+      setIsSavingConnect(false);
     }
   };
 
@@ -176,13 +164,14 @@ export function ProvidersPage() {
     setStatusMessage(null);
     try {
       await borgApi.deleteProvider(provider, { ignoreNotFound: true });
-      setStatusMessage(`${formatProviderName(provider)} deleted`);
+      const providerKind = providersByName[provider]?.provider_kind ?? provider;
+      setStatusMessage(`${formatProviderKind(providerKind)} deleted`);
       await loadProviders();
     } catch (error) {
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : `Unable to delete ${formatProviderName(provider)}`
+          : `Unable to delete provider ${provider}`
       );
     }
   };
@@ -193,18 +182,20 @@ export function ProvidersPage() {
     try {
       await borgApi.upsertProvider({
         provider: provider.provider,
-        apiKey: provider.api_key,
+        providerKind: provider.provider_kind,
+        apiKey: provider.api_key || undefined,
+        baseUrl: provider.base_url ?? undefined,
         enabled: !provider.enabled,
       });
       setStatusMessage(
-        `${formatProviderName(provider.provider)} ${provider.enabled ? "paused" : "resumed"}`
+        `${formatProviderKind(provider.provider_kind)} ${provider.enabled ? "paused" : "resumed"}`
       );
       await loadProviders();
     } catch (error) {
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : `Unable to update ${formatProviderName(provider.provider)}`
+          : `Unable to update ${formatProviderKind(provider.provider_kind)}`
       );
     }
   };
@@ -260,6 +251,7 @@ export function ProvidersPage() {
               <TableRow>
                 <TableHead className="w-[44px]">Status</TableHead>
                 <TableHead>Provider</TableHead>
+                <TableHead>Name</TableHead>
                 <TableHead>Chat Model</TableHead>
                 <TableHead>Audio Model</TableHead>
                 <TableHead>Tokens Used</TableHead>
@@ -284,14 +276,10 @@ export function ProvidersPage() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className="flex flex-col">
-                      <span className="font-medium">
-                        {formatProviderName(provider.provider)}
-                      </span>
-                      <span className="text-muted-foreground text-xs">
-                        {provider.provider}
-                      </span>
-                    </div>
+                    {formatProviderKind(provider.provider_kind)}
+                  </TableCell>
+                  <TableCell>
+                    <span className="font-medium">{provider.provider}</span>
                   </TableCell>
                   <TableCell>
                     {provider.default_text_model ? (
@@ -319,7 +307,7 @@ export function ProvidersPage() {
                       <Button size="icon-sm" variant="outline" asChild>
                         <Link
                           href={`/settings/providers/${provider.provider}`}
-                          aria-label={`Edit ${formatProviderName(provider.provider)}`}
+                          aria-label={`Edit ${formatProviderKind(provider.provider_kind)} ${provider.provider}`}
                           title="Edit"
                         >
                           <Pencil className="size-3.5" />
@@ -329,7 +317,7 @@ export function ProvidersPage() {
                         size="icon-sm"
                         variant="outline"
                         onClick={() => void handleToggleEnabled(provider)}
-                        aria-label={`${provider.enabled ? "Pause" : "Resume"} ${formatProviderName(provider.provider)}`}
+                        aria-label={`${provider.enabled ? "Pause" : "Resume"} ${formatProviderKind(provider.provider_kind)} ${provider.provider}`}
                         title={provider.enabled ? "Pause" : "Resume"}
                       >
                         {provider.enabled ? (
@@ -344,7 +332,7 @@ export function ProvidersPage() {
                         onClick={() =>
                           void handleDeleteProvider(provider.provider)
                         }
-                        aria-label={`Delete ${formatProviderName(provider.provider)}`}
+                        aria-label={`Delete ${formatProviderKind(provider.provider_kind)} ${provider.provider}`}
                         title="Delete"
                       >
                         <Trash2 className="size-3.5" />
@@ -369,15 +357,9 @@ export function ProvidersPage() {
         open={isDialogOpen}
         onOpenChange={setIsDialogOpen}
         isStartingOpenAi={isStartingOpenAi}
-        isSavingOpenAi={isSavingOpenAi}
-        isSavingOpenRouter={isSavingOpenRouter}
-        openAiApiKey={openAiApiKey}
-        openRouterApiKey={openRouterApiKey}
-        onOpenAiApiKeyChange={setOpenAiApiKey}
-        onOpenRouterApiKeyChange={setOpenRouterApiKey}
+        isSaving={isSavingConnect}
         onStartOpenAiSignIn={() => void handleStartOpenAiSignIn()}
-        onSaveOpenAi={handleSaveOpenAi}
-        onSaveOpenRouter={handleSaveOpenRouter}
+        onSave={(input) => void handleConnectProvider(input)}
       />
 
       {!showEmptyState && errorMessage ? (

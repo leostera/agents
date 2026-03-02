@@ -19,7 +19,9 @@ test("provider detail save sends selected default models", async ({ page }) => {
         providers: [
           {
             provider: "openrouter",
+            provider_kind: "openrouter",
             api_key: "sk-or-test",
+            base_url: null,
             enabled: true,
             tokens_used: 0,
             last_used: null,
@@ -65,7 +67,9 @@ test("provider detail save sends selected default models", async ({ page }) => {
       body: JSON.stringify({
         provider: {
           provider: "openrouter",
+          provider_kind: "openrouter",
           api_key: "sk-or-test",
+          base_url: null,
           enabled: true,
           tokens_used: 0,
           last_used: null,

@@ -362,11 +362,35 @@ fn to_openai_tools(tools: &[ToolDescriptor]) -> Vec<Value> {
                 "function": {
                     "name": tool.name,
                     "description": tool.description,
-                    "parameters": tool.input_schema
+                    "parameters": normalize_tool_schema(&tool.input_schema)
                 }
             })
         })
         .collect()
+}
+
+fn normalize_tool_schema(schema: &Value) -> Value {
+    let mut normalized = schema.clone();
+    let Some(root) = normalized.as_object_mut() else {
+        return json!({
+            "type": "object",
+            "properties": {}
+        });
+    };
+
+    if !root.contains_key("type") {
+        root.insert("type".to_string(), Value::String("object".to_string()));
+    }
+
+    let is_object_schema = root
+        .get("type")
+        .and_then(Value::as_str)
+        .is_none_or(|kind| kind == "object");
+    if is_object_schema && !root.contains_key("properties") {
+        root.insert("properties".to_string(), json!({}));
+    }
+
+    normalized
 }
 
 fn to_openai_messages(messages: &[ProviderMessage]) -> Vec<Value> {

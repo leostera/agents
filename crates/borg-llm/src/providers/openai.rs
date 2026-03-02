@@ -29,6 +29,7 @@ pub enum OpenAiApiMode {
 pub struct OpenAiProvider {
     http: Client,
     api_key: String,
+    provider_name: &'static str,
     api_mode: OpenAiApiMode,
     chat_completions_url: String,
     completions_url: String,
@@ -53,6 +54,7 @@ impl OpenAiProvider {
         Self {
             http: Client::new(),
             api_key: api_key.into(),
+            provider_name: OPENAI_PROVIDER_NAME,
             api_mode,
             chat_completions_url: OPENAI_CHAT_COMPLETIONS_URL.to_string(),
             completions_url: OPENAI_COMPLETIONS_URL.to_string(),
@@ -78,6 +80,7 @@ impl OpenAiProvider {
         Self {
             http: Client::new(),
             api_key: api_key.into(),
+            provider_name: OPENAI_PROVIDER_NAME,
             api_mode,
             chat_completions_url: format!("{}/v1/chat/completions", base),
             completions_url: format!("{}/v1/completions", base),
@@ -93,6 +96,7 @@ impl OpenAiProvider {
 
 pub struct OpenAiProviderBuilder {
     api_key: Option<String>,
+    provider_name: &'static str,
     api_mode: OpenAiApiMode,
     base_url: Option<String>,
     device_code_url: Option<String>,
@@ -105,6 +109,7 @@ impl OpenAiProviderBuilder {
     pub fn new() -> Self {
         Self {
             api_key: None,
+            provider_name: OPENAI_PROVIDER_NAME,
             api_mode: OpenAiApiMode::ChatCompletions,
             base_url: None,
             device_code_url: None,
@@ -116,6 +121,11 @@ impl OpenAiProviderBuilder {
 
     pub fn api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
+        self
+    }
+
+    pub fn provider_name(mut self, provider_name: &'static str) -> Self {
+        self.provider_name = provider_name;
         self
     }
 
@@ -160,6 +170,7 @@ impl OpenAiProviderBuilder {
         } else {
             OpenAiProvider::new_with_mode(api_key, self.api_mode)
         };
+        provider.provider_name = self.provider_name;
         provider.device_code_url = normalize_optional(self.device_code_url)
             .unwrap_or_else(|| OPENAI_DEVICE_CODE_URL.to_string());
         provider.device_code_scope = normalize_optional(self.device_code_scope)
@@ -180,7 +191,7 @@ impl Default for OpenAiProviderBuilder {
 #[async_trait]
 impl Provider for OpenAiProvider {
     fn provider_name(&self) -> &'static str {
-        OPENAI_PROVIDER_NAME
+        self.provider_name
     }
 
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
@@ -526,11 +537,35 @@ fn to_openai_tools(tools: &[ToolDescriptor]) -> Vec<Value> {
                 "function": {
                     "name": tool.name,
                     "description": tool.description,
-                    "parameters": tool.input_schema
+                    "parameters": normalize_tool_schema(&tool.input_schema)
                 }
             })
         })
         .collect()
+}
+
+fn normalize_tool_schema(schema: &Value) -> Value {
+    let mut normalized = schema.clone();
+    let Some(root) = normalized.as_object_mut() else {
+        return json!({
+            "type": "object",
+            "properties": {}
+        });
+    };
+
+    if !root.contains_key("type") {
+        root.insert("type".to_string(), Value::String("object".to_string()));
+    }
+
+    let is_object_schema = root
+        .get("type")
+        .and_then(Value::as_str)
+        .is_none_or(|kind| kind == "object");
+    if is_object_schema && !root.contains_key("properties") {
+        root.insert("properties".to_string(), json!({}));
+    }
+
+    normalized
 }
 
 fn to_openai_messages(messages: &[ProviderMessage]) -> Vec<Value> {

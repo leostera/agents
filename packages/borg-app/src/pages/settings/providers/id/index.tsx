@@ -28,16 +28,24 @@ const borgApi = createBorgApiClient();
 
 type EditState = {
   provider: string;
+  providerKind: string;
   apiKey: string;
+  baseUrl: string;
   enabled: boolean;
   chatModel: string | null;
   audioModel: string | null;
 };
 
-function formatProviderName(provider: string): string {
-  if (provider === "openai") return "OpenAI";
-  if (provider === "openrouter") return "OpenRouter";
-  return provider;
+function formatProviderKind(kind: string): string {
+  if (kind === "openai") return "OpenAI";
+  if (kind === "openrouter") return "OpenRouter";
+  if (kind === "lmstudio") return "LM Studio";
+  if (kind === "ollama") return "Ollama";
+  return kind;
+}
+
+function isLocalProvider(providerKind: string): boolean {
+  return providerKind === "lmstudio" || providerKind === "ollama";
 }
 
 export function ProviderDetailsPage({ providerId }: { providerId: string }) {
@@ -67,7 +75,9 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
 
       setForm({
         provider: found.provider,
+        providerKind: found.provider_kind,
         apiKey: found.api_key,
+        baseUrl: found.base_url ?? "",
         enabled: found.enabled,
         chatModel: found.default_text_model ?? null,
         audioModel: found.default_audio_model ?? null,
@@ -105,8 +115,13 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
   const handleSave = async () => {
     if (!form) return;
     const apiKey = form.apiKey.trim();
-    if (!apiKey) {
+    const baseUrl = form.baseUrl.trim();
+    if (!isLocalProvider(form.providerKind) && !apiKey) {
       setError("API key is required");
+      return;
+    }
+    if (isLocalProvider(form.providerKind) && !baseUrl) {
+      setError("Base URL is required");
       return;
     }
 
@@ -116,12 +131,14 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
     try {
       await borgApi.upsertProvider({
         provider: form.provider,
-        apiKey,
+        providerKind: form.providerKind,
+        apiKey: apiKey || undefined,
+        baseUrl: baseUrl || undefined,
         enabled: form.enabled,
         defaultTextModel: form.chatModel,
         defaultAudioModel: form.audioModel,
       });
-      setStatus(`${formatProviderName(form.provider)} updated`);
+      setStatus(`${formatProviderKind(form.providerKind)} updated`);
       await load();
     } catch (saveError) {
       setError(
@@ -176,26 +193,50 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
           <section className="max-w-2xl space-y-4">
             <div className="space-y-1">
               <Label>Provider</Label>
-              <Input value={formatProviderName(provider.provider)} disabled />
+              <Input value={provider.provider} disabled />
             </div>
 
             <div className="space-y-1">
-              <Label htmlFor="provider-api-key">API Key</Label>
-              <Input
-                id="provider-api-key"
-                type="password"
-                autoComplete="off"
-                value={form.apiKey}
-                onChange={(event) =>
-                  setForm((current) =>
-                    current
-                      ? { ...current, apiKey: event.currentTarget.value }
-                      : current
-                  )
-                }
-                placeholder="sk-..."
-              />
+              <Label>Provider Kind</Label>
+              <Input value={formatProviderKind(provider.provider_kind)} disabled />
             </div>
+
+            {!isLocalProvider(form.providerKind) ? (
+              <div className="space-y-1">
+                <Label htmlFor="provider-api-key">API Key</Label>
+                <Input
+                  id="provider-api-key"
+                  type="password"
+                  autoComplete="off"
+                  value={form.apiKey}
+                  onChange={(event) =>
+                    setForm((current) =>
+                      current
+                        ? { ...current, apiKey: event.currentTarget.value }
+                        : current
+                    )
+                  }
+                  placeholder="sk-..."
+                />
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <Label htmlFor="provider-base-url">Base URL</Label>
+                <Input
+                  id="provider-base-url"
+                  autoComplete="off"
+                  value={form.baseUrl}
+                  onChange={(event) =>
+                    setForm((current) =>
+                      current
+                        ? { ...current, baseUrl: event.currentTarget.value }
+                        : current
+                    )
+                  }
+                  placeholder="http://127.0.0.1:1234"
+                />
+              </div>
+            )}
 
             <div className="space-y-1">
               <Label>Default Chat Model</Label>

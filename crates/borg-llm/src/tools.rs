@@ -29,12 +29,14 @@ pub fn default_provider_admin_tool_specs() -> Vec<ProviderAdminToolSpec> {
                 "type": "object",
                 "properties": {
                     "provider": { "type": "string" },
+                    "provider_kind": { "type": "string" },
                     "api_key": { "type": "string" },
+                    "base_url": { "type": "string" },
                     "enabled": { "type": "boolean" },
                     "default_text_model": { "type": "string" },
                     "default_audio_model": { "type": "string" }
                 },
-                "required": ["provider", "api_key"],
+                "required": ["provider"],
                 "additionalProperties": false
             }),
         ),
@@ -45,7 +47,9 @@ pub fn default_provider_admin_tool_specs() -> Vec<ProviderAdminToolSpec> {
                 "type": "object",
                 "properties": {
                     "provider": { "type": "string" },
+                    "provider_kind": { "type": "string" },
                     "api_key": { "type": "string" },
+                    "base_url": { "type": "string" },
                     "enabled": { "type": "boolean" },
                     "default_text_model": { "type": "string" },
                     "default_audio_model": { "type": "string" }
@@ -68,8 +72,16 @@ pub async fn run_provider_admin_tool(db: &BorgDb, name: &str, arguments: &Value)
             Ok(json!({ "providers": providers }))
         }
         "Providers-createProvider" => {
-            let provider = req_str(arguments, "provider")?;
-            let api_key = req_str(arguments, "api_key")?;
+            let provider = normalize_provider_id(req_str(arguments, "provider")?)?;
+            let provider_kind = opt_trimmed_str(arguments, "provider_kind")
+                .unwrap_or_else(|| provider.to_string());
+            let api_key = opt_trimmed_str(arguments, "api_key");
+            let base_url = opt_trimmed_str(arguments, "base_url");
+            validate_provider_config(
+                &provider_kind,
+                api_key.as_deref(),
+                base_url.as_deref(),
+            )?;
             if db.get_provider(provider).await?.is_some() {
                 return Err(anyhow!("provider.already_exists"));
             }
@@ -77,9 +89,11 @@ pub async fn run_provider_admin_tool(db: &BorgDb, name: &str, arguments: &Value)
             let default_text_model = opt_trimmed_str(arguments, "default_text_model");
             let default_audio_model = opt_trimmed_str(arguments, "default_audio_model");
 
-            db.upsert_provider(
+            db.upsert_provider_with_kind(
                 provider,
-                api_key,
+                &provider_kind,
+                api_key.as_deref(),
+                base_url.as_deref(),
                 enabled,
                 default_text_model.as_deref(),
                 default_audio_model.as_deref(),
@@ -93,13 +107,23 @@ pub async fn run_provider_admin_tool(db: &BorgDb, name: &str, arguments: &Value)
             Ok(json!({ "provider": out }))
         }
         "Providers-updateProvider" => {
-            let provider = req_str(arguments, "provider")?;
+            let provider = normalize_provider_id(req_str(arguments, "provider")?)?;
             let existing = db
                 .get_provider(provider)
                 .await?
                 .ok_or_else(|| anyhow!("provider.not_found"))?;
+            let provider_kind = opt_trimmed_str(arguments, "provider_kind")
+                .unwrap_or(existing.provider_kind.clone());
 
-            let api_key = opt_trimmed_str(arguments, "api_key").unwrap_or(existing.api_key.clone());
+            let api_key = opt_trimmed_str(arguments, "api_key")
+                .or_else(|| normalize_existing_text(&existing.api_key));
+            let base_url = arguments
+                .get("base_url")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .map(ToOwned::to_owned)
+                .or(existing.base_url.clone())
+                .filter(|value| !value.is_empty());
             let enabled = arguments
                 .get("enabled")
                 .and_then(Value::as_bool)
@@ -118,10 +142,13 @@ pub async fn run_provider_admin_tool(db: &BorgDb, name: &str, arguments: &Value)
                 .map(ToOwned::to_owned)
                 .or(existing.default_audio_model.clone())
                 .filter(|value| !value.is_empty());
+            validate_provider_config(&provider_kind, api_key.as_deref(), base_url.as_deref())?;
 
-            db.upsert_provider(
+            db.upsert_provider_with_kind(
                 provider,
-                api_key.as_str(),
+                &provider_kind,
+                api_key.as_deref(),
+                base_url.as_deref(),
                 enabled,
                 default_text_model.as_deref(),
                 default_audio_model.as_deref(),
@@ -162,4 +189,42 @@ fn opt_trimmed_str(arguments: &Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn normalize_existing_text(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn normalize_provider_id(raw: &str) -> Result<&str> {
+    let normalized = raw.trim();
+    if normalized.is_empty() {
+        return Err(anyhow!("validation_failed: missing provider"));
+    }
+    Ok(normalized)
+}
+
+fn validate_provider_config(
+    provider: &str,
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+) -> Result<()> {
+    match provider {
+        "openai" | "openrouter" => {
+            if api_key.is_none() {
+                return Err(anyhow!("validation_failed: missing api_key"));
+            }
+        }
+        "lmstudio" | "ollama" => {
+            if base_url.is_none() {
+                return Err(anyhow!("validation_failed: missing base_url"));
+            }
+        }
+        _ => return Err(anyhow!("provider.not_supported")),
+    }
+    Ok(())
 }

@@ -20,8 +20,12 @@ pub enum ProvidersCommand {
     Upsert {
         #[arg(help = "Provider id")]
         provider: String,
+        #[arg(long, help = "Provider kind (openai|openrouter|lmstudio|ollama)")]
+        provider_kind: Option<String>,
         #[arg(long, help = "Provider API key (required when creating)")]
         api_key: Option<String>,
+        #[arg(long, help = "Provider base URL")]
+        base_url: Option<String>,
         #[arg(long, help = "Enable or disable provider")]
         enabled: Option<bool>,
         #[arg(long, help = "Default text model")]
@@ -51,11 +55,14 @@ pub async fn run(app: &BorgCliApp, cmd: ProvidersCommand) -> Result<()> {
         }
         ProvidersCommand::Upsert {
             provider,
+            provider_kind,
             api_key,
+            base_url,
             enabled,
             default_text_model,
             default_audio_model,
         } => {
+            let provider_kind = provider_kind.unwrap_or_else(|| provider.clone());
             let api_key_to_use = match api_key {
                 Some(key) => key,
                 None => db
@@ -70,10 +77,11 @@ pub async fn run(app: &BorgCliApp, cmd: ProvidersCommand) -> Result<()> {
                     })?,
             };
 
-            db.upsert_provider(
+            db.upsert_provider_with_kind(
                 &provider,
+                &provider_kind,
                 Some(&api_key_to_use),
-                None,
+                base_url.as_deref(),
                 enabled,
                 default_text_model.as_deref(),
                 default_audio_model.as_deref(),

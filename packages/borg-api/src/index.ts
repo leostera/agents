@@ -1,6 +1,8 @@
 export type ProviderRecord = {
   provider: string;
+  provider_kind: string;
   api_key: string;
+  base_url?: string | null;
   enabled: boolean;
   tokens_used: number;
   last_used?: string | null;
@@ -571,6 +573,86 @@ export class BorgApiClient {
     }
   }
 
+  async createTaskGraphTask(payload: {
+    sessionUri: string;
+    creatorAgentId: string;
+    title: string;
+    description?: string;
+    definitionOfDone?: string;
+    assigneeAgentId: string;
+    labels?: string[];
+    parentUri?: string | null;
+    blockedBy?: string[];
+    references?: string[];
+  }): Promise<TaskGraphTask> {
+    const data = await this.requestJson<TaskGraphTaskResponse>(
+      `/api/taskgraph/tasks`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          session_uri: payload.sessionUri,
+          creator_agent_id: payload.creatorAgentId,
+          title: payload.title,
+          description: payload.description ?? "",
+          definition_of_done: payload.definitionOfDone ?? "",
+          assignee_agent_id: payload.assigneeAgentId,
+          labels: payload.labels ?? [],
+          parent_uri: payload.parentUri ?? null,
+          blocked_by: payload.blockedBy ?? [],
+          references: payload.references ?? [],
+        }),
+      }
+    );
+    if (!data.task) throw new BorgApiError("Task create failed");
+    return data.task;
+  }
+
+  async updateTaskGraphTaskFields(
+    taskUri: string,
+    payload: {
+      sessionUri: string;
+      title?: string;
+      description?: string;
+      definitionOfDone?: string;
+    }
+  ): Promise<TaskGraphTask> {
+    const data = await this.requestJson<TaskGraphTaskResponse>(
+      `/api/taskgraph/tasks/${encodeURIComponent(taskUri)}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          session_uri: payload.sessionUri,
+          title: payload.title,
+          description: payload.description,
+          definition_of_done: payload.definitionOfDone,
+        }),
+      }
+    );
+    if (!data.task) throw new BorgApiError("Task update failed");
+    return data.task;
+  }
+
+  async setTaskGraphTaskStatus(
+    taskUri: string,
+    payload: { sessionUri: string; status: TaskGraphTask["status"] }
+  ): Promise<TaskGraphTask> {
+    const data = await this.requestJson<TaskGraphTaskResponse>(
+      `/api/taskgraph/tasks/${encodeURIComponent(taskUri)}/status`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          session_uri: payload.sessionUri,
+          status: payload.status,
+        }),
+      }
+    );
+    if (!data.task) throw new BorgApiError("Task status update failed");
+    return data.task;
+  }
+
   async listTaskGraphComments(
     taskUri: string,
     params: { limit?: number; cursor?: string | null } = {}
@@ -928,7 +1010,9 @@ export class BorgApiClient {
 
   async upsertProvider(payload: {
     provider: string;
-    apiKey: string;
+    providerKind?: string | null;
+    apiKey?: string | null;
+    baseUrl?: string | null;
     enabled?: boolean;
     defaultTextModel?: string | null;
     defaultAudioModel?: string | null;
@@ -939,7 +1023,9 @@ export class BorgApiClient {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          provider_kind: payload.providerKind,
           api_key: payload.apiKey,
+          base_url: payload.baseUrl,
           enabled: payload.enabled,
           default_text_model: payload.defaultTextModel,
           default_audio_model: payload.defaultAudioModel,
