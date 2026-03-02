@@ -92,6 +92,23 @@ export type AgentSpecResponse = {
   agent_spec?: AgentSpecRecord;
 };
 
+export type ActorRecord = {
+  actor_id: string;
+  name: string;
+  system_prompt: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ActorsResponse = {
+  actors?: ActorRecord[];
+};
+
+export type ActorResponse = {
+  actor?: ActorRecord;
+};
+
 export type UserRecord = {
   user_key: string;
   profile: Record<string, unknown>;
@@ -148,6 +165,19 @@ export type PortBinding = {
 
 export type PortBindingsResponse = {
   bindings?: PortBinding[];
+};
+
+export type PortActorBinding = {
+  conversation_key: string;
+  actor_id?: string | null;
+};
+
+export type PortActorBindingsResponse = {
+  bindings?: PortActorBinding[];
+};
+
+export type PortActorBindingResponse = {
+  binding?: PortActorBinding;
 };
 
 export type ProviderModelsResponse = {
@@ -828,6 +858,64 @@ export class BorgApiClient {
     );
   }
 
+  async listActors(limit = 100): Promise<ActorRecord[]> {
+    const data = await this.requestJson<ActorsResponse>(
+      `/api/actors?limit=${limit}`
+    );
+    return Array.isArray(data.actors) ? data.actors : [];
+  }
+
+  async getActor(actorId: string): Promise<ActorRecord | null> {
+    try {
+      const data = await this.requestJson<ActorResponse>(
+        `/api/actors/${encodeURIComponent(actorId)}`
+      );
+      return data.actor ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async upsertActor(payload: {
+    actorId: string;
+    name?: string | null;
+    systemPrompt: string;
+    status?: string | null;
+  }): Promise<void> {
+    await this.request(`/api/actors/${encodeURIComponent(payload.actorId)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: payload.name ?? null,
+        system_prompt: payload.systemPrompt,
+        status: payload.status ?? null,
+      }),
+    });
+  }
+
+  async deleteActor(
+    actorId: string,
+    options: { ignoreNotFound?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.request(`/api/actors/${encodeURIComponent(actorId)}`, {
+        method: "DELETE",
+      });
+    } catch (error) {
+      if (
+        options.ignoreNotFound &&
+        error instanceof BorgApiError &&
+        error.status === 404
+      ) {
+        return;
+      }
+      throw error;
+    }
+  }
+
   async listUsers(limit = 100): Promise<UserRecord[]> {
     const data = await this.requestJson<UsersResponse>(
       `/api/users?limit=${limit}`
@@ -998,6 +1086,70 @@ export class BorgApiClient {
       `/api/ports/${encodeURIComponent(portUri)}/bindings?limit=${limit}`
     );
     return Array.isArray(data.bindings) ? data.bindings : [];
+  }
+
+  async listPortActorBindings(
+    portUri: string,
+    limit = 200
+  ): Promise<PortActorBinding[]> {
+    const data = await this.requestJson<PortActorBindingsResponse>(
+      `/api/ports/${encodeURIComponent(portUri)}/actor-bindings?limit=${limit}`
+    );
+    return Array.isArray(data.bindings) ? data.bindings : [];
+  }
+
+  async getPortActorBinding(
+    portUri: string,
+    conversationKey: string
+  ): Promise<PortActorBinding | null> {
+    try {
+      const data = await this.requestJson<PortActorBindingResponse>(
+        `/api/ports/${encodeURIComponent(portUri)}/actor-bindings/${encodeURIComponent(conversationKey)}`
+      );
+      return data.binding ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async upsertPortActorBinding(
+    portUri: string,
+    conversationKey: string,
+    actorId: string
+  ): Promise<void> {
+    await this.request(
+      `/api/ports/${encodeURIComponent(portUri)}/actor-bindings/${encodeURIComponent(conversationKey)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ actor_id: actorId }),
+      }
+    );
+  }
+
+  async deletePortActorBinding(
+    portUri: string,
+    conversationKey: string,
+    options: { ignoreNotFound?: boolean } = {}
+  ): Promise<void> {
+    try {
+      await this.request(
+        `/api/ports/${encodeURIComponent(portUri)}/actor-bindings/${encodeURIComponent(conversationKey)}`,
+        { method: "DELETE" }
+      );
+    } catch (error) {
+      if (
+        options.ignoreNotFound &&
+        error instanceof BorgApiError &&
+        error.status === 404
+      ) {
+        return;
+      }
+      throw error;
+    }
   }
 
   async upsertProviderApiKey(provider: string, apiKey: string): Promise<void> {

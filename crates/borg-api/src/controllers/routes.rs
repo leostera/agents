@@ -10,6 +10,7 @@ use tracing::Level;
 use super::actors::ActorsController;
 use super::apps::AppsController;
 use super::db::DbController;
+use super::port_actor_bindings::PortActorBindingsController;
 use super::providers::ProvidersController;
 use super::system::SystemController;
 use crate::AppState;
@@ -211,6 +212,16 @@ pub(crate) fn app_router(state: AppState) -> Router {
             get(DbController::get_port_binding)
                 .put(DbController::upsert_port_binding)
                 .delete(DbController::delete_port_binding),
+        )
+        .route(
+            "/api/ports/:port_uri/actor-bindings",
+            get(PortActorBindingsController::list_port_actor_bindings),
+        )
+        .route(
+            "/api/ports/:port_uri/actor-bindings/:conversation_key",
+            get(PortActorBindingsController::get_port_actor_binding)
+                .put(PortActorBindingsController::upsert_port_actor_binding)
+                .delete(PortActorBindingsController::delete_port_actor_binding),
         )
         .route(
             "/api/ports/:port_uri/sessions/:session_id/context",

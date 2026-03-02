@@ -6,6 +6,39 @@ use sqlx::Row;
 use crate::BorgDb;
 
 impl BorgDb {
+    pub async fn list_port_actor_bindings(
+        &self,
+        port: &str,
+        limit: usize,
+    ) -> Result<Vec<(Uri, Option<Uri>)>> {
+        let limit = i64::try_from(limit).unwrap_or(200);
+        let rows = sqlx::query(
+            r#"
+            SELECT conversation_key, actor_id
+            FROM port_bindings
+            WHERE port = ?1
+            ORDER BY updated_at DESC
+            LIMIT ?2
+            "#,
+        )
+        .bind(port)
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await
+        .context("failed to list port actor bindings")?;
+
+        rows.into_iter()
+            .map(|row| {
+                let conversation_key = Uri::parse(&row.try_get::<String, _>("conversation_key")?)?;
+                let actor_id = row
+                    .try_get::<Option<String>, _>("actor_id")?
+                    .map(|value| Uri::parse(&value))
+                    .transpose()?;
+                Ok((conversation_key, actor_id))
+            })
+            .collect()
+    }
+
     pub async fn upsert_port_actor_binding(
         &self,
         port: &str,
@@ -70,6 +103,29 @@ impl BorgDb {
 
         let actor_id = row.try_get::<Option<String>, _>("actor_id")?;
         actor_id.map(|value| Uri::parse(&value)).transpose()
+    }
+
+    pub async fn clear_port_actor_binding(
+        &self,
+        port: &str,
+        conversation_key: &Uri,
+    ) -> Result<u64> {
+        let updated = sqlx::query(
+            r#"
+            UPDATE port_bindings
+            SET actor_id = NULL,
+                updated_at = ?3
+            WHERE port = ?1 AND conversation_key = ?2
+            "#,
+        )
+        .bind(port)
+        .bind(conversation_key.to_string())
+        .bind(Utc::now().to_rfc3339())
+        .execute(self.pool())
+        .await
+        .context("failed to clear port actor binding")?
+        .rows_affected();
+        Ok(updated)
     }
 
     pub async fn resolve_port_actor(
@@ -176,6 +232,54 @@ mod tests {
             .await
             .expect_err("expected missing actor binding error");
         assert!(err.to_string().contains("no actor binding"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn clear_port_actor_binding_nulls_actor_id() -> Result<()> {
+        let path = tmp_db_path("clear-binding");
+        let db = BorgDb::open_local(
+            path.to_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid temp db path"))?,
+        )
+        .await?;
+        db.migrate().await?;
+
+        let actor = Uri::from_parts("devmode", "actor", Some("clear-a"))?;
+        let key = Uri::from_parts("borg", "conversation", Some("clear-c"))?;
+        db.upsert_actor(&actor, "A", "prompt", "RUNNING").await?;
+        db.upsert_port_actor_binding("telegram", &key, &actor)
+            .await?;
+        assert_eq!(
+            db.get_port_actor_binding("telegram", &key).await?,
+            Some(actor.clone())
+        );
+
+        let updated = db.clear_port_actor_binding("telegram", &key).await?;
+        assert_eq!(updated, 1);
+        assert_eq!(db.get_port_actor_binding("telegram", &key).await?, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_port_actor_bindings_returns_rows_for_port() -> Result<()> {
+        let path = tmp_db_path("list-bindings");
+        let db = BorgDb::open_local(
+            path.to_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid temp db path"))?,
+        )
+        .await?;
+        db.migrate().await?;
+
+        let actor = Uri::from_parts("devmode", "actor", Some("list-a"))?;
+        let key = Uri::from_parts("borg", "conversation", Some("list-c"))?;
+        db.upsert_actor(&actor, "A", "prompt", "RUNNING").await?;
+        db.upsert_port_actor_binding("telegram", &key, &actor).await?;
+
+        let rows = db.list_port_actor_bindings("telegram", 10).await?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, key);
+        assert_eq!(rows[0].1, Some(actor));
         Ok(())
     }
 }

@@ -813,6 +813,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn port_actor_bindings_endpoints_work() {
+        let app = test_app("port-actor-bindings").await;
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/actors/devmode:actor:default",
+            json!({
+                "name": "Default Actor",
+                "system_prompt": "You are the default actor.",
+                "status": "RUNNING"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/ports/borg:port:telegram/actor-bindings/telegram:conversation:chat1",
+            json!({
+                "actor_id":"devmode:actor:default"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/ports/borg:port:telegram/actor-bindings/telegram:conversation:chat1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["binding"]["actor_id"], "devmode:actor:default");
+
+        let (status, body) = request_no_body(
+            &app,
+            Method::GET,
+            "/api/ports/borg:port:telegram/actor-bindings",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["bindings"].as_array().is_some_and(|items| !items.is_empty()));
+
+        let (status, _) = request_no_body(
+            &app,
+            Method::DELETE,
+            "/api/ports/borg:port:telegram/actor-bindings/telegram:conversation:chat1",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
     async fn sessions_and_messages_crud_endpoints_work() {
         let app = test_app("sessions").await;
         let (status, _) = request_json(
