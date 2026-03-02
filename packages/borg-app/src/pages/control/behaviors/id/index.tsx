@@ -16,7 +16,7 @@ import {
   SelectValue,
   Textarea,
 } from "@borg/ui";
-import { ChevronLeft, Save, Trash2 } from "lucide-react";
+import { ChevronLeft, Pause, Play, Save, Trash2 } from "lucide-react";
 import React from "react";
 
 const borgApi = createBorgApiClient();
@@ -205,15 +205,27 @@ export function BehaviorDetailsPage({ behaviorId }: BehaviorDetailsPageProps) {
         <div className="grid gap-3 md:grid-cols-2">
           <div className="space-y-1">
             <Label>Status</Label>
-            <Select value={status} onValueChange={setStatus}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ACTIVE">ACTIVE</SelectItem>
-                <SelectItem value="INACTIVE">INACTIVE</SelectItem>
-              </SelectContent>
-            </Select>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() =>
+                setStatus((current) =>
+                  current === "ACTIVE" ? "INACTIVE" : "ACTIVE"
+                )
+              }
+            >
+              {status === "ACTIVE" ? (
+                <>
+                  <Pause className="size-4" />
+                  Stop
+                </>
+              ) : (
+                <>
+                  <Play className="size-4" />
+                  Start
+                </>
+              )}
+            </Button>
           </div>
 
           <div className="space-y-1">

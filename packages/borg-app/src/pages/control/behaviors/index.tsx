@@ -1,6 +1,5 @@
 import { type BehaviorRecord, createBorgApiClient } from "@borg/api";
 import {
-  Badge,
   Button,
   Input,
   Link,
@@ -201,15 +200,15 @@ export function BehaviorsPage() {
                 filteredBehaviors.map((behavior) => (
                   <TableRow key={behavior.behavior_id}>
                     <TableCell>
-                      <Badge
-                        className={
+                      <span
+                        className={`inline-block size-2.5 rounded-full ${
                           behavior.status === "ACTIVE"
-                            ? "border-emerald-300 bg-emerald-100 text-emerald-900"
-                            : "border-rose-300 bg-rose-100 text-rose-900"
-                        }
-                      >
-                        {behavior.status === "ACTIVE" ? "Active" : "Inactive"}
-                      </Badge>
+                            ? "bg-emerald-500"
+                            : "bg-rose-500"
+                        }`}
+                        title={behavior.status === "ACTIVE" ? "Active" : "Inactive"}
+                        aria-label={behavior.status === "ACTIVE" ? "Active" : "Inactive"}
+                      />
                     </TableCell>
                     <TableCell>
                       <Link

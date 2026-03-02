@@ -4,7 +4,6 @@ import {
   createBorgApiClient,
 } from "@borg/api";
 import {
-  Badge,
   Button,
   Input,
   Link,
@@ -128,6 +127,12 @@ export function ActorsPage() {
     }
   };
 
+  const openActorDetails = React.useCallback((actorId: string) => {
+    const href = `/control/actors/${encodeURIComponent(actorId)}`;
+    window.history.pushState(null, "", href);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }, []);
+
   return (
     <Section className="gap-4">
       {hasNoActors ? null : (
@@ -195,26 +200,34 @@ export function ActorsPage() {
                 </TableRow>
               ) : (
                 filteredActors.map((actor) => (
-                  <TableRow key={actor.actor_id}>
+                  <TableRow
+                    key={actor.actor_id}
+                    className="cursor-pointer"
+                    onClick={() => openActorDetails(actor.actor_id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openActorDetails(actor.actor_id);
+                      }
+                    }}
+                    tabIndex={0}
+                  >
                     <TableCell>
-                      <Badge
-                        className={
+                      <span
+                        className={`inline-block size-2.5 rounded-full ${
                           actor.status === "RUNNING"
-                            ? "border-emerald-300 bg-emerald-100 text-emerald-900"
-                            : "border-rose-300 bg-rose-100 text-rose-900"
-                        }
-                      >
-                        {actor.status === "RUNNING" ? "Running" : "Stopped"}
-                      </Badge>
+                            ? "bg-emerald-500"
+                            : "bg-rose-500"
+                        }`}
+                        title={actor.status === "RUNNING" ? "Running" : "Stopped"}
+                        aria-label={actor.status === "RUNNING" ? "Running" : "Stopped"}
+                      />
                     </TableCell>
-                    <TableCell>
-                      <Link href={`/control/actors/${encodeURIComponent(actor.actor_id)}`}>
-                        {actor.name}
-                      </Link>
-                    </TableCell>
+                    <TableCell>{actor.name}</TableCell>
                     <TableCell>
                       <Link
                         href={`/control/behaviors/${encodeURIComponent(actor.default_behavior_id)}`}
+                        onClick={(event) => event.stopPropagation()}
                       >
                         {behaviorNameById.get(actor.default_behavior_id) ??
                           actor.default_behavior_id}
@@ -228,6 +241,7 @@ export function ActorsPage() {
                         asChild
                         aria-label={`Edit ${actor.name}`}
                         title="Edit actor"
+                        onClick={(event) => event.stopPropagation()}
                       >
                         <Link href={`/control/actors/${encodeURIComponent(actor.actor_id)}`}>
                           <Pencil className="size-3.5" />
@@ -236,7 +250,10 @@ export function ActorsPage() {
                       <Button
                         size="icon-sm"
                         variant="outline"
-                        onClick={() => void handleSetActorStatus(actor, "RUNNING")}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleSetActorStatus(actor, "RUNNING");
+                        }}
                         disabled={actor.status === "RUNNING"}
                         title="Start actor"
                         aria-label={`Start ${actor.name}`}
@@ -246,7 +263,10 @@ export function ActorsPage() {
                       <Button
                         size="icon-sm"
                         variant="outline"
-                        onClick={() => void handleSetActorStatus(actor, "STOPPED")}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleSetActorStatus(actor, "STOPPED");
+                        }}
                         disabled={actor.status === "STOPPED"}
                         title="Stop actor"
                         aria-label={`Stop ${actor.name}`}
@@ -256,7 +276,10 @@ export function ActorsPage() {
                       <Button
                         size="icon-sm"
                         variant="outline"
-                        onClick={() => void handleDeleteActor(actor.actor_id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleDeleteActor(actor.actor_id);
+                        }}
                         aria-label={`Delete ${actor.actor_id}`}
                         title="Delete actor"
                       >
