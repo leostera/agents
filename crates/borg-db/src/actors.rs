@@ -74,6 +74,16 @@ impl BorgDb {
         rows.into_iter().map(actor_from_row).collect()
     }
 
+    pub async fn delete_actor(&self, actor_id: &Uri) -> Result<u64> {
+        let deleted = sqlx::query("DELETE FROM actors WHERE actor_id = ?1")
+            .bind(actor_id.to_string())
+            .execute(self.conn.pool())
+            .await
+            .context("failed to delete actor")?
+            .rows_affected();
+        Ok(deleted)
+    }
+
     pub async fn enqueue_actor_message(
         &self,
         actor_id: &Uri,
@@ -158,7 +168,10 @@ impl BorgDb {
         row.map(actor_mailbox_from_row).transpose()
     }
 
-    pub async fn list_queued_actor_messages(&self, limit: usize) -> Result<Vec<ActorMailboxRecord>> {
+    pub async fn list_queued_actor_messages(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<ActorMailboxRecord>> {
         let limit = i64::try_from(limit).unwrap_or(1_000);
         let rows = sqlx::query(
             r#"

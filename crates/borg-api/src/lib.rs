@@ -243,6 +243,7 @@ mod tests {
         let (status, body) = request_no_body(&app, Method::GET, "/api/providers/openrouter").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["provider"]["provider"], "openrouter");
+        assert_eq!(body["provider"]["base_url"], Value::Null);
         assert_eq!(body["provider"]["default_text_model"], "openrouter/kimi-k2");
         assert_eq!(body["provider"]["default_audio_model"], "openai/whisper-1");
 
@@ -263,6 +264,29 @@ mod tests {
 
         let (status, _) = request_no_body(&app, Method::DELETE, "/api/providers/openai").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn local_provider_upsert_requires_base_url() {
+        let app = test_app("providers-local-validation").await;
+        let (status, _) =
+            request_json(&app, Method::PUT, "/api/providers/lmstudio", json!({})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/providers/ollama",
+            json!({ "base_url": "http://127.0.0.1:11434" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/providers/ollama").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["provider"]["provider"], "ollama");
+        assert_eq!(body["provider"]["base_url"], "http://127.0.0.1:11434");
+        assert_eq!(body["provider"]["api_key"], "");
     }
 
     #[tokio::test]
@@ -553,6 +577,36 @@ mod tests {
 
         let (status, _) =
             request_no_body(&app, Method::DELETE, "/api/agents/specs/borg:agent:default").await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn actors_crud_endpoints_work() {
+        let app = test_app("actors").await;
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/actors/devmode:actor:default",
+            json!({
+                "system_prompt":"you are actor borg",
+                "status":"RUNNING"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) =
+            request_no_body(&app, Method::GET, "/api/actors/devmode:actor:default").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["actor"]["status"], "RUNNING");
+        assert_eq!(body["actor"]["system_prompt"], "you are actor borg");
+
+        let (status, body) = request_no_body(&app, Method::GET, "/api/actors").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["actors"].as_array().is_some_and(|v| !v.is_empty()));
+
+        let (status, _) =
+            request_no_body(&app, Method::DELETE, "/api/actors/devmode:actor:default").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
     }
 
@@ -854,6 +908,13 @@ mod tests {
 
         let (status, _) = request_no_body(&app, Method::DELETE, "/api/providers/missing").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = request_json(&app, Method::PUT, "/api/providers/openai", json!({})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) =
+            request_json(&app, Method::PUT, "/api/providers/not-real", json!({})).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -944,6 +1005,17 @@ mod tests {
 
         let (status, _) =
             request_no_body(&app, Method::DELETE, "/api/agents/specs/borg:agent:missing").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn actors_negative_paths() {
+        let app = test_app("actors-negative").await;
+        let (status, _) = request_no_body(&app, Method::GET, "/api/actors/not-a-uri").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) =
+            request_no_body(&app, Method::DELETE, "/api/actors/devmode:actor:missing").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 

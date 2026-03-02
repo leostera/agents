@@ -7,6 +7,7 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
+use super::apps::AppsController;
 use super::db::DbController;
 use super::system::SystemController;
 use crate::AppState;
@@ -44,11 +45,15 @@ pub(crate) fn app_router(state: AppState) -> Router {
         )
         .route(
             "/api/taskgraph/tasks",
-            get(DbController::list_taskgraph_tasks),
+            get(DbController::list_taskgraph_tasks).post(DbController::create_taskgraph_task),
         )
         .route(
             "/api/taskgraph/tasks/:task_uri",
-            get(DbController::get_taskgraph_task),
+            get(DbController::get_taskgraph_task).patch(DbController::update_taskgraph_task_fields),
+        )
+        .route(
+            "/api/taskgraph/tasks/:task_uri/status",
+            put(DbController::set_taskgraph_task_status),
         )
         .route(
             "/api/taskgraph/tasks/:task_uri/comments",
@@ -73,22 +78,42 @@ pub(crate) fn app_router(state: AppState) -> Router {
             "/api/providers/:provider/models",
             get(DbController::list_provider_models),
         )
-        .route("/api/apps", get(DbController::list_apps))
+        .route("/api/apps", get(AppsController::list_apps))
         .route(
             "/api/apps/:app_id",
-            get(DbController::get_app)
-                .put(DbController::upsert_app)
-                .delete(DbController::delete_app),
+            get(AppsController::get_app)
+                .put(AppsController::upsert_app)
+                .delete(AppsController::delete_app),
         )
         .route(
             "/api/apps/:app_id/capabilities",
-            get(DbController::list_app_capabilities),
+            get(AppsController::list_app_capabilities),
         )
         .route(
             "/api/apps/:app_id/capabilities/:capability_id",
-            get(DbController::get_app_capability)
-                .put(DbController::upsert_app_capability)
-                .delete(DbController::delete_app_capability),
+            get(AppsController::get_app_capability)
+                .put(AppsController::upsert_app_capability)
+                .delete(AppsController::delete_app_capability),
+        )
+        .route(
+            "/api/apps/:app_id/connections",
+            get(AppsController::list_app_connections),
+        )
+        .route(
+            "/api/apps/:app_id/connections/:connection_id",
+            get(AppsController::get_app_connection)
+                .put(AppsController::upsert_app_connection)
+                .delete(AppsController::delete_app_connection),
+        )
+        .route(
+            "/api/apps/:app_id/secrets",
+            get(AppsController::list_app_secrets),
+        )
+        .route(
+            "/api/apps/:app_id/secrets/:secret_id",
+            get(AppsController::get_app_secret)
+                .put(AppsController::upsert_app_secret)
+                .delete(AppsController::delete_app_secret),
         )
         .route(
             "/api/providers/openai/device-code/start",
@@ -111,11 +136,18 @@ pub(crate) fn app_router(state: AppState) -> Router {
                 .delete(DbController::detach_policy_from_entity),
         )
         .route("/api/agents/specs", get(DbController::list_agent_specs))
+        .route("/api/actors", get(DbController::list_actors))
         .route(
             "/api/agents/specs/:agent_id",
             get(DbController::get_agent_spec)
                 .put(DbController::upsert_agent_spec)
                 .delete(DbController::delete_agent_spec),
+        )
+        .route(
+            "/api/actors/:actor_id",
+            get(DbController::get_actor)
+                .put(DbController::upsert_actor)
+                .delete(DbController::delete_actor),
         )
         .route(
             "/api/agents/specs/:agent_id/enabled",
