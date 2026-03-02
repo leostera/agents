@@ -20,6 +20,7 @@ use borg_shellmode::ShellModeRuntime;
 use serde_json::json;
 use sqlx::Row;
 use tokio::sync::mpsc;
+use tokio::time::{Duration, sleep};
 use tracing_subscriber::EnvFilter;
 
 use crate::BorgSupervisor;
@@ -429,6 +430,24 @@ async fn borg_supervisor_persists_call_and_cast_to_actor_mailbox() {
 
     assert!(cast_count >= 1);
     assert!(call_count >= 1);
+
+    let mut acked = 0_i64;
+    for _ in 0..20 {
+        acked = sqlx::query(
+            "SELECT COUNT(*) as n FROM actor_mailbox WHERE actor_id = ?1 AND status = 'ACKED'",
+        )
+        .bind(actor_id.to_string())
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+        .try_get::<i64, _>("n")
+        .unwrap();
+        if acked >= 2 {
+            break;
+        }
+        sleep(Duration::from_millis(20)).await;
+    }
+    assert!(acked >= 2);
 
     supervisor.shutdown().await;
 }

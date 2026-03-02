@@ -46,7 +46,11 @@ impl BorgSupervisor {
         let (tx, rx) = tokio::sync::oneshot::channel();
         if let Err(err) = actor
             .mailbox
-            .send(ActorCommand::Call(msg, tx))
+            .send(ActorCommand::Call {
+                actor_message_id: actor_message_id.clone(),
+                msg,
+                response_tx: tx,
+            })
             .await
             .map_err(|_| anyhow!("actor mailbox closed"))
         {
@@ -76,7 +80,10 @@ impl BorgSupervisor {
         let actor = self.ensure_actor(&msg.actor_id).await?;
         actor
             .mailbox
-            .send(ActorCommand::Cast(msg))
+            .send(ActorCommand::Cast {
+                actor_message_id: actor_message_id.clone(),
+                msg,
+            })
             .await
             .map_err(|_| anyhow!("actor mailbox closed"))
             .inspect_err(|err| {

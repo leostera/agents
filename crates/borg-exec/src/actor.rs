@@ -107,11 +107,33 @@ impl Actor {
             tokio::select! {
                 Some(cmd) = self.rx.recv() => {
                     match cmd {
-                        ActorCommand::Cast(msg) => {
-                            let _ = self.process_message(msg).await;
-                        }
-                        ActorCommand::Call(msg, response_tx) => {
+                        ActorCommand::Cast { actor_message_id, msg } => {
                             let result = self.process_message(msg).await;
+                            if let Err(err) = &result {
+                                let _ = self
+                                    .runtime
+                                    .db
+                                    .fail_actor_message(&actor_message_id, &err.to_string())
+                                    .await;
+                            } else {
+                                let _ = self.runtime.db.ack_actor_message(&actor_message_id).await;
+                            }
+                        }
+                        ActorCommand::Call {
+                            actor_message_id,
+                            msg,
+                            response_tx,
+                        } => {
+                            let result = self.process_message(msg).await;
+                            if let Err(err) = &result {
+                                let _ = self
+                                    .runtime
+                                    .db
+                                    .fail_actor_message(&actor_message_id, &err.to_string())
+                                    .await;
+                            } else {
+                                let _ = self.runtime.db.ack_actor_message(&actor_message_id).await;
+                            }
                             let _ = response_tx.send(result);
                         }
                         ActorCommand::Terminate => {
