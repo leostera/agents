@@ -21,26 +21,6 @@ use tracing::{debug, warn};
 use crate::AppState;
 use crate::controllers::common::{api_error, parse_uri_field};
 
-fn default_app_status() -> String {
-    "active".to_string()
-}
-
-fn default_app_source() -> String {
-    "custom".to_string()
-}
-
-fn default_app_auth_strategy() -> String {
-    "none".to_string()
-}
-
-fn default_connection_status() -> String {
-    "connected".to_string()
-}
-
-fn default_secret_kind() -> String {
-    "opaque".to_string()
-}
-
 #[derive(Deserialize)]
 pub(crate) struct LimitQuery {
     limit: Option<usize>,
@@ -131,63 +111,6 @@ pub(crate) struct UpsertProviderRequest {
     default_text_model: Option<String>,
     #[serde(default)]
     default_audio_model: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct UpsertAppRequest {
-    name: String,
-    slug: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default = "default_app_status")]
-    status: String,
-    #[serde(default = "default_app_source")]
-    source: String,
-    #[serde(default = "default_app_auth_strategy")]
-    auth_strategy: String,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct UpsertAppCapabilityRequest {
-    name: String,
-    #[serde(default)]
-    hint: String,
-    #[serde(default)]
-    mode: String,
-    #[serde(default)]
-    instructions: String,
-    #[serde(default = "default_app_status")]
-    status: String,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct AppSecretsQuery {
-    limit: Option<usize>,
-    connection_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct UpsertAppConnectionRequest {
-    #[serde(default)]
-    owner_user_id: Option<String>,
-    #[serde(default)]
-    provider_account_id: Option<String>,
-    #[serde(default)]
-    external_user_id: Option<String>,
-    #[serde(default = "default_connection_status")]
-    status: String,
-    #[serde(default)]
-    connection_json: Value,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct UpsertAppSecretRequest {
-    key: String,
-    value: String,
-    #[serde(default)]
-    connection_id: Option<String>,
-    #[serde(default = "default_secret_kind")]
-    kind: String,
 }
 
 #[derive(Deserialize)]
