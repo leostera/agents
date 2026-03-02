@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::future::pending;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,7 +13,6 @@ use tokio::time;
 use tracing::{error, info, warn};
 
 use crate::PortMessage;
-use crate::discord::DiscordPort;
 use crate::message::PortInput;
 use crate::port::Provider::{Discord, Telegram, Unknown};
 use crate::telegram::TelegramPort;
@@ -118,6 +118,21 @@ impl BorgPortsSupervisor {
     }
 
     async fn spawn_port(&mut self, port_id: Uri, config: PortConfig) -> Result<()> {
+        if matches!(config.provider, Discord | Unknown) {
+            let provider = format!("{:?}", config.provider);
+            let task = tokio::spawn(async move {
+                pending::<()>().await;
+            });
+            self.ports.insert(port_id.clone(), (config, task));
+            warn!(
+                target: "borg_ports",
+                port_id = %port_id,
+                provider = %provider,
+                "port provider is not implemented yet; skipping startup"
+            );
+            return Ok(());
+        }
+
         let (inbound_tx, inbound_rx): (Sender<PortMessage>, Receiver<PortMessage>) =
             mpsc::channel(PORT_CHANNEL_CAPACITY);
         let (outbound_tx, outbound_rx): (Sender<SessionOutput>, Receiver<SessionOutput>) =
@@ -143,10 +158,10 @@ impl BorgPortsSupervisor {
         let port_id_for_port_task = port_id.clone();
         let port_task = tokio::spawn(async move {
             match config_for_port_task.provider {
-                Discord => match DiscordPort::new(config_for_port_task.clone()).await {
-                    Ok(port) => port.run(inbound_tx, outbound_rx).await,
-                    Err(err) => Err(err),
-                },
+                Discord => {
+                    warn!(target: "borg_ports", port_id = %port_id_for_port_task, "discord provider should have been skipped before startup");
+                    Ok(())
+                }
                 Telegram => match TelegramPort::new(config_for_port_task.clone()).await {
                     Ok(port) => port.run(inbound_tx, outbound_rx).await,
                     Err(err) => Err(err),
