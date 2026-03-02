@@ -248,7 +248,7 @@ async fn bridge_loop(
     outbound_tx: Sender<SessionOutput>,
 ) {
     while let Some(message) = inbound_rx.recv().await {
-        let (session_id, maybe_actor_id) = match db
+        let (session_id, legacy_actor_id) = match db
             .resolve_port_session(
                 &port_name,
                 &message.conversation_key,
@@ -268,7 +268,23 @@ async fn bridge_loop(
                 continue;
             }
         };
-        let actor_id = maybe_actor_id.unwrap_or_else(|| session_id.clone());
+        let bound_actor_id = match db
+            .get_port_actor_binding(&port_name, &message.conversation_key)
+            .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    target: "borg_ports",
+                    error = %err,
+                    port_name = %port_name,
+                    conversation_key = %message.conversation_key,
+                    "failed to query actor binding; falling back"
+                );
+                None
+            }
+        };
+        let actor_id = select_actor_id(session_id.clone(), bound_actor_id, legacy_actor_id);
 
         let output = match sup
             .call(BorgMessage {
@@ -301,6 +317,16 @@ async fn bridge_loop(
     }
 }
 
+fn select_actor_id(session_id: Uri, bound_actor_id: Option<Uri>, legacy_actor_id: Option<Uri>) -> Uri {
+    if let Some(actor_id) = bound_actor_id {
+        return actor_id;
+    }
+    if let Some(actor_id) = legacy_actor_id {
+        return actor_id;
+    }
+    session_id
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -308,7 +334,7 @@ mod tests {
     use borg_core::Uri;
     use serde_json::json;
 
-    use super::{ReconcileAction, RunningPortState, compute_reconcile_plan};
+    use super::{ReconcileAction, RunningPortState, compute_reconcile_plan, select_actor_id};
     use crate::port::{PortConfig, Privacy, Provider, Status};
 
     fn uri(value: &str) -> Uri {
@@ -325,6 +351,23 @@ mod tests {
             default_agent_id: None,
             settings: json!({"bot_token":"test"}),
         }
+    }
+
+    #[test]
+    fn select_actor_id_prefers_bound_actor_then_legacy_then_session() {
+        let session = uri("borg:session:s1");
+        let bound = uri("devmode:actor:bound");
+        let legacy = uri("devmode:actor:legacy");
+
+        assert_eq!(
+            select_actor_id(session.clone(), Some(bound.clone()), Some(legacy.clone())),
+            bound
+        );
+        assert_eq!(
+            select_actor_id(session.clone(), None, Some(legacy.clone())),
+            legacy
+        );
+        assert_eq!(select_actor_id(session.clone(), None, None), session);
     }
 
     #[test]
