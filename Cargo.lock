@@ -700,6 +700,7 @@ dependencies = [
  "borg-db",
  "borg-llm",
  "borg-memory",
+ "borg-ports-tools",
  "borg-shellmode",
  "borg-taskgraph",
  "serde",
@@ -714,9 +715,11 @@ dependencies = [
 name = "borg-llm"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "base64 0.22.1",
  "borg-core",
+ "borg-db",
  "chrono",
  "reqwest",
  "serde",
@@ -760,12 +763,24 @@ dependencies = [
  "borg-core",
  "borg-db",
  "borg-exec",
+ "borg-ports-tools",
  "serde",
  "serde_json",
  "serenity",
  "teloxide",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "borg-ports-tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "borg-agent",
+ "borg-core",
+ "borg-db",
+ "serde_json",
 ]
 
 [[package]]

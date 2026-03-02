@@ -12,6 +12,7 @@ members = [
   "crates/borg-llm",
   "crates/borg-memory",
   "crates/borg-ports",
+  "crates/borg-ports-tools",
   "crates/borg-codemode",
   "crates/borg-shellmode",
 ]

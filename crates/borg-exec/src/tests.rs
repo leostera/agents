@@ -5,7 +5,10 @@ use std::sync::{Arc, Mutex as StdMutex};
 use anyhow::Result;
 use async_trait::async_trait;
 use borg_agent::{Agent, AgentTools, Message, Session, SessionResult, ToolResultData};
-use borg_codemode::{CodeModeContext, CodeModeRuntime, default_tool_specs};
+use borg_apps::default_tool_specs as default_apps_tool_specs;
+use borg_codemode::{
+    CodeModeContext, CodeModeRuntime, default_tool_specs as default_codemode_tool_specs,
+};
 use borg_core::uri;
 use borg_db::BorgDb;
 use borg_llm::{
@@ -131,13 +134,19 @@ fn assistant_tool_call(
     }
 }
 
+fn default_agent_tools() -> Vec<borg_agent::ToolSpec> {
+    let mut tools = default_codemode_tool_specs();
+    tools.extend(default_apps_tool_specs());
+    tools
+}
+
 #[tokio::test]
 async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
     init_test_tracing();
     let db = open_test_db().await;
     let agent = Agent::new(uri!("borg", "agent", "exec-e2e"))
         .with_system_prompt("Use tools when needed and provide a final concise answer.")
-        .with_tools(default_tool_specs());
+        .with_tools(default_agent_tools());
     let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
         .await
         .unwrap();
@@ -239,7 +248,7 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
     let db = open_test_db().await;
     let agent = Agent::new(uri!("borg", "agent", "exec-e2e-invalid"))
         .with_system_prompt("Call CodeMode-executeCode and then summarize the outcome.")
-        .with_tools(default_tool_specs());
+        .with_tools(default_agent_tools());
     let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
         .await
         .unwrap();

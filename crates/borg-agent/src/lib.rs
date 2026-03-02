@@ -1,3 +1,4 @@
+mod admin_tools;
 mod agent;
 mod context;
 mod llm_adapter;
@@ -5,6 +6,7 @@ mod message;
 mod session;
 mod tools;
 
+pub use admin_tools::{build_agent_admin_toolchain, default_agent_admin_tool_specs};
 pub use agent::{Agent, DEFAULT_AGENT_ID, DEFAULT_MAX_TURNS, DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT};
 pub use context::{
     CompactingContextManager, ContextManager, ContextWindow, PassthroughContextManager,

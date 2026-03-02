@@ -1,5 +1,6 @@
 use anyhow::Result;
 use borg_agent::{Agent, Message, Session, SessionContextManager, SessionEventPayload, ToolSpec};
+use borg_apps::BorgApps;
 use borg_apps::default_tool_specs as default_apps_tool_specs;
 use borg_codemode::default_tool_specs;
 use borg_core::{Uri, uri};
@@ -8,7 +9,7 @@ use borg_memory::default_memory_tool_specs;
 use borg_taskgraph::default_taskgraph_tool_specs;
 use std::sync::Arc;
 
-use crate::admin_tools::default_admin_tool_specs;
+use crate::tool_runner::default_exec_admin_tool_specs;
 use crate::types::UserMessage;
 
 #[derive(Clone)]
@@ -29,16 +30,17 @@ impl SessionManager {
             .unwrap_or_else(|| uri!("borg", "session"));
 
         let agent_id = self.resolve_agent_id(msg, &session_id).await?;
+        let default_tools = self.default_tools_for_session().await?;
         let mut agent = Agent::load(&agent_id, &self.db).await?;
         if let Some(spec) = self.db.get_agent_spec(&agent_id).await? {
             agent = agent
                 .with_model(spec.model)
                 .with_system_prompt(spec.system_prompt)
-                .with_tools(ensure_default_tools(Vec::new()));
+                .with_tools(default_tools.clone());
         } else {
             agent = agent
                 .with_model(self.model.clone())
-                .with_tools(ensure_default_tools(Vec::new()));
+                .with_tools(default_tools.clone());
         }
 
         let mut session = Session::new(session_id.clone(), agent, self.db.clone()).await?;
@@ -78,6 +80,11 @@ impl SessionManager {
 
         Ok(uri!("borg", "agent", "default"))
     }
+
+    async fn default_tools_for_session(&self) -> Result<Vec<ToolSpec>> {
+        let apps = BorgApps::new(self.db.clone()).await?;
+        Ok(ensure_default_tools(apps.capability_tool_specs()))
+    }
 }
 
 fn ensure_default_tools(existing: Vec<ToolSpec>) -> Vec<ToolSpec> {
@@ -90,7 +97,7 @@ fn ensure_default_tools(existing: Vec<ToolSpec>) -> Vec<ToolSpec> {
         .into_iter()
         .chain(default_memory_tool_specs().into_iter())
         .chain(default_taskgraph_tool_specs().into_iter())
-        .chain(default_admin_tool_specs().into_iter())
+        .chain(default_exec_admin_tool_specs().into_iter())
         .chain(default_apps_tool_specs().into_iter())
     {
         by_name.insert(tool.name.clone(), tool);

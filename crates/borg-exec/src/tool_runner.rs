@@ -1,13 +1,16 @@
 use anyhow::Result;
-use borg_agent::Toolchain;
+use borg_agent::{
+    Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain, ToolchainBuilder,
+    build_agent_admin_toolchain, default_agent_admin_tool_specs,
+};
 use borg_codemode::{CodeModeContext, CodeModeRuntime, build_code_mode_toolchain_with_context};
 use borg_core::Uri;
 use borg_db::BorgDb;
+use borg_llm::{default_provider_admin_tool_specs, run_provider_admin_tool};
 use borg_memory::{MemoryStore, build_memory_toolchain};
+use borg_ports_tools::{build_port_admin_toolchain, default_port_admin_tool_specs};
 use borg_shellmode::{ShellModeRuntime, build_shell_mode_toolchain};
 use borg_taskgraph::{build_taskgraph_toolchain, build_taskgraph_worker_toolchain};
-
-use crate::admin_tools::build_admin_toolchain;
 
 pub fn build_exec_toolchain_with_context(
     runtime: CodeModeRuntime,
@@ -27,9 +30,58 @@ pub fn build_exec_toolchain_with_context(
     } else {
         build_taskgraph_worker_toolchain(db.clone())?
     };
-    let admin = build_admin_toolchain(db, current_session_id, current_agent_id)?;
+    let agent_admin =
+        build_agent_admin_toolchain(db.clone(), current_session_id, current_agent_id)?;
+    let port_admin = build_port_admin_toolchain(db.clone())?;
+    let provider_admin = build_provider_admin_toolchain(db)?;
     code.merge(shell)?
         .merge(ltm)?
         .merge(taskgraph)?
-        .merge(admin)
+        .merge(agent_admin)?
+        .merge(port_admin)?
+        .merge(provider_admin)
+}
+
+pub fn default_exec_admin_tool_specs() -> Vec<ToolSpec> {
+    let mut out = Vec::new();
+    out.extend(default_agent_admin_tool_specs());
+    out.extend(default_port_admin_tool_specs());
+    out.extend(
+        default_provider_admin_tool_specs()
+            .into_iter()
+            .map(|spec| ToolSpec {
+                name: spec.name,
+                description: spec.description,
+                parameters: spec.parameters,
+            }),
+    );
+    out
+}
+
+fn build_provider_admin_toolchain(db: BorgDb) -> Result<Toolchain> {
+    let mut builder = ToolchainBuilder::new();
+    for spec in default_provider_admin_tool_specs() {
+        let db = db.clone();
+        let name = spec.name.clone();
+        let tool = Tool::new(
+            ToolSpec {
+                name: spec.name,
+                description: spec.description,
+                parameters: spec.parameters,
+            },
+            None,
+            move |request| {
+                let db = db.clone();
+                let name = name.clone();
+                async move {
+                    let value = run_provider_admin_tool(&db, &name, &request.arguments).await?;
+                    Ok(ToolResponse {
+                        content: ToolResultData::Text(serde_json::to_string(&value)?),
+                    })
+                }
+            },
+        );
+        builder = builder.add_tool(tool)?;
+    }
+    builder.build()
 }
