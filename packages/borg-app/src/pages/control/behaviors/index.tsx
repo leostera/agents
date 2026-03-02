@@ -143,6 +143,13 @@ export function BehaviorsPage() {
     }
   };
 
+  const truncatePrompt = React.useCallback((value: string): string => {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    const limit = 40;
+    if (normalized.length <= limit) return normalized;
+    return `${normalized.slice(0, limit - 1)}…`;
+  }, []);
+
   return (
     <Section className="gap-4">
       {hasNoBehaviors ? null : (
@@ -180,8 +187,9 @@ export function BehaviorsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Status</TableHead>
-                <TableHead>Behavior</TableHead>
-                <TableHead>Provider</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Default Provider</TableHead>
+                <TableHead>Prompt</TableHead>
                 <TableHead>Updated</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
@@ -189,7 +197,7 @@ export function BehaviorsPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-muted-foreground text-center">
+                  <TableCell colSpan={6} className="text-muted-foreground text-center">
                     <span className="inline-flex items-center gap-2">
                       <LoaderCircle className="size-4 animate-spin" />
                       Loading behaviors...
@@ -218,6 +226,12 @@ export function BehaviorsPage() {
                       </Link>
                     </TableCell>
                     <TableCell>{behavior.preferred_provider_id ?? "—"}</TableCell>
+                    <TableCell
+                      className="text-muted-foreground max-w-[38rem] text-sm"
+                      title={behavior.system_prompt}
+                    >
+                      {truncatePrompt(behavior.system_prompt)}
+                    </TableCell>
                     <TableCell>
                       {new Date(behavior.updated_at).toLocaleString()}
                     </TableCell>

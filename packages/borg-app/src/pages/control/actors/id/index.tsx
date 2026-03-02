@@ -256,7 +256,7 @@ export function ActorDetailsPage({ actorId }: ActorDetailsPageProps) {
                   </SelectItem>
                   {activeBehaviors.map((behavior) => (
                     <SelectItem key={behavior.behavior_id} value={behavior.behavior_id}>
-                      {behavior.name} ({behavior.behavior_id})
+                      {behavior.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
