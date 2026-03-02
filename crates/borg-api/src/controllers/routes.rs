@@ -7,6 +7,7 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
+use super::actors::ActorsController;
 use super::apps::AppsController;
 use super::db::DbController;
 use super::system::SystemController;
@@ -136,7 +137,7 @@ pub(crate) fn app_router(state: AppState) -> Router {
                 .delete(DbController::detach_policy_from_entity),
         )
         .route("/api/agents/specs", get(DbController::list_agent_specs))
-        .route("/api/actors", get(DbController::list_actors))
+        .route("/api/actors", get(ActorsController::list_actors))
         .route(
             "/api/agents/specs/:agent_id",
             get(DbController::get_agent_spec)
@@ -145,9 +146,9 @@ pub(crate) fn app_router(state: AppState) -> Router {
         )
         .route(
             "/api/actors/:actor_id",
-            get(DbController::get_actor)
-                .put(DbController::upsert_actor)
-                .delete(DbController::delete_actor),
+            get(ActorsController::get_actor)
+                .put(ActorsController::upsert_actor)
+                .delete(ActorsController::delete_actor),
         )
         .route(
             "/api/agents/specs/:agent_id/enabled",
