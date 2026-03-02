@@ -4,6 +4,7 @@ use crate::message::{BorgMessage, SessionOutput};
 use crate::runtime::BorgRuntime;
 use anyhow::anyhow;
 use borg_core::Uri;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -29,20 +30,64 @@ impl BorgSupervisor {
     }
 
     pub async fn call(&self, msg: BorgMessage) -> anyhow::Result<SessionOutput> {
+        let actor_message_id = self
+            .runtime
+            .db
+            .enqueue_actor_message(
+                &msg.actor_id,
+                "CALL",
+                Some(&msg.session_id),
+                &mailbox_payload(&msg),
+                None,
+                None,
+            )
+            .await?;
         let actor = self.ensure_actor(&msg.actor_id).await?;
         let (tx, rx) = tokio::sync::oneshot::channel();
-        actor
+        if let Err(err) = actor
             .mailbox
             .send(ActorCommand::Call(msg, tx))
             .await
-            .map_err(|_| anyhow!("actor mailbox closed"))?;
+            .map_err(|_| anyhow!("actor mailbox closed"))
+        {
+            let _ = self
+                .runtime
+                .db
+                .fail_actor_message(&actor_message_id, &err.to_string())
+                .await;
+            return Err(err);
+        }
         rx.await.map_err(|_| anyhow!("response channel closed"))?
     }
 
-    pub async fn cast(&self, msg: BorgMessage) {
-        if let Ok(actor) = self.ensure_actor(&msg.actor_id).await {
-            let _ = actor.mailbox.send(ActorCommand::Cast(msg)).await;
-        }
+    pub async fn cast(&self, msg: BorgMessage) -> anyhow::Result<()> {
+        let actor_message_id = self
+            .runtime
+            .db
+            .enqueue_actor_message(
+                &msg.actor_id,
+                "CAST",
+                Some(&msg.session_id),
+                &mailbox_payload(&msg),
+                None,
+                None,
+            )
+            .await?;
+        let actor = self.ensure_actor(&msg.actor_id).await?;
+        actor
+            .mailbox
+            .send(ActorCommand::Cast(msg))
+            .await
+            .map_err(|_| anyhow!("actor mailbox closed"))
+            .inspect_err(|err| {
+                let db = self.runtime.db.clone();
+                let actor_message_id = actor_message_id.clone();
+                let err_text = err.to_string();
+                tokio::spawn(async move {
+                    let _ = db.fail_actor_message(&actor_message_id, &err_text).await;
+                });
+            })?;
+        Ok(())
     }
 
     async fn ensure_actor(&self, actor_id: &Uri) -> anyhow::Result<ActorHandle> {
@@ -66,4 +111,16 @@ impl BorgSupervisor {
             actor.task.abort();
         }
     }
+}
+
+fn mailbox_payload(msg: &BorgMessage) -> Value {
+    json!({
+        "actor_id": msg.actor_id.to_string(),
+        "user_id": msg.user_id.to_string(),
+        "session_id": msg.session_id.to_string(),
+        "input": match &msg.input {
+            crate::message::BorgInput::Chat { text } => json!({ "kind": "chat", "text": text }),
+            crate::message::BorgInput::Command(command) => json!({ "kind": "command", "name": format!("{command:?}") }),
+        }
+    })
 }

@@ -143,7 +143,10 @@ impl Actor {
 
         let result = match &msg.input {
             BorgInput::Chat { text } => self.process_chat_message(&mut state, &msg, text).await,
-            BorgInput::Command(command) => self.process_control_command(&mut state, &msg, command).await,
+            BorgInput::Command(command) => {
+                self.process_control_command(&mut state, &msg, command)
+                    .await
+            }
         };
 
         if !drop_after {
@@ -167,7 +170,11 @@ impl Actor {
             .session_manager
             .session_for_task(&synthetic_msg)
             .await?;
-        if let Some((port, ctx)) = self.runtime.db.get_any_port_session_context(session_id).await?
+        if let Some((port, ctx)) = self
+            .runtime
+            .db
+            .get_any_port_session_context(session_id)
+            .await?
             && port == "telegram"
         {
             session.set_context_manager(Arc::new(
@@ -311,7 +318,11 @@ impl Actor {
                 })
             }
             BorgCommand::ResetContext => {
-                let deleted = self.runtime.db.clear_session_history(&msg.session_id).await?;
+                let deleted = self
+                    .runtime
+                    .db
+                    .clear_session_history(&msg.session_id)
+                    .await?;
                 if let Some((port_name, _)) = self
                     .runtime
                     .db
