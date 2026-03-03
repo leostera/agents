@@ -1,18 +1,16 @@
 use anyhow::Result;
 use borg_core::Uri;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::sync::Arc;
 
 use crate::message::{BorgCommand, BorgInput, BorgMessage};
-use crate::port_context::JsonPortContext;
+use crate::port_context::PortContext;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActorMailboxEnvelope {
     pub actor_id: String,
     pub user_id: String,
     pub session_id: String,
-    pub port_context: Value,
+    pub port_context: PortContext,
     pub input: ActorMailboxInput,
 }
 
@@ -35,15 +33,11 @@ pub enum ActorMailboxInput {
 
 impl ActorMailboxEnvelope {
     pub fn from_borg_message(msg: &BorgMessage) -> Self {
-        let port_context = msg
-            .port_context
-            .to_json()
-            .unwrap_or_else(|_| serde_json::json!({}));
         Self {
             actor_id: msg.actor_id.to_string(),
             user_id: msg.user_id.to_string(),
             session_id: msg.session_id.to_string(),
-            port_context,
+            port_context: msg.port_context.clone(),
             input: match &msg.input {
                 BorgInput::Chat { text } => ActorMailboxInput::Chat { text: text.clone() },
                 BorgInput::Audio {
@@ -62,14 +56,6 @@ impl ActorMailboxEnvelope {
                 },
             },
         }
-    }
-
-    pub fn to_json(&self) -> Result<Value> {
-        Ok(serde_json::to_value(self)?)
-    }
-
-    pub fn from_json(value: &Value) -> Result<Self> {
-        Ok(serde_json::from_value(value.clone())?)
     }
 
     pub fn to_borg_message(&self) -> Result<BorgMessage> {
@@ -96,7 +82,7 @@ impl ActorMailboxEnvelope {
             user_id,
             session_id,
             input,
-            port_context: Arc::new(JsonPortContext::new(self.port_context.clone())),
+            port_context: self.port_context.clone(),
         })
     }
 }
@@ -108,7 +94,7 @@ mod tests {
 
     #[test]
     fn mailbox_envelope_roundtrip_chat() {
-        let port_ctx = serde_json::json!({"port":"test"});
+        let port_ctx = serde_json::json!({"port":"unknown"});
         let msg = BorgMessage {
             actor_id: uri!("devmode", "actor", "a1"),
             user_id: uri!("borg", "user", "u1"),
@@ -116,12 +102,12 @@ mod tests {
             input: BorgInput::Chat {
                 text: "hello".to_string(),
             },
-            port_context: Arc::new(JsonPortContext::new(port_ctx.clone())),
+            port_context: serde_json::from_value(port_ctx.clone()).expect("ctx"),
         };
 
         let env = ActorMailboxEnvelope::from_borg_message(&msg);
-        let json = env.to_json().expect("to_json");
-        let decoded = ActorMailboxEnvelope::from_json(&json)
+        let json = serde_json::to_value(&env).expect("to_json");
+        let decoded = serde_json::from_value::<ActorMailboxEnvelope>(json)
             .expect("from_json")
             .to_borg_message()
             .expect("to_borg");
@@ -129,7 +115,7 @@ mod tests {
         assert_eq!(decoded.actor_id, msg.actor_id);
         assert_eq!(decoded.user_id, msg.user_id);
         assert_eq!(decoded.session_id, msg.session_id);
-        assert_eq!(decoded.port_context.to_json().expect("ctx"), port_ctx);
+        assert_eq!(serde_json::to_value(&decoded.port_context).expect("ctx"), port_ctx);
         match decoded.input {
             BorgInput::Chat { text } => assert_eq!(text, "hello"),
             _ => panic!("expected chat input"),
@@ -145,12 +131,20 @@ mod tests {
             input: BorgInput::Command(BorgCommand::ModelSet {
                 model: "gpt-5-mini".to_string(),
             }),
-            port_context: Arc::new(JsonPortContext::new(serde_json::json!({"chat_id":123}))),
+            port_context: serde_json::from_value(serde_json::json!({
+                "port":"telegram",
+                "chat_id":123,
+                "chat_type":"private",
+                "participants":{},
+                "last_message_id":null,
+                "last_thread_id":null
+            }))
+            .expect("ctx"),
         };
 
         let env = ActorMailboxEnvelope::from_borg_message(&msg);
-        let json = env.to_json().expect("to_json");
-        let decoded = ActorMailboxEnvelope::from_json(&json)
+        let json = serde_json::to_value(&env).expect("to_json");
+        let decoded = serde_json::from_value::<ActorMailboxEnvelope>(json)
             .expect("from_json")
             .to_borg_message()
             .expect("to_borg");
@@ -162,8 +156,15 @@ mod tests {
             _ => panic!("expected model-set command"),
         }
         assert_eq!(
-            decoded.port_context.to_json().expect("ctx"),
-            serde_json::json!({"chat_id":123})
+            serde_json::to_value(&decoded.port_context).expect("ctx"),
+            serde_json::json!({
+                "port":"telegram",
+                "chat_id":123,
+                "chat_type":"private",
+                "participants":{},
+                "last_message_id":null,
+                "last_thread_id":null
+            })
         );
     }
 
@@ -179,12 +180,12 @@ mod tests {
                 duration_ms: Some(1234),
                 language_hint: Some("en".to_string()),
             },
-            port_context: Arc::new(JsonPortContext::new(serde_json::json!({"port":"http"}))),
+            port_context: PortContext::Http(Default::default()),
         };
 
         let env = ActorMailboxEnvelope::from_borg_message(&msg);
-        let json = env.to_json().expect("to_json");
-        let decoded = ActorMailboxEnvelope::from_json(&json)
+        let json = serde_json::to_value(&env).expect("to_json");
+        let decoded = serde_json::from_value::<ActorMailboxEnvelope>(json)
             .expect("from_json")
             .to_borg_message()
             .expect("to_borg");

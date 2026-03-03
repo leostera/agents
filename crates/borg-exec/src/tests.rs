@@ -519,7 +519,7 @@ async fn borg_supervisor_actor_can_serve_multiple_sessions() {
     .await
     .unwrap();
     let user_id = uri!("borg", "user", "tester");
-    let pctx = std::sync::Arc::new(crate::JsonPortContext::new(json!({})));
+    let pctx = crate::PortContext::Unknown;
     let session_a = uri!("borg", "session", "a");
     let session_b = uri!("borg", "session", "b");
 
@@ -578,7 +578,7 @@ async fn borg_supervisor_persists_call_and_cast_to_actor_mailbox() {
     .await
     .unwrap();
     let user_id = uri!("borg", "user", "tester");
-    let pctx = std::sync::Arc::new(crate::JsonPortContext::new(json!({})));
+    let pctx = crate::PortContext::Unknown;
     let session_id = uri!("borg", "session", "persist");
 
     supervisor
@@ -668,7 +668,7 @@ async fn borg_supervisor_missing_actor_spec_keeps_message_queued() {
             user_id: uri!("borg", "user", "tester"),
             session_id: uri!("borg", "session", "missing-spec"),
             input: crate::BorgInput::Command(crate::BorgCommand::ContextDump),
-            port_context: std::sync::Arc::new(crate::JsonPortContext::new(json!({}))),
+            port_context: crate::PortContext::Unknown,
         })
         .await;
     assert!(result.is_err());
@@ -732,7 +732,7 @@ async fn audio_turn_rejects_without_transcription_provider_and_persists_no_user_
                 duration_ms: Some(2500),
                 language_hint: Some("en".to_string()),
             },
-            port_context: std::sync::Arc::new(crate::JsonPortContext::new(json!({}))),
+            port_context: crate::PortContext::Unknown,
         })
         .await;
     assert!(result.is_err());
@@ -761,7 +761,7 @@ async fn borg_supervisor_replays_queued_after_actor_spec_is_created() {
     let actor_id = uri!("devmode", "actor", "late-created");
     let user_id = uri!("borg", "user", "tester");
     let session_id = uri!("borg", "session", "late-created");
-    let pctx = std::sync::Arc::new(crate::JsonPortContext::new(json!({})));
+    let pctx = crate::PortContext::Unknown;
 
     let queued_err = supervisor
         .cast(crate::BorgMessage {
@@ -893,11 +893,9 @@ async fn borg_supervisor_start_replays_queued_mailbox_rows() {
         user_id: uri!("borg", "user", "tester"),
         session_id: uri!("borg", "session", "replay"),
         input: crate::BorgInput::Command(crate::BorgCommand::ContextDump),
-        port_context: std::sync::Arc::new(crate::JsonPortContext::new(json!({}))),
+        port_context: crate::PortContext::Unknown,
     };
-    let payload = ActorMailboxEnvelope::from_borg_message(&msg)
-        .to_json()
-        .unwrap();
+    let payload = serde_json::to_value(ActorMailboxEnvelope::from_borg_message(&msg)).unwrap();
     let msg_id = db
         .enqueue_actor_message(
             &actor_id,
