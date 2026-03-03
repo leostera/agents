@@ -393,6 +393,10 @@ Implemented in this branch so far:
    - converted `Memory-Schema-defineNamespace`, `Memory-Schema-defineKind`, and `Memory-Schema-defineField` to typed DTO requests
    - removed per-field `Value` probing (`get(...).and_then(...)`) from those handlers
    - retained existing validation messages and output payload shape while moving argument parsing to serde
+17. Migrated additional `borg-memory` read/search/entity handlers to typed DTOs:
+   - converted `Memory-search`, `Memory-createEntity`, `Memory-getEntity`, and `Memory-listFacts` to `Tool::new_transcoded(...)`
+   - removed JSON map-walking in those handlers and moved option/default handling into typed request models
+   - preserved all current output payloads and semantic behavior while changing only argument decoding
 
 Important behavior change from these updates:
 
@@ -401,7 +405,7 @@ Important behavior change from these updates:
 3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
 4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
 5. Port metadata still enters through `JsonPortContext`; removing that boundary JSON adapter remains pending.
-6. Some built-in tools still use `Tool::new(...)` with JSON arguments; taskgraph is fully typed and memory migration now covers search/save/new-entity plus schema define handlers.
+6. Some built-in tools still use `Tool::new(...)` with JSON arguments; taskgraph is fully typed and memory migration now also covers search/create/get/list plus schema define handlers.
 
 Known blocker while validating this branch:
 
