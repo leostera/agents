@@ -13,8 +13,8 @@ use borg_agent::{
 };
 use borg_core::Uri;
 use borg_db::{BorgDb, FileRecord};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 pub use local::LocalFsBackend;
@@ -307,6 +307,30 @@ pub struct FsToolArgs {
     content_base64: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FsToolCounts {
+    pub total: usize,
+    pub active: usize,
+    pub deleted: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FsToolOutput {
+    Files { files: Vec<FileRecord> },
+    Get {
+        file: FileRecord,
+        content_base64: String,
+    },
+    Put { file: FileRecord },
+    Delete { deleted: u64 },
+    Settings {
+        backend: String,
+        root_path: Option<String>,
+        counts: FsToolCounts,
+    },
+}
+
 impl FsToolArgs {
     fn query(&self) -> Option<String> {
         option_non_empty(self.query.clone()).or_else(|| option_non_empty(self.q.clone()))
@@ -326,7 +350,11 @@ impl FsToolArgs {
     }
 }
 
-pub async fn run_borg_fs_tool(fs: &BorgFs, tool_name: &str, arguments: &FsToolArgs) -> Result<Value> {
+pub async fn run_borg_fs_tool(
+    fs: &BorgFs,
+    tool_name: &str,
+    arguments: &FsToolArgs,
+) -> Result<FsToolOutput> {
     match tool_name {
         "BorgFS-ls" => {
             let files = fs
@@ -336,7 +364,7 @@ pub async fn run_borg_fs_tool(fs: &BorgFs, tool_name: &str, arguments: &FsToolAr
                     arguments.include_deleted(),
                 )
                 .await?;
-            Ok(json!({ "files": files }))
+            Ok(FsToolOutput::Files { files })
         }
         "BorgFS-search" => {
             let query = arguments
@@ -349,17 +377,17 @@ pub async fn run_borg_fs_tool(fs: &BorgFs, tool_name: &str, arguments: &FsToolAr
                     arguments.include_deleted(),
                 )
                 .await?;
-            Ok(json!({ "files": files }))
+            Ok(FsToolOutput::Files { files })
         }
         "BorgFS-get" => {
             let file_id = option_non_empty(arguments.file_id.clone())
                 .ok_or_else(|| anyhow!("file_id is required"))?;
             let file_id = Uri::parse(&file_id)?;
             let (record, bytes) = fs.read_all(&file_id).await?;
-            Ok(json!({
-                "file": record,
-                "content_base64": base64::engine::general_purpose::STANDARD.encode(bytes),
-            }))
+            Ok(FsToolOutput::Get {
+                file: record,
+                content_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+            })
         }
         "BorgFS-put" => {
             let kind = option_non_empty(arguments.kind.clone())
@@ -374,27 +402,27 @@ pub async fn run_borg_fs_tool(fs: &BorgFs, tool_name: &str, arguments: &FsToolAr
             let file = fs
                 .put_bytes(kind, &bytes, PutFileMetadata { session_id })
                 .await?;
-            Ok(json!({ "file": file }))
+            Ok(FsToolOutput::Put { file })
         }
         "BorgFS-delete" => {
             let file_id = option_non_empty(arguments.file_id.clone())
                 .ok_or_else(|| anyhow!("file_id is required"))?;
             let file_id = Uri::parse(&file_id)?;
             let deleted = fs.soft_delete(&file_id).await?;
-            Ok(json!({ "deleted": deleted }))
+            Ok(FsToolOutput::Delete { deleted })
         }
         "BorgFS-settings" => {
             let total = fs.count_files(true).await?;
             let active = fs.count_files(false).await?;
-            Ok(json!({
-                "backend": fs.backend_name(),
-                "root_path": fs.root_path(),
-                "counts": {
-                    "total": total,
-                    "active": active,
-                    "deleted": total.saturating_sub(active),
-                }
-            }))
+            Ok(FsToolOutput::Settings {
+                backend: fs.backend_name().to_string(),
+                root_path: fs.root_path(),
+                counts: FsToolCounts {
+                    total,
+                    active,
+                    deleted: total.saturating_sub(active),
+                },
+            })
         }
         _ => Err(anyhow!("unknown BorgFS tool: {tool_name}")),
     }
@@ -476,42 +504,52 @@ mod tests {
         let put = run_borg_fs_tool(
             &fs,
             "BorgFS-put",
-            &serde_json::from_value(json!({
-                "kind": "audio",
-                "session_id": "borg:session:tools",
-                "content_base64": base64::engine::general_purpose::STANDARD.encode("hello-tools")
-            }))?,
+            &FsToolArgs {
+                kind: Some("audio".to_string()),
+                session_id: Some("borg:session:tools".to_string()),
+                content_base64: Some(
+                    base64::engine::general_purpose::STANDARD.encode("hello-tools"),
+                ),
+                ..Default::default()
+            },
         )
         .await?;
-        let file_id = put
-            .get("file")
-            .and_then(|value| value.get("file_id"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("missing file_id"))?;
+        let file_id = match put {
+            FsToolOutput::Put { file } => file.file_id.to_string(),
+            other => return Err(anyhow!("unexpected output variant: {:?}", other)),
+        };
 
         let get = run_borg_fs_tool(
             &fs,
             "BorgFS-get",
-            &serde_json::from_value(json!({ "file_id": file_id }))?,
+            &FsToolArgs {
+                file_id: Some(file_id),
+                ..Default::default()
+            },
         )
         .await?;
-        let content = get
-            .get("content_base64")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("missing content_base64"))?;
+        let content = match get {
+            FsToolOutput::Get { content_base64, .. } => content_base64,
+            other => return Err(anyhow!("unexpected output variant: {:?}", other)),
+        };
         assert_eq!(
-            base64::engine::general_purpose::STANDARD.decode(content)?,
+            base64::engine::general_purpose::STANDARD.decode(&content)?,
             b"hello-tools"
         );
 
         let settings = run_borg_fs_tool(
             &fs,
             "BorgFS-settings",
-            &serde_json::from_value(json!({}))?,
+            &FsToolArgs::default(),
         )
         .await?;
-        assert_eq!(settings["counts"]["total"], json!(1));
-        assert_eq!(settings["counts"]["active"], json!(1));
+        match settings {
+            FsToolOutput::Settings { counts, .. } => {
+                assert_eq!(counts.total, 1);
+                assert_eq!(counts.active, 1);
+            }
+            other => return Err(anyhow!("unexpected output variant: {:?}", other)),
+        }
 
         Ok(())
     }
