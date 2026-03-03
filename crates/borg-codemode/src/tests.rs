@@ -13,9 +13,9 @@ fn executes_with_injected_sdk_and_ffi() {
             CodeModeContext::default(),
         )
         .unwrap();
-    assert!(result.result_json.is_object());
+    assert!(result.result.is_object());
     let entries = result
-        .result_json
+        .result
         .get("entries")
         .and_then(Value::as_array)
         .unwrap();
@@ -32,7 +32,7 @@ fn custom_ffi_handler_can_override_sdk_behavior() {
             CodeModeContext::default(),
         )
         .unwrap();
-    assert_eq!(result.result_json, json!({ "args": ["a", "b"] }));
+    assert_eq!(result.result, json!({ "args": ["a", "b"] }));
 }
 
 #[test]
@@ -55,11 +55,11 @@ fn fetch_uses_net_ffi_and_returns_response_shape() {
         ), CodeModeContext::default())
         .unwrap();
 
-    assert_eq!(result.result_json.get("status"), Some(&json!(200)));
-    assert_eq!(result.result_json.get("ok"), Some(&json!(true)));
+    assert_eq!(result.result.get("status"), Some(&json!(200)));
+    assert_eq!(result.result.get("ok"), Some(&json!(true)));
     assert_eq!(
         result
-            .result_json
+            .result
             .get("json")
             .and_then(|v| v.get("source"))
             .and_then(Value::as_str),
@@ -81,7 +81,7 @@ fn me_returns_current_user_uri_from_context() {
             },
         )
         .unwrap();
-    assert_eq!(result.result_json, json!("borg:user:leostera"));
+    assert_eq!(result.result, json!("borg:user:leostera"));
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn env_get_and_keys_are_available_via_sdk() {
         .unwrap();
 
     let keys = result
-        .result_json
+        .result
         .get("keys")
         .and_then(Value::as_array)
         .expect("keys array");
@@ -113,11 +113,11 @@ fn env_get_and_keys_are_available_via_sdk() {
             .any(|value| value.as_str() == Some("APP_GITHUB_ACCESS_TOKEN"))
     );
     assert_eq!(
-        result.result_json.get("token").and_then(Value::as_str),
+        result.result.get("token").and_then(Value::as_str),
         Some("token-123")
     );
     assert_eq!(
-        result.result_json.get("missing").and_then(Value::as_str),
+        result.result.get("missing").and_then(Value::as_str),
         Some("fallback")
     );
 }
@@ -139,9 +139,9 @@ fn context_current_exposes_only_env_keys_not_values() {
             },
         )
         .unwrap();
-    assert!(result.result_json.get("env").is_none());
+    assert!(result.result.get("env").is_none());
     let available = result
-        .result_json
+        .result
         .get("available_env_keys")
         .and_then(Value::as_array)
         .expect("available env keys");
@@ -215,7 +215,7 @@ fn execute_allows_valid_borg_me_calls() {
             CodeModeContext::default(),
         )
         .unwrap();
-    assert_eq!(result.result_json, Value::Null);
+    assert_eq!(result.result, Value::Null);
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn execute_supports_dynamic_file_imports() {
     );
 
     let result = rt.execute(&code, CodeModeContext::default()).unwrap();
-    assert_eq!(result.result_json, json!(42));
+    assert_eq!(result.result, json!(42));
 
     let _ = std::fs::remove_file(module_path);
 }
@@ -281,7 +281,7 @@ export default async () => kleur.bold("ok");
     let result = rt.execute(&code, CodeModeContext::default()).unwrap();
     assert!(
         result
-            .result_json
+            .result
             .as_str()
             .is_some_and(|value| value.contains("ok"))
     );
@@ -298,7 +298,7 @@ fn execute_supports_dynamic_jsr_imports() {
             CodeModeContext::default(),
         )
         .unwrap();
-    assert_eq!(result.result_json, json!(1));
+    assert_eq!(result.result, json!(1));
 }
 
 #[test]

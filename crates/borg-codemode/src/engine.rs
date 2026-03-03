@@ -189,7 +189,7 @@ impl CodeModeRuntime {
         search_capabilities(query)
     }
 
-    pub fn execute(&self, code: &str, context: CodeModeContext) -> Result<ExecutionResult> {
+    pub fn execute(&self, code: &str, context: CodeModeContext) -> Result<ExecutionResult<Value>> {
         let _runtime_lock = runtime_execution_lock()
             .lock()
             .map_err(|_| anyhow!("code-mode runtime execution lock poisoned"))?;
@@ -262,13 +262,13 @@ impl CodeModeRuntime {
                 )))
             })?;
 
-            let result_json: Value = {
+            let result: Value = {
                 let scope = &mut runtime.handle_scope();
                 let local = v8::Local::new(scope, value);
                 serde_v8::from_v8(scope, local).unwrap_or(Value::Null)
             };
 
-            trace!(target: "borg_codemode", result = ?result_json, "js execution result");
+            trace!(target: "borg_codemode", result = ?result, "js execution result");
             let duration = start.elapsed();
             let duration_ms = duration.as_millis();
             info!(target: "borg_codemode", duration_ms, "JS execution finished");
@@ -276,7 +276,7 @@ impl CodeModeRuntime {
             Ok(ExecutionResult {
                 stdout: String::new(),
                 stderr: String::new(),
-                result_json,
+                result,
                 duration,
             })
         }));

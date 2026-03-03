@@ -10,6 +10,11 @@ use crate::types::ShellModeContext;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ShellExecutionData {
+    pub exit_code: i32,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShellModeRuntime {
     default_timeout: Duration,
@@ -40,7 +45,11 @@ impl ShellModeRuntime {
         self
     }
 
-    pub fn execute(&self, command: &str, context: ShellModeContext) -> Result<ExecutionResult> {
+    pub fn execute(
+        &self,
+        command: &str,
+        context: ShellModeContext,
+    ) -> Result<ExecutionResult<ShellExecutionData>> {
         let timeout = context.timeout(self.default_timeout);
 
         let cwd = context
@@ -77,15 +86,7 @@ impl ShellModeRuntime {
         Ok(ExecutionResult {
             stdout: stdout.clone(),
             stderr: stderr.clone(),
-            result_json: serde_json::json!({
-                "exit_code": exit_code,
-                "stdout": stdout,
-                "stderr": stderr,
-                "duration": {
-                    "secs": duration.as_secs(),
-                    "nanos": duration.subsec_nanos()
-                }
-            }),
+            result: ShellExecutionData { exit_code },
             duration,
         })
     }
