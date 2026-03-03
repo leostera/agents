@@ -5,7 +5,7 @@ use uuid::Uuid;
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 
-use crate::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use crate::{Tool, ToolRequest, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 
 pub fn default_agent_admin_tool_specs() -> Vec<ToolSpec> {
     vec![
@@ -93,7 +93,7 @@ pub fn build_agent_admin_toolchain(
         .add_tool(Tool::new(
             required_spec("Agents-listAgents")?,
             None,
-            move |request| {
+            move |request: ToolRequest| {
                 let db = db_list.clone();
                 async move {
                     let limit = request
@@ -109,7 +109,7 @@ pub fn build_agent_admin_toolchain(
         .add_tool(Tool::new(
             required_spec("Agents-whoAmI")?,
             None,
-            move |_request| {
+            move |_request: ToolRequest| {
                 let agent_id = whoami_agent_id.clone();
                 let session_id = whoami_session_id.clone();
                 async move {
@@ -123,7 +123,7 @@ pub fn build_agent_admin_toolchain(
         .add_tool(Tool::new(
             required_spec("Agents-createAgent")?,
             None,
-            move |request| {
+            move |request: ToolRequest| {
                 let db = db_create.clone();
                 async move {
                     let agent_id = request
@@ -159,7 +159,7 @@ pub fn build_agent_admin_toolchain(
         .add_tool(Tool::new(
             required_spec("Agents-updateAgent")?,
             None,
-            move |request| {
+            move |request: ToolRequest| {
                 let db = db_update.clone();
                 async move {
                     let agent_id = Uri::parse(req_str(&request.arguments, "agent_id")?)?;
@@ -207,7 +207,7 @@ pub fn build_agent_admin_toolchain(
         .add_tool(Tool::new(
             required_spec("Agents-disableAgent")?,
             None,
-            move |request| {
+            move |request: ToolRequest| {
                 let db = db_disable.clone();
                 async move {
                     let agent_id = Uri::parse(req_str(&request.arguments, "agent_id")?)?;

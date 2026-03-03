@@ -84,14 +84,16 @@ pub fn to_provider_tool_specs(tool_specs: &[ToolSpec]) -> Vec<ToolDescriptor> {
     tool_specs.iter().map(ToolDescriptor::from).collect()
 }
 
-type ToolFuture = Pin<Box<dyn Future<Output = Result<ToolResponse>> + Send>>;
-type ToolCallback = Arc<dyn Fn(ToolRequest) -> ToolFuture + Send + Sync>;
+type TypedToolFuture<TToolResult> =
+    Pin<Box<dyn Future<Output = Result<ToolResponse<TToolResult>>> + Send>>;
+type TypedToolCallback<TToolCall, TToolResult> =
+    Arc<dyn Fn(ToolRequest<TToolCall>) -> TypedToolFuture<TToolResult> + Send + Sync>;
 
-pub struct Tool {
+pub struct Tool<TToolCall = Value, TToolResult = Value> {
     pub spec: ToolSpec,
     // Transitional metadata for provider-facing schema docs; no runtime enforcement.
     pub output_schema: Option<Value>,
-    callback: ToolCallback,
+    callback: TypedToolCallback<TToolCall, TToolResult>,
 }
 
 impl Tool {
@@ -99,6 +101,16 @@ impl Tool {
     where
         F: Fn(ToolRequest) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<ToolResponse>> + Send + 'static,
+    {
+        Self::new_typed(spec, output_schema, callback)
+    }
+}
+
+impl<TToolCall, TToolResult> Tool<TToolCall, TToolResult> {
+    pub fn new_typed<F, Fut>(spec: ToolSpec, output_schema: Option<Value>, callback: F) -> Self
+    where
+        F: Fn(ToolRequest<TToolCall>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<ToolResponse<TToolResult>>> + Send + 'static,
     {
         Self {
             spec,
@@ -108,22 +120,22 @@ impl Tool {
     }
 }
 
-pub struct Toolchain {
-    tools: HashMap<String, Tool>,
+pub struct Toolchain<TToolCall = Value, TToolResult = Value> {
+    tools: HashMap<String, Tool<TToolCall, TToolResult>>,
 }
 
-impl Toolchain {
+impl<TToolCall, TToolResult> Toolchain<TToolCall, TToolResult> {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
         }
     }
 
-    pub fn builder() -> ToolchainBuilder {
+    pub fn builder() -> ToolchainBuilder<TToolCall, TToolResult> {
         ToolchainBuilder::new()
     }
 
-    pub fn register(&mut self, tool: Tool) -> Result<()> {
+    pub fn register(&mut self, tool: Tool<TToolCall, TToolResult>) -> Result<()> {
         let name = tool.spec.name.clone();
         if self.tools.contains_key(&name) {
             return Err(anyhow!("tool already registered: {}", name));
@@ -140,7 +152,7 @@ impl Toolchain {
         self.tools.is_empty()
     }
 
-    pub fn merge(mut self, other: Toolchain) -> Result<Self> {
+    pub fn merge(mut self, other: Toolchain<TToolCall, TToolResult>) -> Result<Self> {
         for (name, tool) in other.tools {
             if self.tools.contains_key(&name) {
                 return Err(anyhow!("tool already registered: {}", name));
@@ -151,14 +163,17 @@ impl Toolchain {
     }
 }
 
-impl Default for Toolchain {
+impl<TToolCall, TToolResult> Default for Toolchain<TToolCall, TToolResult> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Toolchain {
-    pub async fn run(&self, request: ToolRequest) -> Result<ToolResponse> {
+impl<TToolCall, TToolResult> Toolchain<TToolCall, TToolResult> {
+    pub async fn run(
+        &self,
+        request: ToolRequest<TToolCall>,
+    ) -> Result<ToolResponse<TToolResult>> {
         let Some(tool) = self.tools.get(&request.tool_name) else {
             return Err(anyhow!("unknown tool {}", request.tool_name));
         };
@@ -166,29 +181,29 @@ impl Toolchain {
     }
 }
 
-pub struct ToolchainBuilder {
-    toolchain: Toolchain,
+pub struct ToolchainBuilder<TToolCall = Value, TToolResult = Value> {
+    toolchain: Toolchain<TToolCall, TToolResult>,
 }
 
-impl Default for ToolchainBuilder {
+impl<TToolCall, TToolResult> Default for ToolchainBuilder<TToolCall, TToolResult> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ToolchainBuilder {
+impl<TToolCall, TToolResult> ToolchainBuilder<TToolCall, TToolResult> {
     pub fn new() -> Self {
         Self {
             toolchain: Toolchain::new(),
         }
     }
 
-    pub fn add_tool(mut self, tool: Tool) -> Result<Self> {
+    pub fn add_tool(mut self, tool: Tool<TToolCall, TToolResult>) -> Result<Self> {
         self.toolchain.register(tool)?;
         Ok(self)
     }
 
-    pub fn build(self) -> Result<Toolchain> {
+    pub fn build(self) -> Result<Toolchain<TToolCall, TToolResult>> {
         Ok(self.toolchain)
     }
 }
