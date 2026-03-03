@@ -36,7 +36,7 @@ Scope: builds, workspace wiring, and command expectations.
 - Dev profile keeps dependency debuginfo disabled:
   - `[profile.dev.package."*"] debug = 0`
   - This shortens local rebuilds while preserving debuginfo for workspace crates.
-- Embedded local inference compiles via `crates/borg-infer` using `llama-cpp-2` when the crate feature `llama-cpp` is enabled.
+- Embedded local inference compiles via `crates/borg-infer` using `llama-cpp-2` unconditionally.
 
 ## Commit Hygiene
 
