@@ -93,6 +93,42 @@ struct ListFactsArgs {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct StateFactArg {
+    entity: String,
+    field: String,
+    value: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StateFactsArgs {
+    source: String,
+    facts: Vec<StateFactArg>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RetractPatternArg {
+    entity: String,
+    field: String,
+    value: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RetractTargetArg {
+    #[serde(rename = "factUri", default)]
+    fact_uri: Option<String>,
+    #[serde(default)]
+    pattern: Option<RetractPatternArg>,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RetractFactsArgs {
+    source: String,
+    targets: Vec<RetractTargetArg>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct DefineNamespaceArgs {
     #[serde(rename = "namespaceUri")]
     namespace_uri: String,
@@ -761,43 +797,34 @@ pub fn build_memory_toolchain(
     let memory_for_search = memory;
 
     Toolchain::builder()
-        .add_tool(Tool::new(state_facts_spec, None, move |request| {
+        .add_tool(Tool::new_transcoded(state_facts_spec, None, move |request: borg_agent::ToolRequest<StateFactsArgs>| {
             let memory = memory_for_state_facts.clone();
             async move {
-                let source = request
-                    .arguments
-                    .get("source")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("Memory-stateFacts tool requires source"))?;
+                let source = request.arguments.source.trim();
+                if source.is_empty() {
+                    return Err(anyhow!("Memory-stateFacts tool requires source"));
+                }
                 let source_uri = Uri::parse(source)?;
-                let facts = request
-                    .arguments
-                    .get("facts")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| anyhow!("Memory-stateFacts tool requires facts"))?;
-                if facts.is_empty() {
+                if request.arguments.facts.is_empty() {
                     return Err(anyhow!("Memory-stateFacts expects a non-empty facts array"));
                 }
 
-                let mut inputs = Vec::with_capacity(facts.len());
-                for fact in facts {
-                    let entity = fact
-                        .get("entity")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| anyhow!("Memory-stateFacts fact requires entity"))?;
-                    let field = fact
-                        .get("field")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| anyhow!("Memory-stateFacts fact requires field"))?;
-                    let value = fact
-                        .get("value")
-                        .ok_or_else(|| anyhow!("Memory-stateFacts fact requires value"))?;
+                let mut inputs = Vec::with_capacity(request.arguments.facts.len());
+                for fact in request.arguments.facts {
+                    let entity = fact.entity.trim();
+                    if entity.is_empty() {
+                        return Err(anyhow!("Memory-stateFacts fact requires entity"));
+                    }
+                    let field = fact.field.trim();
+                    if field.is_empty() {
+                        return Err(anyhow!("Memory-stateFacts fact requires field"));
+                    }
                     inputs.push(FactInput {
                         source: source_uri.clone(),
                         entity: Uri::parse(entity)?,
                         field: Uri::parse(field)?,
                         arity: Default::default(),
-                        value: parse_rfd_value(value)?,
+                        value: parse_rfd_value(&fact.value)?,
                     });
                 }
                 let result = memory.state_facts(inputs).await?;
@@ -807,7 +834,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(serde_json::to_string(&out)?),
+                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
                 })
             }
         }))?
@@ -1029,33 +1056,28 @@ pub fn build_memory_toolchain(
                 })
             }
         }))?
-        .add_tool(Tool::new(retract_facts_spec, None, move |request| {
+        .add_tool(Tool::new_transcoded(retract_facts_spec, None, move |request: borg_agent::ToolRequest<RetractFactsArgs>| {
             let memory = memory_for_retract.clone();
             async move {
-                let source = request
-                    .arguments
-                    .get("source")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("Memory-retractFacts tool requires source"))?;
+                let source = request.arguments.source.trim();
+                if source.is_empty() {
+                    return Err(anyhow!("Memory-retractFacts tool requires source"));
+                }
                 let source_uri = Uri::parse(source)?;
-                let targets = request
-                    .arguments
-                    .get("targets")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| anyhow!("Memory-retractFacts tool requires targets"))?;
-                if targets.is_empty() {
+                if request.arguments.targets.is_empty() {
                     return Err(anyhow!("Memory-retractFacts expects a non-empty targets array"));
                 }
 
                 let mut retract_ids: HashSet<String> = HashSet::new();
-                for target in targets {
-                    if target.get("factUri").is_none() && target.get("pattern").is_none() {
+                for target in request.arguments.targets {
+                    let _ = target.reason;
+                    if target.fact_uri.is_none() && target.pattern.is_none() {
                         return Err(anyhow!(
                             "Memory-retractFacts target requires factUri or pattern"
                         ));
                     }
-                    if let Some(fact_uri) = target.get("factUri").and_then(Value::as_str) {
-                        if let Some(fact) = memory.get_fact(fact_uri).await?
+                    if let Some(fact_uri) = target.fact_uri {
+                        if let Some(fact) = memory.get_fact(&fact_uri).await?
                             && !fact.is_retracted
                         {
                             retract_ids.insert(fact.fact_id.to_string());
@@ -1063,19 +1085,16 @@ pub fn build_memory_toolchain(
                         continue;
                     }
 
-                    if let Some(pattern) = target.get("pattern") {
-                        let entity = pattern
-                            .get("entity")
-                            .and_then(Value::as_str)
-                            .ok_or_else(|| anyhow!("pattern.entity is required"))?;
-                        let field = pattern
-                            .get("field")
-                            .and_then(Value::as_str)
-                            .ok_or_else(|| anyhow!("pattern.field is required"))?;
-                        let value = pattern
-                            .get("value")
-                            .ok_or_else(|| anyhow!("pattern.value is required"))?;
-                        let parsed_value = parse_rfd_value(value)?;
+                    if let Some(pattern) = target.pattern {
+                        let entity = pattern.entity.trim();
+                        if entity.is_empty() {
+                            return Err(anyhow!("pattern.entity is required"));
+                        }
+                        let field = pattern.field.trim();
+                        if field.is_empty() {
+                            return Err(anyhow!("pattern.field is required"));
+                        }
+                        let parsed_value = parse_rfd_value(&pattern.value)?;
                         let entity_uri = Uri::parse(entity)?;
                         let field_uri = Uri::parse(field)?;
                         let candidates = memory
@@ -1133,7 +1152,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(serde_json::to_string(&out)?),
+                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
                 })
             }
         }))?
