@@ -22,9 +22,16 @@ pub struct LlamaCppEngine {
 
 impl LlamaCppEngine {
     pub fn new() -> Result<Self> {
-        let backend = LlamaBackend::init().map_err(|error| {
+        Self::new_with_debug(false)
+    }
+
+    pub fn new_with_debug(debug: bool) -> Result<Self> {
+        let mut backend = LlamaBackend::init().map_err(|error| {
             InferError::Engine(format!("failed to init llama backend: {error}"))
         })?;
+        if !debug {
+            backend.void_logs();
+        }
         Ok(Self {
             backend,
             model: None,
@@ -97,33 +104,12 @@ impl InferenceEngine for LlamaCppEngine {
         }
 
         let mut decoder = encoding_rs::UTF_8.new_decoder();
-
-        let batch_capacity = std::cmp::max(prompt_tokens.len().saturating_add(1), 512);
-        let mut batch = LlamaBatch::new(batch_capacity, 1);
-
-        let last_prompt_index = prompt_tokens.len().saturating_sub(1);
-        for (idx, token) in prompt_tokens.iter().copied().enumerate() {
-            batch
-                .add(
-                    token,
-                    i32::try_from(idx).map_err(|_| {
-                        InferError::Engine("prompt too long for llama batch".to_string())
-                    })?,
-                    &[0],
-                    idx == last_prompt_index,
-                )
-                .map_err(|error| {
-                    InferError::Engine(format!("failed to add prompt token to batch: {error}"))
-                })?;
-        }
-
-        ctx.decode(&mut batch).map_err(|error| {
-            InferError::Engine(format!("llama decode failed for prompt prefill: {error}"))
-        })?;
+        let mut last_logits_index = prefill_prompt(&mut ctx, &prompt_tokens)?;
 
         let mut sampler = build_sampler(params);
-        let mut n_cur = batch.n_tokens();
+        let mut n_cur = i32::try_from(prompt_tokens.len()).unwrap_or(i32::MAX);
         let mut generated_tokens = 0_u32;
+        let mut batch = LlamaBatch::new(512, 1);
 
         while generated_tokens < params.max_tokens {
             if cancelled.load(Ordering::Relaxed) {
@@ -134,7 +120,7 @@ impl InferenceEngine for LlamaCppEngine {
                 });
             }
 
-            let token = sampler.sample(&ctx, batch.n_tokens() - 1);
+            let token = sampler.sample(&ctx, last_logits_index);
             sampler.accept(token);
 
             if model.is_eog_token(token) {
@@ -164,6 +150,8 @@ impl InferenceEngine for LlamaCppEngine {
             ctx.decode(&mut batch).map_err(|error| {
                 InferError::Engine(format!("llama decode failed during generation: {error}"))
             })?;
+            // Single-token decode batches always expose logits at slot 0.
+            last_logits_index = 0;
         }
 
         Ok(EngineGenerationOutcome {
@@ -172,6 +160,48 @@ impl InferenceEngine for LlamaCppEngine {
             finish_reason: GenerationFinishReason::MaxTokens,
         })
     }
+}
+
+fn prefill_prompt(
+    ctx: &mut llama_cpp_2::context::LlamaContext<'_>,
+    prompt_tokens: &[llama_cpp_2::token::LlamaToken],
+) -> Result<i32> {
+    if prompt_tokens.is_empty() {
+        return Ok(0);
+    }
+
+    let n_batch = usize::try_from(ctx.n_batch())
+        .ok()
+        .filter(|v| *v > 0)
+        .unwrap_or(512);
+    let mut start = 0_usize;
+    let mut last_logits_index = 0_i32;
+
+    while start < prompt_tokens.len() {
+        let end = std::cmp::min(start.saturating_add(n_batch), prompt_tokens.len());
+        let chunk = &prompt_tokens[start..end];
+        let mut batch = LlamaBatch::new(std::cmp::max(chunk.len().saturating_add(1), 512), 1);
+
+        for (local_idx, token) in chunk.iter().copied().enumerate() {
+            let global_idx = start.saturating_add(local_idx);
+            let pos = i32::try_from(global_idx)
+                .map_err(|_| InferError::Engine("prompt too long for llama batch".to_string()))?;
+            let is_last = global_idx == prompt_tokens.len().saturating_sub(1);
+            if is_last {
+                last_logits_index = i32::try_from(local_idx).unwrap_or(i32::MAX);
+            }
+            batch.add(token, pos, &[0], is_last).map_err(|error| {
+                InferError::Engine(format!("failed to add prompt token to batch: {error}"))
+            })?;
+        }
+
+        ctx.decode(&mut batch).map_err(|error| {
+            InferError::Engine(format!("llama decode failed for prompt prefill: {error}"))
+        })?;
+        start = end;
+    }
+
+    Ok(last_logits_index)
 }
 
 fn build_sampler(params: &GenerationParams) -> LlamaSampler {

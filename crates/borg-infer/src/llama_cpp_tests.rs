@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use crate::LlamaCppEngine;
 use crate::engine::InferenceEngine;
 use crate::runtime::{EmbeddedInferenceRuntime, InferenceRuntime};
 use crate::types::{GenerationFinishReason, GenerationParams, InferError};
+use crate::{CompileParams, ContextCompiler, LlamaCppEngine};
 
 fn llama_cpp_test_model_path() -> Option<PathBuf> {
     let path = std::env::var_os("BORG_INFER_TEST_GGUF")?;
@@ -69,4 +69,40 @@ fn llama_cpp_engine_smoke_generate_with_real_model() {
         !output.is_empty() || report.finish_reason == GenerationFinishReason::EndOfGenerationToken,
         "expected token output unless generation terminated immediately with EOG"
     );
+}
+
+#[test]
+fn context_compiler_smoke_generate_with_real_model() {
+    let Some(model_path) = llama_cpp_test_model_path() else {
+        eprintln!(
+            "skipping context_compiler_smoke_generate_with_real_model: set BORG_INFER_TEST_GGUF to a GGUF file"
+        );
+        return;
+    };
+
+    let compiled = ContextCompiler::builder()
+        .static_text("You are Borg. When asked 'Who are you?' answer exactly: 'I am Borg.'")
+        .params(CompileParams { n_ctx: 512 })
+        .compile(&model_path)
+        .expect("context compilation should succeed");
+
+    let generation = compiled
+        .generate(
+            "Who are you? Answer exactly.",
+            &GenerationParams {
+                max_tokens: 16,
+                temperature: 0.0,
+                top_p: 1.0,
+                top_k: 0,
+                seed: 7,
+            },
+        )
+        .expect("compiled context generation should succeed");
+
+    assert!(generation.report.prompt_tokens > 0);
+    assert!(generation.report.generated_tokens <= 16);
+    assert!(matches!(
+        generation.report.finish_reason,
+        GenerationFinishReason::EndOfGenerationToken | GenerationFinishReason::MaxTokens
+    ));
 }
