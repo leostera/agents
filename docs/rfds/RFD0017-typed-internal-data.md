@@ -294,6 +294,8 @@ Input/output correctness is defined by serde decode/encode of typed request/resp
 7. Runtime tool-call/result contracts in `borg-agent` now use concrete `BorgToolCall` / `BorgToolResult` types end-to-end in `borg-exec` + `borg-ports` message flow, replacing direct `Value` generic usage in these internal signatures.
 8. Legacy tool implementations still parse JSON arguments in tool modules, but adaptation happens in `Tool::new` (`BorgToolCall` -> parsed JSON for callback, callback JSON result -> `BorgToolResult`) so exec/ports/session path signatures no longer use `Value` directly.
 9. `borg-agent::Agent::run` no longer stores intermediate tool-call arguments as `Value`; tool blocks are decoded directly into typed `TToolCall` before dispatch.
+10. Added `Tool::new_transcoded` adapter in `borg-agent` so tool modules can declare typed request/response structs while still registering into the unified runtime toolchain.
+11. Migrated `borg-agent` admin tools (`Agents-*`) to typed request DTOs (`ListAgentsArgs`, `CreateAgentArgs`, etc.) and removed `Value`-shaped request parsing from that module’s execution path.
 
 ### Phase 3 - `borg-db` typed APIs
 

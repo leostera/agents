@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use borg_llm::ToolDescriptor;
-use serde::de::Deserializer;
+use serde::de::{DeserializeOwned, Deserializer};
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 use std::time::Duration;
@@ -202,6 +202,46 @@ impl Tool<BorgToolCall, BorgToolResult> {
                         ToolResultData::Execution { result, duration } => {
                             ToolResultData::Execution {
                                 result: BorgToolResult::from(result),
+                                duration,
+                            }
+                        }
+                        ToolResultData::Error { message } => ToolResultData::Error { message },
+                    },
+                })
+            }
+        })
+    }
+
+    pub fn new_transcoded<TCall, TResp, F, Fut>(
+        spec: ToolSpec,
+        output_schema: Option<Value>,
+        callback: F,
+    ) -> Self
+    where
+        TCall: DeserializeOwned + Send + 'static,
+        TResp: Serialize + Send + 'static,
+        F: Fn(ToolRequest<TCall>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<ToolResponse<TResp>>> + Send + 'static,
+    {
+        let callback = Arc::new(callback);
+        Self::new_typed(spec, output_schema, move |request| {
+            let callback = Arc::clone(&callback);
+            async move {
+                let value = request.arguments.to_value()?;
+                let arguments: TCall = serde_json::from_value(value)?;
+                let response = callback(ToolRequest {
+                    tool_call_id: request.tool_call_id,
+                    tool_name: request.tool_name,
+                    arguments,
+                })
+                .await?;
+                Ok(ToolResponse {
+                    content: match response.content {
+                        ToolResultData::Text(text) => ToolResultData::Text(text),
+                        ToolResultData::Capabilities(items) => ToolResultData::Capabilities(items),
+                        ToolResultData::Execution { result, duration } => {
+                            ToolResultData::Execution {
+                                result: BorgToolResult::from(serde_json::to_value(result)?),
                                 duration,
                             }
                         }
