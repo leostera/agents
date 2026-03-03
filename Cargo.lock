@@ -843,6 +843,7 @@ dependencies = [
  "borg-agent",
  "borg-core",
  "borg-db",
+ "serde",
  "serde_json",
 ]
 

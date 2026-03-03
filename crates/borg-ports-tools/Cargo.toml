@@ -9,3 +9,4 @@ serde_json.workspace = true
 borg-agent = { path = "../borg-agent" }
 borg-core = { path = "../borg-core" }
 borg-db = { path = "../borg-db" }
+serde = { workspace = true, features = ["derive"] }

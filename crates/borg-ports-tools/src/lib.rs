@@ -2,7 +2,43 @@ use anyhow::{Result, anyhow};
 use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use borg_core::Uri;
 use borg_db::BorgDb;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+#[derive(Debug, Clone, Deserialize)]
+struct ListPortsArgs {
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CreatePortArgs {
+    port_uri: String,
+    provider: String,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    allows_guests: Option<bool>,
+    #[serde(default)]
+    default_agent_id: Option<String>,
+    #[serde(default)]
+    settings: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdatePortArgs {
+    port_uri: String,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    allows_guests: Option<bool>,
+    #[serde(default)]
+    default_agent_id: Option<String>,
+    #[serde(default)]
+    settings: Option<Value>,
+}
 
 pub fn default_port_admin_tool_specs() -> Vec<ToolSpec> {
     vec![
@@ -60,59 +96,45 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
     let db_update = db;
 
     Toolchain::builder()
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_transcoded(
             required_spec("Ports-listPorts")?,
             None,
-            move |request| {
+            move |request: borg_agent::ToolRequest<ListPortsArgs>| {
                 let db = db_list.clone();
                 async move {
-                    let limit = request
-                        .arguments
-                        .get("limit")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(200) as usize;
+                    let limit = request.arguments.limit.unwrap_or(200);
                     let ports = db.list_ports(limit).await?;
-                    json_text(json!({ "ports": ports }))
+                    json_text(&json!({ "ports": ports }))
                 }
             },
         ))?
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_transcoded(
             required_spec("Ports-createPort")?,
             None,
-            move |request| {
+            move |request: borg_agent::ToolRequest<CreatePortArgs>| {
                 let db = db_create.clone();
                 async move {
-                    let port_uri = Uri::parse(req_str(&request.arguments, "port_uri")?)?;
+                    let port_uri = Uri::parse(&require_non_empty(&request.arguments.port_uri, "port_uri")?)?;
                     let port_name = port_name_from_uri(&port_uri)?;
                     if db.get_port(&port_name).await?.is_some() {
                         return Err(anyhow!("port.already_exists"));
                     }
-                    let provider = req_str(&request.arguments, "provider")?;
-                    let enabled = request
-                        .arguments
-                        .get("enabled")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(true);
-                    let allows_guests = request
-                        .arguments
-                        .get("allows_guests")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(true);
+                    let provider = require_non_empty(&request.arguments.provider, "provider")?;
+                    let enabled = request.arguments.enabled.unwrap_or(true);
+                    let allows_guests = request.arguments.allows_guests.unwrap_or(true);
                     let default_agent_id = request
                         .arguments
-                        .get("default_agent_id")
-                        .and_then(Value::as_str)
+                        .default_agent_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
                         .map(Uri::parse)
                         .transpose()?;
-                    let settings = request
-                        .arguments
-                        .get("settings")
-                        .cloned()
-                        .unwrap_or_else(|| json!({}));
+                    let settings = request.arguments.settings.unwrap_or_else(|| json!({}));
 
                     db.upsert_port(
                         &port_name,
-                        provider,
+                        &provider,
                         enabled,
                         allows_guests,
                         default_agent_id.as_ref(),
@@ -124,47 +146,37 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                         .get_port(&port_name)
                         .await?
                         .ok_or_else(|| anyhow!("port.not_found"))?;
-                    json_text(json!({ "port": port }))
+                    json_text(&json!({ "port": port }))
                 }
             },
         ))?
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_transcoded(
             required_spec("Ports-updatePort")?,
             None,
-            move |request| {
+            move |request: borg_agent::ToolRequest<UpdatePortArgs>| {
                 let db = db_update.clone();
                 async move {
-                    let port_uri = Uri::parse(req_str(&request.arguments, "port_uri")?)?;
+                    let port_uri = Uri::parse(&require_non_empty(&request.arguments.port_uri, "port_uri")?)?;
                     let port_name = port_name_from_uri(&port_uri)?;
                     let existing = db
                         .get_port(&port_name)
                         .await?
                         .ok_or_else(|| anyhow!("port.not_found"))?;
 
-                    let provider = opt_trimmed_str(&request.arguments, "provider")
+                    let provider = option_non_empty(request.arguments.provider)
                         .unwrap_or(existing.provider.clone());
-                    let enabled = request
-                        .arguments
-                        .get("enabled")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(existing.enabled);
-                    let allows_guests = request
-                        .arguments
-                        .get("allows_guests")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(existing.allows_guests);
+                    let enabled = request.arguments.enabled.unwrap_or(existing.enabled);
+                    let allows_guests = request.arguments.allows_guests.unwrap_or(existing.allows_guests);
                     let default_agent_id = request
                         .arguments
-                        .get("default_agent_id")
-                        .and_then(Value::as_str)
+                        .default_agent_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
                         .map(Uri::parse)
                         .transpose()?
                         .or(existing.default_agent_id);
-                    let settings = request
-                        .arguments
-                        .get("settings")
-                        .cloned()
-                        .unwrap_or(existing.settings);
+                    let settings = request.arguments.settings.unwrap_or(existing.settings);
 
                     db.upsert_port(
                         &port_name,
@@ -180,7 +192,7 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                         .get_port(&port_name)
                         .await?
                         .ok_or_else(|| anyhow!("port.not_found"))?;
-                    json_text(json!({ "port": port }))
+                    json_text(&json!({ "port": port }))
                 }
             },
         ))?
@@ -202,25 +214,23 @@ fn required_spec(name: &str) -> Result<ToolSpec> {
         .ok_or_else(|| anyhow!("missing port admin tool spec {}", name))
 }
 
-fn json_text(value: Value) -> Result<ToolResponse<Value>> {
+fn json_text<T: Serialize>(value: &T) -> Result<ToolResponse<()>> {
     Ok(ToolResponse {
-        content: ToolResultData::Text(serde_json::to_string(&value)?),
+        content: ToolResultData::Text(serde_json::to_string(value)?),
     })
 }
 
-fn req_str<'a>(arguments: &'a Value, key: &str) -> Result<&'a str> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("validation_failed: missing {}", key))
+fn require_non_empty(value: &str, key: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("validation_failed: missing {}", key));
+    }
+    Ok(trimmed.to_string())
 }
 
-fn opt_trimmed_str(arguments: &Value, key: &str) -> Option<String> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
+fn option_non_empty(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
