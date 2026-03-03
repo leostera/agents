@@ -1,10 +1,55 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use borg_agent::{
+    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
+};
 use borg_db::BorgDb;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::model::TaskStatus;
 use crate::store::{CreateTaskInput, ListParams, SplitSubtaskInput, TaskGraphStore, TaskPatch};
+
+#[derive(Debug, Clone, Deserialize)]
+struct CreateTaskArgs {
+    session_uri: String,
+    creator_agent_id: String,
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    definition_of_done: Option<String>,
+    assignee_agent_id: String,
+    #[serde(default)]
+    labels: Option<Vec<String>>,
+    #[serde(default)]
+    parent_uri: Option<String>,
+    #[serde(default)]
+    blocked_by: Option<Vec<String>>,
+    #[serde(default)]
+    references: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GetTaskArgs {
+    uri: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TaskPatchArgs {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    definition_of_done: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateTaskFieldsArgs {
+    session_uri: String,
+    uri: String,
+    patch: TaskPatchArgs,
+}
 
 pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![
@@ -432,7 +477,9 @@ pub fn build_taskgraph_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, B
         .build()
 }
 
-pub fn build_taskgraph_worker_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+pub fn build_taskgraph_worker_toolchain(
+    db: BorgDb,
+) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let store = TaskGraphStore::new(db);
 
     Toolchain::builder()
@@ -468,26 +515,43 @@ struct TaskGraphTools;
 impl TaskGraphTools {
     fn create_task(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-createTask")?;
-        Ok(Tool::new(spec, None, move |request| {
+        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<CreateTaskArgs>| {
             let store = store.clone();
             async move {
-                let session_uri = req_str(&request.arguments, "session_uri")?;
-                let creator_agent_id = req_str(&request.arguments, "creator_agent_id")?;
+                let session_uri = request.arguments.session_uri.trim().to_string();
+                let creator_agent_id = request.arguments.creator_agent_id.trim().to_string();
+                let title = request.arguments.title.trim().to_string();
+                let assignee_agent_id = request.arguments.assignee_agent_id.trim().to_string();
+                if session_uri.is_empty()
+                    || creator_agent_id.is_empty()
+                    || title.is_empty()
+                    || assignee_agent_id.is_empty()
+                {
+                    return Err(anyhow!("task.validation_failed: missing required fields"));
+                }
                 let input = CreateTaskInput {
-                    title: req_str(&request.arguments, "title")?.to_string(),
-                    description: opt_str(&request.arguments, "description").unwrap_or_default(),
-                    definition_of_done: opt_str(&request.arguments, "definition_of_done")
-                        .unwrap_or_default(),
-                    assignee_agent_id: req_str(&request.arguments, "assignee_agent_id")?
+                    title,
+                    description: request
+                        .arguments
+                        .description
+                        .unwrap_or_default()
+                        .trim()
                         .to_string(),
-                    parent_uri: opt_str(&request.arguments, "parent_uri"),
-                    blocked_by: str_array(&request.arguments, "blocked_by")?,
-                    references: str_array(&request.arguments, "references")?,
-                    labels: str_array(&request.arguments, "labels")?,
+                    definition_of_done: request
+                        .arguments
+                        .definition_of_done
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                    assignee_agent_id,
+                    parent_uri: option_non_empty(request.arguments.parent_uri),
+                    blocked_by: normalize_strs(request.arguments.blocked_by),
+                    references: normalize_strs(request.arguments.references),
+                    labels: normalize_strs(request.arguments.labels),
                 };
 
                 let task = store
-                    .create_task(session_uri, creator_agent_id, input)
+                    .create_task(&session_uri, &creator_agent_id, input)
                     .await?;
                 json_text(json!({ "task": task }))
             }
@@ -496,11 +560,14 @@ impl TaskGraphTools {
 
     fn get_task(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-getTask")?;
-        Ok(Tool::new(spec, None, move |request| {
+        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<GetTaskArgs>| {
             let store = store.clone();
             async move {
-                let uri = req_str(&request.arguments, "uri")?;
-                let task = store.get_task(uri).await?;
+                let uri = request.arguments.uri.trim().to_string();
+                if uri.is_empty() {
+                    return Err(anyhow!("task.validation_failed: missing uri"));
+                }
+                let task = store.get_task(&uri).await?;
                 json_text(json!({ "task": task }))
             }
         }))
@@ -508,30 +575,20 @@ impl TaskGraphTools {
 
     fn update_task_fields(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-updateTaskFields")?;
-        Ok(Tool::new(spec, None, move |request| {
+        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<UpdateTaskFieldsArgs>| {
             let store = store.clone();
             async move {
-                let session_uri = req_str(&request.arguments, "session_uri")?;
-                let uri = req_str(&request.arguments, "uri")?;
-                let patch_obj = request
-                    .arguments
-                    .get("patch")
-                    .ok_or_else(|| anyhow!("task.validation_failed: patch missing"))?;
+                let session_uri = request.arguments.session_uri.trim().to_string();
+                let uri = request.arguments.uri.trim().to_string();
+                if session_uri.is_empty() || uri.is_empty() {
+                    return Err(anyhow!("task.validation_failed: missing required fields"));
+                }
                 let patch = TaskPatch {
-                    title: patch_obj
-                        .get("title")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned),
-                    description: patch_obj
-                        .get("description")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned),
-                    definition_of_done: patch_obj
-                        .get("definition_of_done")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned),
+                    title: option_non_empty(request.arguments.patch.title),
+                    description: option_non_empty(request.arguments.patch.description),
+                    definition_of_done: option_non_empty(request.arguments.patch.definition_of_done),
                 };
-                let task = store.update_task_fields(session_uri, uri, patch).await?;
+                let task = store.update_task_fields(&session_uri, &uri, patch).await?;
                 json_text(json!({ "task": task }))
             }
         }))
@@ -669,7 +726,9 @@ impl TaskGraphTools {
         }))
     }
 
-    fn clear_task_duplicate_of(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn clear_task_duplicate_of(
+        store: TaskGraphStore,
+    ) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-clearTaskDuplicateOf")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -790,7 +849,9 @@ impl TaskGraphTools {
         }))
     }
 
-    fn split_task_into_subtasks(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn split_task_into_subtasks(
+        store: TaskGraphStore,
+    ) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-splitTaskIntoSubtasks")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -939,18 +1000,28 @@ fn parse_status(value: &str) -> Result<TaskStatus> {
     TaskStatus::parse(value).ok_or_else(|| anyhow!("task.validation_failed: invalid status"))
 }
 
+fn option_non_empty(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn normalize_strs(values: Option<Vec<String>>) -> Vec<String> {
+    values
+        .unwrap_or_default()
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
 fn req_str<'a>(arguments: &'a Value, key: &str) -> Result<&'a str> {
     arguments
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("task.validation_failed: missing {}", key))
-}
-
-fn opt_str(arguments: &Value, key: &str) -> Option<String> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
 }
 
 fn str_array(arguments: &Value, key: &str) -> Result<Vec<String>> {
