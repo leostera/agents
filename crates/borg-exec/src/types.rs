@@ -1,10 +1,9 @@
 use borg_agent::ToolResultData;
 use borg_core::Uri;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ToolCallSummary<TToolCall = Value, TToolResult = Value> {
+pub struct ToolCallSummary<TToolCall, TToolResult> {
     pub tool_name: String,
     pub arguments: TToolCall,
     pub output: ToolResultData<TToolResult>,
@@ -46,7 +45,7 @@ where
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SessionTurnOutput<TToolCall = Value, TToolResult = Value> {
+pub struct SessionTurnOutput<TToolCall, TToolResult> {
     pub session_id: Uri,
     pub reply: Option<String>,
     #[serde(default)]

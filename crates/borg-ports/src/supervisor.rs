@@ -6,6 +6,7 @@ use anyhow::Result;
 use borg_core::Uri;
 use borg_db::BorgDb;
 use borg_exec::{BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, SessionOutput};
+use serde_json::Value;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 use tokio::time;
@@ -133,7 +134,7 @@ impl BorgPortsSupervisor {
 
         let (inbound_tx, inbound_rx): (Sender<PortMessage>, Receiver<PortMessage>) =
             mpsc::channel(PORT_CHANNEL_CAPACITY);
-        let (outbound_tx, outbound_rx): (Sender<SessionOutput>, Receiver<SessionOutput>) =
+        let (outbound_tx, outbound_rx): (Sender<SessionOutput<Value, Value>>, Receiver<SessionOutput<Value, Value>>) =
             mpsc::channel(PORT_CHANNEL_CAPACITY);
 
         let sup = self.sup.clone();
@@ -246,7 +247,7 @@ async fn bridge_loop(
     port_id: Uri,
     assigned_actor_id: Option<Uri>,
     mut inbound_rx: Receiver<PortMessage>,
-    outbound_tx: Sender<SessionOutput>,
+    outbound_tx: Sender<SessionOutput<Value, Value>>,
 ) {
     while let Some(message) = inbound_rx.recv().await {
         let (session_id, legacy_actor_id) = match db

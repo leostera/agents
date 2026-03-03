@@ -80,6 +80,6 @@ pub trait Port: Send + Sync + Sized + 'static {
     async fn run(
         self,
         inbound: Sender<PortMessage>,
-        outbound: Receiver<SessionOutput>,
+        outbound: Receiver<SessionOutput<Value, Value>>,
     ) -> Result<()>;
 }

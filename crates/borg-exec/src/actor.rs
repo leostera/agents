@@ -126,7 +126,7 @@ impl Actor {
         debug!("actor {} loop ended", self.actor_id);
     }
 
-    async fn process_message(&mut self, msg: BorgMessage) -> Result<SessionOutput> {
+    async fn process_message(&mut self, msg: BorgMessage) -> Result<SessionOutput<Value, Value>> {
         if !self.sessions.contains_key(&msg.session_id) {
             let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
             let session = self.create_session(&msg.session_id, &agent_id).await?;
@@ -193,7 +193,7 @@ impl Actor {
         state: &mut SessionState,
         msg: &BorgMessage,
         text: &str,
-    ) -> Result<SessionOutput> {
+    ) -> Result<SessionOutput<Value, Value>> {
         state
             .session
             .add_message(Message::User {
@@ -212,7 +212,7 @@ impl Actor {
         mime_type_hint: Option<&str>,
         _duration_ms: Option<u64>,
         language_hint: Option<&str>,
-    ) -> Result<SessionOutput> {
+    ) -> Result<SessionOutput<Value, Value>> {
         let (file_record, audio_bytes) = self.runtime.files.read_all(file_id).await?;
         let mime_type = mime_type_hint
             .map(str::trim)
@@ -250,7 +250,7 @@ impl Actor {
         &self,
         state: &mut SessionState,
         msg: &BorgMessage,
-    ) -> Result<SessionOutput> {
+    ) -> Result<SessionOutput<Value, Value>> {
         let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
         state.agent_id = agent_id;
         state.behavior_id = behavior_id;
@@ -308,7 +308,7 @@ impl Actor {
         state: &mut SessionState,
         msg: &BorgMessage,
         command: &BorgCommand,
-    ) -> Result<SessionOutput> {
+    ) -> Result<SessionOutput<Value, Value>> {
         match command {
             BorgCommand::ModelShowCurrent => {
                 let model = self.current_model(&state.agent_id).await?;

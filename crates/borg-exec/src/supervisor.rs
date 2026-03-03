@@ -5,6 +5,7 @@ use crate::message::{BorgMessage, SessionOutput};
 use crate::runtime::BorgRuntime;
 use anyhow::anyhow;
 use borg_core::Uri;
+use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -44,7 +45,7 @@ impl BorgSupervisor {
         Ok(())
     }
 
-    pub async fn call(&self, msg: BorgMessage) -> anyhow::Result<SessionOutput> {
+    pub async fn call(&self, msg: BorgMessage) -> anyhow::Result<SessionOutput<Value, Value>> {
         let actor_message_id = self
             .runtime
             .db

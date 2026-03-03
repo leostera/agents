@@ -356,6 +356,9 @@ Implemented in this branch so far:
 12. Removed implicit JSON generic defaults from core runtime contracts:
    - `Agent`, `Session`, `Message`, `Context*`, `Tool*`, and `Toolchain` no longer default type parameters to `serde_json::Value`
    - all call sites now specify concrete tool call/result types explicitly, eliminating hidden JSON fallback paths in signatures
+13. Extended the same explicit-typing rule to `borg-exec` output contracts:
+   - `SessionOutput<TToolCall, TToolResult>` and `ToolCallSummary<TToolCall, TToolResult>` now require explicit type parameters at all call sites
+   - no implicit `Value` default exists in `borg-exec` runtime-facing message/output types
 
 Important behavior change from these updates:
 

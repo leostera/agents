@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use borg_core::Uri;
 use borg_exec::{JsonPortContext, PortContext, SessionOutput};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use serenity::all::{ChannelId, GatewayIntents, Message};
 use serenity::client::{Client, Context, EventHandler};
 use serenity::http::Http;
@@ -91,7 +91,7 @@ impl DiscordPort {
         })
     }
 
-    async fn send_output(&self, output: SessionOutput) -> Result<()> {
+    async fn send_output(&self, output: SessionOutput<Value, Value>) -> Result<()> {
         let Some(ctx) = output
             .port_context
             .as_any()
@@ -140,7 +140,7 @@ impl Port for DiscordPort {
     async fn run(
         self,
         inbound: Sender<PortMessage>,
-        mut outbound: Receiver<SessionOutput>,
+        mut outbound: Receiver<SessionOutput<Value, Value>>,
     ) -> Result<()> {
         let outbound_port = self.clone();
         let outbound_task = tokio::spawn(async move {

@@ -1,7 +1,6 @@
 use borg_agent::ToolResultData;
 use borg_core::Uri;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::sync::Arc;
 
 use crate::port_context::PortContext;
@@ -40,7 +39,7 @@ pub struct BorgMessage {
 }
 
 #[derive(Debug, Clone)]
-pub struct SessionOutput<TToolCall = Value, TToolResult = Value> {
+pub struct SessionOutput<TToolCall, TToolResult> {
     pub session_id: Uri,
     pub reply: Option<String>,
     pub tool_calls: Vec<ToolCallSummary<TToolCall, TToolResult>>,
@@ -48,7 +47,7 @@ pub struct SessionOutput<TToolCall = Value, TToolResult = Value> {
 }
 
 #[derive(Debug, Clone)]
-pub struct ToolCallSummary<TToolCall = Value, TToolResult = Value> {
+pub struct ToolCallSummary<TToolCall, TToolResult> {
     pub tool_name: String,
     pub arguments: TToolCall,
     pub output: ToolResultData<TToolResult>,
