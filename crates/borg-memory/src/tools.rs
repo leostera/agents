@@ -128,6 +128,9 @@ struct RetractFactsArgs {
     targets: Vec<RetractTargetArg>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+struct EmptyArgs {}
+
 #[derive(Debug, Clone, Deserialize)]
 struct DefineNamespaceArgs {
     #[serde(rename = "namespaceUri")]
@@ -1479,11 +1482,15 @@ pub fn build_memory_toolchain(
                 })
             }
         }))?
-        .add_tool(Tool::new(get_schema_spec, None, move |_request| async move {
+        .add_tool(Tool::new_transcoded(
+            get_schema_spec,
+            None,
+            move |_request: borg_agent::ToolRequest<EmptyArgs>| async move {
             Ok(ToolResponse {
-                content: ToolResultData::Text(memory_get_schema_context().to_string()),
+                content: ToolResultData::<Value>::Text(memory_get_schema_context().to_string()),
             })
-        }))?
+            },
+        ))?
         .add_tool(Tool::new_transcoded(
             new_entity_spec,
             None,
