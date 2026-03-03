@@ -13,7 +13,6 @@ use crate::mailbox::ActorCommand;
 use crate::message::{BorgCommand, BorgInput, BorgMessage, SessionOutput, ToolCallSummary};
 use crate::port_context::TelegramSessionContext;
 use crate::runtime::BorgRuntime;
-use crate::types::UserMessageMetadata;
 
 pub struct ActorHandle {
     pub actor_id: Uri,
@@ -206,7 +205,7 @@ impl Actor {
         msg: &BorgMessage,
         file_id: &Uri,
         mime_type_hint: Option<&str>,
-        duration_ms: Option<u64>,
+        _duration_ms: Option<u64>,
         language_hint: Option<&str>,
     ) -> Result<SessionOutput> {
         let (file_record, audio_bytes) = self.runtime.files.read_all(file_id).await?;
@@ -256,19 +255,10 @@ impl Actor {
             .resolve_agent_for_turn(&state.agent_id, state.behavior_id.as_ref())
             .await?;
 
-        let metadata = msg.port_context.to_json().unwrap_or_default();
-        let user_metadata = serde_json::from_value::<UserMessageMetadata>(metadata)
-            .unwrap_or_default();
-
         let llm = self.runtime.llm().await?;
         let toolchain = self
             .runtime
-            .build_toolchain(
-                &msg.user_id,
-                &user_metadata,
-                &msg.session_id,
-                &state.agent_id,
-            )
+            .build_toolchain(&msg.user_id, &msg.session_id, &state.agent_id)
             .await?;
         match state
             .session
