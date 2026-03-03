@@ -85,7 +85,9 @@ function composeUtcIso(datePart: string, timePart: string): string {
   ) {
     return "";
   }
-  return new Date(Date.UTC(year, month - 1, day, hour, minute, 0, 0)).toISOString();
+  return new Date(
+    Date.UTC(year, month - 1, day, hour, minute, 0, 0)
+  ).toISOString();
 }
 
 function toDateFromUtcPart(datePart: string): Date | undefined {
@@ -106,7 +108,9 @@ export function AddClockworkJobForm({
 }: AddClockworkJobFormProps) {
   const [form, setForm] = React.useState<ClockworkJobFormInput>(EMPTY_FORM);
   const [error, setError] = React.useState<string | null>(null);
-  const [availableSessions, setAvailableSessions] = React.useState<string[]>([]);
+  const [availableSessions, setAvailableSessions] = React.useState<string[]>(
+    []
+  );
   const [isLoadingSessions, setIsLoadingSessions] = React.useState(false);
   const selectedDatePart = toUtcDatePart(form.runAt);
   const selectedTimePart = toUtcTimePart(form.runAt) || "00:00";
@@ -220,7 +224,10 @@ export function AddClockworkJobForm({
                 <Label>Select date (UTC)</Label>
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button variant="outline" className="w-full justify-start text-left font-normal">
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start text-left font-normal"
+                    >
                       {selectedDatePart || "Pick date"}
                     </Button>
                   </PopoverTrigger>
@@ -231,10 +238,16 @@ export function AddClockworkJobForm({
                       onSelect={(picked) => {
                         if (!picked) return;
                         const y = String(picked.getUTCFullYear());
-                        const m = String(picked.getUTCMonth() + 1).padStart(2, "0");
+                        const m = String(picked.getUTCMonth() + 1).padStart(
+                          2,
+                          "0"
+                        );
                         const d = String(picked.getUTCDate()).padStart(2, "0");
                         const nextDatePart = `${y}-${m}-${d}`;
-                        const nextRunAt = composeUtcIso(nextDatePart, selectedTimePart);
+                        const nextRunAt = composeUtcIso(
+                          nextDatePart,
+                          selectedTimePart
+                        );
                         setForm((current) => ({
                           ...current,
                           runAt: nextRunAt,
@@ -253,7 +266,9 @@ export function AddClockworkJobForm({
                   value={selectedTimePart}
                   onChange={(event) => {
                     const nextTimePart = event.currentTarget.value || "00:00";
-                    const nextDatePart = selectedDatePart || toUtcDatePart(new Date().toISOString());
+                    const nextDatePart =
+                      selectedDatePart ||
+                      toUtcDatePart(new Date().toISOString());
                     const nextRunAt = nextDatePart
                       ? composeUtcIso(nextDatePart, nextTimePart)
                       : "";
@@ -364,7 +379,11 @@ export function AddClockworkJobForm({
           {error ? <p className="text-destructive text-xs">{error}</p> : null}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={isSaving}>

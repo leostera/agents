@@ -1160,7 +1160,9 @@ export class BorgApiClient {
     return Array.isArray(data.messages) ? data.messages : [];
   }
 
-  async getSessionContext(sessionId: string): Promise<SessionContextRecord | null> {
+  async getSessionContext(
+    sessionId: string
+  ): Promise<SessionContextRecord | null> {
     try {
       const data = await this.requestJson<SessionContextResponse>(
         `/api/sessions/${encodeURIComponent(sessionId)}/context`
@@ -1485,16 +1487,19 @@ export class BorgApiClient {
       status?: string | null;
     }
   ): Promise<void> {
-    await this.request(`/api/devmode/projects/${encodeURIComponent(projectId)}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: payload.name,
-        root_path: payload.rootPath,
-        description: payload.description ?? "",
-        status: payload.status ?? "ONGOING",
-      }),
-    });
+    await this.request(
+      `/api/devmode/projects/${encodeURIComponent(projectId)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: payload.name,
+          root_path: payload.rootPath,
+          description: payload.description ?? "",
+          status: payload.status ?? "ONGOING",
+        }),
+      }
+    );
   }
 
   async listDevModeSpecs(options?: {

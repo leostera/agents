@@ -44,7 +44,10 @@ const DEFAULT_FORM: FormState = {
 };
 
 function createBehaviorUri(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return `borg:behavior:${crypto.randomUUID()}`;
   }
   return `borg:behavior:${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
@@ -103,7 +106,10 @@ export function AddBehaviorForm({
               id="behavior-name"
               value={form.name}
               onChange={(event) =>
-                setForm((current) => ({ ...current, name: event.currentTarget.value }))
+                setForm((current) => ({
+                  ...current,
+                  name: event.currentTarget.value,
+                }))
               }
               placeholder="Prototyping"
               required
@@ -155,7 +161,11 @@ export function AddBehaviorForm({
           {error ? <p className="text-destructive text-xs">{error}</p> : null}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={isSaving}>

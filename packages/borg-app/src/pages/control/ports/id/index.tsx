@@ -112,12 +112,11 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
     setIsLoading(true);
     setError(null);
     try {
-      const [loadedPorts, loadedActors, loadedSessions] =
-        await Promise.all([
-          borgApi.listPorts(1000),
-          borgApi.listActors(1000),
-          borgApi.listSessions(10000),
-        ]);
+      const [loadedPorts, loadedActors, loadedSessions] = await Promise.all([
+        borgApi.listPorts(1000),
+        borgApi.listActors(1000),
+        borgApi.listSessions(10000),
+      ]);
 
       const selectedPort = resolvePortFromRoute(normalizedPortUri, loadedPorts);
       if (!selectedPort) {
@@ -231,7 +230,8 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
           provider: port.provider,
           enabled,
           allows_guests: mode === "public",
-          assigned_actor_id: assignedActorId === NO_ACTOR ? null : assignedActorId,
+          assigned_actor_id:
+            assignedActorId === NO_ACTOR ? null : assignedActorId,
           settings: nextSettings,
         });
         await load();
@@ -345,7 +345,10 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
             </div>
             <div className="space-y-1">
               <p className="text-muted-foreground text-xs">Assigned Actor</p>
-              <Select value={assignedActorId} onValueChange={setAssignedActorId}>
+              <Select
+                value={assignedActorId}
+                onValueChange={setAssignedActorId}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select actor" />
                 </SelectTrigger>
@@ -509,9 +512,14 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
                         <SelectValue placeholder="No actor binding" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={NO_ACTOR}>No actor binding</SelectItem>
+                        <SelectItem value={NO_ACTOR}>
+                          No actor binding
+                        </SelectItem>
                         {actors.map((actor) => (
-                          <SelectItem key={actor.actor_id} value={actor.actor_id}>
+                          <SelectItem
+                            key={actor.actor_id}
+                            value={actor.actor_id}
+                          >
                             {actor.name} ({actor.actor_id})
                           </SelectItem>
                         ))}

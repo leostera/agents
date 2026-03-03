@@ -226,6 +226,7 @@ impl BorgDb {
         if updated == 0 {
             let users_json = json!(["borg:user:system"]).to_string();
             let port = "borg:port:runtime".to_string();
+            let snapshot_json = snapshot.to_string();
             sqlx::query!(
                 r#"
                 INSERT INTO sessions(
@@ -240,7 +241,7 @@ impl BorgDb {
                 session_id,
                 users_json,
                 port,
-                snapshot.to_string(),
+                snapshot_json,
                 now,
             )
             .execute(self.conn.pool())

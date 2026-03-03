@@ -110,7 +110,10 @@ export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
           </div>
           <div>
             <p className="text-muted-foreground text-xs">Port</p>
-            <EntityLink uri={session.port} name={portNameFromUri(session.port)} />
+            <EntityLink
+              uri={session.port}
+              name={portNameFromUri(session.port)}
+            />
           </div>
           <div>
             <p className="text-muted-foreground text-xs">Users</p>
@@ -149,7 +152,6 @@ export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
           </div>
         </section>
       </section>
-
     </section>
   );
 }
@@ -161,14 +163,21 @@ type SessionChatMessage = {
   timestamp: string;
 };
 
-function detectMessageRole(payload: Record<string, unknown>): SessionChatMessage["role"] {
+function detectMessageRole(
+  payload: Record<string, unknown>
+): SessionChatMessage["role"] {
   const typeCandidate = payload.type;
   if (typeof typeCandidate === "string") {
     const type = typeCandidate.trim().toLowerCase();
     if (type === "assistant") return "assistant";
     if (type === "user") return "user";
     if (type === "system") return "system";
-    if (type === "tool_call" || type === "tool_result" || type === "session_event") return "system";
+    if (
+      type === "tool_call" ||
+      type === "tool_result" ||
+      type === "session_event"
+    )
+      return "system";
   }
 
   const roleCandidate =
@@ -178,7 +187,8 @@ function detectMessageRole(payload: Record<string, unknown>): SessionChatMessage
         ? payload.author.trim().toLowerCase()
         : null;
   if (roleCandidate) {
-    if (roleCandidate === "assistant" || roleCandidate === "agent") return "assistant";
+    if (roleCandidate === "assistant" || roleCandidate === "agent")
+      return "assistant";
     if (roleCandidate === "user") return "user";
   }
   return "system";
@@ -208,7 +218,12 @@ function isChatPayload(payload: Record<string, unknown>): boolean {
     const type = typeCandidate.trim().toLowerCase();
     if (type === "user" || type === "assistant") return true;
     if (type === "system") return false;
-    if (type === "tool_call" || type === "tool_result" || type === "session_event") return false;
+    if (
+      type === "tool_call" ||
+      type === "tool_result" ||
+      type === "session_event"
+    )
+      return false;
   }
 
   const roleCandidate =
@@ -218,16 +233,24 @@ function isChatPayload(payload: Record<string, unknown>): boolean {
         ? payload.author.trim().toLowerCase()
         : null;
   if (roleCandidate) {
-    if (roleCandidate === "assistant" || roleCandidate === "agent" || roleCandidate === "user") {
+    if (
+      roleCandidate === "assistant" ||
+      roleCandidate === "agent" ||
+      roleCandidate === "user"
+    ) {
       return true;
     }
     return false;
   }
 
-  return typeof payload.content === "string" || typeof payload.text === "string";
+  return (
+    typeof payload.content === "string" || typeof payload.text === "string"
+  );
 }
 
-function toChatMessages(rawMessages: Record<string, unknown>[]): SessionChatMessage[] {
+function toChatMessages(
+  rawMessages: Record<string, unknown>[]
+): SessionChatMessage[] {
   const seen = new Set<string>();
   const mapped = rawMessages
     .filter((raw) => isChatPayload(raw as Record<string, unknown>))
@@ -243,7 +266,9 @@ function toChatMessages(rawMessages: Record<string, unknown>[]): SessionChatMess
               : null;
       const role = detectMessageRole(payload);
       const text = extractMessageText(payload);
-      const timestamp = rawTimestamp ? formatDate(rawTimestamp) : formatDate(new Date().toISOString());
+      const timestamp = rawTimestamp
+        ? formatDate(rawTimestamp)
+        : formatDate(new Date().toISOString());
       const messageIdentity =
         (typeof payload.message_id === "string" && payload.message_id.trim()) ||
         `${role}|${text}|${timestamp}`;

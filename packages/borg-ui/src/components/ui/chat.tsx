@@ -42,16 +42,15 @@ export function ChatThread({
 
   return (
     <section
-      className={cn(
-        "flex h-full min-h-0 flex-col bg-background",
-        className,
-      )}
+      className={cn("flex h-full min-h-0 flex-col bg-background", className)}
     >
       <div className="relative min-h-0 flex-1 overflow-x-auto overflow-y-auto px-4 pt-4">
         {messages.length === 0 ? (
           <div className="mx-auto flex h-full min-h-[260px] w-full max-w-3xl flex-col items-start justify-center px-2">
             <p className="font-semibold text-2xl">{emptyTitle}</p>
-            <p className="text-muted-foreground mt-2 text-lg">{emptyDescription}</p>
+            <p className="text-muted-foreground mt-2 text-lg">
+              {emptyDescription}
+            </p>
           </div>
         ) : (
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 pb-4">
@@ -96,22 +95,22 @@ export function ChatMessage({ message }: ChatMessageProps) {
           "max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm",
           toneClass,
           message.role === "assistant" ? "px-2 py-1" : "",
-          message.pending ? "opacity-70" : "",
+          message.pending ? "opacity-70" : ""
         )}
       >
         <div className="chat-markdown markdown-body text-sm">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {message.text}
+          </ReactMarkdown>
         </div>
         <div
           className={cn(
             "mt-1 flex items-center gap-2 text-[10px] opacity-70",
-            isUser ? "justify-end" : "justify-start",
+            isUser ? "justify-end" : "justify-start"
           )}
         >
           <p>{timestampLabel}</p>
-          {message.pending ? (
-            <span>sending...</span>
-          ) : null}
+          {message.pending ? <span>sending...</span> : null}
         </div>
       </div>
     </article>
@@ -157,7 +156,11 @@ export function ChatComposerShell({
   };
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className={cn("p-3 pt-2", className)}>
+    <form
+      ref={formRef}
+      onSubmit={handleSubmit}
+      className={cn("p-3 pt-2", className)}
+    >
       <div className="flex items-end gap-2 rounded-2xl border border-input bg-background px-3 py-2">
         <textarea
           value={value}
@@ -189,7 +192,7 @@ export function ChatComposerShell({
               "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
               value.trim()
                 ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                : "bg-muted text-muted-foreground",
+                : "bg-muted text-muted-foreground"
             )}
             aria-label="Send message"
           >

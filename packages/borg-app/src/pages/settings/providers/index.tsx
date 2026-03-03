@@ -31,7 +31,10 @@ import {
   SectionEmpty,
   SectionToolbar,
 } from "../../../components/Section";
-import { ConnectProviderForm, type ConnectProviderInput } from "./ConnectProviderForm";
+import {
+  ConnectProviderForm,
+  type ConnectProviderInput,
+} from "./ConnectProviderForm";
 
 const borgApi = createBorgApiClient();
 
@@ -125,11 +128,15 @@ export function ProvidersPage() {
       return;
     }
     if (!isLocalProvider(input.providerKind) && !apiKey) {
-      setErrorMessage(`${formatProviderKind(input.providerKind)} API key is required`);
+      setErrorMessage(
+        `${formatProviderKind(input.providerKind)} API key is required`
+      );
       return;
     }
     if (isLocalProvider(input.providerKind) && !baseUrl) {
-      setErrorMessage(`${formatProviderKind(input.providerKind)} base URL is required`);
+      setErrorMessage(
+        `${formatProviderKind(input.providerKind)} base URL is required`
+      );
       return;
     }
 
@@ -144,7 +151,9 @@ export function ProvidersPage() {
         baseUrl,
         enabled: true,
       });
-      setStatusMessage(`${formatProviderKind(input.providerKind)} provider saved`);
+      setStatusMessage(
+        `${formatProviderKind(input.providerKind)} provider saved`
+      );
       await loadProviders();
       setIsDialogOpen(false);
     } catch (error) {

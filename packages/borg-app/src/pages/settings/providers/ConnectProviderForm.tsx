@@ -28,7 +28,9 @@ type ConnectProviderFormProps = {
   onSave: (input: ConnectProviderInput) => void;
 };
 
-function isLocalProvider(provider: ConnectProviderInput["providerKind"]): boolean {
+function isLocalProvider(
+  provider: ConnectProviderInput["providerKind"]
+): boolean {
   return provider === "lmstudio" || provider === "ollama";
 }
 
@@ -43,9 +45,8 @@ export function ConnectProviderForm({
   const [dialogStep, setDialogStep] = React.useState<"provider" | "method">(
     "provider"
   );
-  const [selectedProvider, setSelectedProvider] = React.useState<
-    ConnectProviderInput["providerKind"]
-  >("openai");
+  const [selectedProvider, setSelectedProvider] =
+    React.useState<ConnectProviderInput["providerKind"]>("openai");
   const [providerId, setProviderId] = React.useState("openai");
   const [apiKey, setApiKey] = React.useState("");
   const [baseUrl, setBaseUrl] = React.useState("");
@@ -135,8 +136,10 @@ export function ConnectProviderForm({
                     onClick={() => {
                       setSelectedProvider(provider);
                       setProviderId(provider);
-                      if (provider === "lmstudio") setBaseUrl("http://127.0.0.1:1234");
-                      if (provider === "ollama") setBaseUrl("http://127.0.0.1:11434");
+                      if (provider === "lmstudio")
+                        setBaseUrl("http://127.0.0.1:1234");
+                      if (provider === "ollama")
+                        setBaseUrl("http://127.0.0.1:11434");
                       setDialogStep("method");
                     }}
                   >

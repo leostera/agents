@@ -146,16 +146,23 @@ export function TaskGraphKanbanPage() {
       await load();
     } catch (createError) {
       setError(
-        createError instanceof Error ? createError.message : "Unable to create card"
+        createError instanceof Error
+          ? createError.message
+          : "Unable to create card"
       );
     } finally {
       setIsCreating(false);
     }
   };
 
-  const moveCard = async (task: TaskGraphTask, status: TaskGraphTask["status"]) => {
+  const moveCard = async (
+    task: TaskGraphTask,
+    status: TaskGraphTask["status"]
+  ) => {
     const actorSessionUri =
-      status === "discarded" ? task.reviewer_session_uri : task.assignee_session_uri;
+      status === "discarded"
+        ? task.reviewer_session_uri
+        : task.assignee_session_uri;
     setMovingByUri((value) => ({ ...value, [task.uri]: true }));
     setError(null);
     try {
@@ -165,7 +172,9 @@ export function TaskGraphKanbanPage() {
       });
       await load();
     } catch (moveError) {
-      setError(moveError instanceof Error ? moveError.message : "Unable to move card");
+      setError(
+        moveError instanceof Error ? moveError.message : "Unable to move card"
+      );
     } finally {
       setMovingByUri((value) => ({ ...value, [task.uri]: false }));
     }
@@ -185,7 +194,9 @@ export function TaskGraphKanbanPage() {
       await load();
     } catch (saveError) {
       setError(
-        saveError instanceof Error ? saveError.message : "Unable to save card title"
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to save card title"
       );
     } finally {
       setSavingTitleByUri((value) => ({ ...value, [task.uri]: false }));
@@ -206,10 +217,14 @@ export function TaskGraphKanbanPage() {
       <Card>
         <CardContent className="grid gap-2 p-3 md:grid-cols-2">
           <div>
-            <p className="text-muted-foreground mb-1 text-xs">Board Session URI</p>
+            <p className="text-muted-foreground mb-1 text-xs">
+              Board Session URI
+            </p>
             <Input
               value={boardSessionUri}
-              onChange={(event) => setBoardSessionUri(event.currentTarget.value)}
+              onChange={(event) =>
+                setBoardSessionUri(event.currentTarget.value)
+              }
             />
           </div>
           <div>
@@ -238,16 +253,23 @@ export function TaskGraphKanbanPage() {
                 </CardHeader>
                 <CardContent className="min-h-0 space-y-2 p-2 pt-0">
                   {status === "pending" ? (
-                    <form className="space-y-2 rounded-md border p-2" onSubmit={createCard}>
+                    <form
+                      className="space-y-2 rounded-md border p-2"
+                      onSubmit={createCard}
+                    >
                       <Input
                         placeholder="Add a card title"
                         value={newTitle}
-                        onChange={(event) => setNewTitle(event.currentTarget.value)}
+                        onChange={(event) =>
+                          setNewTitle(event.currentTarget.value)
+                        }
                       />
                       <Input
                         placeholder="Description (optional)"
                         value={newDescription}
-                        onChange={(event) => setNewDescription(event.currentTarget.value)}
+                        onChange={(event) =>
+                          setNewDescription(event.currentTarget.value)
+                        }
                       />
                       <Button type="submit" size="sm" disabled={isCreating}>
                         {isCreating ? (
@@ -264,11 +286,16 @@ export function TaskGraphKanbanPage() {
                     <div className="space-y-2">
                       {items.map((task) => {
                         const isMoving = movingByUri[task.uri] ?? false;
-                        const isSavingTitle = savingTitleByUri[task.uri] ?? false;
-                        const titleDraft = editingTitleByUri[task.uri] ?? task.title;
+                        const isSavingTitle =
+                          savingTitleByUri[task.uri] ?? false;
+                        const titleDraft =
+                          editingTitleByUri[task.uri] ?? task.title;
 
                         return (
-                          <div key={task.uri} className="bg-muted/40 rounded-md border p-2">
+                          <div
+                            key={task.uri}
+                            className="bg-muted/40 rounded-md border p-2"
+                          >
                             <div className="mb-2 flex items-start gap-1">
                               <Input
                                 className="h-8 text-sm"
@@ -307,7 +334,9 @@ export function TaskGraphKanbanPage() {
                             </button>
 
                             <div className="mt-2 flex flex-wrap items-center gap-1">
-                              {STATUSES.filter((candidate) => candidate !== task.status)
+                              {STATUSES.filter(
+                                (candidate) => candidate !== task.status
+                              )
                                 .slice(0, 3)
                                 .map((candidate) => (
                                   <Button
@@ -316,7 +345,9 @@ export function TaskGraphKanbanPage() {
                                     variant="ghost"
                                     className="h-6 px-2 text-[11px]"
                                     disabled={isMoving}
-                                    onClick={() => void moveCard(task, candidate)}
+                                    onClick={() =>
+                                      void moveCard(task, candidate)
+                                    }
                                   >
                                     {candidate}
                                   </Button>
@@ -327,7 +358,9 @@ export function TaskGraphKanbanPage() {
                       })}
 
                       {items.length === 0 ? (
-                        <p className="text-muted-foreground px-1 py-2 text-xs">No cards</p>
+                        <p className="text-muted-foreground px-1 py-2 text-xs">
+                          No cards
+                        </p>
                       ) : null}
                     </div>
                   </ScrollArea>

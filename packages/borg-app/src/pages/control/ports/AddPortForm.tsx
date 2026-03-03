@@ -87,7 +87,8 @@ export function AddPortForm({
     await onSubmit({
       portKind: selectedPortKind,
       portName,
-      assignedActorId: assignedActorId === NO_ACTOR ? undefined : assignedActorId,
+      assignedActorId:
+        assignedActorId === NO_ACTOR ? undefined : assignedActorId,
       telegramBotToken,
       discordBotToken,
     });
@@ -152,7 +153,10 @@ export function AddPortForm({
             </div>
             <div className="space-y-2">
               <Label>Assigned Actor</Label>
-              <Select value={assignedActorId} onValueChange={setAssignedActorId}>
+              <Select
+                value={assignedActorId}
+                onValueChange={setAssignedActorId}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="No assigned actor" />
                 </SelectTrigger>

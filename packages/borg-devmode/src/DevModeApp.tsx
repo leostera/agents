@@ -70,7 +70,11 @@ function detectRole(payload: Record<string, unknown>): ChatMessage["role"] {
     if (type === "assistant") return "assistant";
     if (type === "user") return "user";
     if (type === "system") return "system";
-    if (type === "tool_call" || type === "tool_result" || type === "session_event") {
+    if (
+      type === "tool_call" ||
+      type === "tool_result" ||
+      type === "session_event"
+    ) {
       return "system";
     }
   }
@@ -88,7 +92,12 @@ function isChatPayload(payload: Record<string, unknown>): boolean {
     const type = typeCandidate.trim().toLowerCase();
     if (type === "user" || type === "assistant") return true;
     if (type === "system") return false;
-    if (type === "tool_call" || type === "tool_result" || type === "session_event") return false;
+    if (
+      type === "tool_call" ||
+      type === "tool_result" ||
+      type === "session_event"
+    )
+      return false;
   }
 
   const roleCandidate =
@@ -108,7 +117,9 @@ function isChatPayload(payload: Record<string, unknown>): boolean {
     return false;
   }
 
-  return typeof payload.content === "string" || typeof payload.text === "string";
+  return (
+    typeof payload.content === "string" || typeof payload.text === "string"
+  );
 }
 
 function toChatMessages(rawMessages: Record<string, unknown>[]): ChatMessage[] {
@@ -127,7 +138,9 @@ function toChatMessages(rawMessages: Record<string, unknown>[]): ChatMessage[] {
               : null;
       const role = detectRole(payload);
       const text = extractText(payload);
-      const timestamp = rawTimestamp ? formatDate(rawTimestamp) : nowTimestamp();
+      const timestamp = rawTimestamp
+        ? formatDate(rawTimestamp)
+        : nowTimestamp();
       const messageIdentity =
         (typeof payload.message_id === "string" && payload.message_id.trim()) ||
         `${role}|${text}|${timestamp}`;
@@ -163,11 +176,15 @@ export function DevModeApp() {
   const [isSending, setIsSending] = React.useState(false);
   const [isSavingSettings, setIsSavingSettings] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
-  const [plannerPromptDraft, setPlannerPromptDraft] = React.useState(DEV_MODE_PLANNER_PROMPT);
+  const [plannerPromptDraft, setPlannerPromptDraft] = React.useState(
+    DEV_MODE_PLANNER_PROMPT
+  );
   const [error, setError] = React.useState<string | null>(null);
   const sendInFlightRef = React.useRef(false);
   const plannerActor = React.useMemo(
-    () => actors.find((actor) => actor.actor_id === DEV_MODE_PLANNER_ACTOR_ID) ?? null,
+    () =>
+      actors.find((actor) => actor.actor_id === DEV_MODE_PLANNER_ACTOR_ID) ??
+      null,
     [actors]
   );
 
@@ -180,7 +197,11 @@ export function DevModeApp() {
   const resolvePlannerBehavior = React.useCallback(
     (behaviors: BehaviorRecord[]): string | null => {
       if (behaviors.length === 0) return null;
-      if (behaviors.some((behavior) => behavior.behavior_id === "borg:behavior:default")) {
+      if (
+        behaviors.some(
+          (behavior) => behavior.behavior_id === "borg:behavior:default"
+        )
+      ) {
         return "borg:behavior:default";
       }
       const active = behaviors.find(
@@ -193,7 +214,9 @@ export function DevModeApp() {
 
   const ensurePlannerActor = React.useCallback(
     async (actorRows: ActorRecord[]): Promise<ActorRecord[]> => {
-      if (actorRows.some((actor) => actor.actor_id === DEV_MODE_PLANNER_ACTOR_ID)) {
+      if (
+        actorRows.some((actor) => actor.actor_id === DEV_MODE_PLANNER_ACTOR_ID)
+      ) {
         return actorRows;
       }
       const behaviors = await borgApi.listBehaviors(500);
@@ -221,13 +244,20 @@ export function DevModeApp() {
     try {
       const [actorRows, sessionRows] = await Promise.all([
         borgApi.listActors(500),
-        borgApi.listSessionMessages(PLANNING_SESSION_ID, { from: 0, limit: 500 }),
+        borgApi.listSessionMessages(PLANNING_SESSION_ID, {
+          from: 0,
+          limit: 500,
+        }),
       ]);
       const withPlanner = await ensurePlannerActor(actorRows);
       setActors(withPlanner);
       setMessages(toChatMessages(sessionRows));
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load planning view");
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load planning view"
+      );
     } finally {
       setIsLoading(false);
     }
@@ -273,10 +303,13 @@ export function DevModeApp() {
         },
       });
 
-      const sessionRows = await borgApi.listSessionMessages(PLANNING_SESSION_ID, {
-        from: 0,
-        limit: 500,
-      });
+      const sessionRows = await borgApi.listSessionMessages(
+        PLANNING_SESSION_ID,
+        {
+          from: 0,
+          limit: 500,
+        }
+      );
       setMessages(toChatMessages(sessionRows));
     } catch (sendError) {
       setMessages((previous) => [
@@ -290,7 +323,11 @@ export function DevModeApp() {
           timestamp: nowTimestamp(),
         },
       ]);
-      setError(sendError instanceof Error ? sendError.message : "Unable to send planning message");
+      setError(
+        sendError instanceof Error
+          ? sendError.message
+          : "Unable to send planning message"
+      );
     } finally {
       setIsSending(false);
       sendInFlightRef.current = false;
@@ -324,7 +361,11 @@ export function DevModeApp() {
       );
       setIsSettingsOpen(false);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save planner settings");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to save planner settings"
+      );
     } finally {
       setIsSavingSettings(false);
     }
@@ -334,7 +375,9 @@ export function DevModeApp() {
     <div className="bg-background text-foreground flex min-h-screen">
       <aside className="w-64 border-r bg-muted/20 p-4">
         <div className="rounded-xl border bg-background p-3 shadow-sm">
-          <p className="text-muted-foreground text-xs uppercase tracking-[0.12em]">Borg</p>
+          <p className="text-muted-foreground text-xs uppercase tracking-[0.12em]">
+            Borg
+          </p>
           <p className="text-sm font-semibold">DevMode</p>
         </div>
 
@@ -412,14 +455,17 @@ export function DevModeApp() {
             <DialogHeader>
               <DialogTitle>Planning Settings</DialogTitle>
               <DialogDescription>
-                Configure how the `devmode:actor:planner` behaves in this planning session.
+                Configure how the `devmode:actor:planner` behaves in this
+                planning session.
               </DialogDescription>
             </DialogHeader>
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               <p className="text-sm font-medium">Planner Actor Prompt</p>
               <Textarea
                 value={plannerPromptDraft}
-                onChange={(event) => setPlannerPromptDraft(event.currentTarget.value)}
+                onChange={(event) =>
+                  setPlannerPromptDraft(event.currentTarget.value)
+                }
                 rows={24}
                 className="min-h-[28rem] w-full resize-y overflow-y-auto"
                 placeholder="Enter planner actor prompt..."

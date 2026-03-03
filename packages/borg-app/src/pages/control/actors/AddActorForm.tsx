@@ -44,7 +44,10 @@ const DEFAULT_FORM: FormState = {
 };
 
 function createActorUri(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return `borg:actor:${crypto.randomUUID()}`;
   }
   return `borg:actor:${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
@@ -109,7 +112,10 @@ export function AddActorForm({
               id="actor-name"
               value={form.name}
               onChange={(event) =>
-                setForm((current) => ({ ...current, name: event.currentTarget.value }))
+                setForm((current) => ({
+                  ...current,
+                  name: event.currentTarget.value,
+                }))
               }
               placeholder="DevMode Integrator"
               required
@@ -168,7 +174,11 @@ export function AddActorForm({
           {error ? <p className="text-destructive text-xs">{error}</p> : null}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
               Cancel
             </Button>
             <Button type="submit" disabled={isSaving}>

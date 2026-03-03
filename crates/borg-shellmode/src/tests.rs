@@ -70,7 +70,7 @@ fn returns_duration_in_result() {
     let duration = result.result_json.get("duration").expect("duration field");
     let secs = duration.get("secs").and_then(|v| v.as_u64()).unwrap_or(0);
     let nanos = duration.get("nanos").and_then(|v| v.as_u64()).unwrap_or(0);
-    assert!(secs >= 0 || nanos > 0);
+    assert!(secs > 0 || nanos > 0);
 }
 
 #[test]

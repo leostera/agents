@@ -21,10 +21,27 @@ This RFD introduces:
    - session history stores one combined user message containing
      `file_id + transcript`
 
-Core principle:
+Core principles:
 
 1. Audio is an input modality.
 2. Text remains the reasoning substrate inside session context.
+3. Raw audio bytes never enter mailbox/session JSON payloads.
+
+## Updates
+[updates]: #updates
+
+### 2026-03-03
+
+This revision locks v0 decisions:
+
+1. Files are public within one Borg instance in v0 (no ACL model yet).
+2. Ports are ingest-only for audio in v0; reads are actor-runtime-only.
+3. `file_id` generalizes to `borg:<kind>:<sha512>` (`audio` for v0).
+4. Hash is computed over raw bytes; dedup is canonical by hash.
+5. `session_id` is the only required put metadata in v0.
+6. Transcription failure rejects the turn and does not persist partial
+   `user_audio` history rows.
+7. No observability requirements in v0.
 
 ## Motivation
 [motivation]: #motivation
@@ -83,25 +100,29 @@ This RFD MUST provide:
 3. Runtime handling of `BorgInput::Audio`.
 4. Combined session history persistence for audio user turns.
 5. Actor mailbox payloads that reference audio by ID, not raw bytes.
+6. Port ingest-only behavior in v0 (write-only for audio bytes).
+7. Actor-runtime-only file reads in v0.
 
 ### Non-goals (v0)
 
 This RFD does not provide:
 
 1. Text-to-speech output.
-2. Streaming transcription.
+2. Streaming transcription responses.
 3. Rich multi-part media timelines.
 4. Full media search indexing beyond metadata.
 5. Cross-region replication and archival tiers.
+6. Per-user/tenant access control.
+7. Retention policy enforcement.
 
 ### BorgFS contract
 
 `borg-fs` is a crate-level abstraction used by ports and runtime.
 
-Minimum v0 trait:
+Minimum v0 trait shape (streaming-friendly):
 
-1. `put(bytes, metadata) -> FileRecord`
-2. `get(file_id) -> FileBytes + FileRecord`
+1. `put(stream, metadata) -> FileRecord`
+2. `get(file_id) -> FileStream + FileRecord`
 3. `exists(file_id) -> bool`
 4. `soft_delete(file_id) -> ()`
 
@@ -113,17 +134,29 @@ Optional later:
 
 #### File identity
 
-1. `file_id` format: `borg:audio:<sha512>`
-2. Content hash is computed from raw bytes.
-3. Duplicate uploads by hash MAY reuse existing storage object.
+1. `file_id` format: `borg:<kind>:<sha512>`
+2. v0 audio kind is `audio` (`borg:audio:<sha512>`).
+3. Content hash is computed over raw bytes as received.
+
+#### Dedup semantics
+
+1. `put` MUST deduplicate by content hash/file_id.
+2. Canonical state is one file row per hash.
+3. Concurrent same-hash writers are acceptable as long as stored bytes match
+   the declared hash.
+
+#### MIME handling
+
+1. Port-provided mime is a hint.
+2. `borg-fs` stores canonical `content_type` from byte sniffing.
 
 #### v0 backends
 
 1. `LocalFsBackend` (default):
    - rooted under `~/.borg/files`
-2. `S3Backend` (future within this RFD scope):
-   - configured bucket + prefix
-   - object key derived from `file_id`
+2. `S3Backend`:
+   - not required to ship in first cut
+   - trait design in v0 must avoid breaking changes for S3 addition
 
 ### Data model
 
@@ -135,11 +168,16 @@ Optional later:
 - `content_type`
 - `size_bytes`
 - `sha512`
-- `owner_uri` (nullable)
+- `owner_uri` (nullable, informational in v0)
 - `metadata_json`
 - `deleted_at` (nullable; soft delete)
 - `created_at`
 - `updated_at`
+
+v0 access policy:
+
+1. Files are public within one Borg instance.
+2. `owner_uri` is not an auth boundary in v0.
 
 #### Session message payload (combined audio user message)
 
@@ -149,14 +187,19 @@ Stored in `session_messages.payload_json` as one message:
 {
   "type": "user_audio",
   "file_id": "borg:audio:<sha512>",
-  "mime_type": "audio/m4a",
-  "duration_ms": 12345,
   "transcript": "hello world",
-  "transcription_provider": "openai",
-  "transcription_model": "whisper-1",
   "created_at": "2026-03-03T00:00:00Z"
 }
 ```
+
+Required fields in v0:
+
+1. `type`
+2. `file_id`
+3. `transcript`
+4. `created_at`
+
+Other fields are optional and may be absent.
 
 ### Runtime and port flow
 
@@ -164,9 +207,11 @@ Stored in `session_messages.payload_json` as one message:
 
 Ports that support audio MUST:
 
-1. Accept audio bytes + basic metadata (mime, optional duration).
+1. Accept audio bytes and minimal metadata.
 2. Persist bytes through `borg-fs.put`.
-3. Construct runtime input with `file_id`.
+3. Provide `session_id` in put metadata (required in v0).
+4. Construct runtime input with `file_id`.
+5. Avoid direct audio reads in v0.
 
 #### 2. Borg message input
 
@@ -182,14 +227,19 @@ The `BorgMessage` envelope remains the same (`actor_id`, `user_id`,
 On `BorgInput::Audio`:
 
 1. Fetch bytes from `borg-fs.get(file_id)`.
-2. Run transcription capability/tool.
+2. Run transcription via runtime capability/tooling (`borg_llm` path).
 3. Persist combined `user_audio` message payload in session history.
 4. Continue the turn as standard chat text using `transcript`.
 
+If transcription fails:
+
+1. Reject the turn.
+2. Do not persist partial `user_audio` history rows.
+
 #### 4. Context window behavior
 
-Context manager uses transcript text, not binary audio.
-The `file_id` remains available for audit, replay, and UI.
+1. Context manager uses transcript text only.
+2. Binary audio never enters context windows.
 
 ### API boundary changes
 
@@ -203,26 +253,17 @@ The API must never embed raw audio in mailbox/session JSON rows.
 Failures should be explicit:
 
 1. Unsupported mime type.
-2. Audio too large / too long.
-3. Storage write failure.
-4. Transcription failure.
-5. Missing `file_id` in storage.
+2. Storage write failure.
+3. Transcription failure.
+4. Missing `file_id` in storage.
 
 v0 policy:
 
 1. No automatic retries beyond existing port/runtime retry behavior.
-2. Return a clear user-facing error message in the session.
-
-### Observability and audit
-
-Each audio turn SHOULD log:
-
-1. `file_id`, `size_bytes`, `mime_type`
-2. transcription provider/model
-3. transcription latency
-4. actor/session/message attribution
-
-Do not log raw audio bytes.
+2. Transcription failure rejects the turn and does not create session history
+   entries for that failed audio turn.
+3. Error response may be surfaced out-of-band by the port/runtime response
+   path.
 
 ## Future work
 [future-work]: #future-work
@@ -249,12 +290,13 @@ Guardrails:
 2. Audio preview playback in UI.
 3. TTS assistant output.
 4. Lifecycle policies (retention, archival, restore).
+5. Observability and metrics for audio turn latency/failure.
 
 ## Drawbacks
 [drawbacks]: #drawbacks
 
 1. Adds a new storage subsystem to runtime complexity.
-2. Requires policy decisions around retention and privacy.
+2. Requires follow-up work for ACLs and retention when hosting multi-tenant.
 3. Increases operational footprint when enabling hosted mode.
 
 ## Rationale and alternatives
@@ -273,12 +315,11 @@ Rejected because:
 Rejected because:
 
 1. Duplicates logic across ports.
-2. Weakens runtime consistency and observability.
+2. Weakens runtime consistency.
 3. Prevents unified audio behavior across ingress surfaces.
 
 ## Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-1. Exact retention defaults for soft-deleted files.
-2. Whether v0 enforces one canonical audio MIME set or configurable provider set.
-3. Whether to attach transcript confidence metadata in v0 payload.
+1. Soft-delete restore semantics for future MCP/admin flows.
+2. Whether transcript confidence metadata should be standardized post-v0.

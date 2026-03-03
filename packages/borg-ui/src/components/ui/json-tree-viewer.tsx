@@ -91,7 +91,12 @@ type JsonNodeProps = {
   defaultExpandedDepth: number;
 };
 
-function JsonNode({ label, value, depth, defaultExpandedDepth }: JsonNodeProps) {
+function JsonNode({
+  label,
+  value,
+  depth,
+  defaultExpandedDepth,
+}: JsonNodeProps) {
   const kind = valueKind(value);
   const isBranch = kind === "array" || kind === "object";
   const [isOpen, setIsOpen] = React.useState(depth < defaultExpandedDepth);
@@ -159,7 +164,11 @@ export function JsonTreeViewer({
 }: JsonTreeViewerProps) {
   return (
     <div className={cn("font-mono text-xs", className)}>
-      <JsonNode value={value} depth={0} defaultExpandedDepth={defaultExpandedDepth} />
+      <JsonNode
+        value={value}
+        depth={0}
+        defaultExpandedDepth={defaultExpandedDepth}
+      />
     </div>
   );
 }

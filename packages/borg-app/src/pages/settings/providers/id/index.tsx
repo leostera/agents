@@ -15,7 +15,14 @@ import {
   Input,
   Label,
 } from "@borg/ui";
-import { ArrowLeft, LoaderCircle, Pause, Play, Save, Settings2 } from "lucide-react";
+import {
+  ArrowLeft,
+  LoaderCircle,
+  Pause,
+  Play,
+  Save,
+  Settings2,
+} from "lucide-react";
 import React from "react";
 import {
   Section,
@@ -198,7 +205,10 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
 
             <div className="space-y-1">
               <Label>Provider Kind</Label>
-              <Input value={formatProviderKind(provider.provider_kind)} disabled />
+              <Input
+                value={formatProviderKind(provider.provider_kind)}
+                disabled
+              />
             </div>
 
             {!isLocalProvider(form.providerKind) ? (
@@ -319,7 +329,9 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
                       : current
                   )
                 }
-                aria-label={form.enabled ? "Disable provider" : "Enable provider"}
+                aria-label={
+                  form.enabled ? "Disable provider" : "Enable provider"
+                }
                 title={form.enabled ? "Disable provider" : "Enable provider"}
               >
                 {form.enabled ? (

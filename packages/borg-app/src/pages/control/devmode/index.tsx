@@ -1,8 +1,8 @@
 import {
   type ActorRecord,
+  createBorgApiClient,
   type DevModeProjectRecord,
   type DevModeSpecRecord,
-  createBorgApiClient,
 } from "@borg/api";
 import {
   Button,
@@ -39,7 +39,10 @@ import {
 const borgApi = createBorgApiClient();
 
 function newDevModeUri(kind: "project" | "spec"): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return `devmode:${kind}:${crypto.randomUUID()}`;
   }
   return `devmode:${kind}:${Date.now()}`;
@@ -69,7 +72,9 @@ function useDevModeData() {
       setSpecs([]);
       setActors([]);
       setError(
-        loadError instanceof Error ? loadError.message : "Unable to load DevMode"
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load DevMode"
       );
     } finally {
       setIsLoading(false);
@@ -95,7 +100,9 @@ export function DevModeProjectsPage() {
   const { projects, isLoading, error, setError, reload } = useDevModeData();
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
   const [isSaving, setIsSaving] = React.useState(false);
-  const [editingProjectId, setEditingProjectId] = React.useState<string | null>(null);
+  const [editingProjectId, setEditingProjectId] = React.useState<string | null>(
+    null
+  );
   const [projectRootPath, setProjectRootPath] = React.useState("");
   const [projectDescription, setProjectDescription] = React.useState("");
   const hasNoProjects = !isLoading && projects.length === 0;
@@ -109,12 +116,15 @@ export function DevModeProjectsPage() {
     setIsSaving(true);
     setError(null);
     try {
-      await borgApi.upsertDevModeProject(editingProjectId ?? newDevModeUri("project"), {
-        name: projectDescription.trim() || "Untitled Project",
-        rootPath,
-        description: projectDescription.trim(),
-        status: "ONGOING",
-      });
+      await borgApi.upsertDevModeProject(
+        editingProjectId ?? newDevModeUri("project"),
+        {
+          name: projectDescription.trim() || "Untitled Project",
+          rootPath,
+          description: projectDescription.trim(),
+          status: "ONGOING",
+        }
+      );
       setProjectRootPath("");
       setProjectDescription("");
       setEditingProjectId(null);
@@ -122,19 +132,24 @@ export function DevModeProjectsPage() {
       await reload();
     } catch (saveError) {
       setError(
-        saveError instanceof Error ? saveError.message : "Unable to save project"
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to save project"
       );
     } finally {
       setIsSaving(false);
     }
   }, [editingProjectId, projectDescription, projectRootPath, reload, setError]);
 
-  const handleEditProject = React.useCallback((project: DevModeProjectRecord) => {
-    setEditingProjectId(project.project_id);
-    setProjectRootPath(project.root_path);
-    setProjectDescription(project.description ?? "");
-    setIsDialogOpen(true);
-  }, []);
+  const handleEditProject = React.useCallback(
+    (project: DevModeProjectRecord) => {
+      setEditingProjectId(project.project_id);
+      setProjectRootPath(project.root_path);
+      setProjectDescription(project.description ?? "");
+      setIsDialogOpen(true);
+    },
+    []
+  );
 
   const handleArchiveProject = React.useCallback(
     async (project: DevModeProjectRecord) => {
@@ -164,15 +179,22 @@ export function DevModeProjectsPage() {
 
   const handleBrowseForProject = React.useCallback(async () => {
     try {
-      const picker = (window as unknown as {
-        showDirectoryPicker?: () => Promise<{
-          name: string;
-          values?: () => AsyncIterable<{ kind: string; getFile?: () => Promise<File> }>;
-          path?: string;
-        }>;
-      }).showDirectoryPicker;
+      const picker = (
+        window as unknown as {
+          showDirectoryPicker?: () => Promise<{
+            name: string;
+            values?: () => AsyncIterable<{
+              kind: string;
+              getFile?: () => Promise<File>;
+            }>;
+            path?: string;
+          }>;
+        }
+      ).showDirectoryPicker;
       if (!picker) {
-        setError("Folder picker is unavailable in this environment. Paste path manually.");
+        setError(
+          "Folder picker is unavailable in this environment. Paste path manually."
+        );
         return;
       }
 
@@ -210,7 +232,9 @@ export function DevModeProjectsPage() {
         return;
       }
       setError(
-        pickerError instanceof Error ? pickerError.message : "Unable to select folder."
+        pickerError instanceof Error
+          ? pickerError.message
+          : "Unable to select folder."
       );
     }
   }, [setError]);
@@ -282,16 +306,26 @@ export function DevModeProjectsPage() {
                           ? "bg-slate-400"
                           : "bg-emerald-500"
                       }`}
-                      title={project.status === "ARCHIVED" ? "Archived" : "Ongoing"}
-                      aria-label={project.status === "ARCHIVED" ? "Archived" : "Ongoing"}
+                      title={
+                        project.status === "ARCHIVED" ? "Archived" : "Ongoing"
+                      }
+                      aria-label={
+                        project.status === "ARCHIVED" ? "Archived" : "Ongoing"
+                      }
                     />
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{project.project_id}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {project.project_id}
+                  </TableCell>
                   <TableCell className="max-w-[320px] truncate">
                     {project.description || "—"}
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{project.root_path}</TableCell>
-                  <TableCell>{new Date(project.updated_at).toLocaleString()}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {project.root_path}
+                  </TableCell>
+                  <TableCell>
+                    {new Date(project.updated_at).toLocaleString()}
+                  </TableCell>
                   <TableCell className="space-x-2">
                     <Button
                       size="sm"
@@ -334,7 +368,9 @@ export function DevModeProjectsPage() {
               <Input
                 id="devmode-project-root-path"
                 value={projectRootPath}
-                onChange={(event) => setProjectRootPath(event.currentTarget.value)}
+                onChange={(event) =>
+                  setProjectRootPath(event.currentTarget.value)
+                }
                 placeholder="/absolute/path/to/repo"
               />
               <Button
@@ -352,7 +388,9 @@ export function DevModeProjectsPage() {
             <Textarea
               id="devmode-project-description"
               value={projectDescription}
-              onChange={(event) => setProjectDescription(event.currentTarget.value)}
+              onChange={(event) =>
+                setProjectDescription(event.currentTarget.value)
+              }
               placeholder="What this project is about"
               rows={3}
             />
@@ -361,7 +399,10 @@ export function DevModeProjectsPage() {
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={() => void handleSaveProject()} disabled={isSaving}>
+            <Button
+              onClick={() => void handleSaveProject()}
+              disabled={isSaving}
+            >
               {isSaving ? (
                 <span className="inline-flex items-center gap-2">
                   <LoaderCircle className="size-4 animate-spin" />
@@ -385,7 +426,9 @@ export function DevModeSpecsPage() {
   const [specProjectId, setSpecProjectId] = React.useState("");
   const [specTitle, setSpecTitle] = React.useState("");
   const [specBody, setSpecBody] = React.useState("");
-  const [sessionUri, setSessionUri] = React.useState("borg:session:devmode-bootstrap");
+  const [sessionUri, setSessionUri] = React.useState(
+    "borg:session:devmode-bootstrap"
+  );
   const [creatorActorId, setCreatorActorId] = React.useState("");
   const [assigneeActorId, setAssigneeActorId] = React.useState("");
 
@@ -433,7 +476,9 @@ export function DevModeSpecsPage() {
       setSpecBody("");
       await reload();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to create spec");
+      setError(
+        saveError instanceof Error ? saveError.message : "Unable to create spec"
+      );
     } finally {
       setIsSaving(false);
     }
@@ -567,7 +612,9 @@ export function DevModeSpecsPage() {
               {specs.map((spec) => (
                 <TableRow key={spec.spec_id}>
                   <TableCell>{spec.title}</TableCell>
-                  <TableCell className="font-mono text-xs">{spec.project_id}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {spec.project_id}
+                  </TableCell>
                   <TableCell>{spec.status}</TableCell>
                   <TableCell className="font-mono text-xs">
                     {spec.root_task_uri ?? "—"}

@@ -15,3 +15,6 @@ sqlx.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
+
+[build-dependencies]
+rusqlite = { version = "0.32" }

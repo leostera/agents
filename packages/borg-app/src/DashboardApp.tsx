@@ -22,10 +22,10 @@ import { CommandK, type CommandSectionGroup } from "./CommandK";
 import { ActorsPage } from "./pages/control/actors";
 import { ActorDetailsPage } from "./pages/control/actors/id";
 import { AppsPage } from "./pages/control/apps";
-import { ClockworkPage } from "./pages/control/clockwork";
 import { AppDetailsPage } from "./pages/control/apps/id";
 import { BehaviorsPage } from "./pages/control/behaviors";
 import { BehaviorDetailsPage } from "./pages/control/behaviors/id";
+import { ClockworkPage } from "./pages/control/clockwork";
 import { PortsPage } from "./pages/control/ports";
 import { PortDetailsPage } from "./pages/control/ports/id";
 import { SessionPage } from "./pages/control/sessions";
@@ -392,7 +392,9 @@ function resolveRouteFromPath(pathname: string): ResolvedDashboardRoute {
     normalizedPathname.length > CONTROL_ACTOR_PREFIX.length &&
     !SECTION_BY_PATH[normalizedPathname]
   ) {
-    const encodedActorId = normalizedPathname.slice(CONTROL_ACTOR_PREFIX.length);
+    const encodedActorId = normalizedPathname.slice(
+      CONTROL_ACTOR_PREFIX.length
+    );
     try {
       return {
         id: "control-actor",
@@ -670,7 +672,9 @@ export function DashboardApp() {
         <BehaviorDetailsPage behaviorId={route.entityUri ?? ""} />
       ),
       "control-actors": () => <ActorsPage />,
-      "control-actor": () => <ActorDetailsPage actorId={route.entityUri ?? ""} />,
+      "control-actor": () => (
+        <ActorDetailsPage actorId={route.entityUri ?? ""} />
+      ),
       "control-apps": () => <AppsPage />,
       "control-clockwork": () => <ClockworkPage />,
       "control-app": () => <AppDetailsPage appId={route.entityUri ?? ""} />,

@@ -127,7 +127,9 @@ export function BehaviorDetailsPage({ behaviorId }: BehaviorDetailsPageProps) {
     setIsDeleting(true);
     setError(null);
     try {
-      await borgApi.deleteBehavior(behavior.behavior_id, { ignoreNotFound: true });
+      await borgApi.deleteBehavior(behavior.behavior_id, {
+        ignoreNotFound: true,
+      });
       window.history.pushState(null, "", "/control/behaviors");
       window.dispatchEvent(new PopStateEvent("popstate"));
     } catch (deleteError) {
@@ -145,7 +147,11 @@ export function BehaviorDetailsPage({ behaviorId }: BehaviorDetailsPageProps) {
   }
 
   if (!behavior) {
-    return <p className="text-destructive text-sm">{error ?? "Behavior not found."}</p>;
+    return (
+      <p className="text-destructive text-sm">
+        {error ?? "Behavior not found."}
+      </p>
+    );
   }
 
   return (
@@ -176,7 +182,9 @@ export function BehaviorDetailsPage({ behaviorId }: BehaviorDetailsPageProps) {
         </div>
         <div>
           <p className="text-muted-foreground text-xs">Updated</p>
-          <p className="text-xs">{new Date(behavior.updated_at).toLocaleString()}</p>
+          <p className="text-xs">
+            {new Date(behavior.updated_at).toLocaleString()}
+          </p>
         </div>
       </div>
 
@@ -240,7 +248,9 @@ export function BehaviorDetailsPage({ behaviorId }: BehaviorDetailsPageProps) {
                 <SelectValue placeholder="No preferred provider" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={NO_PROVIDER}>No preferred provider</SelectItem>
+                <SelectItem value={NO_PROVIDER}>
+                  No preferred provider
+                </SelectItem>
                 {providers.map((provider) => (
                   <SelectItem key={provider.provider} value={provider.provider}>
                     {provider.provider}

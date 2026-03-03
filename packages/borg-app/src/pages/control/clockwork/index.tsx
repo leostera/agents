@@ -14,7 +14,15 @@ import {
   TableHeader,
   TableRow,
 } from "@borg/ui";
-import { Clock3, LoaderCircle, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import {
+  Clock3,
+  LoaderCircle,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import React from "react";
 import {
   Section,
@@ -22,7 +30,10 @@ import {
   SectionEmpty,
   SectionToolbar,
 } from "../../../components/Section";
-import { AddClockworkJobForm, type ClockworkJobFormInput } from "./AddClockworkJobForm";
+import {
+  AddClockworkJobForm,
+  type ClockworkJobFormInput,
+} from "./AddClockworkJobForm";
 
 const borgApi = createBorgApiClient();
 
@@ -34,7 +45,10 @@ type DialogState =
     };
 
 function createClockworkJobId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return `borg:clockwork_job:${crypto.randomUUID()}`;
   }
   return `borg:clockwork_job:${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
@@ -97,7 +111,9 @@ export function ClockworkPage() {
   const [isSaving, setIsSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState("");
-  const [dialogState, setDialogState] = React.useState<DialogState | null>(null);
+  const [dialogState, setDialogState] = React.useState<DialogState | null>(
+    null
+  );
 
   const load = React.useCallback(async () => {
     setIsLoading(true);
@@ -112,7 +128,9 @@ export function ClockworkPage() {
     } catch (loadError) {
       setJobs([]);
       setError(
-        loadError instanceof Error ? loadError.message : "Unable to load Clockwork"
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load Clockwork"
       );
     } finally {
       setIsLoading(false);
@@ -131,7 +149,8 @@ export function ClockworkPage() {
         job.job_id,
         job.kind,
         job.status,
-        actors.find((actor) => actor.actor_id === job.target_actor_id)?.name ?? "",
+        actors.find((actor) => actor.actor_id === job.target_actor_id)?.name ??
+          "",
         job.target_actor_id,
         job.target_session_id,
         job.message_type,
@@ -183,7 +202,9 @@ export function ClockworkPage() {
       setDialogState(null);
       await load();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save job");
+      setError(
+        saveError instanceof Error ? saveError.message : "Unable to save job"
+      );
     } finally {
       setIsSaving(false);
     }
@@ -195,7 +216,11 @@ export function ClockworkPage() {
       await borgApi.pauseClockworkJob(jobId);
       await load();
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Unable to pause job");
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Unable to pause job"
+      );
     }
   };
 
@@ -205,7 +230,11 @@ export function ClockworkPage() {
       await borgApi.resumeClockworkJob(jobId);
       await load();
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Unable to resume job");
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Unable to resume job"
+      );
     }
   };
 
@@ -215,7 +244,11 @@ export function ClockworkPage() {
       await borgApi.cancelClockworkJob(jobId);
       await load();
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Unable to cancel job");
+      setError(
+        actionError instanceof Error
+          ? actionError.message
+          : "Unable to cancel job"
+      );
     }
   };
 
@@ -242,7 +275,10 @@ export function ClockworkPage() {
             aria-label="Search jobs"
             className="max-w-md"
           />
-          <Button variant="outline" onClick={() => setDialogState({ mode: "create" })}>
+          <Button
+            variant="outline"
+            onClick={() => setDialogState({ mode: "create" })}
+          >
             <Plus className="size-4" />
             Add Job
           </Button>
@@ -278,7 +314,10 @@ export function ClockworkPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-muted-foreground text-center">
+                  <TableCell
+                    colSpan={6}
+                    className="text-muted-foreground text-center"
+                  >
                     <span className="inline-flex items-center gap-2">
                       <LoaderCircle className="size-4 animate-spin" />
                       Loading jobs...
@@ -303,16 +342,25 @@ export function ClockworkPage() {
                         {job.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="font-mono text-[11px]">{job.job_id}</TableCell>
+                    <TableCell className="font-mono text-[11px]">
+                      {job.job_id}
+                    </TableCell>
                     <TableCell className="font-mono text-[11px]">
                       <div className="font-sans text-sm">
-                        {actorNameById.get(job.target_actor_id) ?? job.target_actor_id}
+                        {actorNameById.get(job.target_actor_id) ??
+                          job.target_actor_id}
                       </div>
-                      <div className="text-muted-foreground">{job.target_session_id}</div>
+                      <div className="text-muted-foreground">
+                        {job.target_session_id}
+                      </div>
                     </TableCell>
-                    <TableCell className="font-mono text-[11px]">{job.kind}</TableCell>
+                    <TableCell className="font-mono text-[11px]">
+                      {job.kind}
+                    </TableCell>
                     <TableCell>
-                      {job.next_run_at ? new Date(job.next_run_at).toLocaleString() : "-"}
+                      {job.next_run_at
+                        ? new Date(job.next_run_at).toLocaleString()
+                        : "-"}
                     </TableCell>
                     <TableCell className="space-x-2">
                       <Button
@@ -321,7 +369,10 @@ export function ClockworkPage() {
                         onClick={() => setDialogState({ mode: "edit", job })}
                         title="Edit job"
                         aria-label={`Edit ${job.job_id}`}
-                        disabled={job.status === "cancelled" || job.status === "completed"}
+                        disabled={
+                          job.status === "cancelled" ||
+                          job.status === "completed"
+                        }
                       >
                         <Pencil className="size-3.5" />
                       </Button>
@@ -349,7 +400,10 @@ export function ClockworkPage() {
                         size="icon-sm"
                         variant="outline"
                         onClick={() => void handleCancel(job.job_id)}
-                        disabled={job.status === "cancelled" || job.status === "completed"}
+                        disabled={
+                          job.status === "cancelled" ||
+                          job.status === "completed"
+                        }
                         title="Cancel job"
                         aria-label={`Cancel ${job.job_id}`}
                       >
@@ -370,9 +424,15 @@ export function ClockworkPage() {
           if (!open) setDialogState(null);
         }}
         isSaving={isSaving}
-        title={dialogState?.mode === "edit" ? "Edit Clockwork Job" : "Add Clockwork Job"}
+        title={
+          dialogState?.mode === "edit"
+            ? "Edit Clockwork Job"
+            : "Add Clockwork Job"
+        }
         actors={actors}
-        loadSessionsForActor={(actorId) => borgApi.listActorSessions(actorId, 500)}
+        loadSessionsForActor={(actorId) =>
+          borgApi.listActorSessions(actorId, 500)
+        }
         initialValue={formInitialValue}
         onSubmit={handleSubmit}
       />

@@ -120,7 +120,9 @@ export function ActorDetailsPage({ actorId }: ActorDetailsPageProps) {
         await load();
       } catch (saveError) {
         setError(
-          saveError instanceof Error ? saveError.message : "Unable to save actor"
+          saveError instanceof Error
+            ? saveError.message
+            : "Unable to save actor"
         );
       } finally {
         setIsSaving(false);
@@ -157,7 +159,9 @@ export function ActorDetailsPage({ actorId }: ActorDetailsPageProps) {
   }
 
   if (!actor) {
-    return <p className="text-destructive text-sm">{error ?? "Actor not found."}</p>;
+    return (
+      <p className="text-destructive text-sm">{error ?? "Actor not found."}</p>
+    );
   }
 
   return (
@@ -188,7 +192,9 @@ export function ActorDetailsPage({ actorId }: ActorDetailsPageProps) {
         </div>
         <div>
           <p className="text-muted-foreground text-xs">Updated</p>
-          <p className="text-xs">{new Date(actor.updated_at).toLocaleString()}</p>
+          <p className="text-xs">
+            {new Date(actor.updated_at).toLocaleString()}
+          </p>
         </div>
       </div>
 
@@ -255,7 +261,10 @@ export function ActorDetailsPage({ actorId }: ActorDetailsPageProps) {
                     Select default behavior
                   </SelectItem>
                   {activeBehaviors.map((behavior) => (
-                    <SelectItem key={behavior.behavior_id} value={behavior.behavior_id}>
+                    <SelectItem
+                      key={behavior.behavior_id}
+                      value={behavior.behavior_id}
+                    >
                       {behavior.name}
                     </SelectItem>
                   ))}

@@ -14,9 +14,22 @@ import {
   TableHeader,
   TableRow,
 } from "@borg/ui";
-import { Bot, LoaderCircle, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import {
+  Bot,
+  LoaderCircle,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import React from "react";
-import { Section, SectionContent, SectionEmpty, SectionToolbar } from "../../../components/Section";
+import {
+  Section,
+  SectionContent,
+  SectionEmpty,
+  SectionToolbar,
+} from "../../../components/Section";
 import { AddActorForm, type AddActorInput } from "./AddActorForm";
 
 const borgApi = createBorgApiClient();
@@ -43,7 +56,9 @@ export function ActorsPage() {
     } catch (loadError) {
       setActors([]);
       setBehaviors([]);
-      setError(loadError instanceof Error ? loadError.message : "Unable to load actors");
+      setError(
+        loadError instanceof Error ? loadError.message : "Unable to load actors"
+      );
     } finally {
       setIsLoading(false);
     }
@@ -91,7 +106,11 @@ export function ActorsPage() {
       setIsDialogOpen(false);
       await loadActors();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to create actor");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to create actor"
+      );
     } finally {
       setIsSaving(false);
     }
@@ -103,7 +122,11 @@ export function ActorsPage() {
       await borgApi.deleteActor(actorId);
       await loadActors();
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete actor");
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Unable to delete actor"
+      );
     }
   };
 
@@ -191,7 +214,10 @@ export function ActorsPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-muted-foreground text-center">
+                  <TableCell
+                    colSpan={5}
+                    className="text-muted-foreground text-center"
+                  >
                     <span className="inline-flex items-center gap-2">
                       <LoaderCircle className="size-4 animate-spin" />
                       Loading actors...
@@ -219,8 +245,12 @@ export function ActorsPage() {
                             ? "bg-emerald-500"
                             : "bg-rose-500"
                         }`}
-                        title={actor.status === "RUNNING" ? "Running" : "Stopped"}
-                        aria-label={actor.status === "RUNNING" ? "Running" : "Stopped"}
+                        title={
+                          actor.status === "RUNNING" ? "Running" : "Stopped"
+                        }
+                        aria-label={
+                          actor.status === "RUNNING" ? "Running" : "Stopped"
+                        }
                       />
                     </TableCell>
                     <TableCell>{actor.name}</TableCell>
@@ -233,7 +263,9 @@ export function ActorsPage() {
                           actor.default_behavior_id}
                       </Link>
                     </TableCell>
-                    <TableCell>{new Date(actor.updated_at).toLocaleString()}</TableCell>
+                    <TableCell>
+                      {new Date(actor.updated_at).toLocaleString()}
+                    </TableCell>
                     <TableCell className="space-x-2">
                       <Button
                         size="icon-sm"
@@ -243,7 +275,9 @@ export function ActorsPage() {
                         title="Edit actor"
                         onClick={(event) => event.stopPropagation()}
                       >
-                        <Link href={`/control/actors/${encodeURIComponent(actor.actor_id)}`}>
+                        <Link
+                          href={`/control/actors/${encodeURIComponent(actor.actor_id)}`}
+                        >
                           <Pencil className="size-3.5" />
                         </Link>
                       </Button>

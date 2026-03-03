@@ -18,10 +18,7 @@ import {
   SectionEmpty,
   SectionToolbar,
 } from "../../../components/Section";
-import {
-  AddBehaviorForm,
-  type AddBehaviorInput,
-} from "./AddBehaviorForm";
+import { AddBehaviorForm, type AddBehaviorInput } from "./AddBehaviorForm";
 
 const borgApi = createBorgApiClient();
 
@@ -197,7 +194,10 @@ export function BehaviorsPage() {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-muted-foreground text-center">
+                  <TableCell
+                    colSpan={6}
+                    className="text-muted-foreground text-center"
+                  >
                     <span className="inline-flex items-center gap-2">
                       <LoaderCircle className="size-4 animate-spin" />
                       Loading behaviors...
@@ -214,8 +214,12 @@ export function BehaviorsPage() {
                             ? "bg-emerald-500"
                             : "bg-rose-500"
                         }`}
-                        title={behavior.status === "ACTIVE" ? "Active" : "Inactive"}
-                        aria-label={behavior.status === "ACTIVE" ? "Active" : "Inactive"}
+                        title={
+                          behavior.status === "ACTIVE" ? "Active" : "Inactive"
+                        }
+                        aria-label={
+                          behavior.status === "ACTIVE" ? "Active" : "Inactive"
+                        }
                       />
                     </TableCell>
                     <TableCell>
@@ -225,7 +229,9 @@ export function BehaviorsPage() {
                         {behavior.name}
                       </Link>
                     </TableCell>
-                    <TableCell>{behavior.preferred_provider_id ?? "—"}</TableCell>
+                    <TableCell>
+                      {behavior.preferred_provider_id ?? "—"}
+                    </TableCell>
                     <TableCell
                       className="text-muted-foreground max-w-[38rem] text-sm"
                       title={behavior.system_prompt}
@@ -249,7 +255,9 @@ export function BehaviorsPage() {
                       <Button
                         size="icon-sm"
                         variant="outline"
-                        onClick={() => void handleSetStatus(behavior, "INACTIVE")}
+                        onClick={() =>
+                          void handleSetStatus(behavior, "INACTIVE")
+                        }
                         disabled={behavior.status !== "ACTIVE"}
                         title="Deactivate behavior"
                         aria-label={`Deactivate ${behavior.name}`}
@@ -259,7 +267,9 @@ export function BehaviorsPage() {
                       <Button
                         size="icon-sm"
                         variant="outline"
-                        onClick={() => void handleDeleteBehavior(behavior.behavior_id)}
+                        onClick={() =>
+                          void handleDeleteBehavior(behavior.behavior_id)
+                        }
                         aria-label={`Delete ${behavior.behavior_id}`}
                         title="Delete behavior"
                       >
