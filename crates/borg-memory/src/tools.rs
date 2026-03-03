@@ -28,6 +28,52 @@ struct SearchMemoryArgs {
     query: SearchQuery,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct DefineNamespaceArgs {
+    #[serde(rename = "namespaceUri")]
+    namespace_uri: String,
+    prefix: String,
+    source: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DefineKindArgs {
+    #[serde(rename = "kindUri")]
+    kind_uri: String,
+    source: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DefineFieldArgs {
+    #[serde(rename = "fieldUri")]
+    field_uri: String,
+    domain: Vec<String>,
+    range: Vec<String>,
+    #[serde(rename = "allowsMany")]
+    allows_many: bool,
+    source: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(rename = "isTransitive", default)]
+    is_transitive: Option<bool>,
+    #[serde(rename = "isReflexive", default)]
+    is_reflexive: Option<bool>,
+    #[serde(rename = "isSymmetric", default)]
+    is_symmetric: Option<bool>,
+    #[serde(rename = "inverseOf", default)]
+    inverse_of: Option<String>,
+}
+
 fn uri_schema() -> Value {
     json!({
         "type": "string",
@@ -1116,40 +1162,34 @@ pub fn build_memory_toolchain(
                 })
             }
         }))?
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_transcoded(
             define_namespace_spec,
             None,
-            move |request| {
+            move |request: borg_agent::ToolRequest<DefineNamespaceArgs>| {
                 let memory = memory_for_define_namespace.clone();
                 async move {
-                    let namespace_uri = request
-                        .arguments
-                        .get("namespaceUri")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| {
-                            anyhow!("Memory-Schema-defineNamespace requires namespaceUri")
-                        })?;
-                    let prefix = request
-                        .arguments
-                        .get("prefix")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| anyhow!("Memory-Schema-defineNamespace requires prefix"))?;
-                    let source = request
-                        .arguments
-                        .get("source")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| anyhow!("Memory-Schema-defineNamespace requires source"))?;
+                    let namespace_uri_raw = request.arguments.namespace_uri.trim();
+                    if namespace_uri_raw.is_empty() {
+                        return Err(anyhow!("Memory-Schema-defineNamespace requires namespaceUri"));
+                    }
+                    let prefix = request.arguments.prefix.trim();
+                    if prefix.is_empty() {
+                        return Err(anyhow!("Memory-Schema-defineNamespace requires prefix"));
+                    }
+                    let source_raw = request.arguments.source.trim();
+                    if source_raw.is_empty() {
+                        return Err(anyhow!("Memory-Schema-defineNamespace requires source"));
+                    }
                     let label = request
                         .arguments
-                        .get("label")
-                        .and_then(Value::as_str)
+                        .label
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
                         .unwrap_or(prefix);
-                    let description = request
-                        .arguments
-                        .get("description")
-                        .and_then(Value::as_str);
-                    let namespace_uri = Uri::parse(namespace_uri)?;
-                    let source_uri = Uri::parse(source)?;
+                    let description = request.arguments.description;
+                    let namespace_uri = Uri::parse(namespace_uri_raw)?;
+                    let source_uri = Uri::parse(source_raw)?;
 
                     let mut facts = vec![
                         FactInput {
@@ -1191,35 +1231,32 @@ pub fn build_memory_toolchain(
                         "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                     });
                     Ok(ToolResponse {
-                        content: ToolResultData::Text(serde_json::to_string(&out)?),
+                        content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
                     })
                 }
             },
         ))?
-        .add_tool(Tool::new(define_kind_spec, None, move |request| {
+        .add_tool(Tool::new_transcoded(define_kind_spec, None, move |request: borg_agent::ToolRequest<DefineKindArgs>| {
             let memory = memory_for_define_kind.clone();
             async move {
-                let kind_uri = request
-                    .arguments
-                    .get("kindUri")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("Memory-Schema-defineKind requires kindUri"))?;
-                let source = request
-                    .arguments
-                    .get("source")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("Memory-Schema-defineKind requires source"))?;
+                let kind_uri_raw = request.arguments.kind_uri.trim();
+                if kind_uri_raw.is_empty() {
+                    return Err(anyhow!("Memory-Schema-defineKind requires kindUri"));
+                }
+                let source_raw = request.arguments.source.trim();
+                if source_raw.is_empty() {
+                    return Err(anyhow!("Memory-Schema-defineKind requires source"));
+                }
                 let label = request
                     .arguments
-                    .get("label")
-                    .and_then(Value::as_str)
-                    .unwrap_or(kind_uri);
-                let description = request
-                    .arguments
-                    .get("description")
-                    .and_then(Value::as_str);
-                let kind_uri = Uri::parse(kind_uri)?;
-                let source_uri = Uri::parse(source)?;
+                    .label
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(kind_uri_raw);
+                let description = request.arguments.description;
+                let kind_uri = Uri::parse(kind_uri_raw)?;
+                let source_uri = Uri::parse(source_raw)?;
                 let mut facts = vec![
                     FactInput {
                         source: source_uri.clone(),
@@ -1253,49 +1290,37 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(serde_json::to_string(&out)?),
+                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
                 })
             }
         }))?
-        .add_tool(Tool::new(define_field_spec, None, move |request| {
+        .add_tool(Tool::new_transcoded(define_field_spec, None, move |request: borg_agent::ToolRequest<DefineFieldArgs>| {
             let memory = memory_for_define_field.clone();
             async move {
-                let field_uri = request
-                    .arguments
-                    .get("fieldUri")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("Memory-Schema-defineField requires fieldUri"))?;
-                let domain = request
-                    .arguments
-                    .get("domain")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| anyhow!("Memory-Schema-defineField requires domain"))?;
-                let range = request
-                    .arguments
-                    .get("range")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| anyhow!("Memory-Schema-defineField requires range"))?;
-                let allows_many = request
-                    .arguments
-                    .get("allowsMany")
-                    .and_then(Value::as_bool)
-                    .ok_or_else(|| anyhow!("Memory-Schema-defineField requires allowsMany"))?;
-                let source = request
-                    .arguments
-                    .get("source")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("Memory-Schema-defineField requires source"))?;
+                let field_uri_raw = request.arguments.field_uri.trim();
+                if field_uri_raw.is_empty() {
+                    return Err(anyhow!("Memory-Schema-defineField requires fieldUri"));
+                }
+                if request.arguments.domain.is_empty() {
+                    return Err(anyhow!("Memory-Schema-defineField requires domain"));
+                }
+                if request.arguments.range.is_empty() {
+                    return Err(anyhow!("Memory-Schema-defineField requires range"));
+                }
+                let source_raw = request.arguments.source.trim();
+                if source_raw.is_empty() {
+                    return Err(anyhow!("Memory-Schema-defineField requires source"));
+                }
                 let label = request
                     .arguments
-                    .get("label")
-                    .and_then(Value::as_str)
-                    .unwrap_or(field_uri);
-                let description = request
-                    .arguments
-                    .get("description")
-                    .and_then(Value::as_str);
-                let field_uri = Uri::parse(field_uri)?;
-                let source_uri = Uri::parse(source)?;
+                    .label
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(field_uri_raw);
+                let description = request.arguments.description;
+                let field_uri = Uri::parse(field_uri_raw)?;
+                let source_uri = Uri::parse(source_raw)?;
 
                 let mut facts = vec![
                     FactInput {
@@ -1317,7 +1342,7 @@ pub fn build_memory_toolchain(
                         entity: field_uri.clone(),
                         field: Uri::parse("borg:field:allowsMany")?,
                         arity: Default::default(),
-                        value: FactValue::Boolean(allows_many),
+                        value: FactValue::Boolean(request.arguments.allows_many),
                     },
                 ];
                 if let Some(description) = description {
@@ -1329,10 +1354,7 @@ pub fn build_memory_toolchain(
                         value: FactValue::Text(description.to_string()),
                     });
                 }
-                for domain_kind in domain {
-                    let domain_kind = domain_kind
-                        .as_str()
-                        .ok_or_else(|| anyhow!("domain values must be strings"))?;
+                for domain_kind in &request.arguments.domain {
                     facts.push(FactInput {
                         source: source_uri.clone(),
                         entity: field_uri.clone(),
@@ -1341,10 +1363,7 @@ pub fn build_memory_toolchain(
                         value: FactValue::Ref(Uri::parse(domain_kind)?),
                     });
                 }
-                for range_kind in range {
-                    let range_kind = range_kind
-                        .as_str()
-                        .ok_or_else(|| anyhow!("range values must be strings"))?;
+                for range_kind in &request.arguments.range {
                     facts.push(FactInput {
                         source: source_uri.clone(),
                         entity: field_uri.clone(),
@@ -1353,7 +1372,7 @@ pub fn build_memory_toolchain(
                         value: FactValue::Ref(Uri::parse(range_kind)?),
                     });
                 }
-                if let Some(value) = request.arguments.get("isTransitive").and_then(Value::as_bool) {
+                if let Some(value) = request.arguments.is_transitive {
                     facts.push(FactInput {
                         source: source_uri.clone(),
                         entity: field_uri.clone(),
@@ -1362,7 +1381,7 @@ pub fn build_memory_toolchain(
                         value: FactValue::Boolean(value),
                     });
                 }
-                if let Some(value) = request.arguments.get("isReflexive").and_then(Value::as_bool) {
+                if let Some(value) = request.arguments.is_reflexive {
                     facts.push(FactInput {
                         source: source_uri.clone(),
                         entity: field_uri.clone(),
@@ -1371,7 +1390,7 @@ pub fn build_memory_toolchain(
                         value: FactValue::Boolean(value),
                     });
                 }
-                if let Some(value) = request.arguments.get("isSymmetric").and_then(Value::as_bool) {
+                if let Some(value) = request.arguments.is_symmetric {
                     facts.push(FactInput {
                         source: source_uri.clone(),
                         entity: field_uri.clone(),
@@ -1380,13 +1399,13 @@ pub fn build_memory_toolchain(
                         value: FactValue::Boolean(value),
                     });
                 }
-                if let Some(value) = request.arguments.get("inverseOf").and_then(Value::as_str) {
+                if let Some(value) = request.arguments.inverse_of {
                     facts.push(FactInput {
                         source: source_uri.clone(),
                         entity: field_uri.clone(),
                         field: Uri::parse("borg:field:inverseOf")?,
                         arity: Default::default(),
-                        value: FactValue::Ref(Uri::parse(value)?),
+                        value: FactValue::Ref(Uri::parse(&value)?),
                     });
                 }
 
@@ -1398,7 +1417,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(serde_json::to_string(&out)?),
+                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
                 })
             }
         }))?
