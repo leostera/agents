@@ -523,3 +523,7 @@ where
         }
     }
 }
+
+pub type JsonContextWindow = ContextWindow<Value, Value>;
+pub type JsonContextChunk = ContextChunk<Value, Value>;
+pub type JsonContextManager = ContextManager<Value, Value>;

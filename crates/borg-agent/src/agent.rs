@@ -455,3 +455,5 @@ where
     }
     result
 }
+
+pub type JsonAgent = Agent<Value, Value>;
