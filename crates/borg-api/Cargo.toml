@@ -6,10 +6,12 @@ edition = "2024"
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+base64.workspace = true
 borg-db = { path = "../borg-db" }
 borg-core = { path = "../borg-core" }
 borg-apps = { path = "../borg-apps" }
 borg-exec = { path = "../borg-exec" }
+borg-fs = { path = "../borg-fs" }
 borg-llm = { path = "../borg-llm" }
 borg-memory = { path = "../borg-memory" }
 borg-taskgraph = { path = "../borg-taskgraph" }

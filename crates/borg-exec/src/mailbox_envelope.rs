@@ -19,8 +19,18 @@ pub struct ActorMailboxEnvelope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ActorMailboxInput {
-    Chat { text: String },
-    Command { command: BorgCommand },
+    Chat {
+        text: String,
+    },
+    Audio {
+        file_id: String,
+        mime_type: Option<String>,
+        duration_ms: Option<u64>,
+        language_hint: Option<String>,
+    },
+    Command {
+        command: BorgCommand,
+    },
 }
 
 impl ActorMailboxEnvelope {
@@ -36,6 +46,17 @@ impl ActorMailboxEnvelope {
             port_context,
             input: match &msg.input {
                 BorgInput::Chat { text } => ActorMailboxInput::Chat { text: text.clone() },
+                BorgInput::Audio {
+                    file_id,
+                    mime_type,
+                    duration_ms,
+                    language_hint,
+                } => ActorMailboxInput::Audio {
+                    file_id: file_id.to_string(),
+                    mime_type: mime_type.clone(),
+                    duration_ms: *duration_ms,
+                    language_hint: language_hint.clone(),
+                },
                 BorgInput::Command(command) => ActorMailboxInput::Command {
                     command: command.clone(),
                 },
@@ -57,6 +78,17 @@ impl ActorMailboxEnvelope {
         let session_id = Uri::parse(&self.session_id)?;
         let input = match &self.input {
             ActorMailboxInput::Chat { text } => BorgInput::Chat { text: text.clone() },
+            ActorMailboxInput::Audio {
+                file_id,
+                mime_type,
+                duration_ms,
+                language_hint,
+            } => BorgInput::Audio {
+                file_id: Uri::parse(file_id)?,
+                mime_type: mime_type.clone(),
+                duration_ms: *duration_ms,
+                language_hint: language_hint.clone(),
+            },
             ActorMailboxInput::Command { command } => BorgInput::Command(command.clone()),
         };
         Ok(BorgMessage {
@@ -133,5 +165,43 @@ mod tests {
             decoded.port_context.to_json().expect("ctx"),
             serde_json::json!({"chat_id":123})
         );
+    }
+
+    #[test]
+    fn mailbox_envelope_roundtrip_audio() {
+        let msg = BorgMessage {
+            actor_id: uri!("devmode", "actor", "a3"),
+            user_id: uri!("borg", "user", "u3"),
+            session_id: uri!("borg", "session", "s3"),
+            input: BorgInput::Audio {
+                file_id: uri!("borg", "audio", "abc123"),
+                mime_type: Some("audio/wav".to_string()),
+                duration_ms: Some(1234),
+                language_hint: Some("en".to_string()),
+            },
+            port_context: Arc::new(JsonPortContext::new(serde_json::json!({"port":"http"}))),
+        };
+
+        let env = ActorMailboxEnvelope::from_borg_message(&msg);
+        let json = env.to_json().expect("to_json");
+        let decoded = ActorMailboxEnvelope::from_json(&json)
+            .expect("from_json")
+            .to_borg_message()
+            .expect("to_borg");
+
+        match decoded.input {
+            BorgInput::Audio {
+                file_id,
+                mime_type,
+                duration_ms,
+                language_hint,
+            } => {
+                assert_eq!(file_id.as_str(), "borg:audio:abc123");
+                assert_eq!(mime_type.as_deref(), Some("audio/wav"));
+                assert_eq!(duration_ms, Some(1234));
+                assert_eq!(language_hint.as_deref(), Some("en"));
+            }
+            _ => panic!("expected audio input"),
+        }
     }
 }

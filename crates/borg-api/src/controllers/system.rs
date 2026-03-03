@@ -4,8 +4,10 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse},
 };
+use base64::Engine;
 use borg_core::{Entity, Uri, uri};
 use borg_exec::{BorgCommand, BorgInput, BorgMessage, JsonPortContext, UserMessage};
+use borg_fs::{FileKind, PutFileMetadata};
 use borg_memory::{FactArity, FactValue, Uri as MemoryUri};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -49,6 +51,35 @@ pub(crate) struct HttpPortRequest {
     pub agent_id: Option<String>,
     #[serde(default)]
     pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct HttpPortAudioRequest {
+    pub user_key: String,
+    pub audio_base64: String,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub language_hint: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<Value>,
+}
+
+struct ValidatedHttpPortAudioRequest {
+    user_id: Uri,
+    audio_bytes: Vec<u8>,
+    mime_type: Option<String>,
+    duration_ms: Option<u64>,
+    language_hint: Option<String>,
+    session_id: Option<Uri>,
+    agent_id: Option<Uri>,
+    metadata: Value,
 }
 
 pub(crate) struct SystemController;
@@ -279,6 +310,144 @@ impl SystemController {
         }
     }
 
+    pub(crate) async fn ports_http_audio(
+        State(state): State<AppState>,
+        headers: HeaderMap,
+        Json(payload): Json<HttpPortAudioRequest>,
+    ) -> impl IntoResponse {
+        match validate_audio_port_request(payload) {
+            Ok(validated) => {
+                let conversation_key = validated
+                    .session_id
+                    .clone()
+                    .unwrap_or_else(|| validated.user_id.clone());
+                let requested_actor_id = validated
+                    .agent_id
+                    .as_ref()
+                    .filter(|value| value.as_str().contains(":actor:"));
+                let (session_id, legacy_actor_id) = match state
+                    .db
+                    .resolve_port_session(
+                        HTTP_PORT_NAME,
+                        &conversation_key,
+                        validated.session_id.as_ref(),
+                        validated.agent_id.as_ref(),
+                    )
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                    }
+                };
+
+                let default_actor_id = match state.db.get_port(HTTP_PORT_NAME).await {
+                    Ok(Some(port)) => port.assigned_actor_id,
+                    Ok(None) => None,
+                    Err(err) => {
+                        return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                    }
+                };
+
+                let resolved_actor_id = match state
+                    .db
+                    .resolve_port_actor(
+                        HTTP_PORT_NAME,
+                        &conversation_key,
+                        requested_actor_id,
+                        default_actor_id.as_ref(),
+                    )
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                    }
+                };
+
+                if let Err(err) = ensure_session_row(
+                    &state,
+                    &headers,
+                    &validated.user_id,
+                    &session_id,
+                    HTTP_PORT_NAME,
+                )
+                .await
+                {
+                    return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                }
+
+                let file = match state
+                    .files
+                    .put_bytes(
+                        FileKind::Audio,
+                        &validated.audio_bytes,
+                        PutFileMetadata {
+                            session_id: session_id.clone(),
+                        },
+                    )
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                    }
+                };
+
+                let output = match state
+                    .supervisor
+                    .call(BorgMessage {
+                        actor_id: select_actor_id(
+                            session_id.clone(),
+                            Some(resolved_actor_id),
+                            legacy_actor_id,
+                        ),
+                        user_id: validated.user_id,
+                        session_id: session_id.clone(),
+                        input: BorgInput::Audio {
+                            file_id: file.file_id,
+                            mime_type: validated.mime_type,
+                            duration_ms: validated.duration_ms,
+                            language_hint: validated.language_hint,
+                        },
+                        port_context: Arc::new(JsonPortContext::new(validated.metadata)),
+                    })
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                    }
+                };
+
+                let mut response = (
+                    StatusCode::OK,
+                    Json(json!({
+                        "session_id": output.session_id,
+                        "reply": output.reply,
+                        "tool_calls": output
+                            .tool_calls
+                            .into_iter()
+                            .map(|call| {
+                                json!({
+                                    "tool_name": call.tool_name,
+                                    "arguments": call.arguments,
+                                    "output": call.output,
+                                })
+                            })
+                            .collect::<Vec<_>>(),
+                    })),
+                )
+                    .into_response();
+                if let Ok(value) = HeaderValue::from_str(session_id.as_str()) {
+                    response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
+                }
+                response
+            }
+            Err(err) => err,
+        }
+    }
+
     fn render_dashboard(entities_count: usize) -> String {
         format!(
             "<!doctype html><html><head><meta charset=\"utf-8\"><title>Borg Dashboard</title></head><body><h1>Borg Dashboard</h1><ul><li>Memory entities: {entities_count}</li></ul></body></html>"
@@ -410,6 +579,104 @@ pub(crate) fn validate_port_request(
     })
 }
 
+fn validate_audio_port_request(
+    payload: HttpPortAudioRequest,
+) -> Result<ValidatedHttpPortAudioRequest, axum::response::Response> {
+    let mut details = Vec::new();
+    let user_id = match Uri::parse(&payload.user_key) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            details.push(ApiFieldError {
+                field: "user_key".to_string(),
+                message: "must be a valid URI".to_string(),
+            });
+            None
+        }
+    };
+
+    let session_id = match payload.session_id {
+        Some(raw) => match Uri::parse(&raw) {
+            Ok(value) => Some(value),
+            Err(_) => {
+                details.push(ApiFieldError {
+                    field: "session_id".to_string(),
+                    message: "must be a valid URI".to_string(),
+                });
+                None
+            }
+        },
+        None => None,
+    };
+
+    let agent_id = match payload.agent_id {
+        Some(raw) => match Uri::parse(&raw) {
+            Ok(value) => Some(value),
+            Err(_) => {
+                details.push(ApiFieldError {
+                    field: "agent_id".to_string(),
+                    message: "must be a valid URI".to_string(),
+                });
+                None
+            }
+        },
+        None => None,
+    };
+
+    if !details.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiValidationError {
+                error: "invalid request".to_string(),
+                details,
+            }),
+        )
+            .into_response());
+    }
+
+    let audio_base64 = payload.audio_base64.trim();
+    if audio_base64.is_empty() {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "audio_base64 is required".to_string(),
+        ));
+    }
+
+    let audio_bytes = match base64::engine::general_purpose::STANDARD.decode(audio_base64) {
+        Ok(value) if !value.is_empty() => value,
+        Ok(_) => {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "audio_base64 decoded to empty payload".to_string(),
+            ));
+        }
+        Err(err) => {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                format!("audio_base64 is invalid: {}", err),
+            ));
+        }
+    };
+
+    Ok(ValidatedHttpPortAudioRequest {
+        user_id: user_id.expect("validated user_key"),
+        audio_bytes,
+        mime_type: payload
+            .mime_type
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        duration_ms: payload.duration_ms,
+        language_hint: payload
+            .language_hint
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        session_id,
+        agent_id,
+        metadata: payload
+            .metadata
+            .unwrap_or(Value::Object(Default::default())),
+    })
+}
+
 #[derive(Debug, Clone)]
 enum HttpPortInput {
     LocalReply(String),
@@ -515,7 +782,8 @@ fn select_actor_id(
 #[cfg(test)]
 mod tests {
     use super::{
-        HttpPortInput, MODEL_COMMAND_USAGE, resolve_http_port_input, validate_port_request,
+        HttpPortAudioRequest, HttpPortInput, MODEL_COMMAND_USAGE, resolve_http_port_input,
+        validate_audio_port_request, validate_port_request,
     };
     use crate::controllers::system::HttpPortRequest;
     use borg_exec::{BorgCommand, BorgInput};
@@ -531,6 +799,21 @@ mod tests {
             metadata: Some(json!({})),
         };
         assert!(validate_port_request(request).is_err());
+    }
+
+    #[test]
+    fn validate_audio_port_request_rejects_invalid_base64() {
+        let request = HttpPortAudioRequest {
+            user_key: "borg:user:test".to_string(),
+            audio_base64: "not-base64".to_string(),
+            mime_type: Some("audio/wav".to_string()),
+            duration_ms: None,
+            language_hint: None,
+            session_id: None,
+            agent_id: None,
+            metadata: Some(json!({})),
+        };
+        assert!(validate_audio_port_request(request).is_err());
     }
 
     #[test]

@@ -76,7 +76,7 @@ impl Session {
             .await?;
         Ok(messages
             .into_iter()
-            .any(|m| matches!(m, Message::User { .. })))
+            .any(|m| matches!(m, Message::User { .. } | Message::UserAudio { .. })))
     }
 
     pub async fn mark_processed(&mut self) -> Result<()> {

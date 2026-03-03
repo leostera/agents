@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{AgentTools, Message, Session, SessionContextManager, SessionResult};
 use borg_core::Uri;
+use borg_llm::TranscriptionRequest;
+use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -146,6 +148,22 @@ impl Actor {
 
         let result = match &msg.input {
             BorgInput::Chat { text } => self.process_chat_message(&mut state, &msg, text).await,
+            BorgInput::Audio {
+                file_id,
+                mime_type,
+                duration_ms,
+                language_hint,
+            } => {
+                self.process_audio_message(
+                    &mut state,
+                    &msg,
+                    file_id,
+                    mime_type.as_deref(),
+                    *duration_ms,
+                    language_hint.as_deref(),
+                )
+                .await
+            }
             BorgInput::Command(command) => {
                 self.process_control_command(&mut state, &msg, command)
                     .await
@@ -193,6 +211,72 @@ impl Actor {
         msg: &BorgMessage,
         text: &str,
     ) -> Result<SessionOutput> {
+        state
+            .session
+            .add_message(Message::User {
+                content: text.to_string(),
+            })
+            .await?;
+
+        self.process_text_turn(state, msg, text, serde_json::json!({}))
+            .await
+    }
+
+    async fn process_audio_message(
+        &self,
+        state: &mut SessionState,
+        msg: &BorgMessage,
+        file_id: &Uri,
+        mime_type_hint: Option<&str>,
+        duration_ms: Option<u64>,
+        language_hint: Option<&str>,
+    ) -> Result<SessionOutput> {
+        let (file_record, audio_bytes) = self.runtime.files.read_all(file_id).await?;
+        let mime_type = mime_type_hint
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(file_record.content_type.as_str())
+            .to_string();
+
+        let llm = self.runtime.llm().await?;
+        let transcript = llm
+            .audio_transcription(&TranscriptionRequest {
+                audio: audio_bytes,
+                mime_type: mime_type.clone(),
+                model: None,
+                language: language_hint.map(str::to_string),
+                prompt: None,
+            })
+            .await?;
+        if transcript.trim().is_empty() {
+            return Err(anyhow!("audio transcription produced an empty transcript"));
+        }
+
+        state
+            .session
+            .add_message(Message::UserAudio {
+                file_id: file_id.clone(),
+                transcript: transcript.clone(),
+                created_at: Utc::now().to_rfc3339(),
+            })
+            .await?;
+
+        let audio_metadata = serde_json::json!({
+            "audio_file_id": file_id.as_str(),
+            "audio_mime_type": mime_type,
+            "audio_duration_ms": duration_ms,
+        });
+        self.process_text_turn(state, msg, &transcript, audio_metadata)
+            .await
+    }
+
+    async fn process_text_turn(
+        &self,
+        state: &mut SessionState,
+        msg: &BorgMessage,
+        text: &str,
+        metadata: serde_json::Value,
+    ) -> Result<SessionOutput> {
         let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
         state.agent_id = agent_id;
         state.behavior_id = behavior_id;
@@ -207,15 +291,8 @@ impl Actor {
             text: text.to_string(),
             session_id: Some(msg.session_id.clone()),
             agent_id: Some(state.agent_id.clone()),
-            metadata: serde_json::json!({}),
+            metadata,
         };
-
-        state
-            .session
-            .add_message(Message::User {
-                content: text.to_string(),
-            })
-            .await?;
 
         let llm = self.runtime.llm().await?;
         let toolchain = self

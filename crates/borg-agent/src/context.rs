@@ -211,7 +211,7 @@ fn build_context_window(agent: &Agent, messages: Vec<Message>) -> ContextWindow 
     let user_messages = ordered_messages
         .iter()
         .filter_map(|message| match message {
-            Message::User { .. } => Some(message.clone()),
+            Message::User { .. } | Message::UserAudio { .. } => Some(message.clone()),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -344,6 +344,11 @@ fn summarize_message_line(message: &Message) -> Option<String> {
     let mut line = match message {
         Message::System { content } => format!("System: {}", content),
         Message::User { content } => format!("User: {}", content),
+        Message::UserAudio {
+            file_id,
+            transcript,
+            ..
+        } => format!("UserAudio {}: {}", file_id, transcript),
         Message::Assistant { content } => format!("Assistant: {}", content),
         Message::ToolCall {
             name, arguments, ..
@@ -372,6 +377,7 @@ fn message_char_count(message: &Message) -> usize {
     match message {
         Message::System { content } => content.chars().count(),
         Message::User { content } => content.chars().count(),
+        Message::UserAudio { transcript, .. } => transcript.chars().count(),
         Message::Assistant { content } => content.chars().count(),
         Message::ToolCall {
             tool_call_id,

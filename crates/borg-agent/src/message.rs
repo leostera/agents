@@ -14,6 +14,11 @@ pub enum Message<TToolCall = Value, TToolResult = Value> {
     User {
         content: String,
     },
+    UserAudio {
+        file_id: Uri,
+        transcript: String,
+        created_at: String,
+    },
     Assistant {
         content: String,
     },

@@ -320,6 +320,17 @@ async fn bridge_loop(
                 session_id,
                 input: match message.input {
                     PortInput::Chat { text } => BorgInput::Chat { text },
+                    PortInput::Audio {
+                        file_id,
+                        mime_type,
+                        duration_ms,
+                        language_hint,
+                    } => BorgInput::Audio {
+                        file_id,
+                        mime_type,
+                        duration_ms,
+                        language_hint,
+                    },
                     PortInput::Command(command) => BorgInput::Command(command),
                 },
                 port_context: message.port_context,

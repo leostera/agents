@@ -7,6 +7,7 @@ use anyhow::Result;
 use axum::extract::FromRef;
 use borg_db::BorgDb;
 use borg_exec::{BorgRuntime, BorgSupervisor};
+use borg_fs::BorgFs;
 use borg_memory::MemoryStore;
 use borg_ports::BorgPortsSupervisor;
 use tokio::net::TcpListener;
@@ -21,6 +22,7 @@ pub(crate) use crate::controllers::system::{HttpPortRequest, validate_port_reque
 pub(crate) struct AppState {
     pub(crate) db: BorgDb,
     pub(crate) memory: MemoryStore,
+    pub(crate) files: BorgFs,
     pub(crate) supervisor: BorgSupervisor,
 }
 
@@ -45,6 +47,7 @@ impl BorgApiServer {
             state: AppState {
                 db: runtime.db.clone(),
                 memory: runtime.memory.clone(),
+                files: runtime.files.clone(),
                 supervisor: supervisor.clone(),
             },
             ports_supervisor,
@@ -92,6 +95,7 @@ mod tests {
     use borg_codemode::CodeModeRuntime;
     use borg_db::BorgDb;
     use borg_exec::{BorgRuntime, BorgSupervisor};
+    use borg_fs::BorgFs;
     use borg_memory::MemoryStore;
     use borg_shellmode::ShellModeRuntime;
     use serde_json::{Value, json};
@@ -114,8 +118,10 @@ mod tests {
         let db_path = root.join("config.db");
         let memory_path = root.join("ltm");
         let search_path = root.join("search");
+        let files_path = root.join("files");
         std::fs::create_dir_all(&memory_path).expect("create memory path");
         std::fs::create_dir_all(&search_path).expect("create search path");
+        std::fs::create_dir_all(&files_path).expect("create files path");
 
         let db = BorgDb::open_local(db_path.to_string_lossy().as_ref())
             .await
@@ -124,17 +130,20 @@ mod tests {
 
         let memory = MemoryStore::new(&memory_path, &search_path).expect("new memory store");
         memory.migrate().await.expect("migrate memory");
+        let files = BorgFs::local(db.clone(), files_path);
         let runtime = Arc::new(BorgRuntime::new(
             db.clone(),
             memory.clone(),
             CodeModeRuntime::default(),
             ShellModeRuntime::new(),
+            files.clone(),
         ));
         let supervisor = BorgSupervisor::new(runtime);
 
         let state = AppState {
             db: db.clone(),
             memory,
+            files,
             supervisor,
         };
         app_router(state)
@@ -469,6 +478,28 @@ mod tests {
         let (status, _) =
             request_no_body(&app, Method::GET, "/api/apps/borg:app:cascade/capabilities").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn http_audio_port_rejects_invalid_base64_payload() {
+        let app = test_app("ports-http-audio-invalid").await;
+        let (status, body) = request_json(
+            &app,
+            Method::POST,
+            "/ports/http/audio",
+            json!({
+                "user_key": "borg:user:tester",
+                "audio_base64": "%%%invalid%%%",
+                "mime_type": "audio/wav"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body.get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|message| message.contains("audio_base64"))
+        );
     }
 
     #[tokio::test]

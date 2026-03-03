@@ -6,6 +6,7 @@ mod behaviors;
 mod clockwork;
 mod core;
 mod devmode;
+mod files;
 mod llm_calls;
 mod migrations;
 mod policies;
@@ -224,6 +225,21 @@ pub struct ActorRecord {
     pub system_prompt: String,
     pub default_behavior_id: Uri,
     pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FileRecord {
+    pub file_id: Uri,
+    pub backend: String,
+    pub storage_key: String,
+    pub content_type: String,
+    pub size_bytes: i64,
+    pub sha512: String,
+    pub owner_uri: Option<Uri>,
+    pub metadata_json: Value,
+    pub deleted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

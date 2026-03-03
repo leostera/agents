@@ -7,6 +7,7 @@ use borg_codemode::CodeModeRuntime;
 use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
 use borg_exec::{BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, JsonPortContext};
+use borg_fs::BorgFs;
 use borg_memory::{FactInput, MemoryStore, SearchQuery};
 use borg_shellmode::ShellModeRuntime;
 use borg_taskgraph::{TaskDispatch, TaskGraphStore, TaskGraphSupervisor};
@@ -67,7 +68,8 @@ impl BorgCliApp {
                 ffi_memory_search(memory_for_search.clone(), args)
             });
         let shell_runtime = ShellModeRuntime::new();
-        let runtime = BorgRuntime::new(db.clone(), memory.clone(), runtime, shell_runtime);
+        let files = BorgFs::local(db.clone(), self.borg_dir.files().to_path_buf());
+        let runtime = BorgRuntime::new(db.clone(), memory.clone(), runtime, shell_runtime, files);
         let runtime = std::sync::Arc::new(runtime);
         let supervisor = BorgSupervisor::new(runtime.clone());
         let (task_dispatch_tx, mut task_dispatch_rx) =

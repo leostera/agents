@@ -8,6 +8,7 @@ use tracing::{debug, info, trace};
 pub struct BorgDir {
     root: PathBuf,
     logs: PathBuf,
+    files: PathBuf,
     config_db: PathBuf,
     memory_db: PathBuf,
 }
@@ -31,12 +32,14 @@ impl BorgDir {
 
         let root = home_dir.join(".borg");
         let logs = root.join("logs");
+        let files = root.join("files");
         let config_db = root.join("config.db");
         let memory_db = root.join("memory.db");
 
         Self {
             root,
             logs,
+            files,
             config_db,
             memory_db,
         }
@@ -63,12 +66,14 @@ impl BorgDir {
             target: "borg_core",
             root = %self.root.display(),
             logs = %self.logs.display(),
+            files = %self.files.display(),
             config_db = %self.config_db.display(),
             memory_db = %self.memory_db.display(),
             "ensuring borg directory structure exists"
         );
         create_dir_all(&self.root).await?;
         create_dir_all(&self.logs).await?;
+        create_dir_all(&self.files).await?;
 
         touch_file(&self.config_db).await?;
         touch_file(&self.memory_db).await?;
@@ -90,6 +95,10 @@ impl BorgDir {
 
     pub fn memory_db(&self) -> &Path {
         &self.memory_db
+    }
+
+    pub fn files(&self) -> &Path {
+        &self.files
     }
 }
 

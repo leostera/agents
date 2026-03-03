@@ -12,6 +12,7 @@ borg-llm = { path = "../borg-llm" }
 borg-memory = { path = "../borg-memory" }
 borg-codemode = { path = "../borg-codemode" }
 borg-shellmode = { path = "../borg-shellmode" }
+borg-fs = { path = "../borg-fs" }
 borg-apps = { path = "../borg-apps" }
 borg-taskgraph = { path = "../borg-taskgraph" }
 borg-clockwork = { path = "../borg-clockwork" }
@@ -22,6 +23,7 @@ tracing.workspace = true
 uuid.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

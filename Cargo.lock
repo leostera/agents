@@ -548,11 +548,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
+ "base64 0.22.1",
  "borg-apps",
  "borg-codemode",
  "borg-core",
  "borg-db",
  "borg-exec",
+ "borg-fs",
  "borg-llm",
  "borg-memory",
  "borg-ports",
@@ -602,6 +604,7 @@ dependencies = [
  "borg-core",
  "borg-db",
  "borg-exec",
+ "borg-fs",
  "borg-memory",
  "borg-shellmode",
  "borg-taskgraph",
@@ -702,17 +705,37 @@ dependencies = [
  "borg-codemode",
  "borg-core",
  "borg-db",
+ "borg-fs",
  "borg-llm",
  "borg-memory",
  "borg-ports-tools",
  "borg-shellmode",
  "borg-taskgraph",
+ "chrono",
  "serde",
  "serde_json",
  "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "borg-fs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "borg-core",
+ "borg-db",
+ "chrono",
+ "hex",
+ "infer",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
  "uuid",
 ]
 
@@ -944,6 +967,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
 dependencies = [
  "nom",
+]
+
+[[package]]
+name = "cfb"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d38f2da7a0a2c4ccf0065be06397cc26a81f4e528be095826eee9d4adbb8c60f"
+dependencies = [
+ "byteorder",
+ "fnv",
+ "uuid",
 ]
 
 [[package]]
@@ -2821,6 +2855,15 @@ dependencies = [
  "hashbrown 0.16.1",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "infer"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc150e5ce2330295b8616ce0e3f53250e53af31759a9dbedad1621ba29151847"
+dependencies = [
+ "cfb",
 ]
 
 [[package]]

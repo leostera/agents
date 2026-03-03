@@ -35,6 +35,16 @@ pub fn to_provider_messages(messages: &[Message]) -> Result<Vec<ProviderMessage>
                     content: vec![UserBlock::Text(content.clone())],
                 });
             }
+            Message::UserAudio { transcript, .. } => {
+                flush_interrupted_tool_call(
+                    &mut provider_messages,
+                    &mut pending_tool_calls,
+                    &mut immediate_tool_call,
+                );
+                provider_messages.push(ProviderMessage::User {
+                    content: vec![UserBlock::Text(transcript.clone())],
+                });
+            }
             Message::Assistant { content } => {
                 flush_interrupted_tool_call(
                     &mut provider_messages,

@@ -1,0 +1,19 @@
+[package]
+name = "borg-fs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+borg-core = { path = "../borg-core" }
+borg-db = { path = "../borg-db" }
+chrono.workspace = true
+hex.workspace = true
+infer.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+

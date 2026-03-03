@@ -13,6 +13,7 @@ use borg_codemode::{
 };
 use borg_core::uri;
 use borg_db::BorgDb;
+use borg_fs::{BorgFs, FileKind, PutFileMetadata};
 use borg_llm::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, ProviderMessage, StopReason,
     TranscriptionRequest,
@@ -38,6 +39,10 @@ fn temp_memory_paths() -> (PathBuf, PathBuf) {
     let root = std::env::temp_dir().join(format!("borg-exec-ltm-{}", uuid::Uuid::now_v7()));
     let search = std::env::temp_dir().join(format!("borg-exec-search-{}", uuid::Uuid::now_v7()));
     (root, search)
+}
+
+fn temp_files_root() -> PathBuf {
+    std::env::temp_dir().join(format!("borg-fs-test-{}", uuid::Uuid::now_v7()))
 }
 
 async fn open_test_memory() -> MemoryStore {
@@ -377,6 +382,7 @@ async fn app_available_secret_is_exposed_in_borg_env_get() {
         memory,
         CodeModeRuntime::default(),
         ShellModeRuntime::new(),
+        BorgFs::local(db.clone(), temp_files_root()),
     );
 
     let app_id = uri!("borg", "app", "github-env-test");
@@ -480,6 +486,7 @@ async fn borg_supervisor_creation_and_lifecycle() {
         memory,
         CodeModeRuntime::default(),
         ShellModeRuntime::new(),
+        BorgFs::local(db.clone(), temp_files_root()),
     );
     let runtime = std::sync::Arc::new(runtime);
     let supervisor = BorgSupervisor::new(runtime);
@@ -497,6 +504,7 @@ async fn borg_supervisor_actor_can_serve_multiple_sessions() {
         memory,
         CodeModeRuntime::default(),
         ShellModeRuntime::new(),
+        BorgFs::local(db.clone(), temp_files_root()),
     );
     let runtime = std::sync::Arc::new(runtime);
     let supervisor = BorgSupervisor::new(runtime);
@@ -555,6 +563,7 @@ async fn borg_supervisor_persists_call_and_cast_to_actor_mailbox() {
         memory,
         CodeModeRuntime::default(),
         ShellModeRuntime::new(),
+        BorgFs::local(db.clone(), temp_files_root()),
     );
     let runtime = std::sync::Arc::new(runtime);
     let supervisor = BorgSupervisor::new(runtime);
@@ -649,6 +658,7 @@ async fn borg_supervisor_missing_actor_spec_keeps_message_queued() {
         memory,
         CodeModeRuntime::default(),
         ShellModeRuntime::new(),
+        BorgFs::local(db.clone(), temp_files_root()),
     );
     let runtime = std::sync::Arc::new(runtime);
     let supervisor = BorgSupervisor::new(runtime);
@@ -681,6 +691,62 @@ async fn borg_supervisor_missing_actor_spec_keeps_message_queued() {
 }
 
 #[tokio::test]
+async fn audio_turn_rejects_without_transcription_provider_and_persists_no_user_audio_message() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let files = BorgFs::local(db.clone(), temp_files_root());
+    let session_id = uri!("borg", "session", "audio-reject");
+    let file = files
+        .put_bytes(
+            FileKind::Audio,
+            b"fake-audio-bytes",
+            PutFileMetadata {
+                session_id: session_id.clone(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let runtime = crate::BorgRuntime::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
+        files,
+    );
+    let runtime = std::sync::Arc::new(runtime);
+    let supervisor = BorgSupervisor::new(runtime);
+    supervisor.start().await.unwrap();
+
+    let actor_id = uri!("devmode", "actor", "audio-reject");
+    let behavior_id = uri!("borg", "behavior", "default");
+    db.upsert_actor(&actor_id, "audio-reject", "prompt", &behavior_id, "RUNNING")
+        .await
+        .unwrap();
+
+    let result = supervisor
+        .call(crate::BorgMessage {
+            actor_id,
+            user_id: uri!("borg", "user", "tester"),
+            session_id: session_id.clone(),
+            input: crate::BorgInput::Audio {
+                file_id: file.file_id,
+                mime_type: Some("audio/wav".to_string()),
+                duration_ms: Some(2500),
+                language_hint: Some("en".to_string()),
+            },
+            port_context: std::sync::Arc::new(crate::JsonPortContext::new(json!({}))),
+        })
+        .await;
+    assert!(result.is_err());
+
+    let messages = db.list_session_messages(&session_id, 0, 50).await.unwrap();
+    assert!(messages.is_empty());
+
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
 async fn borg_supervisor_replays_queued_after_actor_spec_is_created() {
     let db = open_test_db().await;
     let memory = open_test_memory().await;
@@ -689,6 +755,7 @@ async fn borg_supervisor_replays_queued_after_actor_spec_is_created() {
         memory,
         CodeModeRuntime::default(),
         ShellModeRuntime::new(),
+        BorgFs::local(db.clone(), temp_files_root()),
     );
     let runtime = std::sync::Arc::new(runtime);
     let supervisor = BorgSupervisor::new(runtime);
@@ -757,6 +824,7 @@ async fn borg_supervisor_start_fails_stale_in_progress_mailbox_rows() {
         memory,
         CodeModeRuntime::default(),
         ShellModeRuntime::new(),
+        BorgFs::local(db.clone(), temp_files_root()),
     );
     let runtime = std::sync::Arc::new(runtime);
     let supervisor = BorgSupervisor::new(runtime);
@@ -807,6 +875,7 @@ async fn borg_supervisor_start_replays_queued_mailbox_rows() {
         memory,
         CodeModeRuntime::default(),
         ShellModeRuntime::new(),
+        BorgFs::local(db.clone(), temp_files_root()),
     );
     let runtime = std::sync::Arc::new(runtime);
     let supervisor = BorgSupervisor::new(runtime);

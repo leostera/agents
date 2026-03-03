@@ -5,7 +5,15 @@ use borg_exec::{BorgCommand, PortContext};
 
 #[derive(Debug, Clone)]
 pub enum PortInput {
-    Chat { text: String },
+    Chat {
+        text: String,
+    },
+    Audio {
+        file_id: Uri,
+        mime_type: Option<String>,
+        duration_ms: Option<u64>,
+        language_hint: Option<String>,
+    },
     Command(BorgCommand),
 }
 

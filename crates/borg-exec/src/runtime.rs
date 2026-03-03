@@ -4,6 +4,7 @@ use borg_apps::BorgApps;
 use borg_codemode::{CodeModeContext, CodeModeRuntime};
 use borg_core::{Uri, uri};
 use borg_db::{AppConnectionRecord, BorgDb};
+use borg_fs::BorgFs;
 use borg_memory::MemoryStore;
 use borg_shellmode::ShellModeRuntime;
 use serde_json::Value;
@@ -20,6 +21,7 @@ pub struct BorgRuntime {
     pub memory: MemoryStore,
     pub runtime: CodeModeRuntime,
     pub shell_runtime: ShellModeRuntime,
+    pub files: BorgFs,
     pub llm_resolver: BorgLLMResolver,
     pub session_manager: SessionManager,
 }
@@ -30,6 +32,7 @@ impl BorgRuntime {
         memory: MemoryStore,
         runtime: CodeModeRuntime,
         shell_runtime: ShellModeRuntime,
+        files: BorgFs,
     ) -> Self {
         let agent_model = String::new();
         let session_manager = SessionManager::new(db.clone(), agent_model);
@@ -38,6 +41,7 @@ impl BorgRuntime {
             memory,
             runtime,
             shell_runtime,
+            files,
             llm_resolver: BorgLLMResolver::new(db),
             session_manager,
         }

@@ -23,6 +23,10 @@ pub(crate) fn app_router(state: AppState) -> Router {
         .route("/dashboard", get(SystemController::ui_dashboard))
         .route("/health", get(SystemController::health))
         .route("/ports/http", post(SystemController::ports_http))
+        .route(
+            "/ports/http/audio",
+            post(SystemController::ports_http_audio),
+        )
         .route("/memory/search", get(SystemController::memory_search))
         .route(
             "/api/memory/explorer",

@@ -16,6 +16,7 @@ members = [
   "crates/borg-ports-tools",
   "crates/borg-codemode",
   "crates/borg-shellmode",
+  "crates/borg-fs",
 ]
 resolver = "2"
 
@@ -27,7 +28,7 @@ chrono = { version = "0.4", features = ["serde", "clock"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs", "io-util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
@@ -47,3 +48,6 @@ indradb = { package = "indradb-lib", version = "5.0.0", features = ["rocksdb-dat
 tantivy = "0.22"
 sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
 thiserror = "2"
+sha2 = "0.10"
+hex = "0.4"
+infer = "0.16"
