@@ -341,6 +341,13 @@ Implemented in this branch so far:
    - `borg-exec` no longer exports/depends on a `UserMessageMetadata` ingress struct
    - API `ValidatedPortRequest.metadata` is currently passed through as boundary JSON into `JsonPortContext`
    - runtime toolchain build path now takes explicit typed identifiers only (`user_id`, `session_id`, `agent_id`)
+8. Tool runtime foundations are now typed-generic:
+   - `Toolchain<TToolCall, TToolResult>` and `Tool<TToolCall, TToolResult>` now support typed execution envelopes (with `Value` defaults preserved)
+   - added `Tool::new_typed(...)` while keeping `Tool::new(...)` for current JSON-first call sites to avoid broad inference churn
+9. Session/context pipeline now carries tool generics:
+   - `Session<TToolCall, TToolResult>`, `ContextWindow<TToolCall, TToolResult>`, `ContextChunk<TToolCall, TToolResult>`, and `ContextManager<TToolCall, TToolResult>` are generic with `Value` defaults
+   - `Agent::run(...)` is now generic and decodes provider tool-call JSON into `TToolCall` at the provider boundary
+   - LLM adapter now serializes typed tool-call arguments/results back to provider-facing JSON/text at the boundary
 
 Important behavior change from these updates:
 
@@ -349,6 +356,7 @@ Important behavior change from these updates:
 3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
 4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
 5. Port metadata still enters through `JsonPortContext`; removing that boundary JSON adapter remains pending.
+6. Most built-in tools still use `Tool::new(...)` with JSON arguments; migrating those implementations to typed call/response structs is the next concrete step.
 
 Known blocker while validating this branch:
 
