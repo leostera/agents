@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use borg_cmd::CommandRegistry;
 use borg_core::{TelegramUserId, Uri};
 use borg_exec::{BorgCommand, SessionOutput, TelegramSessionContext};
+use serde_json::Value;
 use serde::{Deserialize, Serialize};
 use teloxide::prelude::*;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -68,7 +69,7 @@ impl TelegramPort {
         })
     }
 
-    async fn send_output(&self, output: SessionOutput) -> Result<()> {
+    async fn send_output(&self, output: SessionOutput<Value, Value>) -> Result<()> {
         let Some(ctx) = output
             .port_context
             .as_any()
@@ -115,7 +116,7 @@ impl Port for TelegramPort {
     async fn run(
         self,
         inbound: Sender<PortMessage>,
-        mut outbound: Receiver<SessionOutput>,
+        mut outbound: Receiver<SessionOutput<Value, Value>>,
     ) -> Result<()> {
         let outbound_port = self.clone();
         let outbound_task = tokio::spawn(async move {
