@@ -290,6 +290,7 @@ Input/output correctness is defined by serde decode/encode of typed request/resp
 3. `ActorMailboxEnvelope.port_context` now carries typed `PortContext` (no internal `serde_json::Value` field), serialized/deserialized only at DB boundary with serde.
 4. Runtime/port call sites were updated to use enum accessors (`as_telegram`/`as_discord`) instead of downcasting JSON wrappers.
 5. `cargo test -p borg-exec` passes with these changes.
+6. API-internal validated port ingress DTOs in `borg-api` no longer carry passthrough metadata JSON after boundary validation (`ValidatedPortRequest` / `ValidatedHttpPortAudioRequest` dropped `metadata: Value`).
 
 ### Phase 3 - `borg-db` typed APIs
 
