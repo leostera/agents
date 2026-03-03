@@ -1,9 +1,11 @@
 use borg_agent::ToolResultData;
 use borg_core::Uri;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 use crate::port_context::PortContext;
+
+pub type RuntimeToolCall = borg_agent::BorgToolCall;
+pub type RuntimeToolResult = borg_agent::BorgToolResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BorgCommand {
@@ -35,7 +37,7 @@ pub struct BorgMessage {
     pub user_id: Uri,
     pub session_id: Uri,
     pub input: BorgInput,
-    pub port_context: Arc<dyn PortContext>,
+    pub port_context: PortContext,
 }
 
 #[derive(Debug, Clone)]
@@ -43,7 +45,7 @@ pub struct SessionOutput<TToolCall, TToolResult> {
     pub session_id: Uri,
     pub reply: Option<String>,
     pub tool_calls: Vec<ToolCallSummary<TToolCall, TToolResult>>,
-    pub port_context: Arc<dyn PortContext>,
+    pub port_context: PortContext,
 }
 
 #[derive(Debug, Clone)]

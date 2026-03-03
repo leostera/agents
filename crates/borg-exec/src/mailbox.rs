@@ -1,7 +1,7 @@
 use crate::message::{BorgMessage, SessionOutput};
 use anyhow::Result;
+use borg_agent::{BorgToolCall, BorgToolResult};
 use borg_core::Uri;
-use serde_json::Value;
 use tokio::sync::oneshot;
 
 pub enum ActorCommand {
@@ -12,7 +12,7 @@ pub enum ActorCommand {
     Call {
         actor_message_id: Uri,
         msg: BorgMessage,
-        response_tx: oneshot::Sender<Result<SessionOutput<Value, Value>>>,
+        response_tx: oneshot::Sender<Result<SessionOutput<BorgToolCall, BorgToolResult>>>,
     },
     Terminate,
 }

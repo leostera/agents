@@ -7,7 +7,10 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use base64::Engine;
-use borg_agent::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain, ToolchainBuilder};
+use borg_agent::{
+    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
+    ToolchainBuilder,
+};
 use borg_core::Uri;
 use borg_db::{BorgDb, FileRecord};
 use serde_json::{Value, json};
@@ -260,7 +263,7 @@ pub fn default_borg_fs_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_borg_fs_toolchain(fs: BorgFs) -> Result<Toolchain<Value, Value>> {
+pub fn build_borg_fs_toolchain(fs: BorgFs) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let mut builder = ToolchainBuilder::new();
     for spec in default_borg_fs_tool_specs() {
         let tool_name = spec.name.clone();

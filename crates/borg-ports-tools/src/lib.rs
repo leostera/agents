@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use borg_core::Uri;
 use borg_db::BorgDb;
 use serde_json::{Value, json};
@@ -54,7 +54,7 @@ pub fn default_port_admin_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<Value, Value>> {
+pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let db_list = db.clone();
     let db_create = db.clone();
     let db_update = db;

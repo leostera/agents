@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use borg_db::{BorgDb, CreateClockworkJobInput, UpdateClockworkJobInput};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -122,7 +122,7 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_clockwork_toolchain(db: BorgDb) -> Result<Toolchain<Value, Value>> {
+pub fn build_clockwork_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     Toolchain::builder()
         .add_tool(ClockworkTools::list_jobs(db.clone())?)?
         .add_tool(ClockworkTools::get_job(db.clone())?)?
@@ -138,7 +138,7 @@ pub fn build_clockwork_toolchain(db: BorgDb) -> Result<Toolchain<Value, Value>> 
 struct ClockworkTools;
 
 impl ClockworkTools {
-    fn list_jobs(db: BorgDb) -> Result<Tool<Value, Value>> {
+    fn list_jobs(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("Clockwork-listJobs")?;
         Ok(Tool::new(spec, None, move |request| {
             let db = db.clone();
@@ -160,7 +160,7 @@ impl ClockworkTools {
         }))
     }
 
-    fn get_job(db: BorgDb) -> Result<Tool<Value, Value>> {
+    fn get_job(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("Clockwork-getJob")?;
         Ok(Tool::new(spec, None, move |request| {
             let db = db.clone();
@@ -172,7 +172,7 @@ impl ClockworkTools {
         }))
     }
 
-    fn create_job(db: BorgDb) -> Result<Tool<Value, Value>> {
+    fn create_job(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("Clockwork-createJob")?;
         Ok(Tool::new(spec, None, move |request| {
             let db = db.clone();
@@ -235,7 +235,7 @@ impl ClockworkTools {
         }))
     }
 
-    fn update_job(db: BorgDb) -> Result<Tool<Value, Value>> {
+    fn update_job(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("Clockwork-updateJob")?;
         Ok(Tool::new(spec, None, move |request| {
             let db = db.clone();
@@ -291,19 +291,19 @@ impl ClockworkTools {
         }))
     }
 
-    fn pause_job(db: BorgDb) -> Result<Tool<Value, Value>> {
+    fn pause_job(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         status_tool(db, "Clockwork-pauseJob", "paused")
     }
 
-    fn resume_job(db: BorgDb) -> Result<Tool<Value, Value>> {
+    fn resume_job(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         status_tool(db, "Clockwork-resumeJob", "active")
     }
 
-    fn cancel_job(db: BorgDb) -> Result<Tool<Value, Value>> {
+    fn cancel_job(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         status_tool(db, "Clockwork-cancelJob", "cancelled")
     }
 
-    fn list_runs(db: BorgDb) -> Result<Tool<Value, Value>> {
+    fn list_runs(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("Clockwork-listRuns")?;
         Ok(Tool::new(spec, None, move |request| {
             let db = db.clone();
@@ -321,7 +321,7 @@ impl ClockworkTools {
     }
 }
 
-fn status_tool(db: BorgDb, spec_name: &str, status: &'static str) -> Result<Tool<Value, Value>> {
+fn status_tool(db: BorgDb, spec_name: &str, status: &'static str) -> Result<Tool<BorgToolCall, BorgToolResult>> {
     let spec = required_spec(spec_name)?;
     Ok(Tool::new(spec, None, move |request| {
         let db = db.clone();

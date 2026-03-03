@@ -21,7 +21,7 @@ pub async fn run(db: borg_db::BorgDb, command: &str, payload: Value) -> Result<V
         .run(borg_agent::ToolRequest {
             tool_call_id: format!("cli-taskgraph-{}", command.replace(' ', "-")),
             tool_name: mapping.tool_name.to_string(),
-            arguments: payload,
+            arguments: payload.into(),
         })
         .await?;
 

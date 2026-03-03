@@ -5,8 +5,10 @@ use std::time::Duration;
 use anyhow::Result;
 use borg_core::Uri;
 use borg_db::BorgDb;
-use borg_exec::{BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, SessionOutput};
-use serde_json::Value;
+use borg_exec::{
+    BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, RuntimeToolCall, RuntimeToolResult,
+    SessionOutput,
+};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 use tokio::time;
@@ -134,7 +136,7 @@ impl BorgPortsSupervisor {
 
         let (inbound_tx, inbound_rx): (Sender<PortMessage>, Receiver<PortMessage>) =
             mpsc::channel(PORT_CHANNEL_CAPACITY);
-        let (outbound_tx, outbound_rx): (Sender<SessionOutput<Value, Value>>, Receiver<SessionOutput<Value, Value>>) =
+        let (outbound_tx, outbound_rx): (Sender<SessionOutput<RuntimeToolCall, RuntimeToolResult>>, Receiver<SessionOutput<RuntimeToolCall, RuntimeToolResult>>) =
             mpsc::channel(PORT_CHANNEL_CAPACITY);
 
         let sup = self.sup.clone();
@@ -247,7 +249,7 @@ async fn bridge_loop(
     port_id: Uri,
     assigned_actor_id: Option<Uri>,
     mut inbound_rx: Receiver<PortMessage>,
-    outbound_tx: Sender<SessionOutput<Value, Value>>,
+    outbound_tx: Sender<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
 ) {
     while let Some(message) = inbound_rx.recv().await {
         let (session_id, legacy_actor_id) = match db
@@ -297,7 +299,7 @@ async fn bridge_loop(
             continue;
         }
 
-        if let Ok(ctx) = message.port_context.to_json() {
+        if let Ok(ctx) = serde_json::to_value(&message.port_context) {
             if let Err(err) = db
                 .upsert_port_session_context(&port_name, &session_id, &ctx)
                 .await

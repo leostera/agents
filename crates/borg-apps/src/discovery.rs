@@ -1,5 +1,5 @@
 use anyhow::Result;
-use borg_agent::{Tool, ToolRequest, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolRequest, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use borg_db::{AppCapabilityRecord, AppRecord, BorgDb};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -88,7 +88,7 @@ impl BorgApps {
         Ok(Self { apps: entries })
     }
 
-    pub fn as_toolchain(&self) -> Result<Toolchain<Value, Value>> {
+    pub fn as_toolchain(&self) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
         let app_items = self.list_apps();
         let app_details = self.list_app_details();
         Toolchain::builder()

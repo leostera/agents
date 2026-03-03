@@ -21,7 +21,7 @@ pub async fn run(command: &str, payload: Value) -> Result<Value> {
         .run(borg_agent::ToolRequest {
             tool_call_id: format!("cli-codemode-{}", command),
             tool_name: mapping.tool_name.to_string(),
-            arguments: payload,
+            arguments: payload.into(),
         })
         .await?;
 

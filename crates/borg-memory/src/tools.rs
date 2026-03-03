@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -599,7 +599,7 @@ Examples:
     ]
 }
 
-pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain<Value, Value>> {
+pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let state_facts_spec = required_default_tool_spec("Memory-stateFacts")?;
     let search_spec = required_default_tool_spec("Memory-search")?;
     let create_entity_spec = required_default_tool_spec("Memory-createEntity")?;

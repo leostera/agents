@@ -21,7 +21,7 @@ pub async fn run(memory: crate::MemoryStore, command: &str, payload: Value) -> R
         .run(borg_agent::ToolRequest {
             tool_call_id: format!("cli-memory-{}", command.replace(' ', "-")),
             tool_name: mapping.tool_name.to_string(),
-            arguments: payload,
+            arguments: payload.into(),
         })
         .await?;
 

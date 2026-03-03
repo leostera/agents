@@ -1,9 +1,8 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{Message, Session, SessionResult};
+use borg_agent::{BorgToolCall, BorgToolResult, Message, Session, SessionResult};
 use borg_core::Uri;
 use borg_llm::TranscriptionRequest;
 use chrono::Utc;
-use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -49,7 +48,7 @@ impl ActorHandle {
 }
 
 struct SessionState {
-    session: Session<Value, Value>,
+    session: Session<BorgToolCall, BorgToolResult>,
     agent_id: Uri,
     behavior_id: Option<Uri>,
 }
@@ -126,7 +125,7 @@ impl Actor {
         debug!("actor {} loop ended", self.actor_id);
     }
 
-    async fn process_message(&mut self, msg: BorgMessage) -> Result<SessionOutput<Value, Value>> {
+    async fn process_message(&mut self, msg: BorgMessage) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         if !self.sessions.contains_key(&msg.session_id) {
             let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
             let session = self.create_session(&msg.session_id, &agent_id).await?;
@@ -181,7 +180,7 @@ impl Actor {
         &self,
         session_id: &Uri,
         agent_id: &Uri,
-    ) -> Result<Session<Value, Value>> {
+    ) -> Result<Session<BorgToolCall, BorgToolResult>> {
         self.runtime
             .session_manager
             .session_for_task(Some(session_id.clone()), Some(agent_id))
@@ -193,7 +192,7 @@ impl Actor {
         state: &mut SessionState,
         msg: &BorgMessage,
         text: &str,
-    ) -> Result<SessionOutput<Value, Value>> {
+    ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         state
             .session
             .add_message(Message::User {
@@ -212,7 +211,7 @@ impl Actor {
         mime_type_hint: Option<&str>,
         _duration_ms: Option<u64>,
         language_hint: Option<&str>,
-    ) -> Result<SessionOutput<Value, Value>> {
+    ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         let (file_record, audio_bytes) = self.runtime.files.read_all(file_id).await?;
         let mime_type = mime_type_hint
             .map(str::trim)
@@ -250,7 +249,7 @@ impl Actor {
         &self,
         state: &mut SessionState,
         msg: &BorgMessage,
-    ) -> Result<SessionOutput<Value, Value>> {
+    ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
         state.agent_id = agent_id;
         state.behavior_id = behavior_id;
@@ -308,7 +307,7 @@ impl Actor {
         state: &mut SessionState,
         msg: &BorgMessage,
         command: &BorgCommand,
-    ) -> Result<SessionOutput<Value, Value>> {
+    ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         match command {
             BorgCommand::ModelShowCurrent => {
                 let model = self.current_model(&state.agent_id).await?;
@@ -516,7 +515,7 @@ impl Actor {
         else {
             return Ok("No Telegram participant context found for this session.".to_string());
         };
-        let ctx = TelegramSessionContext::from_json(ctx_json)?;
+        let ctx: TelegramSessionContext = serde_json::from_value(ctx_json)?;
         if ctx.participants.is_empty() {
             return Ok("No participants tracked in Telegram session context.".to_string());
         }

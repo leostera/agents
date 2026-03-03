@@ -300,7 +300,11 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
             Message::ToolResult {
                 content: ToolResultData::Execution { result, .. },
                 ..
-            } if result.get("has_entries").is_some()
+            } if result
+                .to_value()
+                .ok()
+                .and_then(|value| value.get("has_entries").cloned())
+                .is_some()
         )
     }));
 
@@ -450,13 +454,15 @@ async fn app_available_secret_is_exposed_in_borg_env_get() {
             arguments: json!({
                 "hint": "verify app secret projection into env",
                 "code": "async () => ({ keys: Borg.env.keys(), token: Borg.env.get('GITHUB_ACCESS_TOKEN') })"
-            }),
+            })
+            .into(),
         })
         .await
         .unwrap();
 
     match response.content {
         ToolResultData::Execution { result, .. } => {
+            let result = result.to_value().expect("result value");
             let keys = result
                 .get("keys")
                 .and_then(serde_json::Value::as_array)

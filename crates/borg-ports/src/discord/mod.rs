@@ -3,9 +3,8 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_core::Uri;
-use borg_exec::{JsonPortContext, PortContext, SessionOutput};
+use borg_exec::{DiscordSessionContext, PortContext, RuntimeToolCall, RuntimeToolResult, SessionOutput};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use serenity::all::{ChannelId, GatewayIntents, Message};
 use serenity::client::{Client, Context, EventHandler};
 use serenity::http::Http;
@@ -87,23 +86,18 @@ impl DiscordPort {
             conversation_key,
             user_id,
             input: PortInput::Chat { text },
-            port_context: Arc::new(JsonPortContext::new(ctx)),
+            port_context: PortContext::Discord(ctx),
         })
     }
 
-    async fn send_output(&self, output: SessionOutput<Value, Value>) -> Result<()> {
-        let Some(ctx) = output
-            .port_context
-            .as_any()
-            .downcast_ref::<JsonPortContext>()
-        else {
+    async fn send_output(&self, output: SessionOutput<RuntimeToolCall, RuntimeToolResult>) -> Result<()> {
+        let Some(ctx) = output.port_context.as_discord() else {
             return Ok(());
         };
-        let payload = ctx.to_json()?;
-        let Some(channel_id) = payload.get("channel_id").and_then(|value| value.as_u64()) else {
+        if ctx.channel_id == 0 {
             return Ok(());
-        };
-        let channel = ChannelId::new(channel_id);
+        }
+        let channel = ChannelId::new(ctx.channel_id);
 
         if let Some(reply) = output.reply {
             self.send_text(channel, reply).await?;
@@ -140,7 +134,7 @@ impl Port for DiscordPort {
     async fn run(
         self,
         inbound: Sender<PortMessage>,
-        mut outbound: Receiver<SessionOutput<Value, Value>>,
+        mut outbound: Receiver<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
     ) -> Result<()> {
         let outbound_port = self.clone();
         let outbound_task = tokio::spawn(async move {
@@ -196,15 +190,14 @@ fn conversation_routing_key(message: &Message) -> Option<Uri> {
     .ok()
 }
 
-fn discord_session_context_from_message(message: &Message) -> serde_json::Value {
-    json!({
-        "provider": "discord",
-        "channel_id": message.channel_id.get(),
-        "guild_id": message.guild_id.map(|id| id.get()),
-        "message_id": message.id.get(),
-        "author_id": message.author.id.get(),
-        "author_name": message.author.name.clone(),
-    })
+fn discord_session_context_from_message(message: &Message) -> DiscordSessionContext {
+    DiscordSessionContext {
+        channel_id: message.channel_id.get(),
+        guild_id: message.guild_id.map(|id| id.get()),
+        message_id: message.id.get(),
+        author_id: message.author.id.get(),
+        author_name: message.author.name.clone(),
+    }
 }
 
 fn is_allowed_external_user(allowed_external_user_ids: &[String], author_id: u64) -> bool {
