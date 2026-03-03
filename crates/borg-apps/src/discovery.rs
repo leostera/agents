@@ -1,8 +1,10 @@
 use anyhow::Result;
-use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolRequest, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use borg_agent::{
+    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
+};
 use borg_db::{AppCapabilityRecord, AppRecord, BorgDb};
-use serde::Serialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 #[derive(Debug, Clone)]
 pub struct BorgApps {
@@ -77,6 +79,14 @@ pub struct AppDetailsResult {
     pub capabilities: Vec<AppCapabilityDetail>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ListAppsArgs {}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GetAppArgs {
+    id: String,
+}
+
 impl BorgApps {
     pub async fn new(db: BorgDb) -> Result<Self> {
         let apps = db.list_apps(500).await?;
@@ -92,13 +102,13 @@ impl BorgApps {
         let app_items = self.list_apps();
         let app_details = self.list_app_details();
         Toolchain::builder()
-            .add_tool(Tool::new(
+            .add_tool(Tool::new_transcoded(
                 apps_list_apps_tool_spec(),
                 None,
-                move |_request: ToolRequest<Value>| {
+                move |_request: borg_agent::ToolRequest<ListAppsArgs>| {
                     let items = app_items.clone();
                     async move {
-                        Ok(ToolResponse {
+                        Ok(ToolResponse::<()> {
                             content: ToolResultData::Text(serde_json::to_string(&json!({
                                 "apps": items
                             }))?),
@@ -106,24 +116,21 @@ impl BorgApps {
                     }
                 },
             ))?
-            .add_tool(Tool::new(
+            .add_tool(Tool::new_transcoded(
                 apps_get_app_tool_spec(),
                 None,
-                move |request: ToolRequest<Value>| {
+                move |request: borg_agent::ToolRequest<GetAppArgs>| {
                     let entries = app_details.clone();
                     async move {
-                        let id = request
-                            .arguments
-                            .get("id")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .ok_or_else(|| anyhow::anyhow!("missing required field: id"))?;
+                        let id = request.arguments.id.trim();
+                        if id.is_empty() {
+                            return Err(anyhow::anyhow!("missing required field: id"));
+                        }
                         let app = entries
                             .iter()
                             .find(|entry| entry.app_id == id)
                             .ok_or_else(|| anyhow::anyhow!("app not found: {id}"))?;
-                        Ok(ToolResponse {
+                        Ok(ToolResponse::<()> {
                             content: ToolResultData::Text(serde_json::to_string(&json!({
                                 "app": app
                             }))?),
