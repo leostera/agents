@@ -4,7 +4,6 @@ use borg_db::BorgDb;
 use borg_llm::{LlmRequest, Provider, ProviderBlock, StopReason};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::marker::PhantomData;
 use tracing::info;
 use tracing::{Instrument, error, info_span, warn};
@@ -267,18 +266,32 @@ where
                 }
                 info!(target: "borg_agent", session_id = %session.session_id, "turn_end");
 
-                let tool_calls: Vec<(String, String, Value)> = assistant_message
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        ProviderBlock::ToolCall {
-                            id,
-                            name,
-                            arguments_json,
-                        } => Some((id.clone(), name.clone(), arguments_json.clone())),
-                        _ => None,
-                    })
-                    .collect();
+                let mut tool_calls: Vec<(String, String, TToolCall)> = Vec::new();
+                for block in &assistant_message.content {
+                    let ProviderBlock::ToolCall {
+                        id,
+                        name,
+                        arguments_json,
+                    } = block
+                    else {
+                        continue;
+                    };
+
+                    let arguments = match serde_json::from_value::<TToolCall>(arguments_json.clone())
+                    {
+                        Ok(value) => value,
+                        Err(err) => {
+                            return finish_session(
+                                session,
+                                SessionResult::SessionError(format!(
+                                    "invalid tool call arguments for `{name}`: {err}"
+                                )),
+                            )
+                            .await;
+                        }
+                    };
+                    tool_calls.push((id.clone(), name.clone(), arguments));
+                }
 
                 if tool_calls.is_empty() {
                     if matches!(
@@ -334,19 +347,7 @@ where
                 }
 
                 let mut interrupted = false;
-                for (tool_call_id, tool_name, arguments_json) in tool_calls {
-                    let arguments = match serde_json::from_value::<TToolCall>(arguments_json) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            return finish_session(
-                                session,
-                                SessionResult::SessionError(format!(
-                                    "invalid tool call arguments for `{tool_name}`: {err}"
-                                )),
-                            )
-                            .await;
-                        }
-                    };
+                for (tool_call_id, tool_name, arguments) in tool_calls {
                     if let Err(err) = session
                         .add_message(crate::Message::ToolCall {
                             tool_call_id: tool_call_id.clone(),
