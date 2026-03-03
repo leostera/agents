@@ -302,6 +302,7 @@ Input/output correctness is defined by serde decode/encode of typed request/resp
 15. Migrated `borg-clockwork` tools (`Clockwork-*`) to typed request DTOs (`CreateJobArgs`, `UpdateJobArgs`, etc.) with explicit typed schedule input enum, removing ad-hoc request `Value` field access in clockwork tool execution.
 16. Updated Telegram output formatting in `borg-ports` to consume typed runtime tool-call wrappers directly (`RuntimeToolCall`), decoding at the formatting boundary instead of depending on raw `serde_json::Value` argument types.
 17. Migrated `borg-apps` built-in discovery tools (`Apps-listApps`, `Apps-getApp`) to typed request DTOs and removed request argument map access via `Value` in the execution path.
+18. Migrated `borg-fs` tool request handling to typed DTO (`FsToolArgs`) and removed ad-hoc `Value` map parsing helpers (`read_string` / `read_bool` / `read_u64`) from the runtime tool execution path.
 
 ### Phase 3 - `borg-db` typed APIs
 

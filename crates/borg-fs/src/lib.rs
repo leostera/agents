@@ -13,6 +13,7 @@ use borg_agent::{
 };
 use borg_core::Uri;
 use borg_db::{BorgDb, FileRecord};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -268,12 +269,12 @@ pub fn build_borg_fs_toolchain(fs: BorgFs) -> Result<Toolchain<BorgToolCall, Bor
     for spec in default_borg_fs_tool_specs() {
         let tool_name = spec.name.clone();
         let fs = fs.clone();
-        let tool = Tool::new(spec, None, move |request| {
+        let tool = Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<FsToolArgs>| {
             let fs = fs.clone();
             let tool_name = tool_name.clone();
             async move {
                 let output = run_borg_fs_tool(&fs, &tool_name, &request.arguments).await?;
-                Ok(ToolResponse {
+                Ok(ToolResponse::<()> {
                     content: ToolResultData::Text(serde_json::to_string(&output)?),
                 })
             }
@@ -283,33 +284,75 @@ pub fn build_borg_fs_toolchain(fs: BorgFs) -> Result<Toolchain<BorgToolCall, Bor
     builder.build()
 }
 
-pub async fn run_borg_fs_tool(fs: &BorgFs, tool_name: &str, arguments: &Value) -> Result<Value> {
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FsToolArgs {
+    #[serde(default)]
+    q: Option<String>,
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    limit: Option<u64>,
+    #[serde(default)]
+    #[serde(rename = "includeDeleted")]
+    include_deleted_camel: Option<bool>,
+    #[serde(default)]
+    include_deleted: Option<bool>,
+    #[serde(default)]
+    file_id: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    content_base64: Option<String>,
+}
+
+impl FsToolArgs {
+    fn query(&self) -> Option<String> {
+        option_non_empty(self.query.clone()).or_else(|| option_non_empty(self.q.clone()))
+    }
+
+    fn include_deleted(&self) -> bool {
+        self.include_deleted_camel
+            .or(self.include_deleted)
+            .unwrap_or(false)
+    }
+
+    fn normalized_limit(&self) -> usize {
+        self.limit
+            .map(|value| usize::try_from(value).unwrap_or(500))
+            .unwrap_or(500)
+            .clamp(1, 10_000)
+    }
+}
+
+pub async fn run_borg_fs_tool(fs: &BorgFs, tool_name: &str, arguments: &FsToolArgs) -> Result<Value> {
     match tool_name {
         "BorgFS-ls" => {
-            let limit = read_u64(arguments, &["limit"])
-                .map(|value| usize::try_from(value).unwrap_or(500))
-                .unwrap_or(500)
-                .clamp(1, 10_000);
-            let query = read_string(arguments, &["q", "query"]);
-            let include_deleted = read_bool(arguments, &["includeDeleted", "include_deleted"]);
             let files = fs
-                .list_files(limit, query.as_deref(), include_deleted)
+                .list_files(
+                    arguments.normalized_limit(),
+                    arguments.query().as_deref(),
+                    arguments.include_deleted(),
+                )
                 .await?;
             Ok(json!({ "files": files }))
         }
         "BorgFS-search" => {
-            let limit = read_u64(arguments, &["limit"])
-                .map(|value| usize::try_from(value).unwrap_or(500))
-                .unwrap_or(500)
-                .clamp(1, 10_000);
-            let query = read_string(arguments, &["query", "q"])
+            let query = arguments
+                .query()
                 .ok_or_else(|| anyhow!("query is required"))?;
-            let include_deleted = read_bool(arguments, &["includeDeleted", "include_deleted"]);
-            let files = fs.list_files(limit, Some(&query), include_deleted).await?;
+            let files = fs
+                .list_files(
+                    arguments.normalized_limit(),
+                    Some(&query),
+                    arguments.include_deleted(),
+                )
+                .await?;
             Ok(json!({ "files": files }))
         }
         "BorgFS-get" => {
-            let file_id = read_string(arguments, &["file_id"])
+            let file_id = option_non_empty(arguments.file_id.clone())
                 .ok_or_else(|| anyhow!("file_id is required"))?;
             let file_id = Uri::parse(&file_id)?;
             let (record, bytes) = fs.read_all(&file_id).await?;
@@ -319,13 +362,13 @@ pub async fn run_borg_fs_tool(fs: &BorgFs, tool_name: &str, arguments: &Value) -
             }))
         }
         "BorgFS-put" => {
-            let kind = read_string(arguments, &["kind"])
+            let kind = option_non_empty(arguments.kind.clone())
                 .and_then(|value| FileKind::parse(&value))
                 .unwrap_or(FileKind::Audio);
-            let session_id = read_string(arguments, &["session_id"])
+            let session_id = option_non_empty(arguments.session_id.clone())
                 .ok_or_else(|| anyhow!("session_id is required"))?;
             let session_id = Uri::parse(&session_id)?;
-            let content = read_string(arguments, &["content_base64"])
+            let content = option_non_empty(arguments.content_base64.clone())
                 .ok_or_else(|| anyhow!("content_base64 is required"))?;
             let bytes = base64::engine::general_purpose::STANDARD.decode(content)?;
             let file = fs
@@ -334,7 +377,7 @@ pub async fn run_borg_fs_tool(fs: &BorgFs, tool_name: &str, arguments: &Value) -
             Ok(json!({ "file": file }))
         }
         "BorgFS-delete" => {
-            let file_id = read_string(arguments, &["file_id"])
+            let file_id = option_non_empty(arguments.file_id.clone())
                 .ok_or_else(|| anyhow!("file_id is required"))?;
             let file_id = Uri::parse(&file_id)?;
             let deleted = fs.soft_delete(&file_id).await?;
@@ -357,39 +400,12 @@ pub async fn run_borg_fs_tool(fs: &BorgFs, tool_name: &str, arguments: &Value) -
     }
 }
 
-fn read_string(arguments: &Value, keys: &[&str]) -> Option<String> {
-    let object = arguments.as_object()?;
-    for key in keys {
-        if let Some(value) = object.get(*key).and_then(Value::as_str) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn read_bool(arguments: &Value, keys: &[&str]) -> bool {
-    let Some(object) = arguments.as_object() else {
-        return false;
-    };
-    for key in keys {
-        if let Some(value) = object.get(*key).and_then(Value::as_bool) {
-            return value;
-        }
-    }
-    false
-}
-
-fn read_u64(arguments: &Value, keys: &[&str]) -> Option<u64> {
-    let object = arguments.as_object()?;
-    for key in keys {
-        if let Some(value) = object.get(*key).and_then(Value::as_u64) {
-            return Some(value);
-        }
-    }
-    None
+fn option_non_empty(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 #[cfg(test)]
@@ -460,11 +476,11 @@ mod tests {
         let put = run_borg_fs_tool(
             &fs,
             "BorgFS-put",
-            &json!({
+            &serde_json::from_value(json!({
                 "kind": "audio",
                 "session_id": "borg:session:tools",
                 "content_base64": base64::engine::general_purpose::STANDARD.encode("hello-tools")
-            }),
+            }))?,
         )
         .await?;
         let file_id = put
@@ -473,7 +489,12 @@ mod tests {
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("missing file_id"))?;
 
-        let get = run_borg_fs_tool(&fs, "BorgFS-get", &json!({ "file_id": file_id })).await?;
+        let get = run_borg_fs_tool(
+            &fs,
+            "BorgFS-get",
+            &serde_json::from_value(json!({ "file_id": file_id }))?,
+        )
+        .await?;
         let content = get
             .get("content_base64")
             .and_then(Value::as_str)
@@ -483,7 +504,12 @@ mod tests {
             b"hello-tools"
         );
 
-        let settings = run_borg_fs_tool(&fs, "BorgFS-settings", &json!({})).await?;
+        let settings = run_borg_fs_tool(
+            &fs,
+            "BorgFS-settings",
+            &serde_json::from_value(json!({}))?,
+        )
+        .await?;
         assert_eq!(settings["counts"]["total"], json!(1));
         assert_eq!(settings["counts"]["active"], json!(1));
 
