@@ -8,6 +8,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - `borg-onboard` is a library server, not a binary.
 - `BorgDir` in `borg-core` is source of truth for `~/.borg/*` layout.
 - Embedded local inference v0 lives in `borg-infer` (separate from `borg-llm` provider orchestration).
+- `borg-llm` exposes a Hugging Face GGUF downloader that caches model files under `~/.borg/models/<org>/<model>/<revision>/...`.
 
 ## Session-First Model
 - Session is the primary LLM interaction unit.

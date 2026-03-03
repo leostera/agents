@@ -1,4 +1,5 @@
 mod error;
+pub mod huggingface;
 mod orchestrator;
 pub mod providers;
 pub mod testing;

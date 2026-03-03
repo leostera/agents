@@ -1,5 +1,6 @@
 mod clockwork;
 mod infer;
+mod models;
 mod ports;
 mod providers;
 pub mod tools;
@@ -67,6 +68,11 @@ enum Command {
     Ports {
         #[command(subcommand)]
         cmd: ports::PortsCommand,
+    },
+    #[command(about = "Model download and cache commands")]
+    Models {
+        #[command(subcommand)]
+        cmd: models::ModelsCommand,
     },
     #[command(about = "Clockwork jobs CRUD commands")]
     Clockwork {
@@ -199,6 +205,15 @@ pub async fn run(app: BorgCliApp, cli: Cli) -> Result<()> {
         }
         Command::Ports { cmd } => {
             if let Err(err) = ports::run(&app, cmd).await {
+                println!(
+                    "{}",
+                    serde_json::to_string(&json!({ "ok": false, "error": err.to_string() }))?
+                );
+            }
+            Ok(())
+        }
+        Command::Models { cmd } => {
+            if let Err(err) = models::run(&app, cmd).await {
                 println!(
                     "{}",
                     serde_json::to_string(&json!({ "ok": false, "error": err.to_string() }))?

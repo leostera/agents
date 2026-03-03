@@ -18,6 +18,7 @@ borg-db = { path = "../borg-db" }
 borg-exec = { path = "../borg-exec" }
 borg-fs = { path = "../borg-fs" }
 borg-infer = { path = "../borg-infer" }
+borg-llm = { path = "../borg-llm" }
 borg-memory = { path = "../borg-memory" }
 borg-codemode = { path = "../borg-codemode" }
 borg-shellmode = { path = "../borg-shellmode" }
