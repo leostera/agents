@@ -184,5 +184,3 @@ where
         self.db.record_provider_usage(provider, tokens_used).await
     }
 }
-
-pub type JsonSession = Session<Value, Value>;
