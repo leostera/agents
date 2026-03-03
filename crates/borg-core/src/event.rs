@@ -1,24 +1,23 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::{Uri, uri};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionToolSchema {
+pub struct SessionToolSchema<TParameters> {
     pub name: String,
     pub description: String,
-    pub parameters: Value,
+    pub parameters: TParameters,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionContextSnapshot {
+pub struct SessionContextSnapshot<TMessage, TParameters> {
     pub model: String,
-    pub messages: Vec<Value>,
-    pub tools: Vec<SessionToolSchema>,
+    pub messages: Vec<TMessage>,
+    pub tools: Vec<SessionToolSchema<TParameters>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Event {
+pub enum Event<TMessage, TParameters, TArguments, TOutput> {
     SessionStarted {
         session_id: Uri,
         agent_id: Uri,
@@ -26,11 +25,11 @@ pub enum Event {
     SessionMessage {
         session_id: Uri,
         index: usize,
-        message: Value,
+        message: TMessage,
     },
     ContextBuilt {
         session_id: Uri,
-        context: SessionContextSnapshot,
+        context: SessionContextSnapshot<TMessage, TParameters>,
     },
     LlmRequestSent {
         session_id: Uri,
@@ -50,8 +49,8 @@ pub enum Event {
     AgentToolCall {
         session_id: Uri,
         name: String,
-        arguments: Value,
-        output: Value,
+        arguments: TArguments,
+        output: TOutput,
     },
     AgentOutput {
         session_id: Uri,
@@ -59,7 +58,7 @@ pub enum Event {
     },
 }
 
-impl Event {
+impl<TMessage, TParameters, TArguments, TOutput> Event<TMessage, TParameters, TArguments, TOutput> {
     pub fn session_id(&self) -> &Uri {
         match self {
             Self::SessionStarted { session_id, .. } => session_id,
