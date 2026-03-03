@@ -1,9 +1,10 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::{
-    Agent, AgentTools, CompactingContextManager, ContextManager, Message,
-    PassthroughContextManager, Session, SessionResult, Tool, ToolRequest, ToolResponse,
-    ToolResultData, ToolRunner, ToolSpec, Toolchain, call_tool, to_provider_messages,
+    Agent, ContextChunk, ContextManager, ContextManagerStrategy, Message, Session, SessionResult,
+    StaticContextProvider, Tool, ToolRequest, ToolResponse, ToolResultData, ToolSpec, Toolchain,
+    to_provider_messages,
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -18,33 +19,6 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, trace};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
-
-struct ScriptedRunner {
-    calls_tx: mpsc::UnboundedSender<ToolRequest>,
-    outputs_rx: Mutex<mpsc::UnboundedReceiver<Result<ToolResponse, String>>>,
-}
-
-#[async_trait]
-impl ToolRunner for ScriptedRunner {
-    async fn run(&self, request: ToolRequest) -> Result<ToolResponse> {
-        trace!(
-            target: "borg_agent_test",
-            tool_call_id = request.tool_call_id.as_str(),
-            tool_name = request.tool_name.as_str(),
-            "scripted runner received tool request"
-        );
-        self.calls_tx
-            .send(request)
-            .map_err(|e| anyhow!(e.to_string()))?;
-        self.outputs_rx
-            .lock()
-            .await
-            .recv()
-            .await
-            .ok_or_else(|| anyhow!("missing scripted tool output"))?
-            .map_err(|e| anyhow!(e))
-    }
-}
 
 struct ScriptedProvider {
     requests_tx: mpsc::UnboundedSender<LlmRequest>,
@@ -97,22 +71,50 @@ fn scripted_provider(
     )
 }
 
-fn scripted_runner(
+fn scripted_toolchain(
     outputs: Vec<Result<ToolResponse, String>>,
-) -> (ScriptedRunner, mpsc::UnboundedReceiver<ToolRequest>) {
+) -> Result<(Toolchain, mpsc::UnboundedReceiver<ToolRequest>)> {
     let (calls_tx, calls_rx) = mpsc::unbounded_channel();
     let (outputs_tx, outputs_rx) = mpsc::unbounded_channel();
     for output in outputs {
-        outputs_tx.send(output).unwrap();
+        outputs_tx.send(output)?;
     }
     drop(outputs_tx);
-    (
-        ScriptedRunner {
-            calls_tx,
-            outputs_rx: Mutex::new(outputs_rx),
-        },
-        calls_rx,
-    )
+    let outputs_rx = Arc::new(Mutex::new(outputs_rx));
+    let mut toolchain = Toolchain::new();
+    for tool_name in ["search", "execute"] {
+        let calls_tx = calls_tx.clone();
+        let outputs_rx = Arc::clone(&outputs_rx);
+        toolchain.register(Tool::new(
+            ToolSpec {
+                name: tool_name.to_string(),
+                description: format!("scripted {}", tool_name),
+                parameters: json!({ "type": "object", "additionalProperties": true }),
+            },
+            None,
+            move |request| {
+                let calls_tx = calls_tx.clone();
+                let outputs_rx = Arc::clone(&outputs_rx);
+                async move {
+                    trace!(
+                        target: "borg_agent_test",
+                        tool_call_id = request.tool_call_id.as_str(),
+                        tool_name = request.tool_name.as_str(),
+                        "scripted toolchain received tool request"
+                    );
+                    calls_tx.send(request).map_err(|e| anyhow!(e.to_string()))?;
+                    outputs_rx
+                        .lock()
+                        .await
+                        .recv()
+                        .await
+                        .ok_or_else(|| anyhow!("missing scripted tool output"))?
+                        .map_err(|e| anyhow!(e))
+                }
+            },
+        ))?;
+    }
+    Ok((toolchain, calls_rx))
 }
 
 fn assistant_text(text: &str) -> LlmAssistantMessage {
@@ -189,10 +191,7 @@ async fn a1_no_tool_completion() {
         .unwrap();
 
     let (provider, _requests_rx) = scripted_provider(vec![Ok(assistant_text("hello back"))]);
-    let (runner, _calls_rx) = scripted_runner(vec![]);
-    let tools = AgentTools {
-        tool_runner: &runner,
-    };
+    let tools = Toolchain::new();
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::Completed(Ok(_))));
@@ -218,12 +217,10 @@ async fn a2_single_tool_then_answer() {
         )])),
         Ok(assistant_text("done")),
     ]);
-    let (runner, mut calls_rx) = scripted_runner(vec![Ok(ToolResponse {
+    let (tools, mut calls_rx) = scripted_toolchain(vec![Ok(ToolResponse {
         content: ToolResultData::Text("hits: []".to_string()),
-    })]);
-    let tools = AgentTools {
-        tool_runner: &runner,
-    };
+    })])
+    .unwrap();
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::Completed(Ok(_))));
@@ -249,17 +246,15 @@ async fn a3_multiple_tools_keep_order() {
         ])),
         Ok(assistant_text("done")),
     ]);
-    let (runner, mut calls_rx) = scripted_runner(vec![
+    let (tools, mut calls_rx) = scripted_toolchain(vec![
         Ok(ToolResponse {
             content: ToolResultData::Text("a=1".to_string()),
         }),
         Ok(ToolResponse {
             content: ToolResultData::Text("b=2".to_string()),
         }),
-    ]);
-    let tools = AgentTools {
-        tool_runner: &runner,
-    };
+    ])
+    .unwrap();
 
     let _ = agent.run(&mut session, &provider, &tools).await;
     let first = calls_rx.try_recv().unwrap();
@@ -292,10 +287,7 @@ async fn a5_follow_up_continues_run() {
         Ok(assistant_text("turn-1")),
         Ok(assistant_text("turn-2")),
     ]);
-    let (runner, _calls_rx) = scripted_runner(vec![]);
-    let tools = AgentTools {
-        tool_runner: &runner,
-    };
+    let tools = Toolchain::new();
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::Completed(Ok(_))));
@@ -326,10 +318,7 @@ async fn a6_tool_error_is_returned_as_tool_result() {
         )])),
         Ok(assistant_text("handled")),
     ]);
-    let (runner, _calls_rx) = scripted_runner(vec![Err("execution failed".to_string())]);
-    let tools = AgentTools {
-        tool_runner: &runner,
-    };
+    let (tools, _calls_rx) = scripted_toolchain(vec![Err("execution failed".to_string())]).unwrap();
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::Completed(Ok(_))));
@@ -358,10 +347,7 @@ async fn a7_provider_failure_surfaces_session_error() {
         .unwrap();
 
     let (provider, _requests_rx) = scripted_provider(vec![Err("provider down".to_string())]);
-    let (runner, _calls_rx) = scripted_runner(vec![]);
-    let tools = AgentTools {
-        tool_runner: &runner,
-    };
+    let tools = Toolchain::new();
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::SessionError(_)));
@@ -373,10 +359,7 @@ async fn a8_idle_run_when_no_new_messages() {
     info!(target: "borg_agent_test", test = "a8_idle_run_when_no_new_messages", "starting test");
     let (agent, mut session) = make_session().await.unwrap();
     let (provider, _requests_rx) = scripted_provider(vec![]);
-    let (runner, _calls_rx) = scripted_runner(vec![]);
-    let tools = AgentTools {
-        tool_runner: &runner,
-    };
+    let tools = Toolchain::new();
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::Idle));
@@ -394,10 +377,7 @@ async fn a9_lifecycle_events_persisted_once() {
         .await
         .unwrap();
     let (provider, _requests_rx) = scripted_provider(vec![Ok(assistant_text("ok"))]);
-    let (runner, _calls_rx) = scripted_runner(vec![]);
-    let tools = AgentTools {
-        tool_runner: &runner,
-    };
+    let tools = Toolchain::new();
 
     let _ = agent.run(&mut session, &provider, &tools).await;
     let messages = session.read_messages(0, 256).await.unwrap();
@@ -420,31 +400,46 @@ async fn a9_lifecycle_events_persisted_once() {
 }
 
 #[tokio::test]
-async fn injected_tool_runner_helper_still_works() {
+async fn injected_toolchain_helper_still_works() {
     init_test_tracing();
-    info!(target: "borg_agent_test", test = "injected_tool_runner_helper_still_works", "starting test");
-    struct InlineRunner;
-    #[async_trait]
-    impl ToolRunner for InlineRunner {
-        async fn run(&self, _request: ToolRequest) -> Result<ToolResponse> {
-            Ok(ToolResponse {
-                content: ToolResultData::Text("ok".to_string()),
-            })
-        }
-    }
-
-    let tools = AgentTools {
-        tool_runner: &InlineRunner,
-    };
-    let out = call_tool(&tools, "tc1", "search", &json!({"query": "x"}))
-        .await
+    info!(target: "borg_agent_test", test = "injected_toolchain_helper_still_works", "starting test");
+    let tools = Toolchain::builder()
+        .add_tool(Tool::new(
+            ToolSpec {
+                name: "search".to_string(),
+                description: "search".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": { "query": { "type": "string" } },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }),
+            },
+            None,
+            |_request| async move {
+                Ok(ToolResponse {
+                    content: ToolResultData::Text("ok".to_string()),
+                })
+            },
+        ))
+        .unwrap()
+        .build()
         .unwrap();
+    let out = tools
+        .run(ToolRequest {
+            tool_call_id: "tc1".to_string(),
+            tool_name: "search".to_string(),
+            arguments: json!({"query": "x"}),
+        })
+        .await
+        .unwrap()
+        .content;
     assert!(matches!(out, ToolResultData::Text(text) if text == "ok"));
-    info!(target: "borg_agent_test", test = "injected_tool_runner_helper_still_works", "test passed");
+    info!(target: "borg_agent_test", test = "injected_toolchain_helper_still_works", "test passed");
 }
 
 #[tokio::test]
-async fn toolchain_rejects_invalid_input_shape() {
+async fn toolchain_delegates_input_validation_to_tool_callback() {
     let toolchain = Toolchain::builder()
         .add_tool(Tool::new(
             ToolSpec {
@@ -467,21 +462,20 @@ async fn toolchain_rejects_invalid_input_shape() {
         .unwrap()
         .build()
         .unwrap();
-    let tools = AgentTools {
-        tool_runner: &toolchain,
-    };
-
-    let err = call_tool(&tools, "tc1", "search", &json!({}))
+    let out = toolchain
+        .run(ToolRequest {
+            tool_call_id: "tc1".to_string(),
+            tool_name: "search".to_string(),
+            arguments: json!({}),
+        })
         .await
-        .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("missing required property `query`")
-    );
+        .unwrap()
+        .content;
+    assert!(matches!(out, ToolResultData::Text(text) if text == "ok"));
 }
 
 #[tokio::test]
-async fn toolchain_validates_output_shape_when_configured() {
+async fn toolchain_does_not_validate_output_schema() {
     let toolchain = Toolchain::builder()
         .add_tool(Tool::new(
             ToolSpec {
@@ -511,19 +505,19 @@ async fn toolchain_validates_output_shape_when_configured() {
         .unwrap()
         .build()
         .unwrap();
-    let tools = AgentTools {
-        tool_runner: &toolchain,
-    };
-
-    let err = call_tool(
-        &tools,
-        "tc2",
-        "execute",
-        &json!({"code":"async () => { return 1; }"}),
-    )
-    .await
-    .unwrap_err();
-    assert!(err.to_string().contains("missing required property `Text`"));
+    let out = toolchain
+        .run(ToolRequest {
+            tool_call_id: "tc2".to_string(),
+            tool_name: "execute".to_string(),
+            arguments: json!({"code":"async () => { return 1; }"}),
+        })
+        .await
+        .unwrap()
+        .content;
+    assert!(matches!(
+        out,
+        ToolResultData::Error { message } if message == "mismatch"
+    ));
 }
 
 #[test]
@@ -647,7 +641,9 @@ async fn context_window_splits_messages_into_typed_sections() {
         },
     ];
 
-    let manager = PassthroughContextManager;
+    let manager = ContextManager::builder()
+        .with_strategy(ContextManagerStrategy::Passthrough)
+        .build();
     let context = manager.build_context(&agent, &messages).await.unwrap();
 
     assert_eq!(context.system_prompt, "system-prompt");
@@ -671,7 +667,9 @@ async fn context_provider_input_messages_start_with_system_then_behavior() {
         content: "hi".to_string(),
     }];
 
-    let manager = PassthroughContextManager;
+    let manager = ContextManager::builder()
+        .with_strategy(ContextManagerStrategy::Passthrough)
+        .build();
     let context = manager.build_context(&agent, &messages).await.unwrap();
     let provider_messages = context.provider_input_messages();
 
@@ -710,7 +708,12 @@ async fn compaction_keeps_prompts_tools_and_capabilities_uncompacted() {
         },
     ];
 
-    let manager = CompactingContextManager::new(60, 1);
+    let manager = ContextManager::builder()
+        .with_strategy(ContextManagerStrategy::Compacting {
+            max_chars: 60,
+            keep_recent_messages: 1,
+        })
+        .build();
     let context = manager.build_context(&agent, &messages).await.unwrap();
     let provider_messages = context.provider_input_messages();
 
@@ -744,7 +747,9 @@ async fn context_filters_persisted_prompt_messages_from_ordered_history() {
         },
     ];
 
-    let manager = PassthroughContextManager;
+    let manager = ContextManager::builder()
+        .with_strategy(ContextManagerStrategy::Passthrough)
+        .build();
     let context = manager.build_context(&agent, &messages).await.unwrap();
     let provider_messages = context.provider_input_messages();
     let prompt_count = provider_messages
@@ -758,4 +763,53 @@ async fn context_filters_persisted_prompt_messages_from_ordered_history() {
         .count();
 
     assert_eq!(prompt_count, 2);
+}
+
+#[tokio::test]
+async fn context_manager_keeps_pinned_provider_chunks_uncompacted() {
+    let agent = Agent::new(uri!("borg", "agent", "context-pinned-provider"))
+        .with_system_prompt("system-prompt")
+        .with_behavior_prompt("behavior-prompt")
+        .with_tools(vec![]);
+    let messages = vec![
+        Message::User {
+            content: "this user message is long enough to encourage compaction and summarization"
+                .to_string(),
+        },
+        Message::Assistant {
+            content:
+                "this assistant message is also long enough to force compaction in this test case"
+                    .to_string(),
+        },
+        Message::User {
+            content: "keep only this one as recent".to_string(),
+        },
+    ];
+
+    let manager = ContextManager::builder()
+        .with_strategy(ContextManagerStrategy::Compacting {
+            max_chars: 60,
+            keep_recent_messages: 1,
+        })
+        .add_provider(StaticContextProvider::new(vec![ContextChunk::pinned(
+            vec![Message::System {
+                content: "PINNED_PROVIDER_CONTEXT".to_string(),
+            }],
+        )]))
+        .build();
+    let context = manager.build_context(&agent, &messages).await.unwrap();
+    let provider_messages = context.provider_input_messages();
+
+    assert!(provider_messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::System { content } if content == "PINNED_PROVIDER_CONTEXT"
+        )
+    }));
+    assert!(provider_messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::System { content } if content.contains("Compacted conversation summary")
+        )
+    }));
 }

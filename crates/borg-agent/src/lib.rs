@@ -9,8 +9,8 @@ mod tools;
 pub use admin_tools::{build_agent_admin_toolchain, default_agent_admin_tool_specs};
 pub use agent::{Agent, DEFAULT_AGENT_ID, DEFAULT_MAX_TURNS, DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT};
 pub use context::{
-    CompactingContextManager, ContextManager, ContextWindow, PassthroughContextManager,
-    SessionContextManager,
+    ContextChunk, ContextChunkMode, ContextManager, ContextManagerBuilder, ContextManagerStrategy,
+    ContextProvider, ContextWindow, StaticContextProvider,
 };
 pub use llm_adapter::{to_provider_messages, tool_result_to_text};
 pub use message::{
@@ -18,8 +18,8 @@ pub use message::{
 };
 pub use session::Session;
 pub use tools::{
-    AgentTools, CapabilitySummary, Tool, ToolRequest, ToolResponse, ToolResultData, ToolRunner,
-    ToolSpec, Toolchain, ToolchainBuilder, call_tool, to_provider_tool_specs,
+    CapabilitySummary, Tool, ToolRequest, ToolResponse, ToolResultData, ToolSpec, Toolchain,
+    ToolchainBuilder, to_provider_tool_specs,
 };
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use borg_agent::ToolResultData;
 use borg_core::Uri;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -49,5 +50,5 @@ pub struct SessionOutput {
 pub struct ToolCallSummary {
     pub tool_name: String,
     pub arguments: serde_json::Value,
-    pub output: serde_json::Value,
+    pub output: ToolResultData,
 }

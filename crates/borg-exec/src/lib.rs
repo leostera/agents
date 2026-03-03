@@ -20,7 +20,7 @@ mod types;
 
 pub use provider_config::ProviderConfigSnapshot;
 pub use provider_supervisor::ProviderConfigSupervisor;
-pub use types::{SessionTurnOutput, ToolCallSummary, UserMessage};
+pub use types::{SessionTurnOutput, ToolCallSummary, UserMessageMetadata};
 
 #[cfg(test)]
 mod tests;

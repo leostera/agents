@@ -4,9 +4,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use borg_agent::{
-    Agent, AgentTools, Message, Session, SessionResult, ToolRequest, ToolResultData, ToolRunner,
-};
+use borg_agent::{Agent, Message, Session, SessionResult, ToolRequest, ToolResultData};
 use borg_apps::default_tool_specs as default_apps_tool_specs;
 use borg_codemode::{
     CodeModeContext, CodeModeRuntime, default_tool_specs as default_codemode_tool_specs,
@@ -271,11 +269,7 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
         true,
     )
     .unwrap();
-    let tools = AgentTools {
-        tool_runner: &toolchain,
-    };
-
-    let result = agent.run(&mut session, &provider, &tools).await;
+    let result = agent.run(&mut session, &provider, &toolchain).await;
     let output = match result {
         SessionResult::Completed(Ok(output)) => output,
         other => panic!("unexpected session result: {:?}", other),
@@ -369,11 +363,7 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
         true,
     )
     .unwrap();
-    let tools = AgentTools {
-        tool_runner: &toolchain,
-    };
-
-    let result = agent.run(&mut session, &provider, &tools).await;
+    let result = agent.run(&mut session, &provider, &toolchain).await;
     assert!(matches!(result, SessionResult::Completed(Ok(_))));
 
     let messages = session.read_messages(0, 256).await.unwrap();
@@ -444,17 +434,10 @@ async fn app_available_secret_is_exposed_in_borg_env_get() {
     .await
     .unwrap();
 
-    let msg = crate::types::UserMessage {
-        user_id: owner_user_id,
-        text: "inspect env".to_string(),
-        session_id: Some(uri!("borg", "session", "env-test")),
-        agent_id: Some(uri!("borg", "agent", "env-test")),
-        metadata: json!({}),
-    };
-
     let toolchain = runtime
         .build_toolchain(
-            &msg,
+            &owner_user_id,
+            &crate::types::UserMessageMetadata::default(),
             &uri!("borg", "session", "env-test"),
             &uri!("borg", "agent", "env-test"),
         )

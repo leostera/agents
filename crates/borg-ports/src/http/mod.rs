@@ -2,14 +2,24 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use axum::http::HeaderMap;
 use borg_core::Uri;
-use borg_exec::{BorgSupervisor, UserMessage};
+use borg_exec::BorgSupervisor;
+use serde_json::Value;
 
 use crate::{Port, PortConfig, PortMessage};
 
 pub const BORG_SESSION_ID_HEADER: &str = "x-borg-session-id";
 
+#[derive(Debug, Clone)]
+pub struct HttpIngressMessage {
+    pub user_key: Uri,
+    pub text: String,
+    pub session_id: Option<Uri>,
+    pub agent_id: Option<Uri>,
+    pub metadata: Value,
+}
+
 impl PortMessage {
-    pub fn from_http(headers: &HeaderMap, payload: UserMessage) -> Self {
+    pub fn from_http(headers: &HeaderMap, payload: HttpIngressMessage) -> Self {
         let requested_session_id = headers
             .get(BORG_SESSION_ID_HEADER)
             .and_then(|value| value.to_str().ok())
@@ -47,7 +57,7 @@ impl Port for HttpPort {
     async fn handle_messages(&self, messages: Vec<PortMessage>) -> Vec<PortMessage> {
         let mut out = Vec::with_capacity(messages.len());
         for message in messages {
-            let inbox = UserMessage {
+            let inbox = HttpIngressMessage {
                 user_key: message.user_key.clone(),
                 text: message.text.clone(),
                 session_id: message.session_id.clone(),

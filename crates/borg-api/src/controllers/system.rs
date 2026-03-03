@@ -6,7 +6,7 @@ use axum::{
 };
 use base64::Engine;
 use borg_core::{Entity, Uri, uri};
-use borg_exec::{BorgCommand, BorgInput, BorgMessage, JsonPortContext, UserMessage};
+use borg_exec::{BorgCommand, BorgInput, BorgMessage, JsonPortContext, UserMessageMetadata};
 use borg_fs::{FileKind, PutFileMetadata};
 use borg_memory::{FactArity, FactValue, Uri as MemoryUri};
 use serde::{Deserialize, Serialize};
@@ -80,6 +80,15 @@ struct ValidatedHttpPortAudioRequest {
     session_id: Option<Uri>,
     agent_id: Option<Uri>,
     metadata: Value,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ValidatedPortRequest {
+    pub user_id: Uri,
+    pub text: String,
+    pub session_id: Option<Uri>,
+    pub agent_id: Option<Uri>,
+    pub metadata: UserMessageMetadata,
 }
 
 pub(crate) struct SystemController;
@@ -275,7 +284,10 @@ impl SystemController {
                             user_id: validated.user_id,
                             session_id: session_id.clone(),
                             input: forward_input,
-                            port_context: Arc::new(JsonPortContext::new(validated.metadata)),
+                            port_context: Arc::new(JsonPortContext::new(
+                                serde_json::to_value(&validated.metadata)
+                                    .unwrap_or_else(|_| Value::Object(Default::default())),
+                            )),
                         })
                         .await
                     {
@@ -509,7 +521,7 @@ fn fact_value_to_json(value: &FactValue) -> Value {
 
 pub(crate) fn validate_port_request(
     payload: HttpPortRequest,
-) -> Result<UserMessage, axum::response::Response> {
+) -> Result<ValidatedPortRequest, axum::response::Response> {
     let mut details = Vec::new();
     let user_id = match Uri::parse(&payload.user_key) {
         Ok(value) => Some(value),
@@ -568,14 +580,17 @@ pub(crate) fn validate_port_request(
         ));
     }
 
-    Ok(UserMessage {
+    Ok(ValidatedPortRequest {
         user_id: user_id.expect("validated user_key"),
         text: payload.text,
         session_id,
         agent_id,
-        metadata: payload
-            .metadata
-            .unwrap_or(Value::Object(Default::default())),
+        metadata: serde_json::from_value::<UserMessageMetadata>(
+            payload
+                .metadata
+                .unwrap_or(Value::Object(Default::default())),
+        )
+        .unwrap_or_default(),
     })
 }
 

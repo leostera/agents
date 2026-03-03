@@ -1,8 +1,7 @@
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
 use borg_agent::{
-    Agent, AgentTools, Message, Session, SessionOutput, SessionResult, ToolRequest, ToolResponse,
-    ToolResultData, ToolRunner, ToolSpec,
+    Agent, Message, Session, SessionOutput, SessionResult, Tool, ToolRequest, ToolResponse,
+    ToolResultData, ToolSpec, Toolchain,
 };
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
@@ -55,9 +54,8 @@ impl RecordingToolRunner {
     }
 }
 
-#[async_trait]
-impl ToolRunner for RecordingToolRunner {
-    async fn run(&self, request: ToolRequest) -> Result<ToolResponse> {
+impl RecordingToolRunner {
+    async fn run_request(&self, request: ToolRequest) -> Result<ToolResponse> {
         trace!(
             target: "borg_agent_it",
             tool_name = request.tool_name.as_str(),
@@ -174,6 +172,18 @@ impl ToolRunner for RecordingToolRunner {
                 })
             }
         }
+    }
+
+    fn toolchain(&self, tool_specs: &[ToolSpec]) -> Result<Toolchain> {
+        let mut toolchain = Toolchain::new();
+        for spec in tool_specs {
+            let runner = self.clone();
+            toolchain.register(Tool::new(spec.clone(), None, move |request| {
+                let runner = runner.clone();
+                async move { runner.run_request(request).await }
+            }))?;
+        }
+        Ok(toolchain)
     }
 }
 
@@ -444,9 +454,7 @@ After receiving the tool result, return a concise assistant answer.",
             .await
             .unwrap();
 
-        let tools = AgentTools {
-            tool_runner: &runner,
-        };
+        let tools = runner.toolchain(&agent.tools).unwrap();
         let Some(output) =
             session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
         else {
@@ -545,9 +553,7 @@ Then provide one final answer that references the three result labels.",
             .await
             .unwrap();
 
-        let tools = AgentTools {
-            tool_runner: &runner,
-        };
+        let tools = runner.toolchain(&agent.tools).unwrap();
         let Some(output) =
             session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
         else {
@@ -657,9 +663,7 @@ After the second result, answer briefly with the fetched record."
             .await
             .unwrap();
 
-        let tools = AgentTools {
-            tool_runner: &runner,
-        };
+        let tools = runner.toolchain(&agent.tools).unwrap();
         let Some(output) =
             session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
         else {
@@ -775,9 +779,7 @@ Return a final answer after stage_three."
             .await
             .unwrap();
 
-        let tools = AgentTools {
-            tool_runner: &runner,
-        };
+        let tools = runner.toolchain(&agent.tools).unwrap();
         let result = agent.run(&mut session, &provider, &tools).await;
         if let SessionResult::SessionError(err) = result {
             debug!(
@@ -877,9 +879,7 @@ then continue and summarize that error briefly in your final response."
             .await
             .unwrap();
 
-        let tools = AgentTools {
-            tool_runner: &runner,
-        };
+        let tools = runner.toolchain(&agent.tools).unwrap();
         let result = agent.run(&mut session, &provider, &tools).await;
         let messages = session.read_messages(0, 1024).await.unwrap();
         let has_error_result = messages.iter().any(|message| {
@@ -949,9 +949,7 @@ Do not skip tool calls on any turn."
             })
             .await
             .unwrap();
-        let tools = AgentTools {
-            tool_runner: &runner,
-        };
+        let tools = runner.toolchain(&agent.tools).unwrap();
         let first = agent.run(&mut session, &provider, &tools).await;
         if matches!(first, SessionResult::SessionError(_)) {
             continue;

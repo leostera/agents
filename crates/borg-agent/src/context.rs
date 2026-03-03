@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -43,150 +45,237 @@ impl ContextWindow {
     }
 }
 
-#[async_trait]
-pub trait ContextManager: Send + Sync {
-    async fn build_context(&self, agent: &Agent, messages: &[Message]) -> Result<ContextWindow>;
-}
-
 const DEFAULT_MAX_CHARS: usize = 120_000;
 const DEFAULT_KEEP_RECENT_MESSAGES: usize = 24;
 const SUMMARY_MAX_ITEMS: usize = 24;
 const SUMMARY_ITEM_MAX_CHARS: usize = 240;
-const TELEGRAM_CONTEXT_PREFIX: &str = "TELEGRAM_CONTEXT_JSON: ";
-const TELEGRAM_SESSION_CONTEXT_PREFIX: &str = "TELEGRAM_SESSION_CONTEXT_JSON: ";
 const CONTEXT_METADATA_PREFIX: &str = "BORG_CONTEXT_METADATA_JSON: ";
 const CHAR_TO_TOKEN_RATIO: usize = 4;
 
-#[derive(Debug, Default)]
-pub struct PassthroughContextManager;
-
-#[async_trait]
-impl ContextManager for PassthroughContextManager {
-    async fn build_context(&self, agent: &Agent, messages: &[Message]) -> Result<ContextWindow> {
-        let messages = with_context_metadata(
-            messages.to_vec(),
-            ContextMetadataPolicy::Passthrough,
-            None,
-            &agent.agent_id.to_string(),
-        );
-        Ok(build_context_window(agent, messages))
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextChunkMode {
+    Pinned,
+    Compactable,
 }
 
 #[derive(Debug, Clone)]
-pub struct CompactingContextManager {
-    max_chars: usize,
-    keep_recent_messages: usize,
+pub struct ContextChunk {
+    pub mode: ContextChunkMode,
+    pub messages: Vec<Message>,
 }
 
-impl Default for CompactingContextManager {
-    fn default() -> Self {
+impl ContextChunk {
+    pub fn pinned(messages: Vec<Message>) -> Self {
         Self {
+            mode: ContextChunkMode::Pinned,
+            messages,
+        }
+    }
+
+    pub fn compactable(messages: Vec<Message>) -> Self {
+        Self {
+            mode: ContextChunkMode::Compactable,
+            messages,
+        }
+    }
+}
+
+impl From<Message> for ContextChunk {
+    fn from(value: Message) -> Self {
+        ContextChunk::compactable(vec![value])
+    }
+}
+
+impl From<Vec<Message>> for ContextChunk {
+    fn from(value: Vec<Message>) -> Self {
+        ContextChunk::compactable(value)
+    }
+}
+
+#[async_trait]
+pub trait ContextProvider: Send + Sync {
+    async fn get_context(&self) -> Result<Vec<ContextChunk>>;
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StaticContextProvider {
+    chunks: Vec<ContextChunk>,
+}
+
+impl StaticContextProvider {
+    pub fn new(chunks: Vec<ContextChunk>) -> Self {
+        Self { chunks }
+    }
+}
+
+#[async_trait]
+impl ContextProvider for StaticContextProvider {
+    async fn get_context(&self) -> Result<Vec<ContextChunk>> {
+        Ok(self.chunks.clone())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ContextManagerStrategy {
+    Passthrough,
+    Compacting {
+        max_chars: usize,
+        keep_recent_messages: usize,
+    },
+}
+
+impl Default for ContextManagerStrategy {
+    fn default() -> Self {
+        Self::Compacting {
             max_chars: DEFAULT_MAX_CHARS,
             keep_recent_messages: DEFAULT_KEEP_RECENT_MESSAGES,
         }
     }
 }
 
-impl CompactingContextManager {
-    pub fn new(max_chars: usize, keep_recent_messages: usize) -> Self {
-        Self {
-            max_chars: max_chars.max(1),
-            keep_recent_messages: keep_recent_messages.max(1),
-        }
-    }
+#[derive(Clone, Default)]
+pub struct ContextManager {
+    strategy: ContextManagerStrategy,
+    providers: Vec<Arc<dyn ContextProvider>>,
 }
 
-#[async_trait]
-impl ContextManager for CompactingContextManager {
-    async fn build_context(&self, agent: &Agent, messages: &[Message]) -> Result<ContextWindow> {
-        let total_chars: usize = messages.iter().map(message_char_count).sum();
-        if total_chars <= self.max_chars {
-            let pinned = with_pinned_telegram_context(messages.to_vec());
-            let pinned = with_context_metadata(
-                pinned,
-                ContextMetadataPolicy::Compacting {
-                    max_chars: self.max_chars,
-                    keep_recent_messages: self.keep_recent_messages,
-                    was_compacted: false,
-                },
-                Some(self.max_chars),
-                &agent.agent_id.to_string(),
-            );
-            return Ok(build_context_window(agent, pinned));
-        }
+impl ContextManager {
+    pub fn builder() -> ContextManagerBuilder {
+        ContextManagerBuilder::default()
+    }
 
-        let split_at = messages.len().saturating_sub(self.keep_recent_messages);
-        let (older, recent) = messages.split_at(split_at);
+    pub async fn build_context(
+        &self,
+        agent: &Agent,
+        messages: &[Message],
+    ) -> Result<ContextWindow> {
+        let mut pinned_messages = Vec::new();
+        let mut compactable_messages = Vec::new();
 
-        let mut compacted = Vec::new();
-        let mut summary_items = Vec::new();
-        for message in older {
-            if matches!(message, Message::System { .. }) {
-                compacted.push(message.clone());
-                continue;
-            }
-            if summary_items.len() >= SUMMARY_MAX_ITEMS {
-                continue;
-            }
-            if let Some(line) = summarize_message_line(message) {
-                summary_items.push(line);
+        for provider in &self.providers {
+            for chunk in provider.get_context().await? {
+                match chunk.mode {
+                    ContextChunkMode::Pinned => pinned_messages.extend(chunk.messages),
+                    ContextChunkMode::Compactable => compactable_messages.extend(chunk.messages),
+                }
             }
         }
+        compactable_messages.extend_from_slice(messages);
 
-        if !summary_items.is_empty() {
-            let mut summary = String::from(
-                "Compacted conversation summary from older turns (for context continuity):",
-            );
-            for line in summary_items {
-                summary.push('\n');
-                summary.push_str("- ");
-                summary.push_str(&line);
+        let (history_messages, metadata_policy, max_chars) = match self.strategy {
+            ContextManagerStrategy::Passthrough => (
+                compactable_messages,
+                ContextMetadataPolicy::Passthrough,
+                None,
+            ),
+            ContextManagerStrategy::Compacting {
+                max_chars,
+                keep_recent_messages,
+            } => {
+                let (compacted, was_compacted) =
+                    compact_messages(compactable_messages, max_chars, keep_recent_messages);
+                (
+                    compacted,
+                    ContextMetadataPolicy::Compacting {
+                        max_chars,
+                        keep_recent_messages,
+                        was_compacted,
+                    },
+                    Some(max_chars),
+                )
             }
-            compacted.push(Message::System { content: summary });
-        }
+        };
 
-        compacted.extend_from_slice(recent);
-        let compacted = with_pinned_telegram_context(compacted);
-        let compacted = with_context_metadata(
-            compacted,
-            ContextMetadataPolicy::Compacting {
-                max_chars: self.max_chars,
-                keep_recent_messages: self.keep_recent_messages,
-                was_compacted: true,
-            },
-            Some(self.max_chars),
+        let mut ordered_messages =
+            Vec::with_capacity(pinned_messages.len() + history_messages.len() + 1);
+        ordered_messages.extend(pinned_messages);
+        ordered_messages.extend(history_messages);
+        let ordered_messages = with_context_metadata(
+            ordered_messages,
+            metadata_policy,
+            max_chars,
             &agent.agent_id.to_string(),
         );
-        Ok(build_context_window(agent, compacted))
+
+        Ok(build_context_window(agent, ordered_messages))
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct SessionContextManager {
-    inner: CompactingContextManager,
-    telegram_session_context: Option<serde_json::Value>,
+#[derive(Default)]
+pub struct ContextManagerBuilder {
+    strategy: ContextManagerStrategy,
+    providers: Vec<Arc<dyn ContextProvider>>,
 }
 
-impl SessionContextManager {
-    pub fn for_telegram_session_context(telegram_session_context: serde_json::Value) -> Self {
-        Self {
-            inner: CompactingContextManager::default(),
-            telegram_session_context: Some(telegram_session_context),
+impl ContextManagerBuilder {
+    pub fn with_strategy(mut self, strategy: ContextManagerStrategy) -> Self {
+        self.strategy = strategy;
+        self
+    }
+
+    pub fn add_provider<P>(mut self, provider: P) -> Self
+    where
+        P: ContextProvider + 'static,
+    {
+        self.providers.push(Arc::new(provider));
+        self
+    }
+
+    pub fn build(self) -> ContextManager {
+        ContextManager {
+            strategy: self.strategy,
+            providers: self.providers,
         }
     }
 }
 
-#[async_trait]
-impl ContextManager for SessionContextManager {
-    async fn build_context(&self, agent: &Agent, messages: &[Message]) -> Result<ContextWindow> {
-        let context = self.inner.build_context(agent, messages).await?;
-        let messages = with_pinned_telegram_session_context(
-            context.ordered_messages,
-            self.telegram_session_context.clone(),
-        );
-        Ok(build_context_window(agent, messages))
+fn compact_messages(
+    messages: Vec<Message>,
+    max_chars: usize,
+    keep_recent_messages: usize,
+) -> (Vec<Message>, bool) {
+    let normalized_max_chars = max_chars.max(1);
+    let normalized_keep_recent_messages = keep_recent_messages.max(1);
+
+    let total_chars: usize = messages.iter().map(message_char_count).sum();
+    if total_chars <= normalized_max_chars {
+        return (messages, false);
     }
+
+    let split_at = messages
+        .len()
+        .saturating_sub(normalized_keep_recent_messages);
+    let (older, recent) = messages.split_at(split_at);
+
+    let mut compacted = Vec::new();
+    let mut summary_items = Vec::new();
+    for message in older {
+        if matches!(message, Message::System { .. }) {
+            compacted.push(message.clone());
+            continue;
+        }
+        if summary_items.len() >= SUMMARY_MAX_ITEMS {
+            continue;
+        }
+        if let Some(line) = summarize_message_line(message) {
+            summary_items.push(line);
+        }
+    }
+
+    if !summary_items.is_empty() {
+        let mut summary = String::from(
+            "Compacted conversation summary from older turns (for context continuity):",
+        );
+        for line in summary_items {
+            summary.push('\n');
+            summary.push_str("- ");
+            summary.push_str(&line);
+        }
+        compacted.push(Message::System { content: summary });
+    }
+
+    compacted.extend_from_slice(recent);
+    (compacted, true)
 }
 
 fn build_context_window(agent: &Agent, messages: Vec<Message>) -> ContextWindow {
@@ -248,49 +337,6 @@ fn build_context_window(agent: &Agent, messages: Vec<Message>) -> ContextWindow 
         tool_responses,
         ordered_messages,
     }
-}
-
-fn with_pinned_telegram_context(messages: Vec<Message>) -> Vec<Message> {
-    let latest = messages.iter().rev().find_map(|message| match message {
-        Message::System { content } if content.starts_with(TELEGRAM_CONTEXT_PREFIX) => {
-            Some(content.clone())
-        }
-        _ => None,
-    });
-
-    let Some(latest) = latest else {
-        return messages;
-    };
-
-    let mut out = Vec::with_capacity(messages.len() + 1);
-    out.push(Message::System { content: latest });
-    for message in messages {
-        match &message {
-            Message::System { content } if content.starts_with(TELEGRAM_CONTEXT_PREFIX) => {}
-            _ => out.push(message),
-        }
-    }
-    out
-}
-
-fn with_pinned_telegram_session_context(
-    messages: Vec<Message>,
-    telegram_session_context: Option<serde_json::Value>,
-) -> Vec<Message> {
-    let Some(context) = telegram_session_context else {
-        return messages;
-    };
-    let content = format!("{}{}", TELEGRAM_SESSION_CONTEXT_PREFIX, context);
-    let mut out = Vec::with_capacity(messages.len() + 1);
-    out.push(Message::System { content });
-    for message in messages {
-        match &message {
-            Message::System { content } if content.starts_with(TELEGRAM_SESSION_CONTEXT_PREFIX) => {
-            }
-            _ => out.push(message),
-        }
-    }
-    out
 }
 
 #[derive(Debug, Clone, Serialize)]

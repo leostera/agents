@@ -2,7 +2,6 @@ mod execute_code;
 mod search_apis;
 
 use anyhow::Result;
-use borg_agent::ToolRunner;
 use clap::Subcommand;
 use serde_json::{Value, json};
 

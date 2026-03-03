@@ -2,19 +2,18 @@ use anyhow::Result;
 use borg_agent::Toolchain;
 use borg_apps::BorgApps;
 use borg_codemode::{CodeModeContext, CodeModeRuntime};
-use borg_core::{Uri, uri};
+use borg_core::Uri;
 use borg_db::{AppConnectionRecord, BorgDb};
 use borg_fs::BorgFs;
 use borg_memory::MemoryStore;
 use borg_shellmode::ShellModeRuntime;
-use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::llm_resolver::BorgLLMResolver;
 use crate::port_context::{PortContext, TelegramSessionContext};
 use crate::session_manager::SessionManager;
 use crate::tool_runner::build_exec_toolchain_with_context;
-use crate::types::UserMessage;
+use crate::types::UserMessageMetadata;
 
 pub struct BorgRuntime {
     pub db: BorgDb,
@@ -53,14 +52,15 @@ impl BorgRuntime {
 
     pub async fn build_toolchain(
         &self,
-        msg: &UserMessage,
+        user_id: &Uri,
+        metadata: &UserMessageMetadata,
         session_id: &Uri,
         agent_id: &Uri,
     ) -> Result<Toolchain> {
         let context = self
-            .code_mode_context_for_turn(msg, session_id, agent_id)
+            .code_mode_context_for_turn(user_id, metadata, session_id, agent_id)
             .await?;
-        let allow_task_creation = !is_task_worker_message(msg);
+        let allow_task_creation = !is_task_worker_message(metadata);
         let runtime_toolchain = build_exec_toolchain_with_context(
             self.runtime.clone(),
             self.shell_runtime.clone(),
@@ -81,7 +81,7 @@ impl BorgRuntime {
         &self,
         port: &str,
         session_id: &Uri,
-        metadata: &Value,
+        metadata: &UserMessageMetadata,
     ) -> Result<()> {
         if port != "telegram" {
             return Ok(());
@@ -94,68 +94,43 @@ impl BorgRuntime {
             Some(value) => TelegramSessionContext::from_json(value)?,
             None => TelegramSessionContext::default(),
         };
-        ctx.merge_message_metadata(metadata)?;
+        let Some(chat_id) = metadata.chat_id else {
+            return Ok(());
+        };
+        let chat_type = metadata
+            .chat_type
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        ctx.set_chat(chat_id, chat_type);
+        ctx.set_last_message_refs(metadata.message_id, metadata.thread_id);
+        if let Some(sender_id) = metadata.sender_id
+            && sender_id >= 0
+        {
+            ctx.upsert_participant(
+                sender_id as u64,
+                metadata.sender_username.clone(),
+                metadata.sender_first_name.clone(),
+                metadata.sender_last_name.clone(),
+            );
+        }
         self.db
             .upsert_port_session_context("telegram", session_id, &ctx.to_json()?)
             .await?;
         Ok(())
     }
 
-    pub async fn ensure_session_record(&self, msg: &UserMessage, session_id: &Uri) -> Result<()> {
-        let existing = self.db.get_session(session_id).await?;
-        let port = msg
-            .metadata
-            .as_object()
-            .and_then(|obj| obj.get("port"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .and_then(|value| Uri::parse(value).ok())
-            .or_else(|| {
-                msg.metadata
-                    .as_object()
-                    .and_then(|obj| obj.get("port"))
-                    .and_then(Value::as_str)
-                    .and_then(|value| Uri::from_parts("borg", "port", Some(value)).ok())
-            })
-            .or_else(|| existing.as_ref().map(|session| session.port.clone()))
-            .unwrap_or_else(|| uri!("borg", "port", "runtime"));
-
-        let mut users = existing
-            .as_ref()
-            .map(|session| session.users.clone())
-            .unwrap_or_default();
-        if !users.iter().any(|user| user == &msg.user_id) {
-            users.push(msg.user_id.clone());
-        }
-        if users.is_empty() {
-            users.push(msg.user_id.clone());
-        }
-
-        self.db.upsert_session(session_id, &users, &port).await?;
-
-        Ok(())
-    }
-
     async fn code_mode_context_for_turn(
         &self,
-        msg: &UserMessage,
+        user_id: &Uri,
+        metadata: &UserMessageMetadata,
         session_id: &Uri,
         agent_id: &Uri,
     ) -> Result<CodeModeContext> {
-        let metadata = msg.metadata.as_object();
-        let port_name = metadata
-            .and_then(|obj| obj.get("port"))
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
+        let port_name = metadata.port.as_deref().unwrap_or("unknown");
         let current_port_id = Uri::from_parts("borg", "port", Some(port_name)).ok();
 
-        let chat_id = metadata
-            .and_then(|obj| obj.get("chat_id"))
-            .and_then(Value::as_i64);
-        let message_id = metadata
-            .and_then(|obj| obj.get("message_id"))
-            .and_then(Value::as_i64);
+        let chat_id = metadata.chat_id;
+        let message_id = metadata.message_id;
         let current_message_id = match (chat_id, message_id) {
             (Some(chat), Some(message)) => Uri::from_parts(
                 "borg",
@@ -174,8 +149,8 @@ impl BorgRuntime {
             current_message_id,
             current_session_id: Some(session_id.clone()),
             current_agent_id: Some(agent_id.clone()),
-            current_user_id: Some(msg.user_id.clone()),
-            env: self.app_env_for_session(&msg.user_id).await?,
+            current_user_id: Some(user_id.clone()),
+            env: self.app_env_for_session(user_id).await?,
         })
     }
 
@@ -274,10 +249,9 @@ fn available_secret_candidate_keys(available_secret: &str) -> Vec<String> {
     keys
 }
 
-fn is_task_worker_message(msg: &UserMessage) -> bool {
-    msg.metadata
-        .as_object()
-        .and_then(|obj| obj.get("port"))
-        .and_then(Value::as_str)
+fn is_task_worker_message(metadata: &UserMessageMetadata) -> bool {
+    metadata
+        .port
+        .as_deref()
         .is_some_and(|port| port.eq_ignore_ascii_case("taskgraph"))
 }

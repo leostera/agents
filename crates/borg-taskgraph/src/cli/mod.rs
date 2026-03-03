@@ -1,7 +1,6 @@
 mod commands;
 
 use anyhow::{Result, anyhow};
-use borg_agent::ToolRunner;
 use serde_json::{Value, json};
 
 pub fn command_names() -> Vec<&'static str> {

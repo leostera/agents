@@ -9,8 +9,8 @@ use tracing::info;
 use tracing::{Instrument, error, info_span, warn};
 
 use crate::{
-    AgentTools, Session, SessionOutput, SessionResult, ToolCallRecord, ToolResultData, ToolSpec,
-    call_tool, to_provider_messages, to_provider_tool_specs,
+    Session, SessionOutput, SessionResult, ToolCallRecord, ToolRequest, ToolResultData, ToolSpec,
+    Toolchain, to_provider_messages, to_provider_tool_specs,
 };
 
 pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -140,11 +140,11 @@ impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult> {
 }
 
 impl Agent<Value, Value> {
-    pub async fn run<'a, P: Provider>(
+    pub async fn run<P: Provider>(
         &self,
         session: &mut Session,
         provider: &P,
-        tools: &AgentTools<'a>,
+        tools: &Toolchain,
     ) -> SessionResult<SessionOutput> {
         if let Err(err) = session.agent_started().await {
             return SessionResult::SessionError(err.to_string());
@@ -346,9 +346,15 @@ impl Agent<Value, Value> {
                     }
 
                     info!(target: "borg_agent", session_id = %session.session_id, tool_name, "tool_execution_start");
-                    let output = match call_tool(tools, &tool_call_id, &tool_name, &arguments).await
+                    let output = match tools
+                        .run(ToolRequest {
+                            tool_call_id: tool_call_id.clone(),
+                            tool_name: tool_name.clone(),
+                            arguments: arguments.clone(),
+                        })
+                        .await
                     {
-                        Ok(value) => value,
+                        Ok(response) => response.content,
                         Err(err) => ToolResultData::Error {
                             message: err.to_string(),
                         },

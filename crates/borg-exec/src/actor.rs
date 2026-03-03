@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{AgentTools, Message, Session, SessionContextManager, SessionResult};
+use borg_agent::{Message, Session, SessionResult};
 use borg_core::Uri;
 use borg_llm::TranscriptionRequest;
 use chrono::Utc;
@@ -13,7 +13,7 @@ use crate::mailbox::ActorCommand;
 use crate::message::{BorgCommand, BorgInput, BorgMessage, SessionOutput, ToolCallSummary};
 use crate::port_context::TelegramSessionContext;
 use crate::runtime::BorgRuntime;
-use crate::types::UserMessage;
+use crate::types::UserMessageMetadata;
 
 pub struct ActorHandle {
     pub actor_id: Uri,
@@ -178,31 +178,10 @@ impl Actor {
     }
 
     async fn create_session(&self, session_id: &Uri, agent_id: &Uri) -> Result<Session> {
-        let synthetic_msg = UserMessage {
-            user_id: Uri::from_parts("borg", "user", Some("system"))?,
-            text: String::new(),
-            session_id: Some(session_id.clone()),
-            agent_id: Some(agent_id.clone()),
-            metadata: serde_json::json!({}),
-        };
-
-        let mut session = self
-            .runtime
+        self.runtime
             .session_manager
-            .session_for_task(&synthetic_msg)
-            .await?;
-        if let Some((port, ctx)) = self
-            .runtime
-            .db
-            .get_any_port_session_context(session_id)
-            .await?
-            && port == "telegram"
-        {
-            session.set_context_manager(Arc::new(
-                SessionContextManager::for_telegram_session_context(ctx),
-            ));
-        }
-        Ok(session)
+            .session_for_task(Some(session_id.clone()), Some(agent_id))
+            .await
     }
 
     async fn process_chat_message(
@@ -218,8 +197,7 @@ impl Actor {
             })
             .await?;
 
-        self.process_text_turn(state, msg, text, serde_json::json!({}))
-            .await
+        self.process_text_turn(state, msg).await
     }
 
     async fn process_audio_message(
@@ -261,21 +239,13 @@ impl Actor {
             })
             .await?;
 
-        let audio_metadata = serde_json::json!({
-            "audio_file_id": file_id.as_str(),
-            "audio_mime_type": mime_type,
-            "audio_duration_ms": duration_ms,
-        });
-        self.process_text_turn(state, msg, &transcript, audio_metadata)
-            .await
+        self.process_text_turn(state, msg).await
     }
 
     async fn process_text_turn(
         &self,
         state: &mut SessionState,
         msg: &BorgMessage,
-        text: &str,
-        metadata: serde_json::Value,
     ) -> Result<SessionOutput> {
         let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
         state.agent_id = agent_id;
@@ -286,28 +256,25 @@ impl Actor {
             .resolve_agent_for_turn(&state.agent_id, state.behavior_id.as_ref())
             .await?;
 
-        let user_msg = UserMessage {
-            user_id: msg.user_id.clone(),
-            text: text.to_string(),
-            session_id: Some(msg.session_id.clone()),
-            agent_id: Some(state.agent_id.clone()),
-            metadata,
-        };
+        let metadata = msg.port_context.to_json().unwrap_or_default();
+        let user_metadata = serde_json::from_value::<UserMessageMetadata>(metadata)
+            .unwrap_or_default();
 
         let llm = self.runtime.llm().await?;
         let toolchain = self
             .runtime
-            .build_toolchain(&user_msg, &msg.session_id, &state.agent_id)
+            .build_toolchain(
+                &msg.user_id,
+                &user_metadata,
+                &msg.session_id,
+                &state.agent_id,
+            )
             .await?;
-        let tools = AgentTools {
-            tool_runner: &toolchain,
-        };
-
         match state
             .session
             .agent
             .clone()
-            .run(&mut state.session, &llm, &tools)
+            .run(&mut state.session, &llm, &toolchain)
             .await
         {
             SessionResult::Completed(Ok(output)) => Ok(SessionOutput {
@@ -319,8 +286,7 @@ impl Actor {
                     .map(|call| ToolCallSummary {
                         tool_name: call.tool_name.clone(),
                         arguments: call.arguments.clone(),
-                        output: serde_json::to_value(&call.output)
-                            .unwrap_or_else(|_| serde_json::json!({})),
+                        output: call.output.clone(),
                     })
                     .collect(),
                 port_context: msg.port_context.clone(),
