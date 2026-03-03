@@ -10,6 +10,7 @@ members = [
   "crates/borg-core",
   "crates/borg-db",
   "crates/borg-exec",
+  "crates/borg-infer",
   "crates/borg-llm",
   "crates/borg-memory",
   "crates/borg-ports",

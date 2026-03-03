@@ -4,6 +4,19 @@ use serde_json::json;
 
 use crate::app::BorgCliApp;
 
+const RUNTIME_SETTINGS_PORT: &str = "runtime";
+const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
+const RUNTIME_PREFERRED_PROVIDER_ID_KEY: &str = "preferred_provider_id";
+
+#[derive(Subcommand, Debug)]
+pub enum ProvidersSetCommand {
+    #[command(about = "Set default provider id used by runtime selection")]
+    Default {
+        #[arg(help = "Provider id (for example openai, lmstudio, embedded)")]
+        provider: String,
+    },
+}
+
 #[derive(Subcommand, Debug)]
 pub enum ProvidersCommand {
     #[command(about = "List providers")]
@@ -37,6 +50,11 @@ pub enum ProvidersCommand {
     Delete {
         #[arg(help = "Provider id")]
         provider: String,
+    },
+    #[command(about = "Set provider defaults and runtime preferences")]
+    Set {
+        #[command(subcommand)]
+        cmd: ProvidersSetCommand,
     },
 }
 
@@ -94,6 +112,27 @@ pub async fn run(app: &BorgCliApp, cmd: ProvidersCommand) -> Result<()> {
             let deleted = db.delete_provider(&provider).await?;
             json!({ "ok": true, "entity": "providers", "deleted": deleted })
         }
+        ProvidersCommand::Set { cmd } => match cmd {
+            ProvidersSetCommand::Default { provider } => {
+                let provider = provider.trim().to_ascii_lowercase();
+                if provider.is_empty() {
+                    anyhow::bail!("provider must not be empty");
+                }
+                db.upsert_port_setting(
+                    RUNTIME_SETTINGS_PORT,
+                    RUNTIME_PREFERRED_PROVIDER_KEY,
+                    &provider,
+                )
+                .await?;
+                db.upsert_port_setting(
+                    RUNTIME_SETTINGS_PORT,
+                    RUNTIME_PREFERRED_PROVIDER_ID_KEY,
+                    &provider,
+                )
+                .await?;
+                json!({ "ok": true, "entity": "providers", "default_provider": provider })
+            }
+        },
     };
 
     println!("{}", serde_json::to_string(&output)?);

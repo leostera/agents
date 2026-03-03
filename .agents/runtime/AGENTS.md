@@ -7,6 +7,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - Primary commands are `borg init` and `borg start`.
 - `borg-onboard` is a library server, not a binary.
 - `BorgDir` in `borg-core` is source of truth for `~/.borg/*` layout.
+- Embedded local inference v0 lives in `borg-infer` (separate from `borg-llm` provider orchestration).
 
 ## Session-First Model
 - Session is the primary LLM interaction unit.
@@ -58,6 +59,10 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - Default app seeding includes `borg:app:clockwork-system` with Clockwork capabilities mirrored from runtime tool specs.
 - App `available_secrets` are exported into CodeMode env verbatim by the same key name (no `APP_` prefix translation).
 - `borg start` launches a Clockwork supervisor loop (1s poll cadence) as scheduler runtime scaffolding.
+- Local inference smoke commands:
+  - `borg llm models` lists hardcoded GGUF entries from `borg-infer`.
+  - `borg llm test --model <id> --prompt <text> [--gguf <path>]` runs embedded generation with streaming + Ctrl-C cancel.
+  - `borg providers set default embedded` updates runtime preferred provider settings (routing integration is follow-up).
 
 ## Runtime Safety
 - Initialize tracing before application code in `main`.
@@ -69,6 +74,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 1. `cargo build`
 2. `cargo test -p borg-exec -p borg-api -p borg-ports`
 3. `cargo run -p borg-cli -- start` and smoke `POST /ports/http`
+4. `cargo test -p borg-infer`
 
 ## Open TODOs
 - Handle provider `context_length_exceeded` failures gracefully instead of surfacing raw 400 errors.

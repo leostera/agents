@@ -1,4 +1,5 @@
 mod clockwork;
+mod llm;
 mod ports;
 mod providers;
 pub mod tools;
@@ -71,6 +72,11 @@ enum Command {
     Clockwork {
         #[command(subcommand)]
         cmd: clockwork::ClockworkCommand,
+    },
+    #[command(about = "Local embedded inference commands")]
+    Llm {
+        #[command(subcommand)]
+        cmd: llm::LlmCommand,
     },
 }
 
@@ -202,6 +208,15 @@ pub async fn run(app: BorgCliApp, cli: Cli) -> Result<()> {
         }
         Command::Clockwork { cmd } => {
             if let Err(err) = clockwork::run(&app, cmd).await {
+                println!(
+                    "{}",
+                    serde_json::to_string(&json!({ "ok": false, "error": err.to_string() }))?
+                );
+            }
+            Ok(())
+        }
+        Command::Llm { cmd } => {
+            if let Err(err) = llm::run(&app, cmd).await {
                 println!(
                     "{}",
                     serde_json::to_string(&json!({ "ok": false, "error": err.to_string() }))?
