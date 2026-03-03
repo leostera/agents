@@ -30,6 +30,7 @@ use crate::BorgSupervisor;
 use crate::mailbox_envelope::ActorMailboxEnvelope;
 use crate::session_manager::SessionManager;
 use crate::tool_runner::build_exec_toolchain_with_context;
+use crate::tool_runner::default_exec_admin_tool_specs;
 
 fn temp_db_path() -> PathBuf {
     std::env::temp_dir().join(format!("borg-exec-test-{}.db", uuid::Uuid::now_v7()))
@@ -151,6 +152,14 @@ fn default_agent_tools() -> Vec<borg_agent::ToolSpec> {
     tools
 }
 
+#[test]
+fn default_exec_admin_specs_include_borgfs_tools() {
+    let tools = default_exec_admin_tool_specs();
+    assert!(tools.iter().any(|tool| tool.name == "BorgFS-ls"));
+    assert!(tools.iter().any(|tool| tool.name == "BorgFS-put"));
+    assert!(tools.iter().any(|tool| tool.name == "BorgFS-settings"));
+}
+
 #[tokio::test]
 async fn session_manager_resolve_agent_for_turn_refreshes_prompts_and_tools_each_call() {
     let db = open_test_db().await;
@@ -247,13 +256,16 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
             "Completed runtime plan. BORG_EXEC_TOOLCHAIN_RT_OK",
         )),
     ]);
+    let toolchain_db = open_test_db().await;
+    let toolchain_fs = BorgFs::local(toolchain_db.clone(), temp_files_root());
 
     let toolchain = build_exec_toolchain_with_context(
         CodeModeRuntime::default(),
         ShellModeRuntime::new(),
         CodeModeContext::default(),
         open_test_memory().await,
-        open_test_db().await,
+        toolchain_db,
+        toolchain_fs,
         uri!("borg", "session", "test-runtime"),
         uri!("borg", "agent", "test-runtime"),
         true,
@@ -342,13 +354,16 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
         )),
         Ok(assistant_text("Saw tool failure and handled it.")),
     ]);
+    let toolchain_db = open_test_db().await;
+    let toolchain_fs = BorgFs::local(toolchain_db.clone(), temp_files_root());
 
     let toolchain = build_exec_toolchain_with_context(
         CodeModeRuntime::default(),
         ShellModeRuntime::new(),
         CodeModeContext::default(),
         open_test_memory().await,
-        open_test_db().await,
+        toolchain_db,
+        toolchain_fs,
         uri!("borg", "session", "test-invalid"),
         uri!("borg", "agent", "test-invalid"),
         true,

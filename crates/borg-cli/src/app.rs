@@ -194,6 +194,13 @@ impl BorgCliApp {
         Ok(memory)
     }
 
+    pub(crate) async fn open_borg_fs(&self) -> Result<BorgFs> {
+        self.borg_dir.ensure_initialized().await?;
+        let db = self.open_config_db().await?;
+        db.migrate().await?;
+        Ok(BorgFs::local(db, self.borg_dir.files().to_path_buf()))
+    }
+
     pub(crate) async fn config_set(&self, key: String, value: String) -> Result<()> {
         let db = self.open_config_db().await?;
         db.migrate().await?;

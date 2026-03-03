@@ -1413,4 +1413,21 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
+
+    #[tokio::test]
+    async fn fs_endpoints_return_settings_and_files_payloads() {
+        let app = test_app("fs-endpoints").await;
+
+        let (status, settings) = request_no_body(&app, Method::GET, "/api/fs/settings").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            settings.get("backend").and_then(Value::as_str),
+            Some("local")
+        );
+        assert!(settings.get("counts").and_then(Value::as_object).is_some());
+
+        let (status, files) = request_no_body(&app, Method::GET, "/api/fs/files?limit=50").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(files.get("files").and_then(Value::as_array).is_some());
+    }
 }

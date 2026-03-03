@@ -1,4 +1,5 @@
 pub mod codemode;
+pub mod fs;
 pub mod memory;
 pub mod shell;
 pub mod taskgraph;
@@ -28,6 +29,11 @@ pub enum ToolsCommand {
         #[command(subcommand)]
         cmd: memory::MemoryToolsCommand,
     },
+    #[command(about = "BorgFS tools for listing, reading, writing, and deleting files")]
+    Fs {
+        #[command(subcommand)]
+        cmd: fs::FsToolsCommand,
+    },
     #[command(about = "TaskGraph tools for task lifecycle, structure, and review flows")]
     Taskgraph {
         #[command(subcommand)]
@@ -41,6 +47,7 @@ pub async fn run(app: &BorgCliApp, cmd: ToolsCommand) -> Result<()> {
         ToolsCommand::Codemode { cmd } => codemode::run(cmd).await?,
         ToolsCommand::Shell { cmd } => shell::run(cmd).await?,
         ToolsCommand::Memory { cmd } => memory::run(app, cmd).await?,
+        ToolsCommand::Fs { cmd } => fs::run(app, cmd).await?,
         ToolsCommand::Taskgraph { cmd } => taskgraph::run(app, cmd).await?,
     };
 
@@ -55,6 +62,7 @@ fn catalog() -> Value {
             "codemode": codemode::command_names(),
             "shell": shell::command_names(),
             "memory": memory::command_names(),
+            "fs": fs::command_names(),
             "taskgraph": taskgraph::command_names(),
         }
     })

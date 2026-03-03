@@ -199,6 +199,34 @@ export type DevModeMaterializeResponse = {
   subtasks?: TaskGraphTask[];
 };
 
+export type FsFileRecord = {
+  file_id: string;
+  backend: string;
+  storage_key: string;
+  content_type: string;
+  size_bytes: number;
+  sha512: string;
+  owner_uri?: string | null;
+  metadata_json: Record<string, unknown>;
+  deleted_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FsFilesResponse = {
+  files?: FsFileRecord[];
+};
+
+export type FsSettingsResponse = {
+  backend?: string;
+  root_path?: string | null;
+  counts?: {
+    total?: number;
+    active?: number;
+    deleted?: number;
+  };
+};
+
 export type UserRecord = {
   user_key: string;
   profile: Record<string, unknown>;
@@ -1112,6 +1140,46 @@ export class BorgApiClient {
       `/api/sessions?limit=${limit}`
     );
     return Array.isArray(data.sessions) ? data.sessions : [];
+  }
+
+  async listFsFiles(
+    params: { limit?: number; q?: string; includeDeleted?: boolean } = {}
+  ): Promise<FsFileRecord[]> {
+    const search = new URLSearchParams({
+      limit: String(params.limit ?? 500),
+    });
+    if (params.q?.trim()) {
+      search.set("q", params.q.trim());
+    }
+    if (params.includeDeleted) {
+      search.set("include_deleted", "true");
+    }
+    const data = await this.requestJson<FsFilesResponse>(
+      `/api/fs/files?${search.toString()}`
+    );
+    return Array.isArray(data.files) ? data.files : [];
+  }
+
+  async getFsSettings(): Promise<{
+    backend: string;
+    rootPath: string | null;
+    counts: { total: number; active: number; deleted: number };
+  }> {
+    const data = await this.requestJson<FsSettingsResponse>("/api/fs/settings");
+    return {
+      backend: typeof data.backend === "string" ? data.backend : "unknown",
+      rootPath:
+        typeof data.root_path === "string" && data.root_path.length > 0
+          ? data.root_path
+          : null,
+      counts: {
+        total: typeof data.counts?.total === "number" ? data.counts.total : 0,
+        active:
+          typeof data.counts?.active === "number" ? data.counts.active : 0,
+        deleted:
+          typeof data.counts?.deleted === "number" ? data.counts.deleted : 0,
+      },
+    };
   }
 
   async getSession(sessionId: string): Promise<SessionRecord | null> {

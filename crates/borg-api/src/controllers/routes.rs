@@ -12,6 +12,7 @@ use super::apps::AppsController;
 use super::behaviors::BehaviorsController;
 use super::db::DbController;
 use super::devmode::DevModeController;
+use super::fs::FsController;
 use super::port_actor_bindings::PortActorBindingsController;
 use super::providers::ProvidersController;
 use super::system::SystemController;
@@ -27,6 +28,8 @@ pub(crate) fn app_router(state: AppState) -> Router {
             "/ports/http/audio",
             post(SystemController::ports_http_audio),
         )
+        .route("/api/fs/files", get(FsController::list_files))
+        .route("/api/fs/settings", get(FsController::settings))
         .route("/memory/search", get(SystemController::memory_search))
         .route(
             "/api/memory/explorer",

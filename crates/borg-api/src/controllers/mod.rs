@@ -4,6 +4,7 @@ pub(crate) mod behaviors;
 pub(crate) mod common;
 pub(crate) mod db;
 pub(crate) mod devmode;
+pub(crate) mod fs;
 pub(crate) mod port_actor_bindings;
 pub(crate) mod providers;
 pub(crate) mod routes;

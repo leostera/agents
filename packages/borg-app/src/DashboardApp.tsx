@@ -5,6 +5,7 @@ import {
   Bot,
   Brain,
   Clock3,
+  FolderTree,
   GitFork,
   Hammer,
   LayoutDashboard,
@@ -13,6 +14,7 @@ import {
   ScanSearch,
   Settings2,
   Shield,
+  SlidersHorizontal,
   Users,
   Workflow,
 } from "lucide-react";
@@ -32,6 +34,8 @@ import { SessionPage } from "./pages/control/sessions";
 import { SessionDetailsPage } from "./pages/control/sessions/id";
 import { UsersPage } from "./pages/control/users";
 import { UserDetailsPage } from "./pages/control/users/id";
+import { FsExplorerPage } from "./pages/fs/explorer";
+import { FsSettingsPage } from "./pages/fs/settings";
 import { MemoryEntityPage } from "./pages/memory/entity";
 import { MemoryExplorerPage } from "./pages/memory/explorer";
 import { MemoryGraphPage } from "./pages/memory/graph";
@@ -159,6 +163,24 @@ const SECTION_GROUPS: DashboardRouteGroup[] = [
     ],
   },
   {
+    id: "fs",
+    title: "FS",
+    items: [
+      {
+        id: "fs-explorer",
+        title: "Explorer",
+        icon: FolderTree,
+        path: "/fs/explorer",
+      },
+      {
+        id: "fs-settings",
+        title: "Settings",
+        icon: SlidersHorizontal,
+        path: "/fs/settings",
+      },
+    ],
+  },
+  {
     id: "settings",
     title: "Settings",
     items: [
@@ -250,6 +272,7 @@ const SECTION_BY_PATH_ALIASES: Record<string, DashboardRouteItem> = {
   "/clockwork": SECTION_BY_ID["control-clockwork"],
   "/control/tools": SECTION_BY_ID["control-apps"],
   "/settings": SECTION_BY_ID["settings-providers"],
+  "/fs": SECTION_BY_ID["fs-explorer"],
   "/observability/overview": SECTION_BY_ID["observability-overview"],
   "/observability/traces": SECTION_BY_ID["observability-tracing"],
   "/observability/tracing/llm-calls":
@@ -702,6 +725,8 @@ export function DashboardApp() {
       "taskgraph-task": () => (
         <TaskGraphTaskDetailsPage taskUri={route.entityUri ?? ""} />
       ),
+      "fs-explorer": () => <FsExplorerPage />,
+      "fs-settings": () => <FsSettingsPage />,
       "settings-providers": () => <ProvidersPage />,
       "settings-provider": () => (
         <ProviderDetailsPage providerId={route.entityUri ?? ""} />

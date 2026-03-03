@@ -13,6 +13,7 @@ const DASHBOARD_PREFIXES = [
   "/observability",
   "/memory",
   "/taskgraph",
+  "/fs",
   "/settings",
   "/overview",
 ];

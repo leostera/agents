@@ -7,6 +7,7 @@ use borg_clockwork::build_clockwork_toolchain;
 use borg_codemode::{CodeModeContext, CodeModeRuntime, build_code_mode_toolchain_with_context};
 use borg_core::Uri;
 use borg_db::BorgDb;
+use borg_fs::{BorgFs, build_borg_fs_toolchain, default_borg_fs_tool_specs};
 use borg_llm::{default_provider_admin_tool_specs, run_provider_admin_tool};
 use borg_memory::{MemoryStore, build_memory_toolchain};
 use borg_ports_tools::{build_port_admin_toolchain, default_port_admin_tool_specs};
@@ -19,6 +20,7 @@ pub fn build_exec_toolchain_with_context(
     context: CodeModeContext,
     memory: MemoryStore,
     db: BorgDb,
+    files: BorgFs,
     current_session_id: Uri,
     current_agent_id: Uri,
     allow_task_creation: bool,
@@ -26,6 +28,7 @@ pub fn build_exec_toolchain_with_context(
     let code = build_code_mode_toolchain_with_context(runtime, context)?;
     let shell = build_shell_mode_toolchain(shell_runtime)?;
     let ltm = build_memory_toolchain(memory)?;
+    let fs_tools = build_borg_fs_toolchain(files)?;
     let taskgraph = if allow_task_creation {
         build_taskgraph_toolchain(db.clone())?
     } else {
@@ -38,6 +41,7 @@ pub fn build_exec_toolchain_with_context(
     let provider_admin = build_provider_admin_toolchain(db)?;
     code.merge(shell)?
         .merge(ltm)?
+        .merge(fs_tools)?
         .merge(taskgraph)?
         .merge(clockwork)?
         .merge(agent_admin)?
@@ -49,6 +53,7 @@ pub fn default_exec_admin_tool_specs() -> Vec<ToolSpec> {
     let mut out = Vec::new();
     out.extend(default_agent_admin_tool_specs());
     out.extend(default_port_admin_tool_specs());
+    out.extend(default_borg_fs_tool_specs());
     out.extend(
         default_provider_admin_tool_specs()
             .into_iter()

@@ -597,6 +597,7 @@ name = "borg-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "borg-agent",
  "borg-api",
  "borg-apps",
@@ -727,6 +728,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
+ "borg-agent",
  "borg-core",
  "borg-db",
  "chrono",

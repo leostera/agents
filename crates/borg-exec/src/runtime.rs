@@ -67,6 +67,7 @@ impl BorgRuntime {
             context,
             self.memory.clone(),
             self.db.clone(),
+            self.files.clone(),
             session_id.clone(),
             agent_id.clone(),
             allow_task_creation,

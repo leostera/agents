@@ -31,6 +31,10 @@ impl BorgFsBackend for LocalFsBackend {
         "local"
     }
 
+    fn root_path(&self) -> Option<String> {
+        Some(self.root.display().to_string())
+    }
+
     async fn put_reader(
         &self,
         kind: FileKind,

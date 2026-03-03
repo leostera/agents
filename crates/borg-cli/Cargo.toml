@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+base64.workspace = true
 borg-api = { path = "../borg-api" }
 borg-agent = { path = "../borg-agent" }
 borg-apps = { path = "../borg-apps" }

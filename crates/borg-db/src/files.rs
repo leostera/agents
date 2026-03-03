@@ -132,6 +132,81 @@ impl BorgDb {
         .rows_affected();
         Ok(affected)
     }
+
+    pub async fn list_files(
+        &self,
+        limit: usize,
+        query: Option<&str>,
+        include_deleted: bool,
+    ) -> Result<Vec<FileRecord>> {
+        let mut sql = String::from(
+            r#"
+            SELECT
+                file_id,
+                backend,
+                storage_key,
+                content_type,
+                size_bytes,
+                sha512,
+                owner_uri,
+                metadata_json,
+                deleted_at,
+                created_at,
+                updated_at
+            FROM files
+            "#,
+        );
+
+        let mut has_where = false;
+        if !include_deleted {
+            sql.push_str(" WHERE deleted_at IS NULL");
+            has_where = true;
+        }
+
+        let maybe_query = query
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("%{}%", value));
+
+        if maybe_query.is_some() {
+            if has_where {
+                sql.push_str(" AND ");
+            } else {
+                sql.push_str(" WHERE ");
+            }
+            sql.push_str(
+                "(file_id LIKE ?1 OR storage_key LIKE ?1 OR content_type LIKE ?1 OR sha512 LIKE ?1)",
+            );
+        }
+
+        sql.push_str(" ORDER BY created_at DESC LIMIT ");
+        sql.push_str(&i64::try_from(limit).unwrap_or(100).max(1).to_string());
+
+        let mut db_query = sqlx::query(&sql);
+        if let Some(term) = maybe_query {
+            db_query = db_query.bind(term);
+        }
+
+        let rows = db_query
+            .fetch_all(self.pool())
+            .await
+            .context("failed to list files")?;
+        rows.into_iter().map(file_from_row).collect()
+    }
+
+    pub async fn count_files(&self, include_deleted: bool) -> Result<usize> {
+        let sql = if include_deleted {
+            "SELECT COUNT(*) as count FROM files"
+        } else {
+            "SELECT COUNT(*) as count FROM files WHERE deleted_at IS NULL"
+        };
+        let row = sqlx::query(sql)
+            .fetch_one(self.pool())
+            .await
+            .context("failed to count files")?;
+        let count: i64 = row.try_get("count")?;
+        Ok(usize::try_from(count).unwrap_or(0))
+    }
 }
 
 fn file_from_row(row: sqlx::sqlite::SqliteRow) -> Result<FileRecord> {
@@ -207,6 +282,56 @@ mod tests {
         let deleted = db.soft_delete_file(&file_id).await?;
         assert_eq!(deleted, 1);
         assert!(!db.file_exists(&file_id).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn files_list_and_count_filters_deleted_rows() -> Result<()> {
+        let path = tmp_db_path("list-count");
+        let db = BorgDb::open_local(
+            path.to_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid temp db path"))?,
+        )
+        .await?;
+        db.migrate().await?;
+
+        let file_a = Uri::from_parts("borg", "audio", Some("aaaa"))?;
+        let file_b = Uri::from_parts("borg", "audio", Some("bbbb"))?;
+        db.upsert_file(
+            &file_a,
+            "local",
+            "audio/aa/aa/aaaa",
+            "audio/wav",
+            10,
+            "aaaa",
+            None,
+            &serde_json::json!({}),
+        )
+        .await?;
+        db.upsert_file(
+            &file_b,
+            "local",
+            "audio/bb/bb/bbbb",
+            "audio/wav",
+            11,
+            "bbbb",
+            None,
+            &serde_json::json!({}),
+        )
+        .await?;
+        db.soft_delete_file(&file_b).await?;
+
+        assert_eq!(db.count_files(true).await?, 2);
+        assert_eq!(db.count_files(false).await?, 1);
+
+        let active = db.list_files(10, None, false).await?;
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].file_id, file_a);
+
+        let all = db.list_files(10, Some("bbbb"), true).await?;
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].file_id, file_b);
 
         Ok(())
     }
