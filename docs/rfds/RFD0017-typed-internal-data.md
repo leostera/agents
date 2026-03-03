@@ -389,6 +389,10 @@ Implemented in this branch so far:
    - converted `Memory-newEntity`, `Memory-saveFacts`, and `Memory-searchMemory` to `Tool::new_transcoded(...)`
    - replaced local `serde_json::from_value` argument decoding in those handlers with typed request structs
    - kept wire/output format unchanged (`ToolResultData::Text`) to avoid behavior drift while continuing the migration
+16. Expanded `borg-memory` typed ingress coverage for schema tools:
+   - converted `Memory-Schema-defineNamespace`, `Memory-Schema-defineKind`, and `Memory-Schema-defineField` to typed DTO requests
+   - removed per-field `Value` probing (`get(...).and_then(...)`) from those handlers
+   - retained existing validation messages and output payload shape while moving argument parsing to serde
 
 Important behavior change from these updates:
 
@@ -397,7 +401,7 @@ Important behavior change from these updates:
 3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
 4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
 5. Port metadata still enters through `JsonPortContext`; removing that boundary JSON adapter remains pending.
-6. Some built-in tools still use `Tool::new(...)` with JSON arguments; taskgraph handlers are fully typed and memory handler migration is in progress.
+6. Some built-in tools still use `Tool::new(...)` with JSON arguments; taskgraph is fully typed and memory migration now covers search/save/new-entity plus schema define handlers.
 
 Known blocker while validating this branch:
 
