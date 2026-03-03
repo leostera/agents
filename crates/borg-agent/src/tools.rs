@@ -12,15 +12,15 @@ use serde_json::Value;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolRequest {
+pub struct ToolRequest<TToolCall = Value> {
     pub tool_call_id: String,
     pub tool_name: String,
-    pub arguments: Value,
+    pub arguments: TToolCall,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResponse {
-    pub content: ToolResultData,
+pub struct ToolResponse<TToolResult = Value> {
+    pub content: ToolResultData<TToolResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,11 +31,11 @@ pub struct CapabilitySummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ToolResultData {
+pub enum ToolResultData<TToolResult = Value> {
     Text(String),
     Capabilities(Vec<CapabilitySummary>),
     Execution {
-        result: Value,
+        result: TToolResult,
         #[serde(
             alias = "duration_ms",
             deserialize_with = "deserialize_duration_compat"
