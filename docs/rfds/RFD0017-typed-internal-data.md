@@ -300,6 +300,7 @@ Input/output correctness is defined by serde decode/encode of typed request/resp
 13. Migrated `borg-shellmode` command tool request parsing to a typed DTO (`ExecuteCommandArgs`) via `Tool::new_transcoded`.
 14. Migrated `borg-codemode` tool request parsing (`CodeMode-searchApis` and `CodeMode-executeCode`) to typed DTOs (`SearchApisArgs`, `ExecuteCodeArgs`) via `Tool::new_transcoded`.
 15. Migrated `borg-clockwork` tools (`Clockwork-*`) to typed request DTOs (`CreateJobArgs`, `UpdateJobArgs`, etc.) with explicit typed schedule input enum, removing ad-hoc request `Value` field access in clockwork tool execution.
+16. Updated Telegram output formatting in `borg-ports` to consume typed runtime tool-call wrappers directly (`RuntimeToolCall`), decoding at the formatting boundary instead of depending on raw `serde_json::Value` argument types.
 
 ### Phase 3 - `borg-db` typed APIs
 

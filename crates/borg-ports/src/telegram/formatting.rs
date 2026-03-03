@@ -1,17 +1,21 @@
-use borg_exec::ToolCallSummary;
-use serde_json::Value;
+use borg_exec::{RuntimeToolCall, RuntimeToolResult, ToolCallSummary};
 
-pub fn format_tool_action_message(call: &ToolCallSummary) -> String {
+pub fn format_tool_action_message(
+    call: &ToolCallSummary<RuntimeToolCall, RuntimeToolResult>,
+) -> String {
     let tool_name = call.tool_name.as_str();
-    let raw_args = call.arguments.to_string();
+    let parsed_args = call.arguments.to_value().ok();
+    let raw_args = parsed_args
+        .as_ref()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "<invalid_args>".to_string());
     let tool_label = humanize_tool_name(tool_name);
-    let parsed_args = Some(call.arguments.clone());
 
     if tool_name == "CodeMode-executeCode" {
         let hinted_title = parsed_args
             .as_ref()
             .and_then(|args| args.get("hint"))
-            .and_then(Value::as_str)
+            .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty());
         let Some(title) = hinted_title else {
@@ -21,7 +25,7 @@ pub fn format_tool_action_message(call: &ToolCallSummary) -> String {
                 parsed_args
                     .as_ref()
                     .and_then(|args| args.get("code"))
-                    .and_then(Value::as_str)
+                    .and_then(serde_json::Value::as_str)
                     .unwrap_or(raw_args.as_str())
                     .trim()
             );
@@ -29,7 +33,7 @@ pub fn format_tool_action_message(call: &ToolCallSummary) -> String {
         if let Some(code) = parsed_args
             .as_ref()
             .and_then(|args| args.get("code"))
-            .and_then(Value::as_str)
+            .and_then(serde_json::Value::as_str)
         {
             return format!("Action: {title}\n{}", code.trim());
         }
