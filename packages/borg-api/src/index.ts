@@ -118,24 +118,6 @@ export type SessionResponse = {
   session?: SessionRecord;
 };
 
-export type AgentSpecRecord = {
-  agent_id: string;
-  name: string;
-  enabled: boolean;
-  default_provider_id?: string | null;
-  model: string;
-  system_prompt: string;
-  updated_at: string;
-};
-
-export type AgentSpecsResponse = {
-  agent_specs?: AgentSpecRecord[];
-};
-
-export type AgentSpecResponse = {
-  agent_spec?: AgentSpecRecord;
-};
-
 export type ActorRecord = {
   actor_id: string;
   name: string;
@@ -863,11 +845,11 @@ export class BorgApiClient {
 
   async createTaskGraphTask(payload: {
     sessionUri: string;
-    creatorAgentId: string;
+    creatorActorId: string;
     title: string;
     description?: string;
     definitionOfDone?: string;
-    assigneeAgentId: string;
+    assigneeActorId: string;
     labels?: string[];
     parentUri?: string | null;
     blockedBy?: string[];
@@ -880,11 +862,11 @@ export class BorgApiClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           session_uri: payload.sessionUri,
-          creator_agent_id: payload.creatorAgentId,
+          creator_agent_id: payload.creatorActorId,
           title: payload.title,
           description: payload.description ?? "",
           definition_of_done: payload.definitionOfDone ?? "",
-          assignee_agent_id: payload.assigneeAgentId,
+          assignee_agent_id: payload.assigneeActorId,
           labels: payload.labels ?? [],
           parent_uri: payload.parentUri ?? null,
           blocked_by: payload.blockedBy ?? [],
@@ -1219,80 +1201,6 @@ export class BorgApiClient {
       }
     );
     return typeof data.message_index === "number" ? data.message_index : -1;
-  }
-
-  async listAgentSpecs(limit = 100): Promise<AgentSpecRecord[]> {
-    const data = await this.requestJson<AgentSpecsResponse>(
-      `/api/agents/specs?limit=${limit}`
-    );
-    return Array.isArray(data.agent_specs) ? data.agent_specs : [];
-  }
-
-  async getAgentSpec(agentId: string): Promise<AgentSpecRecord | null> {
-    try {
-      const data = await this.requestJson<AgentSpecResponse>(
-        `/api/agents/specs/${encodeURIComponent(agentId)}`
-      );
-      return data.agent_spec ?? null;
-    } catch (error) {
-      if (error instanceof BorgApiError && error.status === 404) {
-        return null;
-      }
-      throw error;
-    }
-  }
-
-  async upsertAgentSpec(payload: {
-    agentId: string;
-    name: string;
-    defaultProviderId?: string | null;
-    model: string;
-    systemPrompt: string;
-  }): Promise<void> {
-    await this.request(
-      `/api/agents/specs/${encodeURIComponent(payload.agentId)}`,
-      {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: payload.name,
-          default_provider_id: payload.defaultProviderId ?? null,
-          model: payload.model,
-          system_prompt: payload.systemPrompt,
-        }),
-      }
-    );
-  }
-
-  async deleteAgentSpec(
-    agentId: string,
-    options: { ignoreNotFound?: boolean } = {}
-  ): Promise<void> {
-    try {
-      await this.request(`/api/agents/specs/${encodeURIComponent(agentId)}`, {
-        method: "DELETE",
-      });
-    } catch (error) {
-      if (
-        options.ignoreNotFound &&
-        error instanceof BorgApiError &&
-        error.status === 404
-      ) {
-        return;
-      }
-      throw error;
-    }
-  }
-
-  async setAgentSpecEnabled(agentId: string, enabled: boolean): Promise<void> {
-    await this.request(
-      `/api/agents/specs/${encodeURIComponent(agentId)}/enabled`,
-      {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enabled }),
-      }
-    );
   }
 
   async listActors(limit = 100): Promise<ActorRecord[]> {

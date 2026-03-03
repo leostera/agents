@@ -457,7 +457,7 @@ export function PortDetailsPage({ portUri }: PortDetailsPageProps) {
             <TableRow>
               <TableHead>Conversation</TableHead>
               <TableHead>Session</TableHead>
-              <TableHead>Agent</TableHead>
+              <TableHead>Legacy Agent</TableHead>
               <TableHead>Actor</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>

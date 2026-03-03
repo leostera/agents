@@ -19,7 +19,6 @@ import {
 import {
   AppWindow,
   Blocks,
-  Bot,
   Code2,
   Github,
   type LucideIcon,
@@ -62,7 +61,6 @@ const APP_KIND_OPTIONS: AppKindOption[] = [
   { id: "github", label: "GitHub", icon: Github },
   { id: "mcp", label: "MCP", icon: Puzzle },
   { id: "workflow", label: "Workflow", icon: Blocks },
-  { id: "agent", label: "Agent", icon: Bot },
 ];
 
 const CAPABILITY_MODE_OPTIONS: CapabilityModeOption[] = [

@@ -31,7 +31,7 @@ const STATUS_LABEL: Record<TaskGraphTask["status"], string> = {
 };
 
 const BOARD_SESSION_STORAGE_KEY = "taskgraph.board.session_uri";
-const BOARD_AGENT_STORAGE_KEY = "taskgraph.board.agent_id";
+const BOARD_ACTOR_STORAGE_KEY = "taskgraph.board.actor_id";
 
 function navigateTo(href: string) {
   window.history.pushState(null, "", href);
@@ -56,8 +56,8 @@ export function TaskGraphKanbanPage() {
   const [boardSessionUri, setBoardSessionUri] = React.useState(() =>
     readStorage(BOARD_SESSION_STORAGE_KEY, "borg:session:taskgraph-ui")
   );
-  const [boardAgentId, setBoardAgentId] = React.useState(() =>
-    readStorage(BOARD_AGENT_STORAGE_KEY, "borg:agent:taskgraph-ui")
+  const [boardActorId, setBoardActorId] = React.useState(() =>
+    readStorage(BOARD_ACTOR_STORAGE_KEY, "borg:actor:taskgraph-ui")
   );
 
   const [newTitle, setNewTitle] = React.useState("");
@@ -107,8 +107,8 @@ export function TaskGraphKanbanPage() {
   }, [boardSessionUri]);
 
   React.useEffect(() => {
-    writeStorage(BOARD_AGENT_STORAGE_KEY, boardAgentId);
-  }, [boardAgentId]);
+    writeStorage(BOARD_ACTOR_STORAGE_KEY, boardActorId);
+  }, [boardActorId]);
 
   const columns = React.useMemo(() => {
     const map = new Map<TaskGraphTask["status"], TaskGraphTask[]>();
@@ -134,11 +134,11 @@ export function TaskGraphKanbanPage() {
     try {
       await borgApi.createTaskGraphTask({
         sessionUri: boardSessionUri.trim(),
-        creatorAgentId: boardAgentId.trim(),
+        creatorActorId: boardActorId.trim(),
         title,
         description: newDescription.trim(),
         definitionOfDone: "",
-        assigneeAgentId: boardAgentId.trim(),
+        assigneeActorId: boardActorId.trim(),
         labels: [],
       });
       setNewTitle("");
@@ -228,10 +228,10 @@ export function TaskGraphKanbanPage() {
             />
           </div>
           <div>
-            <p className="text-muted-foreground mb-1 text-xs">Board Agent ID</p>
+            <p className="text-muted-foreground mb-1 text-xs">Board Actor ID</p>
             <Input
-              value={boardAgentId}
-              onChange={(event) => setBoardAgentId(event.currentTarget.value)}
+              value={boardActorId}
+              onChange={(event) => setBoardActorId(event.currentTarget.value)}
             />
           </div>
         </CardContent>

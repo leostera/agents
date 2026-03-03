@@ -14,7 +14,7 @@ type SessionProps = {
   onChoice: (messageId: string, value: string) => void;
   onAction?: (messageId: string, actionId: string) => void;
   onMessageAnimationComplete?: (messageId: string) => void;
-  agentName?: string;
+  assistantName?: string;
   systemName?: string;
   userName?: string;
 };
@@ -24,8 +24,8 @@ export function Session(props: SessionProps) {
     () => new Set(props.animatedIds ?? []),
     [props.animatedIds]
   );
-  const getAuthorLabel = (author: "system" | "agent" | "user") => {
-    if (author === "agent") return props.agentName;
+  const getAuthorLabel = (author: "system" | "assistant" | "user") => {
+    if (author === "assistant") return props.assistantName;
     if (author === "system") return props.systemName;
     return props.userName;
   };

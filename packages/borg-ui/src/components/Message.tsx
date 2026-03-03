@@ -53,7 +53,7 @@ export function Message(props: MessageProps) {
       className={`borg-message-row ${isRight ? "borg-message-row--right" : "borg-message-row--left"}`}
     >
       <div
-        className={`borg-message ${isRight ? "borg-message--user" : "borg-message--agent"}`}
+        className={`borg-message ${isRight ? "borg-message--user" : "borg-message--assistant"}`}
       >
         <p className="borg-message__author">{roleLabel}</p>
         {visibleText.trim().length > 0 ? (

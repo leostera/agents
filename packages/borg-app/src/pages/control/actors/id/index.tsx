@@ -291,7 +291,7 @@ export function ActorDetailsPage({ actorId }: ActorDetailsPageProps) {
         </form>
 
         <section className="space-y-2 rounded-md border p-3">
-          <h3 className="text-sm font-semibold">Agent Sessions</h3>
+          <h3 className="text-sm font-semibold">Actor Sessions</h3>
           {actorSessions.length === 0 ? (
             <p className="text-muted-foreground text-xs">
               No active sessions recorded for this actor.

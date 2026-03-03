@@ -1,13 +1,13 @@
 export type Locale = "en";
 
 export type MessageKey =
-  | "onboard.agent.welcome"
-  | "onboard.agent.choose_provider"
+  | "onboard.assistant.welcome"
+  | "onboard.assistant.choose_provider"
   | "onboard.provider.openai"
   | "onboard.provider.openrouter"
   | "onboard.title"
   | "onboard.tagline"
-  | "onboard.agent.provider_key_prompt"
+  | "onboard.assistant.provider_key_prompt"
   | "onboard.choice.provider_name"
   | "onboard.choice.provider_placeholder"
   | "onboard.user_turn"
@@ -28,14 +28,14 @@ type Vars = Record<string, string | number>;
 
 const messages: Record<Locale, Record<MessageKey, string>> = {
   en: {
-    "onboard.agent.welcome":
+    "onboard.assistant.welcome":
       "Hello {username}! Welcome to Borg.\n\nBefore we proceed, we need to set up an LLM provider, please choose one from the following list:",
     "onboard.title": "Borg Onboarding",
     "onboard.tagline": "A guided chat setup for your first Borg run.",
-    "onboard.agent.choose_provider": "Choose an LLM provider.",
+    "onboard.assistant.choose_provider": "Choose an LLM provider.",
     "onboard.provider.openai": "OpenAI API Key",
     "onboard.provider.openrouter": "OpenRouter API Key",
-    "onboard.agent.provider_key_prompt":
+    "onboard.assistant.provider_key_prompt":
       "Great choice. Please paste your {provider} below and click Save. It will be stored in ~/.borg/config.db under providers.",
     "onboard.choice.provider_name": "provider",
     "onboard.choice.provider_placeholder": "Select an LLM provider",

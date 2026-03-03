@@ -80,7 +80,7 @@ function detectRole(payload: Record<string, unknown>): ChatMessage["role"] {
   }
   if (typeof payload.role === "string") {
     const role = payload.role.trim().toLowerCase();
-    if (role === "assistant" || role === "agent") return "assistant";
+    if (role === "assistant") return "assistant";
     if (role === "user") return "user";
   }
   return "system";
@@ -107,11 +107,7 @@ function isChatPayload(payload: Record<string, unknown>): boolean {
         ? payload.author.trim().toLowerCase()
         : null;
   if (roleCandidate) {
-    if (
-      roleCandidate === "assistant" ||
-      roleCandidate === "agent" ||
-      roleCandidate === "user"
-    ) {
+    if (roleCandidate === "assistant" || roleCandidate === "user") {
       return true;
     }
     return false;

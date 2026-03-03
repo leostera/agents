@@ -187,8 +187,7 @@ function detectMessageRole(
         ? payload.author.trim().toLowerCase()
         : null;
   if (roleCandidate) {
-    if (roleCandidate === "assistant" || roleCandidate === "agent")
-      return "assistant";
+    if (roleCandidate === "assistant") return "assistant";
     if (roleCandidate === "user") return "user";
   }
   return "system";
@@ -233,11 +232,7 @@ function isChatPayload(payload: Record<string, unknown>): boolean {
         ? payload.author.trim().toLowerCase()
         : null;
   if (roleCandidate) {
-    if (
-      roleCandidate === "assistant" ||
-      roleCandidate === "agent" ||
-      roleCandidate === "user"
-    ) {
+    if (roleCandidate === "assistant" || roleCandidate === "user") {
       return true;
     }
     return false;

@@ -17,7 +17,7 @@ const logs = [
   "Queued tool call: list_ports",
   "Received tool output: 3 ports",
   "Dispatched follow-up prompt",
-  "Agent selected model: gpt-4.1-mini",
+  "Assistant selected model: gpt-4.1-mini",
   "Generated response: 281 tokens",
   "Persisted message to sqlite",
   "Message queue depth: 2",

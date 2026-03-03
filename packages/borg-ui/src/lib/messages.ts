@@ -1,4 +1,4 @@
-export type MessageAuthor = "system" | "agent" | "user";
+export type MessageAuthor = "system" | "assistant" | "user";
 export type MessageChoiceIcon = "openai" | "openrouter";
 export type MessageChoiceOption = {
   label: string;

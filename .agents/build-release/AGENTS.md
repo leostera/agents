@@ -16,6 +16,8 @@ Scope: builds, workspace wiring, and command expectations.
 
 - Web dev:
   - `bun run dev`
+- Workspace tests:
+  - `bun test ./packages --pass-with-no-tests`
 - CLI runtime:
   - `cargo run -p borg-cli -- init`
   - `cargo run -p borg-cli -- start`

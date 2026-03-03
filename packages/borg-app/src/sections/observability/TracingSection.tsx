@@ -12,7 +12,7 @@ export function TracingSection() {
     <Card title="Tracing">
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          Trace execution across sessions, agents, tool calls, provider
+          Trace execution across sessions, actors, tool calls, provider
           requests, and policy gates to debug behavior.
         </p>
         <div className="space-y-2">
@@ -26,7 +26,7 @@ export function TracingSection() {
           ))}
         </div>
         <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
-          Planned: per-trace timeline view, span filtering by session/agent, and
+          Planned: per-trace timeline view, span filtering by session/actor, and
           export for incident postmortems.
         </div>
       </CardContent>

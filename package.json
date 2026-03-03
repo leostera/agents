@@ -18,7 +18,7 @@
     "lint": "biome lint --diagnostic-level=error ./packages",
     "prepare": "husky",
     "storybook": "storybook dev -p 6006 -c packages/borg-ui/.storybook",
-    "test": "bun test --pass-with-no-tests",
+    "test": "bun test ./packages --pass-with-no-tests",
     "test:e2e": "playwright test",
     "test:ui": "vitest --config packages/borg-ui/vitest.config.ts --run",
     "test:storybook": "vitest --config vite.config.ts --project storybook --run --passWithNoTests"

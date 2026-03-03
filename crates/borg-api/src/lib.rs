@@ -562,7 +562,7 @@ mod tests {
         let (status, _) = request_no_body(
             &app,
             Method::PUT,
-            "/api/policies/borg:policy:session-read/uses/borg:agent:default",
+            "/api/policies/borg:policy:session-read/uses/borg:actor:default",
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -579,7 +579,7 @@ mod tests {
         let (status, _) = request_no_body(
             &app,
             Method::DELETE,
-            "/api/policies/borg:policy:session-read/uses/borg:agent:default",
+            "/api/policies/borg:policy:session-read/uses/borg:actor:default",
         )
         .await;
         assert_eq!(status, StatusCode::NO_CONTENT);
@@ -590,56 +590,6 @@ mod tests {
             "/api/policies/borg:policy:session-read",
         )
         .await;
-        assert_eq!(status, StatusCode::NO_CONTENT);
-    }
-
-    #[tokio::test]
-    async fn agent_specs_crud_endpoints_work() {
-        let app = test_app("agent-specs").await;
-        let (status, _) = request_json(
-            &app,
-            Method::PUT,
-            "/api/agents/specs/borg:agent:default",
-            json!({
-                "default_provider_id":"openai",
-                "model":"gpt-4o-mini",
-                "system_prompt":"you are borg"
-            }),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-
-        let (status, body) =
-            request_no_body(&app, Method::GET, "/api/agents/specs/borg:agent:default").await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["agent_spec"]["model"], "gpt-4o-mini");
-        assert_eq!(body["agent_spec"]["enabled"], true);
-        assert_eq!(body["agent_spec"]["default_provider_id"], "openai");
-
-        let (status, body) = request_no_body(&app, Method::GET, "/api/agents/specs").await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(
-            body["agent_specs"]
-                .as_array()
-                .is_some_and(|v| !v.is_empty())
-        );
-
-        let (status, _) = request_json(
-            &app,
-            Method::PUT,
-            "/api/agents/specs/borg:agent:default/enabled",
-            json!({ "enabled": false }),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-
-        let (status, body) =
-            request_no_body(&app, Method::GET, "/api/agents/specs/borg:agent:default").await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["agent_spec"]["enabled"], false);
-
-        let (status, _) =
-            request_no_body(&app, Method::DELETE, "/api/agents/specs/borg:agent:default").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
     }
 
@@ -1235,7 +1185,7 @@ mod tests {
         let (status, _) = request_no_body(
             &app,
             Method::PUT,
-            "/api/policies/borg:policy:missing/uses/borg:agent:default",
+            "/api/policies/borg:policy:missing/uses/borg:actor:default",
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -1243,21 +1193,10 @@ mod tests {
         let (status, _) = request_no_body(
             &app,
             Method::PUT,
-            "/api/policies/not-a-uri/uses/borg:agent:default",
+            "/api/policies/not-a-uri/uses/borg:actor:default",
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn agents_negative_paths() {
-        let app = test_app("agents-negative").await;
-        let (status, _) = request_no_body(&app, Method::GET, "/api/agents/specs/not-a-uri").await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-
-        let (status, _) =
-            request_no_body(&app, Method::DELETE, "/api/agents/specs/borg:agent:missing").await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

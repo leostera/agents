@@ -185,7 +185,6 @@ pub(crate) fn app_router(state: AppState) -> Router {
             put(DbController::attach_policy_to_entity)
                 .delete(DbController::detach_policy_from_entity),
         )
-        .route("/api/agents/specs", get(DbController::list_agent_specs))
         .route("/api/behaviors", get(BehaviorsController::list_behaviors))
         .route(
             "/api/behaviors/:behavior_id",
@@ -194,12 +193,6 @@ pub(crate) fn app_router(state: AppState) -> Router {
                 .delete(BehaviorsController::delete_behavior),
         )
         .route("/api/actors", get(ActorsController::list_actors))
-        .route(
-            "/api/agents/specs/:agent_id",
-            get(DbController::get_agent_spec)
-                .put(DbController::upsert_agent_spec)
-                .delete(DbController::delete_agent_spec),
-        )
         .route(
             "/api/actors/:actor_id",
             get(ActorsController::get_actor)
@@ -211,10 +204,6 @@ pub(crate) fn app_router(state: AppState) -> Router {
             get(ActorsController::list_actor_sessions),
         )
         .route("/api/actors/:actor_id/chat", post(ActorsController::chat))
-        .route(
-            "/api/agents/specs/:agent_id/enabled",
-            put(DbController::set_agent_spec_enabled),
-        )
         .route(
             "/api/users",
             get(DbController::list_users).post(DbController::upsert_user),

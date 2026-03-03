@@ -31,7 +31,7 @@ export const ProductNavigation: Story = {
                 <NavigationMenuLink href="#">
                   <span className="font-medium">Sessions</span>
                   <span className="text-muted-foreground">
-                    Manage long-running agent sessions.
+                    Manage long-running assistant sessions.
                   </span>
                 </NavigationMenuLink>
               </li>

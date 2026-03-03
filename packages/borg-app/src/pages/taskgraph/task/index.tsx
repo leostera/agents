@@ -127,8 +127,12 @@ export function TaskGraphTaskDetailsPage({
             {task.definition_of_done || "Not specified."}
           </p>
           <div className="flex flex-wrap gap-2 text-xs">
-            <Badge variant="outline">assignee: {task.assignee_agent_id}</Badge>
-            <Badge variant="outline">reviewer: {task.reviewer_agent_id}</Badge>
+            <Badge variant="outline">
+              assignee actor: {task.assignee_agent_id}
+            </Badge>
+            <Badge variant="outline">
+              reviewer actor: {task.reviewer_agent_id}
+            </Badge>
             <Badge variant="outline">labels: {task.labels.length}</Badge>
             <Badge variant="outline">deps: {task.blocked_by.length}</Badge>
           </div>
