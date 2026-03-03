@@ -11,14 +11,14 @@ use serde_json::Value;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolRequest<TToolCall = Value> {
+pub struct ToolRequest<TToolCall> {
     pub tool_call_id: String,
     pub tool_name: String,
     pub arguments: TToolCall,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResponse<TToolResult = Value> {
+pub struct ToolResponse<TToolResult> {
     pub content: ToolResultData<TToolResult>,
 }
 
@@ -30,7 +30,7 @@ pub struct CapabilitySummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ToolResultData<TToolResult = Value> {
+pub enum ToolResultData<TToolResult> {
     Text(String),
     Capabilities(Vec<CapabilitySummary>),
     Execution {
@@ -89,18 +89,18 @@ type TypedToolFuture<TToolResult> =
 type TypedToolCallback<TToolCall, TToolResult> =
     Arc<dyn Fn(ToolRequest<TToolCall>) -> TypedToolFuture<TToolResult> + Send + Sync>;
 
-pub struct Tool<TToolCall = Value, TToolResult = Value> {
+pub struct Tool<TToolCall, TToolResult> {
     pub spec: ToolSpec,
     // Transitional metadata for provider-facing schema docs; no runtime enforcement.
     pub output_schema: Option<Value>,
     callback: TypedToolCallback<TToolCall, TToolResult>,
 }
 
-impl Tool {
+impl Tool<Value, Value> {
     pub fn new<F, Fut>(spec: ToolSpec, output_schema: Option<Value>, callback: F) -> Self
     where
-        F: Fn(ToolRequest) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<ToolResponse>> + Send + 'static,
+        F: Fn(ToolRequest<Value>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<ToolResponse<Value>>> + Send + 'static,
     {
         Self::new_typed(spec, output_schema, callback)
     }
@@ -120,7 +120,7 @@ impl<TToolCall, TToolResult> Tool<TToolCall, TToolResult> {
     }
 }
 
-pub struct Toolchain<TToolCall = Value, TToolResult = Value> {
+pub struct Toolchain<TToolCall, TToolResult> {
     tools: HashMap<String, Tool<TToolCall, TToolResult>>,
 }
 
@@ -181,7 +181,7 @@ impl<TToolCall, TToolResult> Toolchain<TToolCall, TToolResult> {
     }
 }
 
-pub struct ToolchainBuilder<TToolCall = Value, TToolResult = Value> {
+pub struct ToolchainBuilder<TToolCall, TToolResult> {
     toolchain: Toolchain<TToolCall, TToolResult>,
 }
 

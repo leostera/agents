@@ -353,6 +353,9 @@ Implemented in this branch so far:
 11. Extended typed envelopes one layer up into `borg-exec`:
    - `ToolCallSummary<TToolCall, TToolResult>` and `SessionOutput<TToolCall, TToolResult>` now accept typed arguments/results with `Value` defaults
    - this keeps current behavior intact while allowing typed session output/tool summaries to propagate as downstream crates adopt concrete tool enums
+12. Removed implicit JSON generic defaults from core runtime contracts:
+   - `Agent`, `Session`, `Message`, `Context*`, `Tool*`, and `Toolchain` no longer default type parameters to `serde_json::Value`
+   - all call sites now specify concrete tool call/result types explicitly, eliminating hidden JSON fallback paths in signatures
 
 Important behavior change from these updates:
 

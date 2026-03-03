@@ -80,7 +80,7 @@ pub fn build_agent_admin_toolchain(
     db: BorgDb,
     current_session_id: Uri,
     current_agent_id: Uri,
-) -> Result<Toolchain> {
+) -> Result<Toolchain<Value, Value>> {
     let whoami_agent_id = current_agent_id.to_string();
     let whoami_session_id = current_session_id.to_string();
 
@@ -93,7 +93,7 @@ pub fn build_agent_admin_toolchain(
         .add_tool(Tool::new(
             required_spec("Agents-listAgents")?,
             None,
-            move |request: ToolRequest| {
+            move |request: ToolRequest<Value>| {
                 let db = db_list.clone();
                 async move {
                     let limit = request
@@ -109,7 +109,7 @@ pub fn build_agent_admin_toolchain(
         .add_tool(Tool::new(
             required_spec("Agents-whoAmI")?,
             None,
-            move |_request: ToolRequest| {
+            move |_request: ToolRequest<Value>| {
                 let agent_id = whoami_agent_id.clone();
                 let session_id = whoami_session_id.clone();
                 async move {
@@ -123,7 +123,7 @@ pub fn build_agent_admin_toolchain(
         .add_tool(Tool::new(
             required_spec("Agents-createAgent")?,
             None,
-            move |request: ToolRequest| {
+            move |request: ToolRequest<Value>| {
                 let db = db_create.clone();
                 async move {
                     let agent_id = request
@@ -159,7 +159,7 @@ pub fn build_agent_admin_toolchain(
         .add_tool(Tool::new(
             required_spec("Agents-updateAgent")?,
             None,
-            move |request: ToolRequest| {
+            move |request: ToolRequest<Value>| {
                 let db = db_update.clone();
                 async move {
                     let agent_id = Uri::parse(req_str(&request.arguments, "agent_id")?)?;
@@ -207,7 +207,7 @@ pub fn build_agent_admin_toolchain(
         .add_tool(Tool::new(
             required_spec("Agents-disableAgent")?,
             None,
-            move |request: ToolRequest| {
+            move |request: ToolRequest<Value>| {
                 let db = db_disable.clone();
                 async move {
                     let agent_id = Uri::parse(req_str(&request.arguments, "agent_id")?)?;
@@ -241,7 +241,7 @@ fn required_spec(name: &str) -> Result<ToolSpec> {
         .ok_or_else(|| anyhow!("missing agent admin tool spec {}", name))
 }
 
-fn json_text(value: Value) -> Result<ToolResponse> {
+fn json_text(value: Value) -> Result<ToolResponse<Value>> {
     Ok(ToolResponse {
         content: ToolResultData::Text(serde_json::to_string(&value)?),
     })

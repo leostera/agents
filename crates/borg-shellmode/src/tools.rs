@@ -36,7 +36,7 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     }]
 }
 
-pub fn build_shell_mode_toolchain(runtime: ShellModeRuntime) -> Result<Toolchain> {
+pub fn build_shell_mode_toolchain(runtime: ShellModeRuntime) -> Result<Toolchain<Value, Value>> {
     let execute_spec = default_tool_specs()
         .into_iter()
         .find(|tool| tool.name == "ShellMode-executeCommand")

@@ -54,7 +54,7 @@ pub fn default_port_admin_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain> {
+pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<Value, Value>> {
     let db_list = db.clone();
     let db_create = db.clone();
     let db_update = db;
@@ -202,7 +202,7 @@ fn required_spec(name: &str) -> Result<ToolSpec> {
         .ok_or_else(|| anyhow!("missing port admin tool spec {}", name))
 }
 
-fn json_text(value: Value) -> Result<ToolResponse> {
+fn json_text(value: Value) -> Result<ToolResponse<Value>> {
     Ok(ToolResponse {
         content: ToolResultData::Text(serde_json::to_string(&value)?),
     })

@@ -260,7 +260,7 @@ pub fn default_borg_fs_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_borg_fs_toolchain(fs: BorgFs) -> Result<Toolchain> {
+pub fn build_borg_fs_toolchain(fs: BorgFs) -> Result<Toolchain<Value, Value>> {
     let mut builder = ToolchainBuilder::new();
     for spec in default_borg_fs_tool_specs() {
         let tool_name = spec.name.clone();
