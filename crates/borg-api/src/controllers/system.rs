@@ -5,7 +5,7 @@ use axum::{
     response::{Html, IntoResponse},
 };
 use base64::Engine;
-use borg_core::{Entity, Uri, uri};
+use borg_core::{Entity, EntityPropValue, Uri, uri};
 use borg_exec::{BorgCommand, BorgInput, BorgMessage, HttpSessionContext, PortContext};
 use borg_fs::{FileKind, PutFileMetadata};
 use borg_memory::{FactArity, FactValue, Uri as MemoryUri};
@@ -470,47 +470,45 @@ async fn hydrate_entity_props_with_field_uris(
         .memory
         .list_facts(Some(&entity_uri), None, false, 5000)
         .await?;
-    let mut props = serde_json::Map::new();
+    let mut props = borg_core::EntityProps::new();
     for fact in facts {
         let key = fact.field.to_string();
-        let value = fact_value_to_json(&fact.value);
+        let value = fact_value_to_prop(&fact.value)?;
         match fact.arity {
             FactArity::One => {
                 props.insert(key, value);
             }
             FactArity::Many => match props.get_mut(&key) {
                 Some(existing) => {
-                    if let Value::Array(values) = existing {
+                    if let EntityPropValue::List(values) = existing {
                         if !values.contains(&value) {
                             values.push(value);
                         }
                     } else if *existing != value {
                         let prior = existing.clone();
-                        *existing = Value::Array(vec![prior, value]);
+                        *existing = EntityPropValue::List(vec![prior, value]);
                     }
                 }
                 None => {
-                    props.insert(key, Value::Array(vec![value]));
+                    props.insert(key, EntityPropValue::List(vec![value]));
                 }
             },
         }
     }
-    entity.props = Value::Object(props);
+    entity.props = props;
     Ok(entity)
 }
 
-fn fact_value_to_json(value: &FactValue) -> Value {
-    match value {
-        FactValue::Text(v) => Value::String(v.clone()),
-        FactValue::Integer(v) => Value::Number((*v).into()),
-        FactValue::Float(v) => serde_json::Number::from_f64(*v)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
-        FactValue::Boolean(v) => Value::Bool(*v),
-        FactValue::Bytes(v) => Value::Array(v.iter().map(|b| Value::Number((*b).into())).collect()),
-        FactValue::Ref(v) => Value::String(v.to_string()),
-        FactValue::Json(v) => v.clone(),
-    }
+fn fact_value_to_prop(value: &FactValue) -> anyhow::Result<EntityPropValue> {
+    Ok(match value {
+        FactValue::Text(v) => EntityPropValue::Text(v.clone()),
+        FactValue::Integer(v) => EntityPropValue::Integer(*v),
+        FactValue::Float(v) => EntityPropValue::Float(*v),
+        FactValue::Boolean(v) => EntityPropValue::Boolean(*v),
+        FactValue::Bytes(v) => EntityPropValue::Bytes(v.clone()),
+        FactValue::Ref(v) => EntityPropValue::Ref(Uri::parse(v.as_str())?),
+        FactValue::Json(v) => EntityPropValue::Text(serde_json::to_string(v)?),
+    })
 }
 
 pub(crate) fn validate_port_request(

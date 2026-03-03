@@ -60,7 +60,7 @@ impl SqliteSearchIndex {
             .get("kind")
             .and_then(|v| v.as_str())
             .unwrap_or(entity.entity_type.as_str());
-        let text = format!("{} {}", entity.label, entity.props);
+        let text = format!("{} {}", entity.label, serde_json::to_string(&entity.props)?);
 
         sqlx::query("DELETE FROM search_fts WHERE entity_id = ?1")
             .bind(entity.entity_id.as_str())

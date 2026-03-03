@@ -3,7 +3,9 @@ pub mod cli;
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use borg_core::Entity;
+use borg_core::{Entity, EntityProps};
+#[cfg(test)]
+use borg_core::EntityPropValue;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, info, warn};
@@ -194,7 +196,7 @@ impl MemoryStore {
         &self,
         entity_type: &str,
         label: &str,
-        props: &serde_json::Value,
+        props: &EntityProps,
         natural_key: Option<&str>,
     ) -> Result<String> {
         self.entity_graph
@@ -207,7 +209,7 @@ impl MemoryStore {
         from_entity_id: &str,
         rel_type: &str,
         to_entity_id: &str,
-        props: &serde_json::Value,
+        props: &EntityProps,
     ) -> Result<String> {
         self.entity_graph
             .link(from_entity_id, rel_type, to_entity_id, props)
@@ -763,12 +765,12 @@ mod tests {
             .props
             .get("hobby")
             .and_then(|value| value.as_array())
-            .cloned()
+            .map(|values| values.to_vec())
             .unwrap_or_default();
 
         assert_eq!(hobbies.len(), 2);
-        assert!(hobbies.contains(&serde_json::Value::String("climbing".to_string())));
-        assert!(hobbies.contains(&serde_json::Value::String("cooking".to_string())));
+        assert!(hobbies.contains(&EntityPropValue::Text("climbing".to_string())));
+        assert!(hobbies.contains(&EntityPropValue::Text("cooking".to_string())));
     }
 
     #[tokio::test]
