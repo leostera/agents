@@ -1,10 +1,77 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use borg_db::{BorgDb, CreateClockworkJobInput, UpdateClockworkJobInput};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 const MESSAGE_TYPE: &str = "BorgMessage";
+
+#[derive(Debug, Clone, Deserialize)]
+struct ListJobsArgs {
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct JobIdArgs {
+    job_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ListRunsArgs {
+    job_id: String,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ScheduleSpecDto {
+    Once {
+        run_at: String,
+    },
+    Cron {
+        cron: String,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CreateJobArgs {
+    #[serde(default)]
+    job_id: Option<String>,
+    kind: String,
+    actor_id: String,
+    session_id: String,
+    message_text: String,
+    schedule_spec: ScheduleSpecDto,
+    #[serde(default)]
+    next_run_at: Option<String>,
+    #[serde(default)]
+    headers: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateJobArgs {
+    job_id: String,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    actor_id: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    message_text: Option<String>,
+    #[serde(default)]
+    schedule_spec: Option<ScheduleSpecDto>,
+    #[serde(default)]
+    next_run_at: Option<Option<String>>,
+    #[serde(default)]
+    headers: Option<BTreeMap<String, String>>,
+}
 
 pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![
@@ -140,77 +207,63 @@ struct ClockworkTools;
 impl ClockworkTools {
     fn list_jobs(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("Clockwork-listJobs")?;
-        Ok(Tool::new(spec, None, move |request| {
+        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<ListJobsArgs>| {
             let db = db.clone();
             async move {
-                let limit = request
-                    .arguments
-                    .get("limit")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(200) as usize;
+                let limit = request.arguments.limit.unwrap_or(200);
                 let status = request
                     .arguments
-                    .get("status")
-                    .and_then(Value::as_str)
+                    .status
+                    .as_deref()
                     .map(str::trim)
                     .filter(|s| !s.is_empty());
                 let jobs = db.list_clockwork_jobs(limit, status).await?;
-                json_text(json!({ "jobs": jobs }))
+                json_text(&json!({ "jobs": jobs }))
             }
         }))
     }
 
     fn get_job(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("Clockwork-getJob")?;
-        Ok(Tool::new(spec, None, move |request| {
+        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<JobIdArgs>| {
             let db = db.clone();
             async move {
-                let job_id = req_str(&request.arguments, "job_id")?;
-                let job = db.get_clockwork_job(job_id).await?;
-                json_text(json!({ "job": job }))
+                let job_id = require_non_empty(&request.arguments.job_id, "job_id")?;
+                let job = db.get_clockwork_job(&job_id).await?;
+                json_text(&json!({ "job": job }))
             }
         }))
     }
 
     fn create_job(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("Clockwork-createJob")?;
-        Ok(Tool::new(spec, None, move |request| {
+        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<CreateJobArgs>| {
             let db = db.clone();
             async move {
-                let kind = req_str(&request.arguments, "kind")?;
+                let kind = require_non_empty(&request.arguments.kind, "kind")?;
                 if kind != "once" && kind != "cron" {
                     return Err(anyhow!(
                         "clockwork.validation_failed: kind must be once or cron"
                     ));
                 }
 
-                let actor_id = req_str(&request.arguments, "actor_id")?;
-                let session_id = req_str(&request.arguments, "session_id")?;
-                let message_text = req_str(&request.arguments, "message_text")?;
+                let actor_id = require_non_empty(&request.arguments.actor_id, "actor_id")?;
+                let session_id = require_non_empty(&request.arguments.session_id, "session_id")?;
+                let message_text = require_non_empty(&request.arguments.message_text, "message_text")?;
                 if message_text.trim().is_empty() {
                     return Err(anyhow!(
                         "clockwork.validation_failed: message_text cannot be empty"
                     ));
                 }
 
-                let schedule_spec = req_obj_clone(&request.arguments, "schedule_spec")?;
-                let headers = request
-                    .arguments
-                    .get("headers")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .map(Value::Object)
-                    .unwrap_or_else(|| json!({}));
-                let next_run_at = request
-                    .arguments
-                    .get("next_run_at")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned);
+                let schedule_spec = serde_json::to_value(&request.arguments.schedule_spec)?;
+                let headers = serde_json::to_value(request.arguments.headers.unwrap_or_default())?;
+                let next_run_at = option_non_empty(request.arguments.next_run_at);
 
                 let job_id = request
                     .arguments
-                    .get("job_id")
-                    .and_then(Value::as_str)
+                    .job_id
+                    .as_deref()
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(ToOwned::to_owned)
@@ -218,9 +271,9 @@ impl ClockworkTools {
 
                 db.create_clockwork_job(&CreateClockworkJobInput {
                     job_id: job_id.clone(),
-                    kind: kind.to_string(),
-                    target_actor_id: actor_id.to_string(),
-                    target_session_id: session_id.to_string(),
+                    kind,
+                    target_actor_id: actor_id,
+                    target_session_id: session_id,
                     message_type: MESSAGE_TYPE.to_string(),
                     payload: json!({ "text": message_text }),
                     headers,
@@ -230,53 +283,36 @@ impl ClockworkTools {
                 .await?;
 
                 let job = db.get_clockwork_job(&job_id).await?;
-                json_text(json!({ "job": job }))
+                json_text(&json!({ "job": job }))
             }
         }))
     }
 
     fn update_job(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("Clockwork-updateJob")?;
-        Ok(Tool::new(spec, None, move |request| {
+        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<UpdateJobArgs>| {
             let db = db.clone();
             async move {
-                let job_id = req_str(&request.arguments, "job_id")?;
+                let job_id = require_non_empty(&request.arguments.job_id, "job_id")?;
 
                 let payload = request
                     .arguments
-                    .get("message_text")
-                    .and_then(Value::as_str)
+                    .message_text
+                    .as_deref()
                     .map(|text| json!({ "text": text }));
 
-                let headers = request
-                    .arguments
-                    .get("headers")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .map(Value::Object);
-
+                let headers = request.arguments.headers.map(serde_json::to_value).transpose()?;
                 let schedule_spec = request
                     .arguments
-                    .get("schedule_spec")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .map(Value::Object);
-
-                let next_run_at = match request.arguments.get("next_run_at") {
-                    Some(Value::Null) => Some(None),
-                    Some(Value::String(value)) => Some(Some(value.clone())),
-                    Some(_) => {
-                        return Err(anyhow!(
-                            "clockwork.validation_failed: next_run_at must be string or null"
-                        ));
-                    }
-                    None => None,
-                };
+                    .schedule_spec
+                    .map(|value| serde_json::to_value(value))
+                    .transpose()?;
+                let next_run_at = request.arguments.next_run_at;
 
                 let patch = UpdateClockworkJobInput {
-                    kind: opt_str(&request.arguments, "kind"),
-                    target_actor_id: opt_str(&request.arguments, "actor_id"),
-                    target_session_id: opt_str(&request.arguments, "session_id"),
+                    kind: option_non_empty(request.arguments.kind),
+                    target_actor_id: option_non_empty(request.arguments.actor_id),
+                    target_session_id: option_non_empty(request.arguments.session_id),
                     message_type: Some(MESSAGE_TYPE.to_string()),
                     payload,
                     headers,
@@ -284,9 +320,9 @@ impl ClockworkTools {
                     next_run_at,
                 };
 
-                db.update_clockwork_job(job_id, &patch).await?;
-                let job = db.get_clockwork_job(job_id).await?;
-                json_text(json!({ "job": job }))
+                db.update_clockwork_job(&job_id, &patch).await?;
+                let job = db.get_clockwork_job(&job_id).await?;
+                json_text(&json!({ "job": job }))
             }
         }))
     }
@@ -305,17 +341,13 @@ impl ClockworkTools {
 
     fn list_runs(db: BorgDb) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("Clockwork-listRuns")?;
-        Ok(Tool::new(spec, None, move |request| {
+        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<ListRunsArgs>| {
             let db = db.clone();
             async move {
-                let job_id = req_str(&request.arguments, "job_id")?;
-                let limit = request
-                    .arguments
-                    .get("limit")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(200) as usize;
-                let runs = db.list_clockwork_job_runs(job_id, limit).await?;
-                json_text(json!({ "runs": runs }))
+                let job_id = require_non_empty(&request.arguments.job_id, "job_id")?;
+                let limit = request.arguments.limit.unwrap_or(200);
+                let runs = db.list_clockwork_job_runs(&job_id, limit).await?;
+                json_text(&json!({ "runs": runs }))
             }
         }))
     }
@@ -323,52 +355,37 @@ impl ClockworkTools {
 
 fn status_tool(db: BorgDb, spec_name: &str, status: &'static str) -> Result<Tool<BorgToolCall, BorgToolResult>> {
     let spec = required_spec(spec_name)?;
-    Ok(Tool::new(spec, None, move |request| {
+    Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<JobIdArgs>| {
         let db = db.clone();
         async move {
-            let job_id = req_str(&request.arguments, "job_id")?;
-            db.set_clockwork_job_status(job_id, status).await?;
-            let job = db.get_clockwork_job(job_id).await?;
-            json_text(json!({ "job": job }))
+            let job_id = require_non_empty(&request.arguments.job_id, "job_id")?;
+            db.set_clockwork_job_status(&job_id, status).await?;
+            let job = db.get_clockwork_job(&job_id).await?;
+            json_text(&json!({ "job": job }))
         }
     }))
 }
 
-fn req_str<'a>(arguments: &'a Value, key: &str) -> Result<&'a str> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("clockwork.validation_failed: missing {}", key))
+fn json_text<T: Serialize>(value: &T) -> Result<ToolResponse<()>> {
+    Ok(ToolResponse {
+        content: ToolResultData::Text(serde_json::to_string(value)?),
+    })
 }
 
-fn opt_str(arguments: &Value, key: &str) -> Option<String> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
+fn require_non_empty(value: &str, key: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("clockwork.validation_failed: missing {}", key));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn option_non_empty(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-fn req_obj_clone(arguments: &Value, key: &str) -> Result<Value> {
-    let value = arguments
-        .get(key)
-        .ok_or_else(|| anyhow!("clockwork.validation_failed: missing {}", key))?;
-    match value {
-        Value::Object(map) => Ok(Value::Object(map.clone())),
-        _ => Err(anyhow!(
-            "clockwork.validation_failed: {} must be an object",
-            key
-        )),
-    }
-}
-
-fn json_text(value: Value) -> Result<ToolResponse<Value>> {
-    Ok(ToolResponse {
-        content: ToolResultData::Text(serde_json::to_string(&value)?),
-    })
 }
 
 fn tool_spec(name: &str, description: &str, parameters: Value) -> ToolSpec {
