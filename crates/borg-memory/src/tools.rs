@@ -1,10 +1,32 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use borg_agent::{
+    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
+};
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 
 use crate::{FactInput, FactValue, MemoryStore, SearchQuery, Uri};
+
+#[derive(Debug, Clone, Deserialize)]
+struct NewEntityArgs {
+    ns: String,
+    kind: String,
+    #[serde(rename = "displayName")]
+    display_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SaveFactsArgs {
+    entities: Vec<String>,
+    facts: Vec<FactInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SearchMemoryArgs {
+    query: SearchQuery,
+}
 
 fn uri_schema() -> Value {
     json!({
@@ -599,7 +621,9 @@ Examples:
     ]
 }
 
-pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+pub fn build_memory_toolchain(
+    memory: MemoryStore,
+) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let state_facts_spec = required_default_tool_spec("Memory-stateFacts")?;
     let search_spec = required_default_tool_spec("Memory-search")?;
     let create_entity_spec = required_default_tool_spec("Memory-createEntity")?;
@@ -1383,68 +1407,55 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain<BorgToolC
                 content: ToolResultData::Text(memory_get_schema_context().to_string()),
             })
         }))?
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_transcoded(
             new_entity_spec,
             None,
-            move |request| {
+            move |request: borg_agent::ToolRequest<NewEntityArgs>| {
                 let memory = memory_for_new_entity.clone();
                 async move {
-                let ns = request
-                    .arguments
-                    .get("ns")
-                    .and_then(|value| value.as_str())
-                    .ok_or_else(|| anyhow!("Memory-newEntity tool requires ns"))?;
-                let kind = request
-                    .arguments
-                    .get("kind")
-                    .and_then(|value| value.as_str())
-                    .ok_or_else(|| anyhow!("Memory-newEntity tool requires kind"))?;
-                let display_name = request
-                    .arguments
-                    .get("displayName")
-                    .and_then(|value| value.as_str())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| anyhow!("Memory-newEntity tool requires non-empty displayName"))?;
-                let entity = Uri::from_parts(ns, kind, Some(&uuid::Uuid::now_v7().to_string()))?;
-                let source = Uri::parse(format!("borg:tool_call:{}", uuid::Uuid::now_v7()))?;
-                let field = Uri::parse("borg:field:displayName")?;
-                memory
-                    .state_facts(vec![FactInput {
-                        source,
-                        entity: entity.clone(),
-                        field,
-                        arity: Default::default(),
-                        value: FactValue::Text(display_name.to_string()),
-                    }])
-                    .await?;
-                Ok(ToolResponse {
-                    content: ToolResultData::Text(entity.to_string()),
-                })
+                    let ns = request.arguments.ns.trim();
+                    if ns.is_empty() {
+                        return Err(anyhow!("Memory-newEntity tool requires ns"));
+                    }
+                    let kind = request.arguments.kind.trim();
+                    if kind.is_empty() {
+                        return Err(anyhow!("Memory-newEntity tool requires kind"));
+                    }
+                    let display_name = request.arguments.display_name.trim();
+                    if display_name.is_empty() {
+                        return Err(anyhow!(
+                            "Memory-newEntity tool requires non-empty displayName"
+                        ));
+                    }
+                    let entity = Uri::from_parts(ns, kind, Some(&uuid::Uuid::now_v7().to_string()))?;
+                    let source = Uri::parse(format!("borg:tool_call:{}", uuid::Uuid::now_v7()))?;
+                    let field = Uri::parse("borg:field:displayName")?;
+                    memory
+                        .state_facts(vec![FactInput {
+                            source,
+                            entity: entity.clone(),
+                            field,
+                            arity: Default::default(),
+                            value: FactValue::Text(display_name.to_string()),
+                        }])
+                        .await?;
+                    Ok(ToolResponse {
+                        content: ToolResultData::<Value>::Text(entity.to_string()),
+                    })
                 }
             },
         ))?
-        .add_tool(Tool::new(save_facts_spec, None, move |request| {
+        .add_tool(Tool::new_transcoded(save_facts_spec, None, move |request: borg_agent::ToolRequest<SaveFactsArgs>| {
             let memory = memory_for_save.clone();
             async move {
-                let entities_value = request
-                    .arguments
-                    .get("entities")
-                    .cloned()
-                    .ok_or_else(|| anyhow!("Memory-saveFacts tool requires entities"))?;
-                let entities: Vec<String> = serde_json::from_value(entities_value)?;
+                let entities = request.arguments.entities;
                 if entities.is_empty() {
                     return Err(anyhow!(
                         "Memory-saveFacts expects a non-empty entities array"
                     ));
                 }
                 let declared_entities: HashSet<String> = entities.into_iter().collect();
-                let facts_value = request
-                    .arguments
-                    .get("facts")
-                    .cloned()
-                    .ok_or_else(|| anyhow!("Memory-saveFacts tool requires facts"))?;
-                let facts: Vec<FactInput> = serde_json::from_value(facts_value)?;
+                let facts = request.arguments.facts;
                 if facts.is_empty() {
                     return Err(anyhow!("Memory-saveFacts expects a non-empty facts array"));
                 }
@@ -1461,22 +1472,16 @@ pub fn build_memory_toolchain(memory: MemoryStore) -> Result<Toolchain<BorgToolC
 
                 let result = memory.state_facts(facts).await?;
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(serde_json::to_string(&result)?),
+                    content: ToolResultData::<Value>::Text(serde_json::to_string(&result)?),
                 })
             }
         }))?
-        .add_tool(Tool::new(search_memory_spec, None, move |request| {
+        .add_tool(Tool::new_transcoded(search_memory_spec, None, move |request: borg_agent::ToolRequest<SearchMemoryArgs>| {
             let memory = memory_for_search.clone();
             async move {
-                let query_value = request
-                    .arguments
-                    .get("query")
-                    .cloned()
-                    .ok_or_else(|| anyhow!("Memory-searchMemory tool requires query"))?;
-                let query: SearchQuery = serde_json::from_value(query_value)?;
-                let results = memory.search_query(query).await?;
+                let results = memory.search_query(request.arguments.query).await?;
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(serde_json::to_string(&results)?),
+                    content: ToolResultData::<Value>::Text(serde_json::to_string(&results)?),
                 })
             }
         }))?
