@@ -628,6 +628,7 @@ dependencies = [
  "anyhow",
  "borg-agent",
  "borg-db",
+ "serde",
  "serde_json",
  "uuid",
 ]

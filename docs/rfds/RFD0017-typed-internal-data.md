@@ -299,6 +299,7 @@ Input/output correctness is defined by serde decode/encode of typed request/resp
 12. Migrated `borg-ports-tools` (`Ports-*`) to typed request DTOs with `Tool::new_transcoded`; request parsing now happens via serde decode into typed structs instead of ad-hoc `Value` field lookups.
 13. Migrated `borg-shellmode` command tool request parsing to a typed DTO (`ExecuteCommandArgs`) via `Tool::new_transcoded`.
 14. Migrated `borg-codemode` tool request parsing (`CodeMode-searchApis` and `CodeMode-executeCode`) to typed DTOs (`SearchApisArgs`, `ExecuteCodeArgs`) via `Tool::new_transcoded`.
+15. Migrated `borg-clockwork` tools (`Clockwork-*`) to typed request DTOs (`CreateJobArgs`, `UpdateJobArgs`, etc.) with explicit typed schedule input enum, removing ad-hoc request `Value` field access in clockwork tool execution.
 
 ### Phase 3 - `borg-db` typed APIs
 
