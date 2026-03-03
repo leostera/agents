@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use serde_json::Value;
 
 use crate::{Agent, Message, ToolSpec};
 
@@ -16,7 +15,7 @@ pub struct AvailableCapability {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContextWindow<TToolCall = Value, TToolResult = Value> {
+pub struct ContextWindow<TToolCall, TToolResult> {
     pub system_prompt: String,
     pub behavior_prompt: String,
     pub available_tools: Vec<ToolSpec>,
@@ -64,7 +63,7 @@ pub enum ContextChunkMode {
 }
 
 #[derive(Debug, Clone)]
-pub struct ContextChunk<TToolCall = Value, TToolResult = Value> {
+pub struct ContextChunk<TToolCall, TToolResult> {
     pub mode: ContextChunkMode,
     pub messages: Vec<Message<TToolCall, TToolResult>>,
 }
@@ -102,12 +101,12 @@ impl<TToolCall, TToolResult> From<Vec<Message<TToolCall, TToolResult>>>
 }
 
 #[async_trait]
-pub trait ContextProvider<TToolCall = Value, TToolResult = Value>: Send + Sync {
+pub trait ContextProvider<TToolCall, TToolResult>: Send + Sync {
     async fn get_context(&self) -> Result<Vec<ContextChunk<TToolCall, TToolResult>>>;
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct StaticContextProvider<TToolCall = Value, TToolResult = Value> {
+pub struct StaticContextProvider<TToolCall, TToolResult> {
     chunks: Vec<ContextChunk<TToolCall, TToolResult>>,
 }
 
@@ -148,7 +147,7 @@ impl Default for ContextManagerStrategy {
 }
 
 #[derive(Clone)]
-pub struct ContextManager<TToolCall = Value, TToolResult = Value> {
+pub struct ContextManager<TToolCall, TToolResult> {
     strategy: ContextManagerStrategy,
     providers: Vec<Arc<dyn ContextProvider<TToolCall, TToolResult>>>,
 }
@@ -228,7 +227,7 @@ where
     }
 }
 
-pub struct ContextManagerBuilder<TToolCall = Value, TToolResult = Value> {
+pub struct ContextManagerBuilder<TToolCall, TToolResult> {
     strategy: ContextManagerStrategy,
     providers: Vec<Arc<dyn ContextProvider<TToolCall, TToolResult>>>,
 }

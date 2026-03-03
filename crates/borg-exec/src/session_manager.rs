@@ -10,6 +10,7 @@ use borg_codemode::default_tool_specs;
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 use borg_memory::default_memory_tool_specs;
+use serde_json::Value;
 use borg_taskgraph::default_taskgraph_tool_specs;
 
 use crate::tool_runner::default_exec_admin_tool_specs;
@@ -31,7 +32,7 @@ impl SessionManager {
         &self,
         session_id: Option<Uri>,
         requested_agent_id: Option<&Uri>,
-    ) -> Result<Session> {
+    ) -> Result<Session<Value, Value>> {
         let session_id = session_id.unwrap_or_else(|| uri!("borg", "session"));
         let agent_id = self
             .resolve_agent_id(requested_agent_id, &session_id)
@@ -59,7 +60,7 @@ impl SessionManager {
         &self,
         agent_id: &Uri,
         behavior_id: Option<&Uri>,
-    ) -> Result<Agent> {
+    ) -> Result<Agent<Value, Value>> {
         let default_tools = self.default_tools_for_session().await?;
         let mut agent = Agent::load(agent_id, &self.db).await?;
         if let Some(spec) = self.db.get_agent_spec(agent_id).await? {
@@ -101,7 +102,7 @@ impl SessionManager {
 
         let messages = self.db.list_session_messages(session_id, 0, 64).await?;
         for message in messages {
-            let Ok(message) = serde_json::from_value::<Message>(message) else {
+            let Ok(message) = serde_json::from_value::<Message<Value, Value>>(message) else {
                 continue;
             };
             if let Message::SessionEvent {

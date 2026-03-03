@@ -3,7 +3,6 @@ use borg_core::Uri;
 use borg_db::BorgDb;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
 
 use crate::{
     Agent, ContextManager, ContextWindow, Message, SessionEndStatus, SessionEventPayload,
@@ -14,7 +13,7 @@ const AGENT_STARTED_EVENT: &str = "agent_started";
 const AGENT_FINISHED_EVENT: &str = "agent_finished";
 
 #[derive(Clone)]
-pub struct Session<TToolCall = Value, TToolResult = Value> {
+pub struct Session<TToolCall, TToolResult> {
     pub session_id: Uri,
     pub agent: Agent<TToolCall, TToolResult>,
     db: BorgDb,

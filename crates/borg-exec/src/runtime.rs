@@ -7,6 +7,7 @@ use borg_db::{AppConnectionRecord, BorgDb};
 use borg_fs::BorgFs;
 use borg_memory::MemoryStore;
 use borg_shellmode::ShellModeRuntime;
+use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::llm_resolver::BorgLLMResolver;
@@ -53,7 +54,7 @@ impl BorgRuntime {
         user_id: &Uri,
         session_id: &Uri,
         agent_id: &Uri,
-    ) -> Result<Toolchain> {
+    ) -> Result<Toolchain<Value, Value>> {
         let context = self
             .code_mode_context_for_turn(user_id, session_id, agent_id)
             .await?;

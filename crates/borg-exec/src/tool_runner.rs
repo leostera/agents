@@ -13,6 +13,7 @@ use borg_memory::{MemoryStore, build_memory_toolchain};
 use borg_ports_tools::{build_port_admin_toolchain, default_port_admin_tool_specs};
 use borg_shellmode::{ShellModeRuntime, build_shell_mode_toolchain};
 use borg_taskgraph::{build_taskgraph_toolchain, build_taskgraph_worker_toolchain};
+use serde_json::Value;
 
 pub fn build_exec_toolchain_with_context(
     runtime: CodeModeRuntime,
@@ -24,7 +25,7 @@ pub fn build_exec_toolchain_with_context(
     current_session_id: Uri,
     current_agent_id: Uri,
     allow_task_creation: bool,
-) -> Result<Toolchain> {
+) -> Result<Toolchain<Value, Value>> {
     let code = build_code_mode_toolchain_with_context(runtime, context)?;
     let shell = build_shell_mode_toolchain(shell_runtime)?;
     let ltm = build_memory_toolchain(memory)?;
@@ -66,7 +67,7 @@ pub fn default_exec_admin_tool_specs() -> Vec<ToolSpec> {
     out
 }
 
-fn build_provider_admin_toolchain(db: BorgDb) -> Result<Toolchain> {
+fn build_provider_admin_toolchain(db: BorgDb) -> Result<Toolchain<Value, Value>> {
     let mut builder = ToolchainBuilder::new();
     for spec in default_provider_admin_tool_specs() {
         let db = db.clone();

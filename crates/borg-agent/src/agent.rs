@@ -71,7 +71,7 @@ the web or ask the user if they have the answer and wish you to remember it for 
 "#;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Agent<TToolCall = Value, TToolResult = Value> {
+pub struct Agent<TToolCall, TToolResult> {
     pub agent_id: Uri,
     pub model: String,
     pub system_prompt: String,

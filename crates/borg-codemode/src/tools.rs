@@ -75,14 +75,14 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_code_mode_toolchain(runtime: CodeModeRuntime) -> Result<Toolchain> {
+pub fn build_code_mode_toolchain(runtime: CodeModeRuntime) -> Result<Toolchain<Value, Value>> {
     build_code_mode_toolchain_with_context(runtime, CodeModeContext::default())
 }
 
 pub fn build_code_mode_toolchain_with_context(
     runtime: CodeModeRuntime,
     context: CodeModeContext,
-) -> Result<Toolchain> {
+) -> Result<Toolchain<Value, Value>> {
     let search_spec = required_default_tool_spec("CodeMode-searchApis")?;
     let execute_spec = required_default_tool_spec("CodeMode-executeCode")?;
 

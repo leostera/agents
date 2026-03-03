@@ -3,6 +3,7 @@ use borg_agent::{Message, Session, SessionResult};
 use borg_core::Uri;
 use borg_llm::TranscriptionRequest;
 use chrono::Utc;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -48,7 +49,7 @@ impl ActorHandle {
 }
 
 struct SessionState {
-    session: Session,
+    session: Session<Value, Value>,
     agent_id: Uri,
     behavior_id: Option<Uri>,
 }
@@ -176,7 +177,11 @@ impl Actor {
         result
     }
 
-    async fn create_session(&self, session_id: &Uri, agent_id: &Uri) -> Result<Session> {
+    async fn create_session(
+        &self,
+        session_id: &Uri,
+        agent_id: &Uri,
+    ) -> Result<Session<Value, Value>> {
         self.runtime
             .session_manager
             .session_for_task(Some(session_id.clone()), Some(agent_id))

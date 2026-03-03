@@ -58,8 +58,9 @@ impl Provider for ScriptedProvider {
 fn scripted_provider(
     responses: Vec<Result<LlmAssistantMessage, String>>,
 ) -> (ScriptedProvider, mpsc::UnboundedReceiver<LlmRequest>) {
-    let (requests_tx, requests_rx) = mpsc::unbounded_channel();
-    let (responses_tx, responses_rx) = mpsc::unbounded_channel();
+    let (requests_tx, requests_rx) = mpsc::unbounded_channel::<LlmRequest>();
+    let (responses_tx, responses_rx) =
+        mpsc::unbounded_channel::<Result<LlmAssistantMessage, String>>();
     for response in responses {
         responses_tx.send(response).unwrap();
     }
@@ -74,16 +75,17 @@ fn scripted_provider(
 }
 
 fn scripted_toolchain(
-    outputs: Vec<Result<ToolResponse, String>>,
-) -> Result<(Toolchain, mpsc::UnboundedReceiver<ToolRequest>)> {
-    let (calls_tx, calls_rx) = mpsc::unbounded_channel();
-    let (outputs_tx, outputs_rx) = mpsc::unbounded_channel();
+    outputs: Vec<Result<ToolResponse<Value>, String>>,
+) -> Result<(Toolchain<Value, Value>, mpsc::UnboundedReceiver<ToolRequest<Value>>)> {
+    let (calls_tx, calls_rx) = mpsc::unbounded_channel::<ToolRequest<Value>>();
+    let (outputs_tx, outputs_rx) =
+        mpsc::unbounded_channel::<Result<ToolResponse<Value>, String>>();
     for output in outputs {
         outputs_tx.send(output)?;
     }
     drop(outputs_tx);
     let outputs_rx = Arc::new(Mutex::new(outputs_rx));
-    let mut toolchain = Toolchain::new();
+    let mut toolchain = Toolchain::<Value, Value>::new();
     for tool_name in ["search", "execute"] {
         let calls_tx = calls_tx.clone();
         let outputs_rx = Arc::clone(&outputs_rx);
@@ -172,7 +174,7 @@ async fn make_test_db() -> Result<BorgDb> {
     Ok(borg_db)
 }
 
-async fn make_session() -> Result<(Agent, Session)> {
+async fn make_session() -> Result<(Agent<Value, Value>, Session<Value, Value>)> {
     init_test_tracing();
     let db = make_test_db().await?;
     let agent = Agent::new(uri!("borg", "agent", "test-agent")).with_system_prompt("system prompt");
@@ -203,7 +205,7 @@ async fn a1_no_tool_completion() {
         .unwrap();
 
     let (provider, _requests_rx) = scripted_provider(vec![Ok(assistant_text("hello back"))]);
-    let tools = Toolchain::new();
+    let tools = Toolchain::<Value, Value>::new();
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::Completed(Ok(_))));
@@ -373,7 +375,7 @@ async fn a5_follow_up_continues_run() {
         Ok(assistant_text("turn-1")),
         Ok(assistant_text("turn-2")),
     ]);
-    let tools = Toolchain::new();
+    let tools = Toolchain::<Value, Value>::new();
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::Completed(Ok(_))));
@@ -433,7 +435,7 @@ async fn a7_provider_failure_surfaces_session_error() {
         .unwrap();
 
     let (provider, _requests_rx) = scripted_provider(vec![Err("provider down".to_string())]);
-    let tools = Toolchain::new();
+    let tools = Toolchain::<Value, Value>::new();
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::SessionError(_)));
@@ -445,7 +447,7 @@ async fn a8_idle_run_when_no_new_messages() {
     info!(target: "borg_agent_test", test = "a8_idle_run_when_no_new_messages", "starting test");
     let (agent, mut session) = make_session().await.unwrap();
     let (provider, _requests_rx) = scripted_provider(vec![]);
-    let tools = Toolchain::new();
+    let tools = Toolchain::<Value, Value>::new();
 
     let result = agent.run(&mut session, &provider, &tools).await;
     assert!(matches!(result, SessionResult::Idle));
@@ -463,7 +465,7 @@ async fn a9_lifecycle_events_persisted_once() {
         .await
         .unwrap();
     let (provider, _requests_rx) = scripted_provider(vec![Ok(assistant_text("ok"))]);
-    let tools = Toolchain::new();
+    let tools = Toolchain::<Value, Value>::new();
 
     let _ = agent.run(&mut session, &provider, &tools).await;
     let messages = session.read_messages(0, 256).await.unwrap();
@@ -489,7 +491,7 @@ async fn a9_lifecycle_events_persisted_once() {
 async fn injected_toolchain_helper_still_works() {
     init_test_tracing();
     info!(target: "borg_agent_test", test = "injected_toolchain_helper_still_works", "starting test");
-    let tools = Toolchain::builder()
+    let tools = Toolchain::<Value, Value>::builder()
         .add_tool(Tool::new(
             ToolSpec {
                 name: "search".to_string(),
@@ -526,7 +528,7 @@ async fn injected_toolchain_helper_still_works() {
 
 #[tokio::test]
 async fn toolchain_delegates_input_validation_to_tool_callback() {
-    let toolchain = Toolchain::builder()
+    let toolchain = Toolchain::<Value, Value>::builder()
         .add_tool(Tool::new(
             ToolSpec {
                 name: "search".to_string(),
@@ -562,7 +564,7 @@ async fn toolchain_delegates_input_validation_to_tool_callback() {
 
 #[tokio::test]
 async fn toolchain_does_not_validate_output_schema() {
-    let toolchain = Toolchain::builder()
+    let toolchain = Toolchain::<Value, Value>::builder()
         .add_tool(Tool::new(
             ToolSpec {
                 name: "execute".to_string(),

@@ -399,7 +399,7 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_taskgraph_toolchain(db: BorgDb) -> Result<Toolchain> {
+pub fn build_taskgraph_toolchain(db: BorgDb) -> Result<Toolchain<Value, Value>> {
     let store = TaskGraphStore::new(db);
 
     Toolchain::builder()
@@ -432,7 +432,7 @@ pub fn build_taskgraph_toolchain(db: BorgDb) -> Result<Toolchain> {
         .build()
 }
 
-pub fn build_taskgraph_worker_toolchain(db: BorgDb) -> Result<Toolchain> {
+pub fn build_taskgraph_worker_toolchain(db: BorgDb) -> Result<Toolchain<Value, Value>> {
     let store = TaskGraphStore::new(db);
 
     Toolchain::builder()
@@ -466,7 +466,7 @@ pub fn build_taskgraph_worker_toolchain(db: BorgDb) -> Result<Toolchain> {
 struct TaskGraphTools;
 
 impl TaskGraphTools {
-    fn create_task(store: TaskGraphStore) -> Result<Tool> {
+    fn create_task(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-createTask")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -494,7 +494,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn get_task(store: TaskGraphStore) -> Result<Tool> {
+    fn get_task(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-getTask")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -506,7 +506,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn update_task_fields(store: TaskGraphStore) -> Result<Tool> {
+    fn update_task_fields(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-updateTaskFields")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -537,7 +537,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn reassign_assignee(store: TaskGraphStore) -> Result<Tool> {
+    fn reassign_assignee(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-reassignAssignee")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -553,7 +553,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn add_task_labels(store: TaskGraphStore) -> Result<Tool> {
+    fn add_task_labels(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-addTaskLabels")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -567,7 +567,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn remove_task_labels(store: TaskGraphStore) -> Result<Tool> {
+    fn remove_task_labels(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-removeTaskLabels")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -581,7 +581,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn set_task_parent(store: TaskGraphStore) -> Result<Tool> {
+    fn set_task_parent(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-setTaskParent")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -595,7 +595,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn clear_task_parent(store: TaskGraphStore) -> Result<Tool> {
+    fn clear_task_parent(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-clearTaskParent")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -608,7 +608,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn list_task_children(store: TaskGraphStore) -> Result<Tool> {
+    fn list_task_children(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-listTaskChildren")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -621,7 +621,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn add_task_blocked_by(store: TaskGraphStore) -> Result<Tool> {
+    fn add_task_blocked_by(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-addTaskBlockedBy")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -637,7 +637,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn remove_task_blocked_by(store: TaskGraphStore) -> Result<Tool> {
+    fn remove_task_blocked_by(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-removeTaskBlockedBy")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -653,7 +653,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn set_task_duplicate_of(store: TaskGraphStore) -> Result<Tool> {
+    fn set_task_duplicate_of(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-setTaskDuplicateOf")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -669,7 +669,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn clear_task_duplicate_of(store: TaskGraphStore) -> Result<Tool> {
+    fn clear_task_duplicate_of(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-clearTaskDuplicateOf")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -682,7 +682,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn list_duplicated_by(store: TaskGraphStore) -> Result<Tool> {
+    fn list_duplicated_by(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-listDuplicatedBy")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -695,7 +695,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn add_task_reference(store: TaskGraphStore) -> Result<Tool> {
+    fn add_task_reference(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-addTaskReference")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -711,7 +711,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn remove_task_reference(store: TaskGraphStore) -> Result<Tool> {
+    fn remove_task_reference(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-removeTaskReference")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -727,7 +727,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn set_task_status(store: TaskGraphStore) -> Result<Tool> {
+    fn set_task_status(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-setTaskStatus")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -741,7 +741,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn submit_review(store: TaskGraphStore) -> Result<Tool> {
+    fn submit_review(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-submitReview")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -754,7 +754,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn approve_review(store: TaskGraphStore) -> Result<Tool> {
+    fn approve_review(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-approveReview")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -767,7 +767,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn request_review_changes(store: TaskGraphStore) -> Result<Tool> {
+    fn request_review_changes(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-requestReviewChanges")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -790,7 +790,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn split_task_into_subtasks(store: TaskGraphStore) -> Result<Tool> {
+    fn split_task_into_subtasks(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-splitTaskIntoSubtasks")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -850,7 +850,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn add_comment(store: TaskGraphStore) -> Result<Tool> {
+    fn add_comment(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-addComment")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -864,7 +864,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn list_comments(store: TaskGraphStore) -> Result<Tool> {
+    fn list_comments(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-listComments")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -877,7 +877,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn list_events(store: TaskGraphStore) -> Result<Tool> {
+    fn list_events(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-listEvents")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -890,7 +890,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn next_task(store: TaskGraphStore) -> Result<Tool> {
+    fn next_task(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-nextTask")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -907,7 +907,7 @@ impl TaskGraphTools {
         }))
     }
 
-    fn reconcile_in_progress(store: TaskGraphStore) -> Result<Tool> {
+    fn reconcile_in_progress(store: TaskGraphStore) -> Result<Tool<Value, Value>> {
         let spec = required_spec("TaskGraph-reconcileInProgress")?;
         Ok(Tool::new(spec, None, move |request| {
             let store = store.clone();
@@ -970,7 +970,7 @@ fn str_array(arguments: &Value, key: &str) -> Result<Vec<String>> {
         .collect()
 }
 
-fn json_text(value: Value) -> Result<ToolResponse> {
+fn json_text(value: Value) -> Result<ToolResponse<Value>> {
     Ok(ToolResponse {
         content: ToolResultData::Text(serde_json::to_string(&value)?),
     })

@@ -1,13 +1,12 @@
 use anyhow::Result;
 use borg_core::Uri;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::ToolResultData;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Message<TToolCall = Value, TToolResult = Value> {
+pub enum Message<TToolCall, TToolResult> {
     System {
         content: String,
     },
@@ -59,14 +58,14 @@ pub enum SessionEndStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCallRecord<TToolCall = Value, TToolResult = Value> {
+pub struct ToolCallRecord<TToolCall, TToolResult> {
     pub tool_name: String,
     pub arguments: TToolCall,
     pub output: ToolResultData<TToolResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionOutput<TToolCall = Value, TToolResult = Value> {
+pub struct SessionOutput<TToolCall, TToolResult> {
     pub reply: String,
     pub tool_calls: Vec<ToolCallRecord<TToolCall, TToolResult>>,
 }

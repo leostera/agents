@@ -7,7 +7,7 @@ use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 use borg_llm::providers::openai::OpenAiProvider;
 use borg_llm::testing::llm_container::LlmContainer;
-use serde_json::json;
+use serde_json::{Value, json};
 use serial_test::serial;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Once};
@@ -34,7 +34,7 @@ enum RunnerMode {
 #[derive(Clone)]
 struct RecordingToolRunner {
     mode: RunnerMode,
-    calls: Arc<Mutex<Vec<ToolRequest>>>,
+    calls: Arc<Mutex<Vec<ToolRequest<Value>>>>,
     stage_two_attempts: Arc<Mutex<usize>>,
     follow_up_turn: Arc<Mutex<usize>>,
 }
@@ -49,13 +49,13 @@ impl RecordingToolRunner {
         }
     }
 
-    fn calls(&self) -> Vec<ToolRequest> {
+    fn calls(&self) -> Vec<ToolRequest<Value>> {
         self.calls.lock().expect("calls lock poisoned").clone()
     }
 }
 
 impl RecordingToolRunner {
-    async fn run_request(&self, request: ToolRequest) -> Result<ToolResponse> {
+    async fn run_request(&self, request: ToolRequest<Value>) -> Result<ToolResponse<Value>> {
         trace!(
             target: "borg_agent_it",
             tool_name = request.tool_name.as_str(),
@@ -174,7 +174,7 @@ impl RecordingToolRunner {
         }
     }
 
-    fn toolchain(&self, tool_specs: &[ToolSpec]) -> Result<Toolchain> {
+    fn toolchain(&self, tool_specs: &[ToolSpec]) -> Result<Toolchain<Value, Value>> {
         let mut toolchain = Toolchain::new();
         for spec in tool_specs {
             let runner = self.clone();
@@ -202,8 +202,13 @@ fn init_test_tracing() {
     });
 }
 
-fn make_agent(agent_id: Uri, model: String, system_prompt: String, tools: Vec<ToolSpec>) -> Agent {
-    Agent::new(agent_id)
+fn make_agent(
+    agent_id: Uri,
+    model: String,
+    system_prompt: String,
+    tools: Vec<ToolSpec>,
+) -> Agent<Value, Value> {
+    Agent::<Value, Value>::new(agent_id)
         .with_model(model)
         .with_system_prompt(system_prompt)
         .with_tools(tools)
@@ -361,7 +366,7 @@ async fn start_llm_container_with_retries() -> Option<LlmContainer> {
     None
 }
 
-fn session_output_or_retry(result: SessionResult<SessionOutput>) -> Option<SessionOutput> {
+fn session_output_or_retry(result: SessionResult<SessionOutput<Value, Value>>) -> Option<SessionOutput<Value, Value>> {
     match result {
         SessionResult::Completed(Ok(output)) => Some(output),
         SessionResult::Completed(Err(err)) => panic!("unexpected completed error: {}", err),
@@ -370,7 +375,7 @@ fn session_output_or_retry(result: SessionResult<SessionOutput>) -> Option<Sessi
     }
 }
 
-fn count_events(messages: &[Message], event_name: &str) -> usize {
+fn count_events(messages: &[Message<Value, Value>], event_name: &str) -> usize {
     messages
         .iter()
         .filter(
@@ -379,7 +384,7 @@ fn count_events(messages: &[Message], event_name: &str) -> usize {
         .count()
 }
 
-fn log_session_messages(test_name: &str, attempt: usize, messages: &[Message]) {
+fn log_session_messages(test_name: &str, attempt: usize, messages: &[Message<Value, Value>]) {
     info!(
         target: "borg_agent_it",
         test = test_name,
@@ -406,7 +411,7 @@ fn log_session_messages(test_name: &str, attempt: usize, messages: &[Message]) {
     );
 }
 
-fn has_non_empty_assistant(messages: &[Message]) -> bool {
+fn has_non_empty_assistant(messages: &[Message<Value, Value>]) -> bool {
     messages.iter().any(|message| match message {
         Message::Assistant { content } => !content.trim().is_empty(),
         _ => false,
