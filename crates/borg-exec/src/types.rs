@@ -1,33 +1,43 @@
+use borg_agent::ToolResultData;
 use borg_core::Uri;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct UserMessage {
-    pub user_id: Uri,
-    pub text: String,
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct UserMessageMetadata {
     #[serde(default)]
-    pub session_id: Option<Uri>,
+    pub port: Option<String>,
     #[serde(default)]
-    pub agent_id: Option<Uri>,
+    pub chat_id: Option<i64>,
     #[serde(default)]
-    pub metadata: Value,
+    pub chat_type: Option<String>,
+    #[serde(default)]
+    pub message_id: Option<i64>,
+    #[serde(default)]
+    pub thread_id: Option<i64>,
+    #[serde(default)]
+    pub sender_id: Option<i64>,
+    #[serde(default)]
+    pub sender_username: Option<String>,
+    #[serde(default)]
+    pub sender_first_name: Option<String>,
+    #[serde(default)]
+    pub sender_last_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ToolCallSummary {
     pub tool_name: String,
     pub arguments: Value,
-    pub output: Value,
+    pub output: ToolResultData,
 }
 
 impl ToolCallSummary {
     pub fn error_message(&self) -> Option<String> {
-        self.output
-            .get("Error")
-            .and_then(|value| value.get("message"))
-            .and_then(Value::as_str)
-            .map(ToString::to_string)
+        match &self.output {
+            ToolResultData::Error { message } => Some(message.clone()),
+            _ => None,
+        }
     }
 
     pub fn is_error(&self) -> bool {
@@ -39,12 +49,16 @@ impl ToolCallSummary {
             return error;
         }
 
-        if let Some(execution) = self.output.get("Execution") {
-            return serde_json::to_string_pretty(execution)
-                .unwrap_or_else(|_| execution.to_string());
+        match &self.output {
+            ToolResultData::Execution { result, .. } => {
+                serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string())
+            }
+            ToolResultData::Text(text) => text.clone(),
+            ToolResultData::Capabilities(capabilities) => {
+                serde_json::to_string_pretty(capabilities).unwrap_or_else(|_| "[]".to_string())
+            }
+            ToolResultData::Error { message } => message.clone(),
         }
-
-        serde_json::to_string_pretty(&self.output).unwrap_or_else(|_| self.output.to_string())
     }
 }
 

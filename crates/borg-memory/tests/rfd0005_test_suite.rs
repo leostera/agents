@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use borg_agent::{ToolRequest, ToolResultData, ToolRunner};
+use borg_agent::{ToolRequest, ToolResultData};
 use borg_memory::{
     FactArity, FactInput, FactValue, MemoryStore, Uri, build_memory_toolchain,
     default_memory_tool_specs,

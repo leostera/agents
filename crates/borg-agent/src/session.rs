@@ -1,11 +1,10 @@
 use anyhow::{Result, anyhow};
 use borg_core::Uri;
 use borg_db::BorgDb;
-use std::sync::Arc;
 
 use crate::{
-    Agent, CompactingContextManager, ContextManager, ContextWindow, Message, SessionEndStatus,
-    SessionEventPayload, SessionOutput, SessionResult,
+    Agent, ContextManager, ContextWindow, Message, SessionEndStatus, SessionEventPayload,
+    SessionOutput, SessionResult,
 };
 
 const AGENT_STARTED_EVENT: &str = "agent_started";
@@ -16,7 +15,7 @@ pub struct Session {
     pub session_id: Uri,
     pub agent: Agent,
     db: BorgDb,
-    context_manager: Arc<dyn ContextManager>,
+    context_manager: ContextManager,
     last_processed_len: usize,
     steering_messages: Vec<Message>,
     follow_up_messages: Vec<Message>,
@@ -28,7 +27,7 @@ impl Session {
             session_id,
             agent,
             db,
-            context_manager: Arc::new(CompactingContextManager::default()),
+            context_manager: ContextManager::default(),
             last_processed_len: 0,
             steering_messages: Vec::new(),
             follow_up_messages: Vec::new(),
@@ -49,7 +48,7 @@ impl Session {
         Ok(())
     }
 
-    pub fn set_context_manager(&mut self, context_manager: Arc<dyn ContextManager>) {
+    pub fn set_context_manager(&mut self, context_manager: ContextManager) {
         self.context_manager = context_manager;
     }
 

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use borg_agent::{ToolRequest, ToolResultData, ToolRunner};
+use borg_agent::{ToolRequest, ToolResultData};
 use borg_memory::{MemoryStore, build_memory_toolchain};
 use proptest::prelude::*;
 use proptest::string::string_regex;

@@ -311,6 +311,56 @@ Input/output correctness is defined by serde decode/encode of typed request/resp
 2. Keep `Value` only in strict boundary modules.
 3. Add tests that fail if internal runtime types regress to untyped JSON.
 
+### Current implementation findings (2026-03-03)
+
+Implemented in this branch so far:
+
+1. Collapsed tool execution indirection in runtime path:
+   - removed `ToolRunner` trait and `AgentTools` wrapper from `borg-agent`
+   - `Agent::run` now receives `&Toolchain` directly and dispatches through `Toolchain::run(ToolRequest { ... })`
+   - removed `call_tool` helper from runtime path; tests now also execute tools via `Toolchain::run`
+2. Updated downstream call sites/tests to use direct `Toolchain` execution:
+   - `borg-exec` actor path and crate tests
+   - `borg-agent` unit/integration tests
+   - CLI/test imports in `borg-memory`, `borg-taskgraph`, `borg-shellmode`, `borg-codemode`, and `borg-cli`
+3. Removed ad-hoc schema gate from agent execution path:
+   - `Toolchain::run` no longer calls runtime `validate_schema` on input/output
+   - validation responsibility moves to typed decode/encode at boundaries and tool callback logic
+4. Context orchestration refactor started:
+   - replaced trait-based manager variants with a concrete `ContextManager` configured by `ContextManagerStrategy`
+   - introduced `ContextProvider::get_context() -> Result<Vec<ContextChunk>>` where each `ContextChunk` is `Pinned` or `Compactable`
+   - removed Telegram-specific context logic from `borg-agent`; port-specific pinned context is now injected from `borg-exec` via `StaticContextProvider`
+   - removed duplicate Telegram context re-injection in `borg-exec::actor` (session manager now owns this context wiring)
+   - added coverage for `Pinned` provider chunks surviving compaction in `borg-agent` tests
+5. Typed tool output wiring started in exec:
+   - `borg-exec` tool-call summaries now carry `ToolResultData` directly (instead of converting output to `serde_json::Value` in actor runtime)
+   - `ToolCallSummary::error_message` / `output_message` now match on typed tool result variants
+6. Removed `UserMessage` intermediate ingress DTO from active exec path:
+   - session/toolchain wiring now uses explicit typed fields instead of passing a generic ingress object through runtime internals
+7. Typed user-turn metadata started in exec ingress path:
+   - metadata is now parsed into `UserMessageMetadata` (typed struct) instead of carrying `serde_json::Value`
+   - API boundary parses metadata with serde derive (`serde_json::from_value::<UserMessageMetadata>`)
+   - runtime consumers now read typed fields (`port`, `chat_id`, `message_id`, sender/chat refs) directly
+
+Important behavior change from these updates:
+
+1. `ToolSpec.parameters` and `Tool.output_schema` are no longer enforced by `borg-agent` at runtime.
+2. Existing tests that asserted schema-rejection behavior were updated to reflect callback-owned validation.
+3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
+4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
+5. Unknown metadata keys from API input are currently ignored by typed parse (intentional while we remove shapeless runtime JSON).
+
+Known blocker while validating this branch:
+
+1. Workspace checks can be blocked by unrelated in-flight `borg-db` compile issues from parallel work (outside this RFD track). This does not change the typed-agent design direction, but it can temporarily reduce end-to-end check coverage on this branch.
+
+Immediate follow-up work after this pass:
+
+1. Replace string-prefixed Telegram context system messages with typed provider payload structs.
+2. Remove remaining `serde_json::Value` usage in exec/session-facing types (`ToolCallSummary.arguments`, legacy JSON port context adapters).
+3. Type `ToolRequest.arguments` and `Message::ToolCall.arguments` with Borg request enums at agent dispatch boundary.
+4. Replace API `ValidatedPortRequest` and remaining port ingress wrappers with a single typed ingress schema shared with port supervisors.
+
 ### Test plan
 
 1. Unit tests per boundary parser (JSON -> typed).
