@@ -291,6 +291,8 @@ Input/output correctness is defined by serde decode/encode of typed request/resp
 4. Runtime/port call sites were updated to use enum accessors (`as_telegram`/`as_discord`) instead of downcasting JSON wrappers.
 5. `cargo test -p borg-exec` passes with these changes.
 6. API-internal validated port ingress DTOs in `borg-api` no longer carry passthrough metadata JSON after boundary validation (`ValidatedPortRequest` / `ValidatedHttpPortAudioRequest` dropped `metadata: Value`).
+7. Runtime tool-call/result contracts in `borg-agent` now use concrete `BorgToolCall` / `BorgToolResult` types end-to-end in `borg-exec` + `borg-ports` message flow, replacing direct `Value` generic usage in these internal signatures.
+8. Legacy tool implementations still parse JSON arguments in tool modules, but adaptation happens in `Tool::new` (`BorgToolCall` -> parsed JSON for callback, callback JSON result -> `BorgToolResult`) so exec/ports/session path signatures no longer use `Value` directly.
 
 ### Phase 3 - `borg-db` typed APIs
 

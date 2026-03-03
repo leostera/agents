@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use borg_agent::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
@@ -36,7 +36,7 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     }]
 }
 
-pub fn build_shell_mode_toolchain(runtime: ShellModeRuntime) -> Result<Toolchain<Value, Value>> {
+pub fn build_shell_mode_toolchain(runtime: ShellModeRuntime) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let execute_spec = default_tool_specs()
         .into_iter()
         .find(|tool| tool.name == "ShellMode-executeCommand")

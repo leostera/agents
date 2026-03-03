@@ -5,7 +5,10 @@ use uuid::Uuid;
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 
-use crate::{Tool, ToolRequest, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use crate::{
+    BorgToolCall, BorgToolResult, Tool, ToolRequest, ToolResponse, ToolResultData, ToolSpec,
+    Toolchain,
+};
 
 pub fn default_agent_admin_tool_specs() -> Vec<ToolSpec> {
     vec![
@@ -80,7 +83,7 @@ pub fn build_agent_admin_toolchain(
     db: BorgDb,
     current_session_id: Uri,
     current_agent_id: Uri,
-) -> Result<Toolchain<Value, Value>> {
+) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let whoami_agent_id = current_agent_id.to_string();
     let whoami_session_id = current_session_id.to_string();
 

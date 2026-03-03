@@ -6,8 +6,10 @@ mod message;
 mod runtime;
 mod supervisor;
 
-pub use message::{BorgCommand, BorgInput, BorgMessage, SessionOutput};
-pub use port_context::{JsonPortContext, PortContext, TelegramSessionContext};
+pub use message::{BorgCommand, BorgInput, BorgMessage, RuntimeToolCall, RuntimeToolResult, SessionOutput};
+pub use port_context::{
+    DiscordSessionContext, HttpSessionContext, PortContext, TelegramSessionContext,
+};
 pub use runtime::BorgRuntime;
 pub use supervisor::BorgSupervisor;
 

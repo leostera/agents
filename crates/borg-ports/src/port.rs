@@ -3,7 +3,7 @@ use std::str::FromStr;
 use anyhow::Result;
 use async_trait::async_trait;
 use borg_core::Uri;
-use borg_exec::SessionOutput;
+use borg_exec::{RuntimeToolCall, RuntimeToolResult, SessionOutput};
 use serde_json::Value;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -80,6 +80,6 @@ pub trait Port: Send + Sync + Sized + 'static {
     async fn run(
         self,
         inbound: Sender<PortMessage>,
-        outbound: Receiver<SessionOutput<Value, Value>>,
+        outbound: Receiver<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
     ) -> Result<()>;
 }

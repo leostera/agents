@@ -6,9 +6,91 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use borg_llm::ToolDescriptor;
 use serde::de::Deserializer;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 use std::time::Duration;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BorgToolCall {
+    encoded_json: String,
+}
+
+impl BorgToolCall {
+    pub fn to_value(&self) -> Result<Value> {
+        Ok(serde_json::from_str(&self.encoded_json)?)
+    }
+}
+
+impl From<Value> for BorgToolCall {
+    fn from(value: Value) -> Self {
+        Self {
+            encoded_json: value.to_string(),
+        }
+    }
+}
+
+impl Serialize for BorgToolCall {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let value: Value = serde_json::from_str(&self.encoded_json).map_err(serde::ser::Error::custom)?;
+        value.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BorgToolCall {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Ok(Self {
+            encoded_json: value.to_string(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BorgToolResult {
+    encoded_json: String,
+}
+
+impl BorgToolResult {
+    pub fn to_value(&self) -> Result<Value> {
+        Ok(serde_json::from_str(&self.encoded_json)?)
+    }
+}
+
+impl From<Value> for BorgToolResult {
+    fn from(value: Value) -> Self {
+        Self {
+            encoded_json: value.to_string(),
+        }
+    }
+}
+
+impl Serialize for BorgToolResult {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let value: Value = serde_json::from_str(&self.encoded_json).map_err(serde::ser::Error::custom)?;
+        value.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for BorgToolResult {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Ok(Self {
+            encoded_json: value.to_string(),
+        })
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolRequest<TToolCall> {
@@ -96,13 +178,38 @@ pub struct Tool<TToolCall, TToolResult> {
     callback: TypedToolCallback<TToolCall, TToolResult>,
 }
 
-impl Tool<Value, Value> {
+impl Tool<BorgToolCall, BorgToolResult> {
     pub fn new<F, Fut>(spec: ToolSpec, output_schema: Option<Value>, callback: F) -> Self
     where
         F: Fn(ToolRequest<Value>) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<ToolResponse<Value>>> + Send + 'static,
     {
-        Self::new_typed(spec, output_schema, callback)
+        let callback = Arc::new(callback);
+        Self::new_typed(spec, output_schema, move |request| {
+            let callback = Arc::clone(&callback);
+            async move {
+                let arguments = request.arguments.to_value()?;
+                let response = callback(ToolRequest {
+                    tool_call_id: request.tool_call_id,
+                    tool_name: request.tool_name,
+                    arguments,
+                })
+                .await?;
+                Ok(ToolResponse {
+                    content: match response.content {
+                        ToolResultData::Text(text) => ToolResultData::Text(text),
+                        ToolResultData::Capabilities(items) => ToolResultData::Capabilities(items),
+                        ToolResultData::Execution { result, duration } => {
+                            ToolResultData::Execution {
+                                result: BorgToolResult::from(result),
+                                duration,
+                            }
+                        }
+                        ToolResultData::Error { message } => ToolResultData::Error { message },
+                    },
+                })
+            }
+        })
     }
 }
 
@@ -184,6 +291,8 @@ impl<TToolCall, TToolResult> Toolchain<TToolCall, TToolResult> {
 pub struct ToolchainBuilder<TToolCall, TToolResult> {
     toolchain: Toolchain<TToolCall, TToolResult>,
 }
+
+pub type BorgToolchain = Toolchain<BorgToolCall, BorgToolResult>;
 
 impl<TToolCall, TToolResult> Default for ToolchainBuilder<TToolCall, TToolResult> {
     fn default() -> Self {

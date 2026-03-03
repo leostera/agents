@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
 use serde_json::{Value, json};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -75,14 +75,14 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_code_mode_toolchain(runtime: CodeModeRuntime) -> Result<Toolchain<Value, Value>> {
+pub fn build_code_mode_toolchain(runtime: CodeModeRuntime) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     build_code_mode_toolchain_with_context(runtime, CodeModeContext::default())
 }
 
 pub fn build_code_mode_toolchain_with_context(
     runtime: CodeModeRuntime,
     context: CodeModeContext,
-) -> Result<Toolchain<Value, Value>> {
+) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let search_spec = required_default_tool_spec("CodeMode-searchApis")?;
     let execute_spec = required_default_tool_spec("CodeMode-executeCode")?;
 

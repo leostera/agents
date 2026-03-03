@@ -3,9 +3,9 @@ use crate::mailbox::ActorCommand;
 use crate::mailbox_envelope::ActorMailboxEnvelope;
 use crate::message::{BorgMessage, SessionOutput};
 use crate::runtime::BorgRuntime;
+use borg_agent::{BorgToolCall, BorgToolResult};
 use anyhow::anyhow;
 use borg_core::Uri;
-use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -45,7 +45,7 @@ impl BorgSupervisor {
         Ok(())
     }
 
-    pub async fn call(&self, msg: BorgMessage) -> anyhow::Result<SessionOutput<Value, Value>> {
+    pub async fn call(&self, msg: BorgMessage) -> anyhow::Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         let actor_message_id = self
             .runtime
             .db
