@@ -348,6 +348,8 @@ Implemented in this branch so far:
    - `Session<TToolCall, TToolResult>`, `ContextWindow<TToolCall, TToolResult>`, `ContextChunk<TToolCall, TToolResult>`, and `ContextManager<TToolCall, TToolResult>` are generic with `Value` defaults
    - `Agent::run(...)` is now generic and decodes provider tool-call JSON into `TToolCall` at the provider boundary
    - LLM adapter now serializes typed tool-call arguments/results back to provider-facing JSON/text at the boundary
+10. Added regression coverage for typed dispatch:
+   - new `borg-agent` test exercises a typed toolchain (`EchoArgs`/`EchoResult`) and verifies provider JSON arguments decode into strongly typed tool requests before tool execution
 
 Important behavior change from these updates:
 
