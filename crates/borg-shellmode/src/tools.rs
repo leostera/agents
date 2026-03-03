@@ -1,10 +1,21 @@
 use anyhow::{Context, Result};
 use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
-use serde_json::{Value, json};
+use serde::Deserialize;
+use serde_json::json;
 use std::path::PathBuf;
 
 use crate::engine::ShellModeRuntime;
 use crate::types::ShellModeContext;
+
+#[derive(Debug, Clone, Deserialize)]
+struct ExecuteCommandArgs {
+    command: String,
+    hint: String,
+    #[serde(default)]
+    timeout_seconds: Option<u64>,
+    #[serde(default)]
+    working_directory: Option<String>,
+}
 
 pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![ToolSpec {
@@ -42,7 +53,7 @@ pub fn build_shell_mode_toolchain(runtime: ShellModeRuntime) -> Result<Toolchain
         .find(|tool| tool.name == "ShellMode-executeCommand")
         .context("missing ShellMode-executeCommand tool spec")?;
 
-    let tool = Tool::new(
+    let tool = Tool::new_transcoded(
         execute_spec,
         Some(json!({
             "type": "object",
@@ -68,28 +79,18 @@ pub fn build_shell_mode_toolchain(runtime: ShellModeRuntime) -> Result<Toolchain
             "required": ["Execution"],
             "additionalProperties": false
         })),
-        move |request| {
+        move |request: borg_agent::ToolRequest<ExecuteCommandArgs>| {
             let runtime = runtime.clone();
             async move {
-                let command = request
-                    .arguments
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("ShellMode-executeCommand tool requires command")
-                    })?
-                    .to_string();
-
-                let timeout_seconds = request
-                    .arguments
-                    .get("timeout_seconds")
-                    .and_then(Value::as_u64);
-
-                let working_directory = request
-                    .arguments
-                    .get("working_directory")
-                    .and_then(Value::as_str)
-                    .map(PathBuf::from);
+                let command = request.arguments.command.trim().to_string();
+                if command.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "ShellMode-executeCommand tool requires command"
+                    ));
+                }
+                let _hint = request.arguments.hint;
+                let timeout_seconds = request.arguments.timeout_seconds;
+                let working_directory = request.arguments.working_directory.map(PathBuf::from);
 
                 let context = ShellModeContext::default()
                     .with_timeout(timeout_seconds.unwrap_or(30))

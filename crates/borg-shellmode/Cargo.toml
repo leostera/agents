@@ -11,6 +11,7 @@ borg-agent = { path = "../borg-agent" }
 tracing.workspace = true
 tokio.workspace = true
 async-trait.workspace = true
+serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
