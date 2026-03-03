@@ -29,6 +29,70 @@ struct SearchMemoryArgs {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct PaginationArgs {
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SearchArgs {
+    query: String,
+    #[serde(rename = "resultTypes", default)]
+    result_types: Option<Vec<String>>,
+    #[serde(rename = "namespacePrefixes", default)]
+    namespace_prefixes: Option<Vec<String>>,
+    #[serde(rename = "kindUris", default)]
+    kind_uris: Option<Vec<String>>,
+    #[serde(rename = "fieldUris", default)]
+    field_uris: Option<Vec<String>>,
+    #[serde(default)]
+    pagination: Option<PaginationArgs>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CreateEntityArgs {
+    #[serde(rename = "kindUri")]
+    kind_uri: String,
+    source: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(rename = "entityUri", default)]
+    entity_uri: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GetEntityArgs {
+    #[serde(rename = "entityUri")]
+    entity_uri: String,
+    #[serde(rename = "includeRetracted", default)]
+    include_retracted: Option<bool>,
+    #[serde(rename = "factPagination", default)]
+    fact_pagination: Option<PaginationArgs>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ListFactsArgs {
+    #[serde(default)]
+    entity: Option<String>,
+    #[serde(default)]
+    field: Option<String>,
+    #[serde(rename = "includeRetracted", default)]
+    include_retracted: Option<bool>,
+    #[serde(default)]
+    since: Option<String>,
+    #[serde(default)]
+    until: Option<String>,
+    #[serde(default)]
+    pagination: Option<PaginationArgs>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct DefineNamespaceArgs {
     #[serde(rename = "namespaceUri")]
     namespace_uri: String,
@@ -747,43 +811,34 @@ pub fn build_memory_toolchain(
                 })
             }
         }))?
-        .add_tool(Tool::new(search_spec, None, move |request| {
+        .add_tool(Tool::new_transcoded(search_spec, None, move |request: borg_agent::ToolRequest<SearchArgs>| {
             let memory = memory_for_search_v2.clone();
             async move {
-                let query = request
+                let query = request.arguments.query.trim();
+                if query.is_empty() {
+                    return Err(anyhow!("Memory-search tool requires query"));
+                }
+                let result_types = request
                     .arguments
-                    .get("query")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("Memory-search tool requires query"))?;
-                let result_types: Vec<&str> = request
-                    .arguments
-                    .get("resultTypes")
-                    .and_then(Value::as_array)
-                    .map(|items| items.iter().filter_map(Value::as_str).collect())
-                    .unwrap_or_else(|| vec!["entity", "schema"]);
-                if !result_types.iter().any(|kind| *kind == "entity") {
+                    .result_types
+                    .unwrap_or_else(|| vec!["entity".to_string(), "schema".to_string()]);
+                if !result_types.iter().any(|kind| kind == "entity") {
                     let out = json!({ "results": [] });
                     return Ok(ToolResponse {
-                        content: ToolResultData::Text(serde_json::to_string(&out)?),
+                        content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
                     });
                 }
                 let ns = request
                     .arguments
-                    .get("namespacePrefixes")
-                    .and_then(Value::as_array)
-                    .and_then(|items| items.first())
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned);
+                    .namespace_prefixes
+                    .and_then(|items| items.first().cloned());
                 let kind = request
                     .arguments
-                    .get("kindUris")
-                    .and_then(Value::as_array)
-                    .and_then(|items| items.first())
-                    .and_then(Value::as_str)
-                    .and_then(|uri| uri.rsplit(':').next())
-                    .map(ToOwned::to_owned);
+                    .kind_uris
+                    .and_then(|items| items.first().cloned())
+                    .and_then(|uri| uri.rsplit(':').next().map(ToOwned::to_owned));
                 if let Ok(query_uri) = Uri::parse(query)
-                    && result_types.iter().any(|kind| *kind == "entity")
+                    && result_types.iter().any(|kind| kind == "entity")
                 {
                     let mut exact = None;
                     for _ in 0..40 {
@@ -812,23 +867,22 @@ pub fn build_memory_toolchain(
                         json!({ "results": [] })
                     };
                     return Ok(ToolResponse {
-                        content: ToolResultData::Text(serde_json::to_string(&out)?),
+                        content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
                     });
                 }
 
+                let _ = &request.arguments.field_uris;
+                let _ = request
+                    .arguments
+                    .pagination
+                    .as_ref()
+                    .and_then(|pagination| pagination.cursor.as_deref());
                 let limit = request
                     .arguments
-                    .get("pagination")
-                    .and_then(|v| v.get("limit"))
-                    .and_then(Value::as_u64)
-                    .map(|v| v as usize)
-                    .or_else(|| {
-                        request
-                            .arguments
-                            .get("limit")
-                            .and_then(Value::as_u64)
-                            .map(|v| v as usize)
-                    })
+                    .pagination
+                    .as_ref()
+                    .and_then(|pagination| pagination.limit)
+                    .or(request.arguments.limit)
                     .unwrap_or(25);
                 let results = memory
                     .search_query(SearchQuery {
@@ -859,26 +913,24 @@ pub fn build_memory_toolchain(
                     "results": items
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(serde_json::to_string(&out)?),
+                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
                 })
             }
         }))?
-        .add_tool(Tool::new(create_entity_spec, None, move |request| {
+        .add_tool(Tool::new_transcoded(create_entity_spec, None, move |request: borg_agent::ToolRequest<CreateEntityArgs>| {
             let memory = memory_for_create_entity.clone();
             async move {
-                let kind_uri = request
-                    .arguments
-                    .get("kindUri")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("Memory-createEntity tool requires kindUri"))?;
-                let source = request
-                    .arguments
-                    .get("source")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("Memory-createEntity tool requires source"))?;
+                let kind_uri = request.arguments.kind_uri.trim();
+                if kind_uri.is_empty() {
+                    return Err(anyhow!("Memory-createEntity tool requires kindUri"));
+                }
+                let source = request.arguments.source.trim();
+                if source.is_empty() {
+                    return Err(anyhow!("Memory-createEntity tool requires source"));
+                }
                 let source_uri = Uri::parse(source)?;
-                let label = request.arguments.get("label").and_then(Value::as_str);
-                let description = request.arguments.get("description").and_then(Value::as_str);
+                let label = request.arguments.label.as_deref();
+                let description = request.arguments.description.as_deref();
                 let mut parts = kind_uri.split(':');
                 let ns = parts
                     .next()
@@ -895,9 +947,7 @@ pub fn build_memory_toolchain(
                         kind_uri
                     ));
                 }
-                let entity = if let Some(entity_uri) =
-                    request.arguments.get("entityUri").and_then(Value::as_str)
-                {
+                let entity = if let Some(entity_uri) = request.arguments.entity_uri.as_deref() {
                     Uri::parse(entity_uri)?
                 } else {
                     Uri::from_parts(ns, kind, Some(&uuid::Uuid::now_v7().to_string()))?
@@ -935,33 +985,27 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(serde_json::to_string(&out)?),
+                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
                 })
             }
         }))?
-        .add_tool(Tool::new(get_entity_spec, None, move |request| {
+        .add_tool(Tool::new_transcoded(get_entity_spec, None, move |request: borg_agent::ToolRequest<GetEntityArgs>| {
             let memory = memory_for_get_entity.clone();
             async move {
-                let entity_uri = request
-                    .arguments
-                    .get("entityUri")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("Memory-getEntity tool requires entityUri"))?;
+                let entity_uri = request.arguments.entity_uri.trim();
+                if entity_uri.is_empty() {
+                    return Err(anyhow!("Memory-getEntity tool requires entityUri"));
+                }
                 let requested_uri = Uri::parse(entity_uri)?;
                 let same_as_group = resolve_same_as_group(&memory, &requested_uri).await?;
                 let canonical_uri = choose_canonical_uri(&same_as_group).unwrap_or(requested_uri);
                 let entity = memory.get_entity_uri(&canonical_uri).await?;
-                let include_retracted = request
-                    .arguments
-                    .get("includeRetracted")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                let include_retracted = request.arguments.include_retracted.unwrap_or(false);
                 let limit = request
                     .arguments
-                    .get("factPagination")
-                    .and_then(|value| value.get("limit"))
-                    .and_then(Value::as_u64)
-                    .map(|value| value as usize)
+                    .fact_pagination
+                    .as_ref()
+                    .and_then(|pagination| pagination.limit)
                     .unwrap_or(50);
                 let mut facts = list_facts_for_entity_group(
                     &memory,
@@ -981,7 +1025,7 @@ pub fn build_memory_toolchain(
                     "sameAs": same_as_group.iter().map(ToString::to_string).collect::<Vec<_>>(),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(serde_json::to_string(&out)?),
+                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
                 })
             }
         }))?
@@ -1093,43 +1137,38 @@ pub fn build_memory_toolchain(
                 })
             }
         }))?
-        .add_tool(Tool::new(list_facts_spec, None, move |request| {
+        .add_tool(Tool::new_transcoded(list_facts_spec, None, move |request: borg_agent::ToolRequest<ListFactsArgs>| {
             let memory = memory_for_list.clone();
             async move {
                 let entity = request
                     .arguments
-                    .get("entity")
-                    .and_then(Value::as_str)
+                    .entity
+                    .as_deref()
                     .map(Uri::parse)
                     .transpose()?;
                 let field = request
                     .arguments
-                    .get("field")
-                    .and_then(Value::as_str)
+                    .field
+                    .as_deref()
                     .map(Uri::parse)
                     .transpose()?;
-                let include_retracted = request
-                    .arguments
-                    .get("includeRetracted")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                let include_retracted = request.arguments.include_retracted.unwrap_or(false);
                 let limit = request
                     .arguments
-                    .get("pagination")
-                    .and_then(|value| value.get("limit"))
-                    .and_then(Value::as_u64)
-                    .map(|value| value as usize)
+                    .pagination
+                    .as_ref()
+                    .and_then(|value| value.limit)
                     .unwrap_or(50);
                 let since = request
                     .arguments
-                    .get("since")
-                    .and_then(Value::as_str)
+                    .since
+                    .as_deref()
                     .map(parse_rfc3339)
                     .transpose()?;
                 let until = request
                     .arguments
-                    .get("until")
-                    .and_then(Value::as_str)
+                    .until
+                    .as_deref()
                     .map(parse_rfc3339)
                     .transpose()?;
                 let mut facts = memory
@@ -1158,7 +1197,7 @@ pub fn build_memory_toolchain(
                     "warnings": warnings
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(serde_json::to_string(&out)?),
+                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
                 })
             }
         }))?
