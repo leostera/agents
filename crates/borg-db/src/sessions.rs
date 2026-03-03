@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use chrono::Utc;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tracing::debug;
 
 use borg_core::{Uri, uri};
@@ -177,6 +177,75 @@ impl BorgDb {
         )
         .execute(self.conn.pool())
         .await?;
+
+        let existing_ctx = sqlx::query!(
+            r#"SELECT context_snapshot_json as "context_snapshot_json: String"
+            FROM sessions
+            WHERE session_id = ?1
+            LIMIT 1"#,
+            session_id
+        )
+        .fetch_optional(self.conn.pool())
+        .await?
+        .and_then(|row| row.context_snapshot_json);
+
+        let mut snapshot = existing_ctx
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .unwrap_or_else(|| json!({}));
+
+        if !snapshot.is_object() {
+            snapshot = json!({});
+        }
+
+        if let Some(obj) = snapshot.as_object_mut() {
+            obj.insert(
+                "_session".to_string(),
+                json!({
+                    "last_message_index": next_index,
+                    "updated_at": now,
+                    "last_message": payload
+                }),
+            );
+        }
+
+        let snapshot_json = snapshot.to_string();
+        let updated = sqlx::query!(
+            r#"
+            UPDATE sessions
+            SET context_snapshot_json = ?1, updated_at = ?2
+            WHERE session_id = ?3
+            "#,
+            snapshot_json,
+            now,
+            session_id,
+        )
+        .execute(self.conn.pool())
+        .await?
+        .rows_affected();
+
+        if updated == 0 {
+            let users_json = json!(["borg:user:system"]).to_string();
+            let port = "borg:port:runtime".to_string();
+            sqlx::query!(
+                r#"
+                INSERT INTO sessions(
+                    session_id,
+                    users_json,
+                    port,
+                    context_snapshot_json,
+                    updated_at
+                )
+                VALUES(?1, ?2, ?3, ?4, ?5)
+                "#,
+                session_id,
+                users_json,
+                port,
+                snapshot.to_string(),
+                now,
+            )
+            .execute(self.conn.pool())
+            .await?;
+        }
 
         Ok(next_index)
     }

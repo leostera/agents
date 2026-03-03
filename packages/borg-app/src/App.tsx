@@ -1,3 +1,4 @@
+import { DevModeApp } from "@borg/devmode";
 import { createI18n } from "@borg/i18n";
 import { Card, TooltipProvider } from "@borg/ui";
 import React, { useMemo } from "react";
@@ -11,6 +12,7 @@ const DASHBOARD_PREFIXES = [
   "/clockwork",
   "/observability",
   "/memory",
+  "/taskgraph",
   "/settings",
   "/overview",
 ];
@@ -33,6 +35,14 @@ export function App() {
             </p>
           </Card>
         </section>
+      </TooltipProvider>
+    );
+  }
+
+  if (pathname === "/devmode" || pathname.startsWith("/devmode/")) {
+    return (
+      <TooltipProvider>
+        <DevModeApp />
       </TooltipProvider>
     );
   }

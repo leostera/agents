@@ -562,6 +562,7 @@ dependencies = [
  "anyhow",
  "axum 0.7.9",
  "borg-agent",
+ "borg-clockwork",
  "borg-codemode",
  "borg-core",
  "borg-db",
@@ -601,6 +602,17 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "borg-clockwork"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "borg-agent",
+ "borg-db",
+ "serde_json",
  "uuid",
 ]
 
@@ -673,6 +685,7 @@ dependencies = [
  "async-trait",
  "borg-agent",
  "borg-apps",
+ "borg-clockwork",
  "borg-codemode",
  "borg-core",
  "borg-db",

@@ -33,7 +33,7 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = r#"You are Borg's default agent, and thi
 
 ## Rules for Apps and Capabilities
 
-0. Use `Apps-listCapabilities` to discover available app capabilities.
+0. Use `Apps-listApps` to discover apps, then `Apps-getApp` to inspect capabilities and instructions for a specific app.
 1. Call discovered capabilities directly by tool name, using the capability's mode-specific input shape.
 2. Prefer app capabilities over generating raw runtime code when a matching capability exists.
 
@@ -73,6 +73,7 @@ pub struct Agent {
     pub agent_id: Uri,
     pub model: String,
     pub system_prompt: String,
+    pub behavior_prompt: String,
     pub max_turns: usize,
     pub tools: Vec<ToolSpec>,
 }
@@ -83,6 +84,7 @@ impl Agent {
             agent_id,
             model: DEFAULT_MODEL.to_string(),
             system_prompt: String::new(),
+            behavior_prompt: String::new(),
             max_turns: DEFAULT_MAX_TURNS,
             tools: Vec::new(),
         }
@@ -109,6 +111,11 @@ impl Agent {
 
     pub fn with_system_prompt(mut self, system_prompt: impl Into<String>) -> Self {
         self.system_prompt = system_prompt.into();
+        self
+    }
+
+    pub fn with_behavior_prompt(mut self, behavior_prompt: impl Into<String>) -> Self {
+        self.behavior_prompt = behavior_prompt.into();
         self
     }
 
@@ -195,7 +202,8 @@ impl Agent {
                         .await;
                     }
                 };
-                let provider_messages = match to_provider_messages(&context.messages) {
+                let provider_input_messages = context.provider_input_messages();
+                let provider_messages = match to_provider_messages(&provider_input_messages) {
                     Ok(messages) => messages,
                     Err(err) => {
                         return finish_session(
@@ -208,7 +216,7 @@ impl Agent {
                 let req = LlmRequest {
                     model: self.model.clone(),
                     messages: provider_messages,
-                    tools: to_provider_tool_specs(&context.tools),
+                    tools: to_provider_tool_specs(&context.available_tools),
                     temperature: None,
                     max_tokens: None,
                     api_key: None,

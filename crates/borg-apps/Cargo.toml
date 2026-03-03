@@ -14,6 +14,7 @@ borg-core = { path = "../borg-core" }
 borg-db = { path = "../borg-db" }
 borg-memory = { path = "../borg-memory" }
 borg-taskgraph = { path = "../borg-taskgraph" }
+borg-clockwork = { path = "../borg-clockwork" }
 oauth2.workspace = true
 serde.workspace = true
 serde_json.workspace = true

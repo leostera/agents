@@ -296,6 +296,21 @@ async fn bridge_loop(
             continue;
         }
 
+        if let Ok(ctx) = message.port_context.to_json() {
+            if let Err(err) = db
+                .upsert_port_session_context(&port_name, &session_id, &ctx)
+                .await
+            {
+                warn!(
+                    target: "borg_ports",
+                    error = %err,
+                    port_name = %port_name,
+                    session_id = %session_id,
+                    "failed to persist port session context snapshot"
+                );
+            }
+        }
+
         let actor_id = select_actor_id(session_id.clone(), bound_actor_id, legacy_actor_id);
 
         let output = match sup

@@ -4,6 +4,7 @@ members = [
   "crates/borg-api",
   "crates/borg-apps",
   "crates/borg-cli",
+  "crates/borg-clockwork",
   "crates/borg-cmd",
   "crates/borg-taskgraph",
   "crates/borg-core",

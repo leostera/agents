@@ -2,6 +2,7 @@ use anyhow::Result;
 use borg_agent::{Agent, Message, Session, SessionContextManager, SessionEventPayload, ToolSpec};
 use borg_apps::BorgApps;
 use borg_apps::default_tool_specs as default_apps_tool_specs;
+use borg_clockwork::default_clockwork_tool_specs;
 use borg_codemode::default_tool_specs;
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
@@ -30,18 +31,7 @@ impl SessionManager {
             .unwrap_or_else(|| uri!("borg", "session"));
 
         let agent_id = self.resolve_agent_id(msg, &session_id).await?;
-        let default_tools = self.default_tools_for_session().await?;
-        let mut agent = Agent::load(&agent_id, &self.db).await?;
-        if let Some(spec) = self.db.get_agent_spec(&agent_id).await? {
-            agent = agent
-                .with_model(spec.model)
-                .with_system_prompt(spec.system_prompt)
-                .with_tools(default_tools.clone());
-        } else {
-            agent = agent
-                .with_model(self.model.clone())
-                .with_tools(default_tools.clone());
-        }
+        let agent = self.resolve_agent_for_turn(&agent_id, None).await?;
 
         let mut session = Session::new(session_id.clone(), agent, self.db.clone()).await?;
         if let Some((port, ctx)) = self.db.get_any_port_session_context(&session_id).await?
@@ -52,6 +42,41 @@ impl SessionManager {
             ));
         }
         Ok(session)
+    }
+
+    pub async fn resolve_agent_for_turn(
+        &self,
+        agent_id: &Uri,
+        behavior_id: Option<&Uri>,
+    ) -> Result<Agent> {
+        let default_tools = self.default_tools_for_session().await?;
+        let mut agent = Agent::load(agent_id, &self.db).await?;
+        if let Some(spec) = self.db.get_agent_spec(agent_id).await? {
+            agent = agent
+                .with_model(spec.model)
+                .with_system_prompt(spec.system_prompt);
+        } else {
+            agent = agent.with_model(self.model.clone());
+        }
+
+        let behavior_prompt = if let Some(behavior_id) = behavior_id {
+            self.db
+                .get_behavior(behavior_id)
+                .await?
+                .map(|behavior| behavior.system_prompt)
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let behavior_prompt = if behavior_prompt.trim() == agent.system_prompt.trim() {
+            String::new()
+        } else {
+            behavior_prompt
+        };
+
+        Ok(agent
+            .with_behavior_prompt(behavior_prompt)
+            .with_tools(default_tools))
     }
 
     async fn resolve_agent_id(&self, msg: &UserMessage, session_id: &Uri) -> Result<Uri> {
@@ -97,6 +122,7 @@ fn ensure_default_tools(existing: Vec<ToolSpec>) -> Vec<ToolSpec> {
         .into_iter()
         .chain(default_memory_tool_specs().into_iter())
         .chain(default_taskgraph_tool_specs().into_iter())
+        .chain(default_clockwork_tool_specs().into_iter())
         .chain(default_exec_admin_tool_specs().into_iter())
         .chain(default_apps_tool_specs().into_iter())
     {

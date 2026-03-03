@@ -34,17 +34,6 @@ impl Session {
             follow_up_messages: Vec::new(),
         };
 
-        let existing_messages = session
-            .db
-            .count_session_messages(&session.session_id)
-            .await?;
-        if existing_messages == 0 && !session.agent.system_prompt.is_empty() {
-            session
-                .add_message(Message::System {
-                    content: session.agent.system_prompt.clone(),
-                })
-                .await?;
-        }
         session.last_processed_len = session
             .db
             .count_session_messages(&session.session_id)

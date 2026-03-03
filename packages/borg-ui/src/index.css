@@ -4,6 +4,7 @@
 @import "@fontsource-variable/noto-sans";
 @source "../**/*.{ts,tsx}";
 @source "../../borg-app/src/**/*.{ts,tsx}";
+@source "../../borg-devmode/src/**/*.{ts,tsx}";
 @source "../../borg-explorer/src/**/*.{ts,tsx}";
 
 @custom-variant dark (&:is(.dark *));
@@ -134,4 +135,149 @@
   html {
     @apply font-sans;
     }
+}
+
+@layer components {
+  .chat-markdown {
+    line-height: 1.5;
+    color: inherit;
+  }
+
+  .chat-markdown > :first-child {
+    margin-top: 0;
+  }
+
+  .chat-markdown > :last-child {
+    margin-bottom: 0;
+  }
+
+  .chat-markdown p,
+  .chat-markdown ul,
+  .chat-markdown ol,
+  .chat-markdown blockquote,
+  .chat-markdown pre,
+  .chat-markdown table,
+  .chat-markdown hr {
+    margin: 0.5rem 0;
+  }
+
+  .chat-markdown h1,
+  .chat-markdown h2,
+  .chat-markdown h3,
+  .chat-markdown h4 {
+    margin: 0.75rem 0 0.5rem;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+
+  .chat-markdown h1 {
+    font-size: 1.25rem;
+  }
+
+  .chat-markdown h2 {
+    font-size: 1.125rem;
+  }
+
+  .chat-markdown h3 {
+    font-size: 1rem;
+  }
+
+  .chat-markdown ul,
+  .chat-markdown ol {
+    padding-left: 1.25rem;
+  }
+
+  .chat-markdown ul {
+    list-style: disc outside;
+  }
+
+  .chat-markdown ol {
+    list-style: decimal outside;
+  }
+
+  .chat-markdown ul ul {
+    list-style-type: circle;
+  }
+
+  .chat-markdown ul ul ul {
+    list-style-type: square;
+  }
+
+  .chat-markdown ol ol {
+    list-style-type: lower-alpha;
+  }
+
+  .chat-markdown ol ol ol {
+    list-style-type: lower-roman;
+  }
+
+  .chat-markdown li + li {
+    margin-top: 0.2rem;
+  }
+
+  .chat-markdown a {
+    color: color-mix(in oklab, var(--color-primary) 85%, var(--color-foreground));
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .chat-markdown blockquote {
+    border-left: 3px solid var(--color-border);
+    padding-left: 0.75rem;
+    color: var(--color-muted-foreground);
+  }
+
+  .chat-markdown :not(pre) > code {
+    border: 1px solid var(--color-border);
+    border-radius: 0.375rem;
+    background: color-mix(in oklab, var(--color-muted) 75%, transparent);
+    padding: 0.1rem 0.35rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.85em;
+  }
+
+  .chat-markdown pre {
+    overflow-x: auto;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background: color-mix(in oklab, var(--color-muted) 82%, transparent);
+    padding: 0.7rem 0.85rem;
+  }
+
+  .chat-markdown pre code {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.85em;
+    white-space: pre;
+  }
+
+  .chat-markdown table {
+    width: 100%;
+    border-collapse: collapse;
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+  }
+
+  .chat-markdown thead {
+    background: color-mix(in oklab, var(--color-muted) 85%, transparent);
+  }
+
+  .chat-markdown th,
+  .chat-markdown td {
+    border: 1px solid var(--color-border);
+    padding: 0.45rem 0.6rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .chat-markdown th {
+    font-weight: 600;
+  }
+
+  .chat-markdown tr:nth-child(even) td {
+    background: color-mix(in oklab, var(--color-muted) 45%, transparent);
+  }
 }

@@ -2,6 +2,8 @@
 
 import { ArrowUp, Square } from "lucide-react";
 import * as React from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { cn } from "@/lib/utils";
 
@@ -12,6 +14,7 @@ export type ChatMessageItem = {
   role: ChatRole;
   text: string;
   timestamp?: string | null;
+  pending?: boolean;
 };
 
 type ChatThreadProps = {
@@ -31,24 +34,40 @@ export function ChatThread({
   className,
   children,
 }: ChatThreadProps) {
+  const endRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, isLoading]);
+
   return (
-    <section className={cn("flex h-full min-h-0 flex-col", className)}>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 md:px-4 md:py-4">
+    <section
+      className={cn(
+        "flex h-full min-h-0 flex-col bg-background",
+        className,
+      )}
+    >
+      <div className="relative min-h-0 flex-1 overflow-x-auto overflow-y-auto px-4 pt-4">
         {messages.length === 0 ? (
-          <div className="flex h-full min-h-[180px] flex-col items-center justify-center text-center">
-            <p className="text-sm font-semibold">{emptyTitle}</p>
-            <p className="text-muted-foreground mt-1 text-xs">{emptyDescription}</p>
+          <div className="mx-auto flex h-full min-h-[260px] w-full max-w-3xl flex-col items-start justify-center px-2">
+            <p className="font-semibold text-2xl">{emptyTitle}</p>
+            <p className="text-muted-foreground mt-2 text-lg">{emptyDescription}</p>
           </div>
         ) : (
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 pb-4">
             {messages.map((message) => (
               <ChatMessage key={message.id} message={message} />
             ))}
             {isLoading ? <ChatLoadingIndicator /> : null}
+            <div ref={endRef} />
           </div>
         )}
       </div>
-      {children ? <div className="mx-auto w-full max-w-3xl">{children}</div> : null}
+      {children ? (
+        <div className="sticky bottom-0 mx-auto w-full max-w-3xl bg-background pb-4">
+          {children}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -59,28 +78,41 @@ type ChatMessageProps = {
 
 export function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === "user";
+  const timestampLabel =
+    typeof message.timestamp === "string" && message.timestamp.trim().length > 0
+      ? message.timestamp
+      : "just now";
   const toneClass =
     message.role === "assistant"
-      ? "bg-muted text-foreground"
+      ? "text-foreground"
       : message.role === "system"
         ? "border border-dashed border-border bg-background text-muted-foreground"
-        : "bg-primary text-primary-foreground";
+        : "bg-muted text-foreground";
 
   return (
     <article className={cn("flex", isUser ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[82%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm",
+          "max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm",
           toneClass,
+          message.role === "assistant" ? "px-2 py-1" : "",
+          message.pending ? "opacity-70" : "",
         )}
       >
-        <p className="mb-1 text-[10px] uppercase tracking-[0.1em] opacity-70">
-          {message.role}
-        </p>
-        <p>{message.text}</p>
-        {message.timestamp ? (
-          <p className="mt-1 text-[10px] opacity-70">{message.timestamp}</p>
-        ) : null}
+        <div className="chat-markdown markdown-body text-sm">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+        </div>
+        <div
+          className={cn(
+            "mt-1 flex items-center gap-2 text-[10px] opacity-70",
+            isUser ? "justify-end" : "justify-start",
+          )}
+        >
+          <p>{timestampLabel}</p>
+          {message.pending ? (
+            <span>sending...</span>
+          ) : null}
+        </div>
       </div>
     </article>
   );
@@ -115,6 +147,8 @@ export function ChatComposerShell({
   placeholder = "Send a message...",
   className,
 }: ChatComposerShellProps) {
+  const formRef = React.useRef<HTMLFormElement | null>(null);
+
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!isRunning && value.trim()) {
@@ -123,21 +157,19 @@ export function ChatComposerShell({
   };
 
   return (
-    <form onSubmit={handleSubmit} className={cn("p-3 pt-2", className)}>
-      <div className="flex items-end gap-2 rounded-2xl border bg-background px-3 py-2 shadow-sm">
+    <form ref={formRef} onSubmit={handleSubmit} className={cn("p-3 pt-2", className)}>
+      <div className="flex items-end gap-2 rounded-2xl border border-input bg-background px-3 py-2">
         <textarea
           value={value}
           onChange={(event) => onChange(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              if (!isRunning && value.trim()) {
-                onSubmit();
-              }
+              formRef.current?.requestSubmit();
             }
           }}
           placeholder={placeholder}
-          className="max-h-32 min-h-8 flex-1 resize-none bg-transparent py-1 text-sm leading-normal outline-none placeholder:text-muted-foreground"
+          className="max-h-32 min-h-12 flex-1 resize-none bg-transparent py-1 text-sm leading-normal outline-none placeholder:text-muted-foreground"
           rows={1}
         />
         {isRunning ? (

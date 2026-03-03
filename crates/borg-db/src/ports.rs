@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use borg_core::{Uri, uri};
 use chrono::Utc;
 use serde_json::Value;
+use sqlx::Row;
 
 use crate::{BorgDb, PortRecord};
 
@@ -646,29 +647,53 @@ impl BorgDb {
         session_id: &Uri,
         ctx: &Value,
     ) -> Result<()> {
-        let port = port.to_string();
-        let session_id = session_id.to_string();
         let ctx_json = ctx.to_string();
         let now = Utc::now().to_rfc3339();
-        let created_at = now.clone();
-        let updated_at = now;
-        sqlx::query!(
+        let session_id = session_id.to_string();
+        let expected_port_id = format!("borg:port:{port}");
+        let updated = sqlx::query(
             r#"
-            INSERT INTO port_session_ctx(port, session_id, ctx_json, created_at, updated_at)
-            VALUES(?1, ?2, ?3, ?4, ?5)
-            ON CONFLICT(port, session_id) DO UPDATE SET
-              ctx_json = excluded.ctx_json,
-              updated_at = excluded.updated_at
+            UPDATE sessions
+            SET context_snapshot_json = ?1, updated_at = ?2
+            WHERE session_id = ?3
+              AND (port = ?4 OR port = ?5)
             "#,
-            port,
-            session_id,
-            ctx_json,
-            created_at,
-            updated_at,
         )
+        .bind(&ctx_json)
+        .bind(now)
+        .bind(&session_id)
+        .bind(port)
+        .bind(&expected_port_id)
         .execute(self.conn.pool())
         .await
-        .context("failed to upsert port session context")?;
+        .context("failed to upsert session context snapshot")?
+        .rows_affected();
+        if updated == 0 {
+            let fallback_users_json = serde_json::json!(["borg:user:system"]).to_string();
+            sqlx::query(
+                r#"
+                INSERT INTO sessions(
+                    session_id,
+                    users_json,
+                    port,
+                    context_snapshot_json,
+                    updated_at
+                )
+                VALUES(?1, ?2, ?3, ?4, ?5)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  context_snapshot_json = excluded.context_snapshot_json,
+                  updated_at = excluded.updated_at
+                "#,
+            )
+            .bind(&session_id)
+            .bind(fallback_users_json)
+            .bind(expected_port_id)
+            .bind(ctx_json)
+            .bind(Utc::now().to_rfc3339())
+            .execute(self.conn.pool())
+            .await
+            .context("failed to create fallback session context snapshot")?;
+        }
         Ok(())
     }
 
@@ -677,25 +702,31 @@ impl BorgDb {
         port: &str,
         session_id: &Uri,
     ) -> Result<Option<Value>> {
-        let port = port.to_string();
         let session_id = session_id.to_string();
-        let row = sqlx::query!(
-            r#"SELECT ctx_json as "ctx_json!: String"
-            FROM port_session_ctx
-            WHERE port = ?1 AND session_id = ?2
+        let expected_port_id = format!("borg:port:{port}");
+        let row = sqlx::query(
+            r#"SELECT context_snapshot_json
+            FROM sessions
+            WHERE session_id = ?1
+              AND (port = ?2 OR port = ?3)
+              AND context_snapshot_json IS NOT NULL
             LIMIT 1"#,
-            port,
-            session_id,
         )
+        .bind(&session_id)
+        .bind(port)
+        .bind(expected_port_id)
         .fetch_optional(self.conn.pool())
         .await
-        .context("failed to query port session context")?;
+        .context("failed to query session context snapshot")?;
 
         let Some(row) = row else {
             return Ok(None);
         };
-        let parsed =
-            serde_json::from_str(&row.ctx_json).context("invalid port session context json")?;
+        let raw: Option<String> = row.try_get("context_snapshot_json")?;
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        let parsed = serde_json::from_str(&raw).context("invalid session context snapshot json")?;
         Ok(Some(parsed))
     }
 
@@ -704,26 +735,32 @@ impl BorgDb {
         session_id: &Uri,
     ) -> Result<Option<(String, Value)>> {
         let session_id = session_id.to_string();
-        let row = sqlx::query!(
-            r#"SELECT
-                port as "port!: String",
-                ctx_json as "ctx_json!: String"
-            FROM port_session_ctx
+        let row = sqlx::query(
+            r#"SELECT port, context_snapshot_json
+            FROM sessions
             WHERE session_id = ?1
-            ORDER BY updated_at DESC
+              AND context_snapshot_json IS NOT NULL
             LIMIT 1"#,
-            session_id,
         )
+        .bind(&session_id)
         .fetch_optional(self.conn.pool())
         .await
-        .context("failed to query session port context")?;
+        .context("failed to query session context snapshot")?;
 
         let Some(row) = row else {
             return Ok(None);
         };
-        let parsed =
-            serde_json::from_str(&row.ctx_json).context("invalid session port context json")?;
-        Ok(Some((row.port, parsed)))
+        let port_value: String = row.try_get("port")?;
+        let raw: Option<String> = row.try_get("context_snapshot_json")?;
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        let parsed = serde_json::from_str(&raw).context("invalid session context snapshot json")?;
+        let port_name = port_value
+            .strip_prefix("borg:port:")
+            .unwrap_or(port_value.as_str())
+            .to_string();
+        Ok(Some((port_name, parsed)))
     }
 
     pub async fn list_port_session_ids(&self, port: &str) -> Result<Vec<Uri>> {
@@ -744,16 +781,25 @@ impl BorgDb {
     }
 
     pub async fn clear_port_session_context(&self, port: &str, session_id: &Uri) -> Result<u64> {
-        let port = port.to_string();
         let session_id = session_id.to_string();
-        let deleted = sqlx::query!(
-            "DELETE FROM port_session_ctx WHERE port = ?1 AND session_id = ?2",
-            port,
-            session_id,
+        let expected_port_id = format!("borg:port:{port}");
+        let now = Utc::now().to_rfc3339();
+        let deleted = sqlx::query(
+            r#"
+            UPDATE sessions
+            SET context_snapshot_json = NULL, updated_at = ?1
+            WHERE session_id = ?2
+              AND (port = ?3 OR port = ?4)
+              AND context_snapshot_json IS NOT NULL
+            "#,
         )
+        .bind(now)
+        .bind(session_id)
+        .bind(port)
+        .bind(expected_port_id)
         .execute(self.conn.pool())
         .await
-        .context("failed to clear port session context")?
+        .context("failed to clear session context snapshot")?
         .rows_affected();
         Ok(deleted)
     }

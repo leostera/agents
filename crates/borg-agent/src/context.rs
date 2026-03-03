@@ -7,10 +7,40 @@ use serde_json::json;
 use crate::{Agent, Message, ToolSpec};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailableCapability {
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextWindow {
-    pub agent: Agent,
-    pub messages: Vec<Message>,
-    pub tools: Vec<ToolSpec>,
+    pub system_prompt: String,
+    pub behavior_prompt: String,
+    pub available_tools: Vec<ToolSpec>,
+    pub available_capabilities: Vec<AvailableCapability>,
+    pub user_messages: Vec<Message>,
+    pub assistant_messages: Vec<Message>,
+    pub tool_calls: Vec<Message>,
+    pub tool_responses: Vec<Message>,
+    pub ordered_messages: Vec<Message>,
+}
+
+impl ContextWindow {
+    pub fn provider_input_messages(&self) -> Vec<Message> {
+        let mut messages = Vec::with_capacity(self.ordered_messages.len() + 2);
+        if !self.system_prompt.trim().is_empty() {
+            messages.push(Message::System {
+                content: self.system_prompt.clone(),
+            });
+        }
+        if !self.behavior_prompt.trim().is_empty() {
+            messages.push(Message::System {
+                content: self.behavior_prompt.clone(),
+            });
+        }
+        messages.extend(self.ordered_messages.clone());
+        messages
+    }
 }
 
 #[async_trait]
@@ -39,11 +69,7 @@ impl ContextManager for PassthroughContextManager {
             None,
             &agent.agent_id.to_string(),
         );
-        Ok(ContextWindow {
-            agent: agent.clone(),
-            messages,
-            tools: agent.tools.clone(),
-        })
+        Ok(build_context_window(agent, messages))
     }
 }
 
@@ -87,11 +113,7 @@ impl ContextManager for CompactingContextManager {
                 Some(self.max_chars),
                 &agent.agent_id.to_string(),
             );
-            return Ok(ContextWindow {
-                agent: agent.clone(),
-                messages: pinned,
-                tools: agent.tools.clone(),
-            });
+            return Ok(build_context_window(agent, pinned));
         }
 
         let split_at = messages.len().saturating_sub(self.keep_recent_messages);
@@ -136,11 +158,7 @@ impl ContextManager for CompactingContextManager {
             Some(self.max_chars),
             &agent.agent_id.to_string(),
         );
-        Ok(ContextWindow {
-            agent: agent.clone(),
-            messages: compacted,
-            tools: agent.tools.clone(),
-        })
+        Ok(build_context_window(agent, compacted))
     }
 }
 
@@ -164,14 +182,71 @@ impl ContextManager for SessionContextManager {
     async fn build_context(&self, agent: &Agent, messages: &[Message]) -> Result<ContextWindow> {
         let context = self.inner.build_context(agent, messages).await?;
         let messages = with_pinned_telegram_session_context(
-            context.messages,
+            context.ordered_messages,
             self.telegram_session_context.clone(),
         );
-        Ok(ContextWindow {
-            agent: context.agent,
-            messages,
-            tools: context.tools,
+        Ok(build_context_window(agent, messages))
+    }
+}
+
+fn build_context_window(agent: &Agent, messages: Vec<Message>) -> ContextWindow {
+    let ordered_messages = messages
+        .into_iter()
+        .filter(|message| match message {
+            Message::System { content } => {
+                let trimmed = content.trim();
+                !trimmed.eq(agent.system_prompt.trim()) && !trimmed.eq(agent.behavior_prompt.trim())
+            }
+            _ => true,
         })
+        .collect::<Vec<_>>();
+    let available_tools = agent.tools.clone();
+    let available_capabilities = available_tools
+        .iter()
+        .map(|tool| AvailableCapability {
+            name: tool.name.clone(),
+            description: tool.description.clone(),
+        })
+        .collect::<Vec<_>>();
+    let user_messages = ordered_messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::User { .. } => Some(message.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let assistant_messages = ordered_messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::Assistant { .. } => Some(message.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let tool_calls = ordered_messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolCall { .. } => Some(message.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let tool_responses = ordered_messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult { .. } => Some(message.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    ContextWindow {
+        system_prompt: agent.system_prompt.clone(),
+        behavior_prompt: agent.behavior_prompt.clone(),
+        available_tools,
+        available_capabilities,
+        user_messages,
+        assistant_messages,
+        tool_calls,
+        tool_responses,
+        ordered_messages,
     }
 }
 

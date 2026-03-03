@@ -1,5 +1,9 @@
-import { createBorgApiClient, type SessionRecord } from "@borg/api";
-import { Badge, ChatThread, type ChatMessageItem } from "@borg/ui";
+import {
+  createBorgApiClient,
+  type SessionContextRecord,
+  type SessionRecord,
+} from "@borg/api";
+import { ChatThread, EntityLink, JsonTreeViewer } from "@borg/ui";
 import React from "react";
 
 const borgApi = createBorgApiClient();
@@ -10,20 +14,21 @@ type SessionDetailsPageProps = {
 
 export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
   const [session, setSession] = React.useState<SessionRecord | null>(null);
+  const [sessionContext, setSessionContext] =
+    React.useState<SessionContextRecord | null>(null);
   const [messages, setMessages] = React.useState<Record<string, unknown>[]>([]);
   const [isLoading, setIsLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
-  const chatMessages = React.useMemo<ChatMessageItem[]>(() => {
-    return messages.map((message, index) =>
-      mapSessionMessageToChatItem(message, index)
-    );
+  const chatMessages = React.useMemo(() => {
+    return toChatMessages(messages);
   }, [messages]);
 
   React.useEffect(() => {
     if (!sessionId.trim()) {
       setError("Missing session id");
       setSession(null);
+      setSessionContext(null);
       setIsLoading(false);
       return;
     }
@@ -38,9 +43,14 @@ export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
         if (!active) return;
         setSession(row);
         if (!row) {
+          setSessionContext(null);
           setMessages([]);
           return;
         }
+
+        const context = await borgApi.getSessionContext(sessionId);
+        if (!active) return;
+        setSessionContext(context);
 
         const allMessages: Record<string, unknown>[] = [];
         const pageSize = 500;
@@ -60,6 +70,7 @@ export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
       } catch (loadError) {
         if (!active) return;
         setSession(null);
+        setSessionContext(null);
         setMessages([]);
         setError(
           loadError instanceof Error
@@ -90,218 +101,184 @@ export function SessionDetailsPage({ sessionId }: SessionDetailsPageProps) {
   }
 
   return (
-    <section className="space-y-4">
-      <section className="grid gap-3 md:grid-cols-2">
-        <div>
-          <p className="text-muted-foreground text-xs">Session ID</p>
-          <p className="font-mono text-xs break-all">{session.session_id}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground text-xs">Users</p>
-          <p className="font-mono text-xs break-all">
-            {session.users.join(", ")}
-          </p>
-        </div>
-        <div>
-          <p className="text-muted-foreground text-xs">Port</p>
-          <Badge variant="outline">{session.port}</Badge>
-        </div>
-        <div>
-          <p className="text-muted-foreground text-xs">Updated</p>
-          <p>{new Date(session.updated_at).toLocaleString()}</p>
-        </div>
-      </section>
-
-      <section className="space-y-2">
-        <p className="text-sm font-semibold">Session Messages</p>
-        <div className="h-[420px] rounded-xl border">
-          <ChatThread
-            messages={chatMessages}
-            emptyTitle="No messages found"
-            emptyDescription="This session has no chat history yet."
-          />
+    <section className="flex h-screen max-h-screen min-h-0 flex-col gap-4 overflow-hidden">
+      <section className="rounded-lg border bg-card p-3">
+        <div className="grid gap-3 md:grid-cols-4">
+          <div>
+            <p className="text-muted-foreground text-xs">Session ID</p>
+            <p className="font-mono text-xs break-all">{session.session_id}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground text-xs">Port</p>
+            <EntityLink uri={session.port} name={portNameFromUri(session.port)} />
+          </div>
+          <div>
+            <p className="text-muted-foreground text-xs">Users</p>
+            <p className="font-mono text-xs break-all">
+              {session.users.join(", ")}
+            </p>
+          </div>
+          <div>
+            <p className="text-muted-foreground text-xs">Updated</p>
+            <p className="font-mono text-xs break-all">
+              {new Date(session.updated_at).toLocaleString()}
+            </p>
+          </div>
         </div>
       </section>
 
-      <section className="space-y-2">
-        <p className="text-sm font-semibold">Raw Session JSON</p>
-        <pre className="bg-muted/30 overflow-x-auto rounded-lg border p-3 text-xs leading-relaxed">
-          {JSON.stringify(session, null, 2)}
-        </pre>
+      <section className="grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
+        <section className="flex min-h-0 flex-col gap-2">
+          <p className="text-sm font-semibold">Messages</p>
+          <div className="min-h-0 flex-1 overflow-hidden rounded-xl border bg-card">
+            <ChatThread
+              messages={chatMessages}
+              emptyTitle="No messages found"
+              emptyDescription="This session has no chat history yet."
+            />
+          </div>
+        </section>
+
+        <section className="flex min-h-0 flex-col gap-2">
+          <p className="text-sm font-semibold">Context</p>
+          <div className="bg-muted/30 min-h-0 flex-1 overflow-auto rounded-lg border p-2">
+            <JsonTreeViewer
+              value={sessionContext ?? { message: "No session context found." }}
+              defaultExpandedDepth={2}
+            />
+          </div>
+        </section>
       </section>
+
     </section>
   );
 }
 
-function mapSessionMessageToChatItem(
-  payload: Record<string, unknown>,
-  index: number
-): ChatMessageItem {
-  const role = detectMessageRole(payload);
-  const text = extractMessageText(payload);
-  const timestamp = formatMessageTimestamp(payload);
-  const id = `session-message-${index}`;
-  return { id, role, text: text.trim() || JSON.stringify(payload, null, 2), timestamp };
-}
+type SessionChatMessage = {
+  id: string;
+  role: "assistant" | "user" | "system";
+  text: string;
+  timestamp: string;
+};
 
-function detectMessageRole(
-  payload: Record<string, unknown>
-): ChatMessageItem["role"] {
+function detectMessageRole(payload: Record<string, unknown>): SessionChatMessage["role"] {
   const typeCandidate = payload.type;
   if (typeof typeCandidate === "string") {
-    const normalized = typeCandidate.trim().toLowerCase();
-    if (normalized === "assistant") return "assistant";
-    if (normalized === "user") return "user";
-    if (normalized === "system") return "system";
-    if (
-      normalized === "tool_call" ||
-      normalized === "tool_result" ||
-      normalized === "session_event"
-    ) {
-      return "system";
-    }
+    const type = typeCandidate.trim().toLowerCase();
+    if (type === "assistant") return "assistant";
+    if (type === "user") return "user";
+    if (type === "system") return "system";
+    if (type === "tool_call" || type === "tool_result" || type === "session_event") return "system";
   }
 
-  const candidates = [
-    payload.role,
-    payload.author,
-    getNested(payload, ["message", "role"]),
-    getNested(payload, ["payload", "role"]),
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string") continue;
-    const normalized = candidate.trim().toLowerCase();
-    if (normalized === "assistant" || normalized === "agent")
-      return "assistant";
-    if (normalized === "user") return "user";
-    if (normalized === "system") return "system";
+  const roleCandidate =
+    typeof payload.role === "string"
+      ? payload.role.trim().toLowerCase()
+      : typeof payload.author === "string"
+        ? payload.author.trim().toLowerCase()
+        : null;
+  if (roleCandidate) {
+    if (roleCandidate === "assistant" || roleCandidate === "agent") return "assistant";
+    if (roleCandidate === "user") return "user";
   }
-
-  const variantCandidates: Array<[string, ChatMessageItem["role"]]> = [
-    ["assistant", "assistant"],
-    ["user", "user"],
-    ["system", "system"],
-    ["toolcall", "system"],
-    ["toolresult", "system"],
-    ["sessionevent", "system"],
-  ];
-  for (const [variant, role] of variantCandidates) {
-    if (hasTopLevelVariant(payload, variant)) return role;
-  }
-
   return "system";
 }
 
 function extractMessageText(payload: Record<string, unknown>): string {
+  if (typeof payload.content === "string" && payload.content.trim()) {
+    return payload.content;
+  }
+  if (typeof payload.text === "string" && payload.text.trim()) {
+    return payload.text;
+  }
+  if (payload.type === "tool_call") {
+    const name = typeof payload.name === "string" ? payload.name : "tool";
+    return `Tool call: ${name}`;
+  }
+  if (payload.type === "tool_result") {
+    const name = typeof payload.name === "string" ? payload.name : "tool";
+    return `Tool result: ${name}`;
+  }
+  return safeJson(payload);
+}
+
+function isChatPayload(payload: Record<string, unknown>): boolean {
   const typeCandidate = payload.type;
   if (typeof typeCandidate === "string") {
-    const normalized = typeCandidate.trim().toLowerCase();
-    if (normalized === "tool_call") {
-      const name = typeof payload.name === "string" ? payload.name : "tool";
-      const argumentsValue = payload.arguments;
-      const renderedArguments =
-        argumentsValue === undefined ? "" : ` ${safeJson(argumentsValue)}`;
-      return `Tool call: ${name}${renderedArguments}`;
+    const type = typeCandidate.trim().toLowerCase();
+    if (type === "user" || type === "assistant") return true;
+    if (type === "system") return false;
+    if (type === "tool_call" || type === "tool_result" || type === "session_event") return false;
+  }
+
+  const roleCandidate =
+    typeof payload.role === "string"
+      ? payload.role.trim().toLowerCase()
+      : typeof payload.author === "string"
+        ? payload.author.trim().toLowerCase()
+        : null;
+  if (roleCandidate) {
+    if (roleCandidate === "assistant" || roleCandidate === "agent" || roleCandidate === "user") {
+      return true;
     }
-    if (normalized === "tool_result") {
-      const name = typeof payload.name === "string" ? payload.name : "tool";
-      const content = payload.content;
-      if (typeof content === "string" && content.trim()) {
-        return `Tool result: ${name}\n${content}`;
+    return false;
+  }
+
+  return typeof payload.content === "string" || typeof payload.text === "string";
+}
+
+function toChatMessages(rawMessages: Record<string, unknown>[]): SessionChatMessage[] {
+  const seen = new Set<string>();
+  const mapped = rawMessages
+    .filter((raw) => isChatPayload(raw as Record<string, unknown>))
+    .map((raw, index) => {
+      const payload = raw as Record<string, unknown>;
+      const rawTimestamp =
+        typeof payload.created_at === "string"
+          ? payload.created_at
+          : typeof payload.timestamp === "string"
+            ? payload.timestamp
+            : typeof payload.updated_at === "string"
+              ? payload.updated_at
+              : null;
+      const role = detectMessageRole(payload);
+      const text = extractMessageText(payload);
+      const timestamp = rawTimestamp ? formatDate(rawTimestamp) : formatDate(new Date().toISOString());
+      const messageIdentity =
+        (typeof payload.message_id === "string" && payload.message_id.trim()) ||
+        `${role}|${text}|${timestamp}`;
+      return {
+        id: `session-message-${index}`,
+        role,
+        text,
+        timestamp,
+        messageIdentity,
+      };
+    });
+
+  return mapped
+    .filter((message) => {
+      if (seen.has(message.messageIdentity)) {
+        return false;
       }
-      return `Tool result: ${name}\n${safeJson(content)}`;
-    }
-    if (normalized === "session_event") {
-      const name = typeof payload.name === "string" ? payload.name : "event";
-      return `Session event: ${name}\n${safeJson(payload.payload)}`;
-    }
-  }
-
-  const candidates = [
-    payload.content,
-    payload.text,
-    getNested(payload, ["message", "content"]),
-    getNested(payload, ["payload", "text"]),
-    getNested(payload, ["input", "text"]),
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) {
-      return candidate;
-    }
-  }
-
-  const namedVariantText = extractFromVariantPayload(payload);
-  if (namedVariantText) return namedVariantText;
-
-  return JSON.stringify(payload, null, 2);
+      seen.add(message.messageIdentity);
+      return true;
+    })
+    .map(({ messageIdentity: _messageIdentity, ...message }) => message);
 }
 
-function formatMessageTimestamp(payload: Record<string, unknown>): string | null {
-  const candidates = [
-    payload.created_at,
-    payload.timestamp,
-    getNested(payload, ["message", "created_at"]),
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string") continue;
-    const date = new Date(candidate);
-    if (!Number.isNaN(date.getTime())) {
-      return date.toLocaleString();
-    }
-  }
-  return null;
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }
 
-function getNested(
-  payload: Record<string, unknown>,
-  path: string[]
-): unknown {
-  let current: unknown = payload;
-  for (const segment of path) {
-    if (!current || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[segment];
-  }
-  return current;
-}
-
-function hasTopLevelVariant(
-  payload: Record<string, unknown>,
-  variantName: string
-): boolean {
-  const normalizedVariant = variantName.trim().toLowerCase();
-  return Object.keys(payload).some(
-    (key) => key.trim().toLowerCase() === normalizedVariant
-  );
-}
-
-function extractFromVariantPayload(payload: Record<string, unknown>): string | null {
-  const variantMap: Array<[string, string]> = [
-    ["user", "User"],
-    ["assistant", "Assistant"],
-    ["system", "System"],
-    ["toolcall", "Tool call"],
-    ["toolresult", "Tool result"],
-    ["sessionevent", "Session event"],
-  ];
-
-  for (const [variant, label] of variantMap) {
-    const key = Object.keys(payload).find(
-      (candidate) => candidate.trim().toLowerCase() === variant
-    );
-    if (!key) continue;
-    const value = payload[key];
-    if (value === undefined) return label;
-    if (typeof value === "string") return value;
-    if (value && typeof value === "object") {
-      const obj = value as Record<string, unknown>;
-      if (typeof obj.content === "string" && obj.content.trim()) {
-        return obj.content;
-      }
-      return `${label}\n${safeJson(obj)}`;
-    }
-    return `${label}\n${String(value)}`;
-  }
-  return null;
+function portNameFromUri(portUri: string): string {
+  const trimmed = portUri.trim();
+  if (!trimmed) return "unknown";
+  const parts = trimmed.split(":");
+  const name = parts.at(-1)?.trim();
+  return name && name.length > 0 ? name : trimmed;
 }
 
 function safeJson(value: unknown): string {

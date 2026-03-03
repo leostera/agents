@@ -5,6 +5,7 @@ mod apps;
 mod behaviors;
 mod clockwork;
 mod core;
+mod devmode;
 mod llm_calls;
 mod migrations;
 mod policies;
@@ -281,6 +282,29 @@ pub struct BehaviorRecord {
     pub required_capabilities_json: Value,
     pub session_turn_concurrency: String,
     pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DevModeProjectRecord {
+    pub project_id: Uri,
+    pub name: String,
+    pub root_path: String,
+    pub description: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DevModeSpecRecord {
+    pub spec_id: Uri,
+    pub project_id: Uri,
+    pub title: String,
+    pub body: String,
+    pub status: String,
+    pub root_task_uri: Option<Uri>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

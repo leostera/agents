@@ -21,6 +21,7 @@ pub(crate) use crate::controllers::system::{HttpPortRequest, validate_port_reque
 pub(crate) struct AppState {
     pub(crate) db: BorgDb,
     pub(crate) memory: MemoryStore,
+    pub(crate) supervisor: BorgSupervisor,
 }
 
 impl FromRef<AppState> for BorgDb {
@@ -44,6 +45,7 @@ impl BorgApiServer {
             state: AppState {
                 db: runtime.db.clone(),
                 memory: runtime.memory.clone(),
+                supervisor: supervisor.clone(),
             },
             ports_supervisor,
         }
@@ -87,10 +89,14 @@ mod tests {
     use super::{AppState, HttpPortRequest, app_router, validate_port_request};
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode, header};
+    use borg_codemode::CodeModeRuntime;
     use borg_db::BorgDb;
+    use borg_exec::{BorgRuntime, BorgSupervisor};
     use borg_memory::MemoryStore;
+    use borg_shellmode::ShellModeRuntime;
     use serde_json::{Value, json};
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower::ServiceExt;
 
@@ -118,10 +124,18 @@ mod tests {
 
         let memory = MemoryStore::new(&memory_path, &search_path).expect("new memory store");
         memory.migrate().await.expect("migrate memory");
+        let runtime = Arc::new(BorgRuntime::new(
+            db.clone(),
+            memory.clone(),
+            CodeModeRuntime::default(),
+            ShellModeRuntime::new(),
+        ));
+        let supervisor = BorgSupervisor::new(runtime);
 
         let state = AppState {
             db: db.clone(),
             memory,
+            supervisor,
         };
         app_router(state)
     }
@@ -1066,6 +1080,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn devmode_project_spec_materialize_vertical_slice_works() {
+        let app = test_app("devmode-vertical").await;
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/devmode/projects/devmode:project:sample",
+            json!({
+                "name": "Sample Project",
+                "root_path": "/tmp/borg-devmode-sample",
+                "description": "Sample project",
+                "status": "ONGOING"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, projects_body) =
+            request_no_body(&app, Method::GET, "/api/devmode/projects?limit=10").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(projects_body["projects"][0]["name"], "Sample Project");
+        assert_eq!(
+            projects_body["projects"][0]["description"],
+            "Sample project"
+        );
+        assert_eq!(projects_body["projects"][0]["status"], "ONGOING");
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/devmode/specs/devmode:spec:sample",
+            json!({
+                "project_id":"devmode:project:sample",
+                "title":"Add worker orchestration",
+                "body":"Implement project workers and task graph kickoff flow.",
+                "status":"DRAFT"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_json(
+            &app,
+            Method::POST,
+            "/api/devmode/specs/devmode:spec:sample/materialize",
+            json!({
+                "session_uri":"borg:session:devmode-bootstrap",
+                "creator_actor_id":"borg:actor:planner",
+                "assignee_actor_id":"borg:actor:implementer"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "materialize failed: {body}");
+        assert_eq!(body["spec"]["status"], "TASK_GRAPHED");
+        assert!(body["spec"]["root_task_uri"].is_string());
+        assert!(body["root_task"]["uri"].is_string());
+        assert_eq!(body["subtasks"].as_array().map(|rows| rows.len()), Some(3));
+
+        let root_task_uri = body["root_task"]["uri"].as_str().expect("root task uri");
+        let (status, children) = request_no_body(
+            &app,
+            Method::GET,
+            &format!("/api/taskgraph/tasks/{root_task_uri}/children"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            children["children"].as_array().map(|rows| rows.len()),
+            Some(3)
+        );
+    }
+
+    #[tokio::test]
     async fn providers_negative_paths() {
         let app = test_app("providers-negative").await;
         let (status, _) = request_no_body(&app, Method::GET, "/api/providers/missing").await;
@@ -1182,6 +1269,81 @@ mod tests {
         let (status, _) =
             request_no_body(&app, Method::DELETE, "/api/actors/devmode:actor:missing").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _) = request_json(
+            &app,
+            Method::POST,
+            "/api/actors/not-a-uri/chat",
+            json!({
+                "session_id":"borg:session:test",
+                "user_id":"borg:user:test",
+                "text":"hello"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _) = request_json(
+            &app,
+            Method::POST,
+            "/api/actors/devmode:actor:missing/chat",
+            json!({
+                "session_id":"borg:session:test",
+                "user_id":"borg:user:test",
+                "text":" "
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn ports_http_supports_forwarded_commands() {
+        let app = test_app("ports-http-commands").await;
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/behaviors/borg:behavior:default",
+            json!({
+                "name":"Default",
+                "system_prompt":"default prompt",
+                "status":"ACTIVE"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, _) = request_json(
+            &app,
+            Method::PUT,
+            "/api/actors/devmode:actor:planner",
+            json!({
+                "name":"Planner",
+                "system_prompt":"planner prompt",
+                "default_behavior_id":"borg:behavior:default",
+                "status":"RUNNING"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = request_json(
+            &app,
+            Method::POST,
+            "/ports/http",
+            json!({
+                "user_key":"borg:user:test",
+                "session_id":"borg:session:test-http-command",
+                "agent_id":"devmode:actor:planner",
+                "text":"/model"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let reply = body["reply"].as_str().unwrap_or_default();
+        assert!(reply.contains("Actor: devmode:actor:planner"));
+        assert!(reply.contains("Session: borg:session:test-http-command"));
     }
 
     #[tokio::test]

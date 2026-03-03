@@ -9,7 +9,13 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "CodeMode-searchApis".to_string(),
-            description: "Search for APIs available to execute code. ALWAYS use the `CodeMode-searchApis` tool to search for APIs before executing code. Returns only APIs available in the TypeScript SDK definitions for the Borg SDK. When code needs credentials or secrets from connected apps, first discover available keys with `Borg.env.keys()` and then read specific values with `Borg.env.get('KEY', 'fallback')` (for example `Borg.env.get('APP_GITHUB_ACCESS_TOKEN')`). CodeMode supports dynamic imports inside execution payloads, for example `const kleur = (await import('npm:kleur@4.1.5')).default;` or `const semver = await import('jsr:@std/semver');`, plus local `file:` and remote `http(s):` specifiers. Package installs and resolver state are managed in `~/.borg/codemode` with `node_modules` at `~/.borg/codemode/node_modules`. Static `import ... from ...` declarations are not valid in the function payload shape, but are supported inside imported modules.".to_string(),
+            description: r#"
+
+            Search for APIs available to execute code. ALWAYS use the `CodeMode-searchApis` tool to search for APIs before executing code. 
+
+            Returns only APIs available in the TypeScript SDK definitions for the Borg SDK. 
+
+            "#.to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -24,7 +30,32 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "CodeMode-executeCode".to_string(),
-            description: "Execute JavaScript in Code Mode runtime. ALWAYS use the `CodeMode-searchApis` tool to search for APIs before executing code. Input must be {\"code\": string} where code is exactly an async zero-arg arrow function, for example: `async () => { const listing = await Borg.OS.ls('.'); return listing; }`. For app credentials/secrets, first inspect keys with `Borg.env.keys()` then fetch only needed values with `Borg.env.get(name, fallback)` (for example `const token = Borg.env.get('APP_GITHUB_ACCESS_TOKEN');`). Returns JSON from the function return value. Dynamic imports are supported via `await import(specifier)`, including package specifiers like `npm:kleur@4.1.5` and `jsr:@std/semver`, plus local `file:` and remote `http(s):` specifiers. Resolver + package install state is embedded and persisted under `~/.borg/codemode` (`~/.borg/codemode/node_modules` for installed packages). Static `import ... from ...` declarations are not supported in this function-expression payload format.".to_string(),
+            description: r#"
+            Execute JavaScript in Code Mode runtime. 
+
+            Input must be {"code": string, "hint": string} where code is exactly an async zero-arg arrow function. 
+
+            For example: 
+
+            ```js
+            // Important to make the function async!
+            async () => { 
+              // You can use `await import("<registry>:<package>@<version>");`
+              // to import packages dynamically, because `import * from "pkg";` syntax is not
+              // allowed in this context.
+
+              // Make sure you call the CodeMode-searchApis MCP Tool to learn what the API surface
+              // is for the `Borg` global object.
+              const listing = await Borg.OS.ls('.'); 
+
+              // return a JSON-serializable object
+              return listing; 
+            }
+            ```. 
+
+            If you see reiceve back any syntax or compilation or runtime errors, do your best to correct the existing code snippet.
+
+            "#.to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {

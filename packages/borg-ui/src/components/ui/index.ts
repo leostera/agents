@@ -30,6 +30,7 @@ export * from "./hover-card";
 export * from "./input";
 export * from "./input-group";
 export * from "./input-otp";
+export * from "./json-tree-viewer";
 export * from "./item";
 export * from "./kbd";
 export * from "./label";

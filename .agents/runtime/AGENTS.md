@@ -32,7 +32,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - `providers` table stores provider credentials (`openai`, `openrouter`).
 - `port_settings` stores runtime defaults under `port=runtime` (for example `preferred_provider`).
 - `port_bindings` stores `port + conversation_key -> session_id (+ optional agent_id)`.
-- `port_session_ctx` stores port-owned per-session context snapshots (`port + session_id -> ctx_json`).
+- `sessions.context_snapshot_json` stores the latest per-session context snapshot (canonical context storage).
 - `agent_specs` includes `enabled` for soft-disabling agent definitions without deleting rows.
 - `agent_specs.default_provider_id` stores the preferred provider key for provider-first model selection in control UI.
 - `agent_specs` no longer persists per-agent `tools_json`; runtime toolchain is composed from default code+memory tools.

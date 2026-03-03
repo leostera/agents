@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use super::{
-    Agent, AgentTools, Message, Session, SessionResult, Tool, ToolRequest, ToolResponse,
+    Agent, AgentTools, CompactingContextManager, ContextManager, Message,
+    PassthroughContextManager, Session, SessionResult, Tool, ToolRequest, ToolResponse,
     ToolResultData, ToolRunner, ToolSpec, Toolchain, call_tool, to_provider_messages,
 };
 use anyhow::{Result, anyhow};
@@ -615,4 +616,146 @@ fn llm_adapter_auto_closes_dangling_tool_call_before_user_message() {
                 && name == "execute"
                 && matches!(content.first(), Some(borg_llm::ProviderBlock::Text(text)) if text.contains("tool execution interrupted"))
     ));
+}
+
+#[tokio::test]
+async fn context_window_splits_messages_into_typed_sections() {
+    let agent = Agent::new(uri!("borg", "agent", "context-sections"))
+        .with_system_prompt("system-prompt")
+        .with_behavior_prompt("behavior-prompt")
+        .with_tools(vec![ToolSpec {
+            name: "Apps-getApp".to_string(),
+            description: "Get app details".to_string(),
+            parameters: json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}),
+        }]);
+    let messages = vec![
+        Message::User {
+            content: "hi".to_string(),
+        },
+        Message::Assistant {
+            content: "hello".to_string(),
+        },
+        Message::ToolCall {
+            tool_call_id: "call_1".to_string(),
+            name: "Apps-getApp".to_string(),
+            arguments: json!({"id":"borg:app:github"}),
+        },
+        Message::ToolResult {
+            tool_call_id: "call_1".to_string(),
+            name: "Apps-getApp".to_string(),
+            content: ToolResultData::Text("{\"app\":{}}".to_string()),
+        },
+    ];
+
+    let manager = PassthroughContextManager;
+    let context = manager.build_context(&agent, &messages).await.unwrap();
+
+    assert_eq!(context.system_prompt, "system-prompt");
+    assert_eq!(context.behavior_prompt, "behavior-prompt");
+    assert_eq!(context.available_tools.len(), 1);
+    assert_eq!(context.available_capabilities.len(), 1);
+    assert_eq!(context.available_capabilities[0].name, "Apps-getApp");
+    assert_eq!(context.user_messages.len(), 1);
+    assert_eq!(context.assistant_messages.len(), 1);
+    assert_eq!(context.tool_calls.len(), 1);
+    assert_eq!(context.tool_responses.len(), 1);
+}
+
+#[tokio::test]
+async fn context_provider_input_messages_start_with_system_then_behavior() {
+    let agent = Agent::new(uri!("borg", "agent", "context-order"))
+        .with_system_prompt("system-prompt")
+        .with_behavior_prompt("behavior-prompt")
+        .with_tools(vec![]);
+    let messages = vec![Message::User {
+        content: "hi".to_string(),
+    }];
+
+    let manager = PassthroughContextManager;
+    let context = manager.build_context(&agent, &messages).await.unwrap();
+    let provider_messages = context.provider_input_messages();
+
+    assert!(matches!(
+        provider_messages.first(),
+        Some(Message::System { content }) if content == "system-prompt"
+    ));
+    assert!(matches!(
+        provider_messages.get(1),
+        Some(Message::System { content }) if content == "behavior-prompt"
+    ));
+}
+
+#[tokio::test]
+async fn compaction_keeps_prompts_tools_and_capabilities_uncompacted() {
+    let agent = Agent::new(uri!("borg", "agent", "context-compact"))
+        .with_system_prompt("system-prompt")
+        .with_behavior_prompt("behavior-prompt")
+        .with_tools(vec![ToolSpec {
+            name: "Apps-listApps".to_string(),
+            description: "List apps".to_string(),
+            parameters: json!({"type":"object","properties":{},"additionalProperties":false}),
+        }]);
+    let messages = vec![
+        Message::User {
+            content: "this is a very long user message that should trigger compaction 1"
+                .to_string(),
+        },
+        Message::Assistant {
+            content: "this is a very long assistant message that should trigger compaction 2"
+                .to_string(),
+        },
+        Message::User {
+            content: "this is a very long user message that should trigger compaction 3"
+                .to_string(),
+        },
+    ];
+
+    let manager = CompactingContextManager::new(60, 1);
+    let context = manager.build_context(&agent, &messages).await.unwrap();
+    let provider_messages = context.provider_input_messages();
+
+    assert_eq!(context.system_prompt, "system-prompt");
+    assert_eq!(context.behavior_prompt, "behavior-prompt");
+    assert_eq!(context.available_tools.len(), 1);
+    assert_eq!(context.available_capabilities.len(), 1);
+    assert!(provider_messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::System { content } if content.contains("Compacted conversation summary")
+        )
+    }));
+}
+
+#[tokio::test]
+async fn context_filters_persisted_prompt_messages_from_ordered_history() {
+    let agent = Agent::new(uri!("borg", "agent", "context-dedup"))
+        .with_system_prompt("system-prompt")
+        .with_behavior_prompt("behavior-prompt")
+        .with_tools(vec![]);
+    let messages = vec![
+        Message::System {
+            content: "system-prompt".to_string(),
+        },
+        Message::System {
+            content: "behavior-prompt".to_string(),
+        },
+        Message::User {
+            content: "hello".to_string(),
+        },
+    ];
+
+    let manager = PassthroughContextManager;
+    let context = manager.build_context(&agent, &messages).await.unwrap();
+    let provider_messages = context.provider_input_messages();
+    let prompt_count = provider_messages
+        .iter()
+        .filter(|message| {
+            matches!(
+                message,
+                Message::System { content } if content == "system-prompt" || content == "behavior-prompt"
+            )
+        })
+        .count();
+
+    assert_eq!(prompt_count, 2);
 }

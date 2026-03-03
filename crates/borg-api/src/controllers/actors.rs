@@ -4,8 +4,10 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use borg_exec::{BorgInput, BorgMessage, JsonPortContext};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
+use std::sync::Arc;
 
 use crate::AppState;
 use crate::controllers::common::{api_error, parse_uri_field};
@@ -23,6 +25,15 @@ pub(crate) struct UpsertActorRequest {
     default_behavior_id: String,
     #[serde(default)]
     status: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ActorChatRequest {
+    session_id: String,
+    user_id: String,
+    text: String,
+    #[serde(default)]
+    metadata: Option<Value>,
 }
 
 pub(crate) struct ActorsController;
@@ -124,6 +135,68 @@ impl ActorsController {
         match state.db.delete_actor(&actor_id).await {
             Ok(0) => api_error(StatusCode::NOT_FOUND, "actor not found".to_string()),
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
+            Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+        }
+    }
+
+    pub(crate) async fn chat(
+        State(state): State<AppState>,
+        AxumPath(actor_id): AxumPath<String>,
+        Json(payload): Json<ActorChatRequest>,
+    ) -> impl IntoResponse {
+        let actor_id = match parse_uri_field("actor_id", &actor_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        let session_id = match parse_uri_field("session_id", &payload.session_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        let user_id = match parse_uri_field("user_id", &payload.user_id) {
+            Ok(v) => v,
+            Err(err) => return err,
+        };
+        let text = payload.text.trim();
+        if text.is_empty() {
+            return api_error(StatusCode::BAD_REQUEST, "text is required".to_string());
+        }
+
+        let message = BorgMessage {
+            actor_id,
+            user_id,
+            session_id,
+            input: BorgInput::Chat {
+                text: text.to_string(),
+            },
+            port_context: Arc::new(JsonPortContext::new(payload.metadata.unwrap_or_else(
+                || {
+                    json!({
+                        "port": "devmode"
+                    })
+                },
+            ))),
+        };
+
+        match state.supervisor.call(message).await {
+            Ok(output) => (
+                StatusCode::OK,
+                Json(json!({
+                    "session_id": output.session_id,
+                    "reply": output.reply,
+                    "tool_calls": output
+                        .tool_calls
+                        .into_iter()
+                        .map(|call| {
+                            json!({
+                                "tool_name": call.tool_name,
+                                "arguments": call.arguments,
+                                "output": call.output,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                })),
+            )
+                .into_response(),
             Err(err) => api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
         }
     }

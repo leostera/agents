@@ -11,6 +11,7 @@ use super::actors::ActorsController;
 use super::apps::AppsController;
 use super::behaviors::BehaviorsController;
 use super::db::DbController;
+use super::devmode::DevModeController;
 use super::port_actor_bindings::PortActorBindingsController;
 use super::providers::ProvidersController;
 use super::system::SystemController;
@@ -70,6 +71,23 @@ pub(crate) fn app_router(state: AppState) -> Router {
         .route(
             "/api/taskgraph/tasks/:task_uri/children",
             get(DbController::list_taskgraph_children),
+        )
+        .route(
+            "/api/devmode/projects",
+            get(DevModeController::list_projects),
+        )
+        .route(
+            "/api/devmode/projects/:project_id",
+            put(DevModeController::upsert_project),
+        )
+        .route("/api/devmode/specs", get(DevModeController::list_specs))
+        .route(
+            "/api/devmode/specs/:spec_id",
+            get(DevModeController::get_spec).put(DevModeController::upsert_spec),
+        )
+        .route(
+            "/api/devmode/specs/:spec_id/materialize",
+            post(DevModeController::materialize_spec),
         )
         .route(
             "/api/clockwork/jobs",
@@ -192,6 +210,7 @@ pub(crate) fn app_router(state: AppState) -> Router {
             "/api/actors/:actor_id/sessions",
             get(ActorsController::list_actor_sessions),
         )
+        .route("/api/actors/:actor_id/chat", post(ActorsController::chat))
         .route(
             "/api/agents/specs/:agent_id/enabled",
             put(DbController::set_agent_spec_enabled),

@@ -178,6 +178,45 @@ export type BehaviorResponse = {
   behavior?: BehaviorRecord;
 };
 
+export type DevModeProjectRecord = {
+  project_id: string;
+  name: string;
+  root_path: string;
+  description: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DevModeSpecRecord = {
+  spec_id: string;
+  project_id: string;
+  title: string;
+  body: string;
+  status: string;
+  root_task_uri?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DevModeProjectsResponse = {
+  projects?: DevModeProjectRecord[];
+};
+
+export type DevModeSpecsResponse = {
+  specs?: DevModeSpecRecord[];
+};
+
+export type DevModeSpecResponse = {
+  spec?: DevModeSpecRecord;
+};
+
+export type DevModeMaterializeResponse = {
+  spec?: DevModeSpecRecord;
+  root_task?: TaskGraphTask;
+  subtasks?: TaskGraphTask[];
+};
+
 export type UserRecord = {
   user_key: string;
   profile: Record<string, unknown>;
@@ -195,6 +234,36 @@ export type UserResponse = {
 
 export type SessionMessagesResponse = {
   messages?: Record<string, unknown>[];
+};
+
+export type SessionContextRecord = {
+  port: string;
+  session_id: string;
+  ctx: Record<string, unknown>;
+};
+
+export type SessionContextResponse = {
+  port?: string;
+  session_id?: string;
+  ctx?: Record<string, unknown>;
+};
+
+export type ActorChatToolCall = {
+  tool_name: string;
+  arguments: unknown;
+  output: unknown;
+};
+
+export type ActorChatResponse = {
+  session_id: string;
+  reply?: string | null;
+  tool_calls?: ActorChatToolCall[];
+};
+
+export type HttpPortResponse = {
+  session_id: string;
+  reply?: string | null;
+  tool_calls?: ActorChatToolCall[];
 };
 
 export type PortSetting = {
@@ -938,10 +1007,9 @@ export class BorgApiClient {
     };
   }
 
-  async listClockworkJobs(params: {
-    limit?: number;
-    status?: ClockworkJobStatus | string;
-  } = {}): Promise<ClockworkJobRecord[]> {
+  async listClockworkJobs(
+    params: { limit?: number; status?: ClockworkJobStatus | string } = {}
+  ): Promise<ClockworkJobRecord[]> {
     const searchParams = new URLSearchParams({
       limit: String(params.limit ?? 200),
     });
@@ -1092,6 +1160,65 @@ export class BorgApiClient {
     return Array.isArray(data.messages) ? data.messages : [];
   }
 
+  async getSessionContext(sessionId: string): Promise<SessionContextRecord | null> {
+    try {
+      const data = await this.requestJson<SessionContextResponse>(
+        `/api/sessions/${encodeURIComponent(sessionId)}/context`
+      );
+      if (
+        typeof data.port !== "string" ||
+        typeof data.session_id !== "string" ||
+        !data.ctx ||
+        typeof data.ctx !== "object"
+      ) {
+        return null;
+      }
+      return {
+        port: data.port,
+        session_id: data.session_id,
+        ctx: data.ctx,
+      };
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async upsertSession(payload: {
+    sessionId: string;
+    users: string[];
+    port: string;
+  }): Promise<void> {
+    await this.request(`/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        session_id: payload.sessionId,
+        users: payload.users,
+        port: payload.port,
+      }),
+    });
+  }
+
+  async appendSessionMessage(
+    sessionId: string,
+    payload: Record<string, unknown>
+  ): Promise<number> {
+    const data = await this.requestJson<{ message_index?: number }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          payload,
+        }),
+      }
+    );
+    return typeof data.message_index === "number" ? data.message_index : -1;
+  }
+
   async listAgentSpecs(limit = 100): Promise<AgentSpecRecord[]> {
     const data = await this.requestJson<AgentSpecsResponse>(
       `/api/agents/specs?limit=${limit}`
@@ -1233,6 +1360,48 @@ export class BorgApiClient {
     return Array.isArray(data.sessions) ? data.sessions : [];
   }
 
+  async chatActor(payload: {
+    actorId: string;
+    sessionId: string;
+    userId: string;
+    text: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<ActorChatResponse> {
+    return this.requestJson<ActorChatResponse>(
+      `/api/actors/${encodeURIComponent(payload.actorId)}/chat`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          session_id: payload.sessionId,
+          user_id: payload.userId,
+          text: payload.text,
+          metadata: payload.metadata ?? null,
+        }),
+      }
+    );
+  }
+
+  async postHttpPort(payload: {
+    userKey: string;
+    text: string;
+    sessionId?: string | null;
+    actorId?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }): Promise<HttpPortResponse> {
+    return this.requestJson<HttpPortResponse>("/ports/http", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        user_key: payload.userKey,
+        text: payload.text,
+        session_id: payload.sessionId ?? null,
+        agent_id: payload.actorId ?? null,
+        metadata: payload.metadata ?? null,
+      }),
+    });
+  }
+
   async listBehaviors(limit = 100): Promise<BehaviorRecord[]> {
     const data = await this.requestJson<BehaviorsResponse>(
       `/api/behaviors?limit=${limit}`
@@ -1298,6 +1467,120 @@ export class BorgApiClient {
       }
       throw error;
     }
+  }
+
+  async listDevModeProjects(limit = 100): Promise<DevModeProjectRecord[]> {
+    const data = await this.requestJson<DevModeProjectsResponse>(
+      `/api/devmode/projects?limit=${limit}`
+    );
+    return Array.isArray(data.projects) ? data.projects : [];
+  }
+
+  async upsertDevModeProject(
+    projectId: string,
+    payload: {
+      name: string;
+      rootPath: string;
+      description?: string | null;
+      status?: string | null;
+    }
+  ): Promise<void> {
+    await this.request(`/api/devmode/projects/${encodeURIComponent(projectId)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: payload.name,
+        root_path: payload.rootPath,
+        description: payload.description ?? "",
+        status: payload.status ?? "ONGOING",
+      }),
+    });
+  }
+
+  async listDevModeSpecs(options?: {
+    limit?: number;
+    projectId?: string | null;
+  }): Promise<DevModeSpecRecord[]> {
+    const limit = options?.limit ?? 100;
+    const params = new URLSearchParams();
+    params.set("limit", String(limit));
+    if (options?.projectId?.trim()) {
+      params.set("project_id", options.projectId.trim());
+    }
+    const data = await this.requestJson<DevModeSpecsResponse>(
+      `/api/devmode/specs?${params.toString()}`
+    );
+    return Array.isArray(data.specs) ? data.specs : [];
+  }
+
+  async getDevModeSpec(specId: string): Promise<DevModeSpecRecord | null> {
+    try {
+      const data = await this.requestJson<DevModeSpecResponse>(
+        `/api/devmode/specs/${encodeURIComponent(specId)}`
+      );
+      return data.spec ?? null;
+    } catch (error) {
+      if (error instanceof BorgApiError && error.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async upsertDevModeSpec(
+    specId: string,
+    payload: {
+      projectId: string;
+      title: string;
+      body: string;
+      status?: string | null;
+    }
+  ): Promise<void> {
+    await this.request(`/api/devmode/specs/${encodeURIComponent(specId)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: payload.projectId,
+        title: payload.title,
+        body: payload.body,
+        status: payload.status ?? "DRAFT",
+      }),
+    });
+  }
+
+  async materializeDevModeSpec(
+    specId: string,
+    payload: {
+      sessionUri: string;
+      creatorActorId: string;
+      assigneeActorId?: string | null;
+      subtasks?: Array<{
+        title: string;
+        description?: string | null;
+        definitionOfDone?: string | null;
+        assigneeActorId?: string | null;
+      }>;
+    }
+  ): Promise<DevModeMaterializeResponse> {
+    return await this.requestJson<DevModeMaterializeResponse>(
+      `/api/devmode/specs/${encodeURIComponent(specId)}/materialize`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          session_uri: payload.sessionUri,
+          creator_actor_id: payload.creatorActorId,
+          assignee_actor_id: payload.assigneeActorId ?? null,
+          subtasks:
+            payload.subtasks?.map((subtask) => ({
+              title: subtask.title,
+              description: subtask.description ?? "",
+              definition_of_done: subtask.definitionOfDone ?? "",
+              assignee_actor_id: subtask.assigneeActorId ?? null,
+            })) ?? [],
+        }),
+      }
+    );
   }
 
   async listUsers(limit = 100): Promise<UserRecord[]> {

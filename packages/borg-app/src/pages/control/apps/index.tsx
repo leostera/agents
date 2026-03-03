@@ -48,6 +48,7 @@ type AppFormState = {
   name: string;
   description: string;
   status: string;
+  availableSecretsText: string;
 };
 
 const DEFAULT_FORM: AppFormState = {
@@ -55,6 +56,7 @@ const DEFAULT_FORM: AppFormState = {
   name: "",
   description: "",
   status: "active",
+  availableSecretsText: "",
 };
 
 function slugFromName(name: string): string {
@@ -175,6 +177,7 @@ export function AppsPage() {
       name: app.name,
       description: app.description,
       status: app.status,
+      availableSecretsText: (app.available_secrets ?? []).join("\n"),
     });
     setIsEditDialogOpen(true);
   };
@@ -195,7 +198,13 @@ export function AppsPage() {
     setIsSaving(true);
     try {
       const capabilityId = nextCapabilityId();
-      await borgApi.upsertApp(appId, { name, slug, description, status });
+      await borgApi.upsertApp(appId, {
+        name,
+        slug,
+        description,
+        status,
+        available_secrets: input.availableSecrets,
+      });
       await borgApi.upsertAppCapability(appId, capabilityId, {
         name: input.capability.name.trim(),
         hint: input.capability.hint.trim(),
@@ -260,7 +269,17 @@ export function AppsPage() {
 
     setIsSaving(true);
     try {
-      await borgApi.upsertApp(appId, { name, slug, description, status });
+      const availableSecrets = form.availableSecretsText
+        .split("\n")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+      await borgApi.upsertApp(appId, {
+        name,
+        slug,
+        description,
+        status,
+        available_secrets: availableSecrets,
+      });
       setIsEditDialogOpen(false);
       setForm(DEFAULT_FORM);
       setEditingAppId(null);
@@ -303,6 +322,7 @@ export function AppsPage() {
         slug: app.slug,
         description: app.description,
         status: nextStatus,
+        available_secrets: app.available_secrets ?? [],
       });
       await loadApps();
     } catch (toggleError) {
@@ -542,6 +562,26 @@ export function AppsPage() {
                 }
                 rows={4}
               />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="app-available-secrets">Available secrets</Label>
+              <Textarea
+                id="app-available-secrets"
+                value={form.availableSecretsText}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    availableSecretsText: event.currentTarget.value,
+                  }))
+                }
+                rows={4}
+                placeholder={
+                  "APP_GITHUB_ACCESS_TOKEN\nAPP_GITHUB_REFRESH_TOKEN"
+                }
+              />
+              <p className="text-muted-foreground text-xs">
+                One secret name per line.
+              </p>
             </div>
             <div className="space-y-1">
               <Label htmlFor="app-status">Status</Label>

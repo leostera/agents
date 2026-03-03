@@ -193,6 +193,15 @@ impl Actor {
         msg: &BorgMessage,
         text: &str,
     ) -> Result<SessionOutput> {
+        let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
+        state.agent_id = agent_id;
+        state.behavior_id = behavior_id;
+        state.session.agent = self
+            .runtime
+            .session_manager
+            .resolve_agent_for_turn(&state.agent_id, state.behavior_id.as_ref())
+            .await?;
+
         let user_msg = UserMessage {
             user_id: msg.user_id.clone(),
             text: text.to_string(),

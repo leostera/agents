@@ -28,11 +28,6 @@ import {
 } from "lucide-react";
 import React from "react";
 
-export type AppSecretInput = {
-  key: string;
-  value: string;
-};
-
 export type AppCapabilityInput = {
   name: string;
   hint: string;
@@ -46,7 +41,7 @@ export type AddAppInput = {
   name: string;
   description: string;
   status: string;
-  secrets: AppSecretInput[];
+  availableSecrets: string[];
   capability: AppCapabilityInput;
 };
 
@@ -84,7 +79,7 @@ type AddAppFormProps = {
   onStartGithubOAuth: () => Promise<void>;
 };
 
-const DEFAULT_SECRET: AppSecretInput = { key: "", value: "" };
+const DEFAULT_SECRET_NAME = "";
 const DEFAULT_CAPABILITY: AppCapabilityInput = {
   name: "",
   hint: "",
@@ -117,7 +112,7 @@ export function AddAppForm({
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [status, setStatus] = React.useState("active");
-  const [secrets, setSecrets] = React.useState<AppSecretInput[]>([]);
+  const [availableSecrets, setAvailableSecrets] = React.useState<string[]>([]);
   const [capability, setCapability] = React.useState(DEFAULT_CAPABILITY);
   const [isStartingOAuth, setIsStartingOAuth] = React.useState(false);
 
@@ -129,7 +124,7 @@ export function AddAppForm({
       setName("");
       setDescription("");
       setStatus("active");
-      setSecrets([]);
+      setAvailableSecrets([]);
       setCapability(DEFAULT_CAPABILITY);
       setIsStartingOAuth(false);
     }
@@ -139,22 +134,19 @@ export function AddAppForm({
     appId.trim().length > 0 && name.trim().length > 0;
 
   const addSecretRow = () => {
-    setSecrets((current) => [...current, { ...DEFAULT_SECRET }]);
+    setAvailableSecrets((current) => [...current, DEFAULT_SECRET_NAME]);
   };
 
-  const updateSecret = (
-    index: number,
-    patch: Partial<AppSecretInput>
-  ): void => {
-    setSecrets((current) =>
-      current.map((secret, rowIndex) =>
-        rowIndex === index ? { ...secret, ...patch } : secret
+  const updateSecret = (index: number, value: string): void => {
+    setAvailableSecrets((current) =>
+      current.map((secretName, rowIndex) =>
+        rowIndex === index ? value : secretName
       )
     );
   };
 
   const removeSecret = (index: number) => {
-    setSecrets((current) =>
+    setAvailableSecrets((current) =>
       current.filter((_, rowIndex) => rowIndex !== index)
     );
   };
@@ -162,12 +154,9 @@ export function AddAppForm({
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const normalizedSecrets = secrets
-      .map((secret) => ({
-        key: secret.key.trim(),
-        value: secret.value.trim(),
-      }))
-      .filter((secret) => secret.key.length > 0);
+    const normalizedSecrets = availableSecrets
+      .map((name) => name.trim())
+      .filter((name) => name.length > 0);
 
     await onSubmit({
       appKind: selectedAppKind,
@@ -175,7 +164,7 @@ export function AddAppForm({
       name: name.trim(),
       description: description.trim(),
       status: status.trim() || "active",
-      secrets: normalizedSecrets,
+      availableSecrets: normalizedSecrets,
       capability: {
         name: capability.name.trim(),
         hint: capability.hint.trim(),
@@ -321,49 +310,33 @@ export function AddAppForm({
 
             <section className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label>Secrets</Label>
+                <Label>Available Secrets</Label>
                 <Button type="button" variant="outline" onClick={addSecretRow}>
                   Add Secret
                 </Button>
               </div>
-              {secrets.length === 0 ? (
+              {availableSecrets.length === 0 ? (
                 <p className="text-muted-foreground text-xs">
-                  No secrets configured yet.
+                  No secret names configured yet.
                 </p>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Key</TableHead>
-                      <TableHead>Value</TableHead>
+                      <TableHead>Secret name</TableHead>
                       <TableHead className="w-[84px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {secrets.map((secret, index) => (
-                      <TableRow key={`${secret.key}-${index}`}>
+                    {availableSecrets.map((secretName, index) => (
+                      <TableRow key={`${secretName}-${index}`}>
                         <TableCell>
                           <Input
-                            value={secret.key}
+                            value={secretName}
                             onChange={(event) =>
-                              updateSecret(index, {
-                                key: event.currentTarget.value,
-                              })
+                              updateSecret(index, event.currentTarget.value)
                             }
-                            placeholder="OPENAI_API_KEY"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="password"
-                            autoComplete="off"
-                            value={secret.value}
-                            onChange={(event) =>
-                              updateSecret(index, {
-                                value: event.currentTarget.value,
-                              })
-                            }
-                            placeholder="sk-..."
+                            placeholder="APP_GITHUB_ACCESS_TOKEN"
                           />
                         </TableCell>
                         <TableCell>

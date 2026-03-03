@@ -1,6 +1,6 @@
 import {
-  type AppConnectionRecord,
   type AppCapabilityRecord,
+  type AppConnectionRecord,
   type AppRecord,
   createBorgApiClient,
 } from "@borg/api";
@@ -39,6 +39,7 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
     slug: "",
     description: "",
     status: "active",
+    availableSecretsText: "",
   });
   const [capabilities, setCapabilities] = React.useState<AppCapabilityRecord[]>(
     []
@@ -81,11 +82,12 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [loadedApp, loadedCapabilities, loadedConnections] = await Promise.all([
-        borgApi.getApp(normalizedAppId),
-        borgApi.listAppCapabilities(normalizedAppId, 500),
-        borgApi.listAppConnections(normalizedAppId, 500),
-      ]);
+      const [loadedApp, loadedCapabilities, loadedConnections] =
+        await Promise.all([
+          borgApi.getApp(normalizedAppId),
+          borgApi.listAppCapabilities(normalizedAppId, 500),
+          borgApi.listAppConnections(normalizedAppId, 500),
+        ]);
       if (!loadedApp) {
         setLoadError("App not found");
         setApp(null);
@@ -100,6 +102,7 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
         slug: loadedApp.slug,
         description: loadedApp.description,
         status: loadedApp.status,
+        availableSecretsText: (loadedApp.available_secrets ?? []).join("\n"),
       });
       setCapabilities(loadedCapabilities);
       setConnections(loadedConnections);
@@ -172,9 +175,13 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
             })
           )
         );
-        await borgApi.deleteAppConnection(app.app_id, connection.connection_id, {
-          ignoreNotFound: true,
-        });
+        await borgApi.deleteAppConnection(
+          app.app_id,
+          connection.connection_id,
+          {
+            ignoreNotFound: true,
+          }
+        );
       }
       await load();
     } catch (error) {
@@ -231,11 +238,16 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
     setActionError(null);
     setIsSavingApp(true);
     try {
+      const availableSecrets = appDraft.availableSecretsText
+        .split("\n")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
       await borgApi.upsertApp(app.app_id, {
         name: appDraft.name.trim(),
         slug: appDraft.slug.trim(),
         description: appDraft.description.trim(),
         status: appDraft.status.trim() || "active",
+        available_secrets: availableSecrets,
       });
       await load();
     } catch (saveError) {
@@ -382,6 +394,24 @@ export function AppDetailsPage({ appId }: AppCapabilitiesPageProps) {
               }
               rows={5}
             />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="app-available-secrets">Available secrets</Label>
+            <Textarea
+              id="app-available-secrets"
+              value={appDraft.availableSecretsText}
+              onChange={(event) =>
+                setAppDraft((current) => ({
+                  ...current,
+                  availableSecretsText: event.currentTarget.value,
+                }))
+              }
+              rows={4}
+              placeholder={"APP_GITHUB_ACCESS_TOKEN\nAPP_GITHUB_REFRESH_TOKEN"}
+            />
+            <p className="text-muted-foreground text-xs">
+              One secret name per line.
+            </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">

@@ -1,20 +1,28 @@
 use axum::{
     Json,
     extract::{Path as AxumPath, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{Html, IntoResponse},
 };
-use borg_core::{Entity, Uri};
-use borg_exec::UserMessage;
+use borg_core::{Entity, Uri, uri};
+use borg_exec::{BorgCommand, BorgInput, BorgMessage, JsonPortContext, UserMessage};
 use borg_memory::{FactArity, FactValue, Uri as MemoryUri};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use tracing::debug;
 
 use crate::AppState;
 use crate::controllers::common::{ApiFieldError, ApiValidationError, api_error};
 
 const HEALTH_STATUS_OK: &str = "ok";
+const HTTP_PORT_NAME: &str = "http";
+const HTTP_PORT_URI_NAMESPACE: &str = "borg";
+const HTTP_PORT_URI_KIND: &str = "port";
+const HTTP_HELP_TEXT: &str = "Available commands: /help, /start, /model [model_name], /participants, /context, /reset, /compact";
+const HTTP_START_GREETING: &str = "Borg is online. Send a message to start.";
+const MODEL_COMMAND_USAGE: &str = "Usage: /model [model_name]";
+const BORG_SESSION_ID_HEADER: &str = "x-borg-session-id";
 
 #[derive(Deserialize)]
 pub(crate) struct MemorySearchQuery {
@@ -148,15 +156,125 @@ impl SystemController {
     }
 
     pub(crate) async fn ports_http(
-        State(_state): State<AppState>,
-        _headers: HeaderMap,
+        State(state): State<AppState>,
+        headers: HeaderMap,
         Json(payload): Json<HttpPortRequest>,
     ) -> impl IntoResponse {
         match validate_port_request(payload) {
-            Ok(_validated) => api_error(
-                StatusCode::NOT_IMPLEMENTED,
-                "ports/http is temporarily unavailable during refactor".to_string(),
-            ),
+            Ok(validated) => {
+                let conversation_key = validated
+                    .session_id
+                    .clone()
+                    .unwrap_or_else(|| validated.user_id.clone());
+                let requested_actor_id = validated
+                    .agent_id
+                    .as_ref()
+                    .filter(|value| value.as_str().contains(":actor:"));
+                let (session_id, legacy_actor_id) = match state
+                    .db
+                    .resolve_port_session(
+                        HTTP_PORT_NAME,
+                        &conversation_key,
+                        validated.session_id.as_ref(),
+                        validated.agent_id.as_ref(),
+                    )
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                    }
+                };
+
+                let default_actor_id = match state.db.get_port(HTTP_PORT_NAME).await {
+                    Ok(Some(port)) => port.assigned_actor_id,
+                    Ok(None) => None,
+                    Err(err) => {
+                        return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                    }
+                };
+
+                let resolved_actor_id = match state
+                    .db
+                    .resolve_port_actor(
+                        HTTP_PORT_NAME,
+                        &conversation_key,
+                        requested_actor_id,
+                        default_actor_id.as_ref(),
+                    )
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                    }
+                };
+
+                if let Err(err) = ensure_session_row(
+                    &state,
+                    &headers,
+                    &validated.user_id,
+                    &session_id,
+                    HTTP_PORT_NAME,
+                )
+                .await
+                {
+                    return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                }
+
+                let input = match resolve_http_port_input(&validated.text) {
+                    Ok(value) => value,
+                    Err(err) => return api_error(StatusCode::BAD_REQUEST, err),
+                };
+
+                let body = match input {
+                    HttpPortInput::LocalReply(reply) => json!({
+                        "session_id": session_id,
+                        "reply": reply,
+                        "tool_calls": [],
+                    }),
+                    HttpPortInput::Forward(forward_input) => match state
+                        .supervisor
+                        .call(BorgMessage {
+                            actor_id: select_actor_id(
+                                session_id.clone(),
+                                Some(resolved_actor_id),
+                                legacy_actor_id,
+                            ),
+                            user_id: validated.user_id,
+                            session_id: session_id.clone(),
+                            input: forward_input,
+                            port_context: Arc::new(JsonPortContext::new(validated.metadata)),
+                        })
+                        .await
+                    {
+                        Ok(output) => json!({
+                            "session_id": output.session_id,
+                            "reply": output.reply,
+                            "tool_calls": output
+                                .tool_calls
+                                .into_iter()
+                                .map(|call| {
+                                    json!({
+                                        "tool_name": call.tool_name,
+                                        "arguments": call.arguments,
+                                        "output": call.output,
+                                    })
+                                })
+                                .collect::<Vec<_>>(),
+                        }),
+                        Err(err) => {
+                            return api_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string());
+                        }
+                    },
+                };
+
+                let mut response = (StatusCode::OK, Json(body)).into_response();
+                if let Ok(value) = HeaderValue::from_str(session_id.as_str()) {
+                    response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
+                }
+                response
+            }
             Err(err) => err,
         }
     }
@@ -274,6 +392,13 @@ pub(crate) fn validate_port_request(
             .into_response());
     }
 
+    if payload.text.trim().is_empty() {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "text is required".to_string(),
+        ));
+    }
+
     Ok(UserMessage {
         user_id: user_id.expect("validated user_key"),
         text: payload.text,
@@ -283,4 +408,154 @@ pub(crate) fn validate_port_request(
             .metadata
             .unwrap_or(Value::Object(Default::default())),
     })
+}
+
+#[derive(Debug, Clone)]
+enum HttpPortInput {
+    LocalReply(String),
+    Forward(BorgInput),
+}
+
+fn resolve_http_port_input(text: &str) -> Result<HttpPortInput, String> {
+    let trimmed = text.trim();
+    if !trimmed.starts_with('/') {
+        return Ok(HttpPortInput::Forward(BorgInput::Chat {
+            text: text.to_string(),
+        }));
+    }
+
+    let mut parts = trimmed.split_whitespace();
+    let token = parts.next().unwrap_or_default();
+    let command = token
+        .trim_start_matches('/')
+        .split('@')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let args: Vec<String> = parts.map(ToOwned::to_owned).collect();
+
+    match command.as_str() {
+        "help" => Ok(HttpPortInput::LocalReply(HTTP_HELP_TEXT.to_string())),
+        "start" => Ok(HttpPortInput::LocalReply(HTTP_START_GREETING.to_string())),
+        "model" => parse_model_command_action(&args),
+        "participants" => Ok(HttpPortInput::Forward(BorgInput::Command(
+            BorgCommand::ParticipantsList,
+        ))),
+        "context" => Ok(HttpPortInput::Forward(BorgInput::Command(
+            BorgCommand::ContextDump,
+        ))),
+        "reset" => Ok(HttpPortInput::Forward(BorgInput::Command(
+            BorgCommand::ResetContext,
+        ))),
+        "compact" => Ok(HttpPortInput::Forward(BorgInput::Command(
+            BorgCommand::CompactSession,
+        ))),
+        "" => Err("empty command".to_string()),
+        _ => Err(format!("unknown command: /{command}")),
+    }
+}
+
+fn parse_model_command_action(args: &[String]) -> Result<HttpPortInput, String> {
+    match args {
+        [] => Ok(HttpPortInput::Forward(BorgInput::Command(
+            BorgCommand::ModelShowCurrent,
+        ))),
+        [model] if !model.trim().is_empty() => Ok(HttpPortInput::Forward(BorgInput::Command(
+            BorgCommand::ModelSet {
+                model: model.trim().to_string(),
+            },
+        ))),
+        [..] => Err(MODEL_COMMAND_USAGE.to_string()),
+    }
+}
+
+async fn ensure_session_row(
+    state: &AppState,
+    headers: &HeaderMap,
+    user_id: &Uri,
+    session_id: &Uri,
+    port_name: &str,
+) -> anyhow::Result<()> {
+    let mut users = state
+        .db
+        .get_session(session_id)
+        .await?
+        .map(|session| session.users)
+        .unwrap_or_default();
+    if !users.iter().any(|value| value == user_id) {
+        users.push(user_id.clone());
+    }
+    if users.is_empty() {
+        users.push(user_id.clone());
+    }
+
+    let requested_port_id = headers
+        .get("x-borg-port-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| Uri::parse(value).ok());
+    let port_id = requested_port_id
+        .unwrap_or_else(|| uri!(HTTP_PORT_URI_NAMESPACE, HTTP_PORT_URI_KIND, port_name));
+    state.db.upsert_session(session_id, &users, &port_id).await
+}
+
+fn select_actor_id(
+    session_id: Uri,
+    bound_actor_id: Option<Uri>,
+    legacy_actor_id: Option<Uri>,
+) -> Uri {
+    if let Some(actor_id) = bound_actor_id {
+        return actor_id;
+    }
+    if let Some(actor_id) = legacy_actor_id.filter(|value| value.as_str().contains(":actor:")) {
+        return actor_id;
+    }
+    session_id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        HttpPortInput, MODEL_COMMAND_USAGE, resolve_http_port_input, validate_port_request,
+    };
+    use crate::controllers::system::HttpPortRequest;
+    use borg_exec::{BorgCommand, BorgInput};
+    use serde_json::json;
+
+    #[test]
+    fn validate_port_request_rejects_empty_text() {
+        let request = HttpPortRequest {
+            user_key: "borg:user:test".to_string(),
+            text: "   ".to_string(),
+            session_id: None,
+            agent_id: None,
+            metadata: Some(json!({})),
+        };
+        assert!(validate_port_request(request).is_err());
+    }
+
+    #[test]
+    fn resolve_http_port_input_maps_model_show() {
+        let input = resolve_http_port_input("/model").expect("parse /model");
+        assert!(matches!(
+            input,
+            HttpPortInput::Forward(BorgInput::Command(BorgCommand::ModelShowCurrent))
+        ));
+    }
+
+    #[test]
+    fn resolve_http_port_input_maps_model_set() {
+        let input = resolve_http_port_input("/model moonshotai/kimi-k2").expect("parse /model set");
+        assert!(matches!(
+            input,
+            HttpPortInput::Forward(BorgInput::Command(BorgCommand::ModelSet { model }))
+                if model == "moonshotai/kimi-k2"
+        ));
+    }
+
+    #[test]
+    fn resolve_http_port_input_reports_model_usage_for_invalid_shape() {
+        let error =
+            resolve_http_port_input("/model one two").expect_err("invalid /model should fail");
+        assert_eq!(error, MODEL_COMMAND_USAGE);
+    }
 }
