@@ -1,6 +1,9 @@
 use anyhow::{Result, anyhow};
 use borg_core::Uri;
 use borg_db::BorgDb;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 use crate::{
     Agent, ContextManager, ContextWindow, Message, SessionEndStatus, SessionEventPayload,
@@ -11,18 +14,26 @@ const AGENT_STARTED_EVENT: &str = "agent_started";
 const AGENT_FINISHED_EVENT: &str = "agent_finished";
 
 #[derive(Clone)]
-pub struct Session {
+pub struct Session<TToolCall = Value, TToolResult = Value> {
     pub session_id: Uri,
-    pub agent: Agent,
+    pub agent: Agent<TToolCall, TToolResult>,
     db: BorgDb,
-    context_manager: ContextManager,
+    context_manager: ContextManager<TToolCall, TToolResult>,
     last_processed_len: usize,
-    steering_messages: Vec<Message>,
-    follow_up_messages: Vec<Message>,
+    steering_messages: Vec<Message<TToolCall, TToolResult>>,
+    follow_up_messages: Vec<Message<TToolCall, TToolResult>>,
 }
 
-impl Session {
-    pub async fn new(session_id: Uri, agent: Agent, db: BorgDb) -> Result<Self> {
+impl<TToolCall, TToolResult> Session<TToolCall, TToolResult>
+where
+    TToolCall: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    TToolResult: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+{
+    pub async fn new(
+        session_id: Uri,
+        agent: Agent<TToolCall, TToolResult>,
+        db: BorgDb,
+    ) -> Result<Self> {
         let mut session = Self {
             session_id,
             agent,
@@ -40,7 +51,7 @@ impl Session {
         Ok(session)
     }
 
-    pub async fn add_message(&mut self, message: Message) -> Result<()> {
+    pub async fn add_message(&mut self, message: Message<TToolCall, TToolResult>) -> Result<()> {
         let payload = serde_json::to_value(message)?;
         self.db
             .append_session_message(&self.session_id, &payload)
@@ -48,18 +59,25 @@ impl Session {
         Ok(())
     }
 
-    pub fn set_context_manager(&mut self, context_manager: ContextManager) {
+    pub fn set_context_manager(
+        &mut self,
+        context_manager: ContextManager<TToolCall, TToolResult>,
+    ) {
         self.context_manager = context_manager;
     }
 
-    pub async fn read_messages(&self, from: usize, limit: usize) -> Result<Vec<Message>> {
+    pub async fn read_messages(
+        &self,
+        from: usize,
+        limit: usize,
+    ) -> Result<Vec<Message<TToolCall, TToolResult>>> {
         let payloads = self
             .db
             .list_session_messages(&self.session_id, from, limit)
             .await?;
         payloads
             .into_iter()
-            .map(serde_json::from_value::<Message>)
+            .map(serde_json::from_value::<Message<TToolCall, TToolResult>>)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| anyhow!(err))
     }
@@ -93,7 +111,10 @@ impl Session {
         .await
     }
 
-    pub async fn agent_finished(&mut self, result: &SessionResult<SessionOutput>) -> Result<()> {
+    pub async fn agent_finished(
+        &mut self,
+        result: &SessionResult<SessionOutput<TToolCall, TToolResult>>,
+    ) -> Result<()> {
         let payload = match result {
             SessionResult::Completed(Ok(output)) => SessionEventPayload::Finished {
                 status: SessionEndStatus::Completed,
@@ -123,23 +144,23 @@ impl Session {
         .await
     }
 
-    pub fn enqueue_steering_message(&mut self, message: Message) {
+    pub fn enqueue_steering_message(&mut self, message: Message<TToolCall, TToolResult>) {
         self.steering_messages.push(message);
     }
 
-    pub fn enqueue_follow_up_message(&mut self, message: Message) {
+    pub fn enqueue_follow_up_message(&mut self, message: Message<TToolCall, TToolResult>) {
         self.follow_up_messages.push(message);
     }
 
-    pub fn pop_steering_messages(&mut self) -> Vec<Message> {
+    pub fn pop_steering_messages(&mut self) -> Vec<Message<TToolCall, TToolResult>> {
         std::mem::take(&mut self.steering_messages)
     }
 
-    pub fn pop_follow_up_messages(&mut self) -> Vec<Message> {
+    pub fn pop_follow_up_messages(&mut self) -> Vec<Message<TToolCall, TToolResult>> {
         std::mem::take(&mut self.follow_up_messages)
     }
 
-    pub async fn build_context(&self) -> Result<ContextWindow> {
+    pub async fn build_context(&self) -> Result<ContextWindow<TToolCall, TToolResult>> {
         let messages = self.read_messages(0, usize::MAX).await?;
         self.context_manager
             .build_context(&self.agent, &messages)

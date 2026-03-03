@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use serde_json::Value;
 
 use crate::{Agent, Message, ToolSpec};
 
@@ -15,20 +16,24 @@ pub struct AvailableCapability {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContextWindow {
+pub struct ContextWindow<TToolCall = Value, TToolResult = Value> {
     pub system_prompt: String,
     pub behavior_prompt: String,
     pub available_tools: Vec<ToolSpec>,
     pub available_capabilities: Vec<AvailableCapability>,
-    pub user_messages: Vec<Message>,
-    pub assistant_messages: Vec<Message>,
-    pub tool_calls: Vec<Message>,
-    pub tool_responses: Vec<Message>,
-    pub ordered_messages: Vec<Message>,
+    pub user_messages: Vec<Message<TToolCall, TToolResult>>,
+    pub assistant_messages: Vec<Message<TToolCall, TToolResult>>,
+    pub tool_calls: Vec<Message<TToolCall, TToolResult>>,
+    pub tool_responses: Vec<Message<TToolCall, TToolResult>>,
+    pub ordered_messages: Vec<Message<TToolCall, TToolResult>>,
 }
 
-impl ContextWindow {
-    pub fn provider_input_messages(&self) -> Vec<Message> {
+impl<TToolCall, TToolResult> ContextWindow<TToolCall, TToolResult>
+where
+    TToolCall: Clone,
+    TToolResult: Clone,
+{
+    pub fn provider_input_messages(&self) -> Vec<Message<TToolCall, TToolResult>> {
         let mut messages = Vec::with_capacity(self.ordered_messages.len() + 2);
         if !self.system_prompt.trim().is_empty() {
             messages.push(Message::System {
@@ -59,20 +64,20 @@ pub enum ContextChunkMode {
 }
 
 #[derive(Debug, Clone)]
-pub struct ContextChunk {
+pub struct ContextChunk<TToolCall = Value, TToolResult = Value> {
     pub mode: ContextChunkMode,
-    pub messages: Vec<Message>,
+    pub messages: Vec<Message<TToolCall, TToolResult>>,
 }
 
-impl ContextChunk {
-    pub fn pinned(messages: Vec<Message>) -> Self {
+impl<TToolCall, TToolResult> ContextChunk<TToolCall, TToolResult> {
+    pub fn pinned(messages: Vec<Message<TToolCall, TToolResult>>) -> Self {
         Self {
             mode: ContextChunkMode::Pinned,
             messages,
         }
     }
 
-    pub fn compactable(messages: Vec<Message>) -> Self {
+    pub fn compactable(messages: Vec<Message<TToolCall, TToolResult>>) -> Self {
         Self {
             mode: ContextChunkMode::Compactable,
             messages,
@@ -80,37 +85,46 @@ impl ContextChunk {
     }
 }
 
-impl From<Message> for ContextChunk {
-    fn from(value: Message) -> Self {
+impl<TToolCall, TToolResult> From<Message<TToolCall, TToolResult>>
+    for ContextChunk<TToolCall, TToolResult>
+{
+    fn from(value: Message<TToolCall, TToolResult>) -> Self {
         ContextChunk::compactable(vec![value])
     }
 }
 
-impl From<Vec<Message>> for ContextChunk {
-    fn from(value: Vec<Message>) -> Self {
+impl<TToolCall, TToolResult> From<Vec<Message<TToolCall, TToolResult>>>
+    for ContextChunk<TToolCall, TToolResult>
+{
+    fn from(value: Vec<Message<TToolCall, TToolResult>>) -> Self {
         ContextChunk::compactable(value)
     }
 }
 
 #[async_trait]
-pub trait ContextProvider: Send + Sync {
-    async fn get_context(&self) -> Result<Vec<ContextChunk>>;
+pub trait ContextProvider<TToolCall = Value, TToolResult = Value>: Send + Sync {
+    async fn get_context(&self) -> Result<Vec<ContextChunk<TToolCall, TToolResult>>>;
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct StaticContextProvider {
-    chunks: Vec<ContextChunk>,
+pub struct StaticContextProvider<TToolCall = Value, TToolResult = Value> {
+    chunks: Vec<ContextChunk<TToolCall, TToolResult>>,
 }
 
-impl StaticContextProvider {
-    pub fn new(chunks: Vec<ContextChunk>) -> Self {
+impl<TToolCall, TToolResult> StaticContextProvider<TToolCall, TToolResult> {
+    pub fn new(chunks: Vec<ContextChunk<TToolCall, TToolResult>>) -> Self {
         Self { chunks }
     }
 }
 
 #[async_trait]
-impl ContextProvider for StaticContextProvider {
-    async fn get_context(&self) -> Result<Vec<ContextChunk>> {
+impl<TToolCall, TToolResult> ContextProvider<TToolCall, TToolResult>
+    for StaticContextProvider<TToolCall, TToolResult>
+where
+    TToolCall: Clone + Send + Sync,
+    TToolResult: Clone + Send + Sync,
+{
+    async fn get_context(&self) -> Result<Vec<ContextChunk<TToolCall, TToolResult>>> {
         Ok(self.chunks.clone())
     }
 }
@@ -133,22 +147,35 @@ impl Default for ContextManagerStrategy {
     }
 }
 
-#[derive(Clone, Default)]
-pub struct ContextManager {
+#[derive(Clone)]
+pub struct ContextManager<TToolCall = Value, TToolResult = Value> {
     strategy: ContextManagerStrategy,
-    providers: Vec<Arc<dyn ContextProvider>>,
+    providers: Vec<Arc<dyn ContextProvider<TToolCall, TToolResult>>>,
 }
 
-impl ContextManager {
-    pub fn builder() -> ContextManagerBuilder {
+impl<TToolCall, TToolResult> Default for ContextManager<TToolCall, TToolResult> {
+    fn default() -> Self {
+        Self {
+            strategy: ContextManagerStrategy::default(),
+            providers: Vec::new(),
+        }
+    }
+}
+
+impl<TToolCall, TToolResult> ContextManager<TToolCall, TToolResult>
+where
+    TToolCall: Clone + Serialize + Send + Sync + 'static,
+    TToolResult: Clone + Serialize + Send + Sync + 'static,
+{
+    pub fn builder() -> ContextManagerBuilder<TToolCall, TToolResult> {
         ContextManagerBuilder::default()
     }
 
     pub async fn build_context(
         &self,
-        agent: &Agent,
-        messages: &[Message],
-    ) -> Result<ContextWindow> {
+        agent: &Agent<TToolCall, TToolResult>,
+        messages: &[Message<TToolCall, TToolResult>],
+    ) -> Result<ContextWindow<TToolCall, TToolResult>> {
         let mut pinned_messages = Vec::new();
         let mut compactable_messages = Vec::new();
 
@@ -201,13 +228,25 @@ impl ContextManager {
     }
 }
 
-#[derive(Default)]
-pub struct ContextManagerBuilder {
+pub struct ContextManagerBuilder<TToolCall = Value, TToolResult = Value> {
     strategy: ContextManagerStrategy,
-    providers: Vec<Arc<dyn ContextProvider>>,
+    providers: Vec<Arc<dyn ContextProvider<TToolCall, TToolResult>>>,
 }
 
-impl ContextManagerBuilder {
+impl<TToolCall, TToolResult> Default for ContextManagerBuilder<TToolCall, TToolResult> {
+    fn default() -> Self {
+        Self {
+            strategy: ContextManagerStrategy::default(),
+            providers: Vec::new(),
+        }
+    }
+}
+
+impl<TToolCall, TToolResult> ContextManagerBuilder<TToolCall, TToolResult>
+where
+    TToolCall: Clone + Serialize + Send + Sync + 'static,
+    TToolResult: Clone + Serialize + Send + Sync + 'static,
+{
     pub fn with_strategy(mut self, strategy: ContextManagerStrategy) -> Self {
         self.strategy = strategy;
         self
@@ -215,13 +254,13 @@ impl ContextManagerBuilder {
 
     pub fn add_provider<P>(mut self, provider: P) -> Self
     where
-        P: ContextProvider + 'static,
+        P: ContextProvider<TToolCall, TToolResult> + 'static,
     {
         self.providers.push(Arc::new(provider));
         self
     }
 
-    pub fn build(self) -> ContextManager {
+    pub fn build(self) -> ContextManager<TToolCall, TToolResult> {
         ContextManager {
             strategy: self.strategy,
             providers: self.providers,
@@ -229,11 +268,15 @@ impl ContextManagerBuilder {
     }
 }
 
-fn compact_messages(
-    messages: Vec<Message>,
+fn compact_messages<TToolCall, TToolResult>(
+    messages: Vec<Message<TToolCall, TToolResult>>,
     max_chars: usize,
     keep_recent_messages: usize,
-) -> (Vec<Message>, bool) {
+) -> (Vec<Message<TToolCall, TToolResult>>, bool)
+where
+    TToolCall: Clone + Serialize,
+    TToolResult: Clone + Serialize,
+{
     let normalized_max_chars = max_chars.max(1);
     let normalized_keep_recent_messages = keep_recent_messages.max(1);
 
@@ -278,7 +321,14 @@ fn compact_messages(
     (compacted, true)
 }
 
-fn build_context_window(agent: &Agent, messages: Vec<Message>) -> ContextWindow {
+fn build_context_window<TToolCall, TToolResult>(
+    agent: &Agent<TToolCall, TToolResult>,
+    messages: Vec<Message<TToolCall, TToolResult>>,
+) -> ContextWindow<TToolCall, TToolResult>
+where
+    TToolCall: Clone + Serialize,
+    TToolResult: Clone + Serialize,
+{
     let ordered_messages = messages
         .into_iter()
         .filter(|message| match message {
@@ -350,13 +400,17 @@ enum ContextMetadataPolicy {
     },
 }
 
-fn with_context_metadata(
-    messages: Vec<Message>,
+fn with_context_metadata<TToolCall, TToolResult>(
+    messages: Vec<Message<TToolCall, TToolResult>>,
     autocompaction_policy: ContextMetadataPolicy,
     max_chars: Option<usize>,
     current_agent_id: &str,
-) -> Vec<Message> {
-    let base_messages: Vec<Message> = messages
+) -> Vec<Message<TToolCall, TToolResult>>
+where
+    TToolCall: Clone + Serialize,
+    TToolResult: Clone + Serialize,
+{
+    let base_messages: Vec<Message<TToolCall, TToolResult>> = messages
         .into_iter()
         .filter(|message| match message {
             Message::System { content } => !content.starts_with(CONTEXT_METADATA_PREFIX),
@@ -386,7 +440,13 @@ fn with_context_metadata(
     out
 }
 
-fn summarize_message_line(message: &Message) -> Option<String> {
+fn summarize_message_line<TToolCall, TToolResult>(
+    message: &Message<TToolCall, TToolResult>,
+) -> Option<String>
+where
+    TToolCall: Serialize,
+    TToolResult: Serialize,
+{
     let mut line = match message {
         Message::System { content } => format!("System: {}", content),
         Message::User { content } => format!("User: {}", content),
@@ -398,7 +458,11 @@ fn summarize_message_line(message: &Message) -> Option<String> {
         Message::Assistant { content } => format!("Assistant: {}", content),
         Message::ToolCall {
             name, arguments, ..
-        } => format!("Tool call `{}` args {}", name, arguments),
+        } => format!(
+            "Tool call `{}` args {}",
+            name,
+            serde_json::to_string(arguments).ok()?
+        ),
         Message::ToolResult { name, content, .. } => {
             format!(
                 "Tool result `{}` {}",
@@ -419,7 +483,11 @@ fn summarize_message_line(message: &Message) -> Option<String> {
     Some(line)
 }
 
-fn message_char_count(message: &Message) -> usize {
+fn message_char_count<TToolCall, TToolResult>(message: &Message<TToolCall, TToolResult>) -> usize
+where
+    TToolCall: Serialize,
+    TToolResult: Serialize,
+{
     match message {
         Message::System { content } => content.chars().count(),
         Message::User { content } => content.chars().count(),
@@ -432,7 +500,9 @@ fn message_char_count(message: &Message) -> usize {
         } => {
             tool_call_id.chars().count()
                 + name.chars().count()
-                + arguments.to_string().chars().count()
+                + serde_json::to_string(arguments)
+                    .map(|value| value.chars().count())
+                    .unwrap_or(0)
         }
         Message::ToolResult {
             tool_call_id,

@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 use borg_llm::{LlmRequest, Provider, ProviderBlock, StopReason};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::marker::PhantomData;
@@ -139,13 +140,17 @@ impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult> {
     }
 }
 
-impl Agent<Value, Value> {
+impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult>
+where
+    TToolCall: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    TToolResult: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+{
     pub async fn run<P: Provider>(
         &self,
-        session: &mut Session,
+        session: &mut Session<TToolCall, TToolResult>,
         provider: &P,
-        tools: &Toolchain,
-    ) -> SessionResult<SessionOutput> {
+        tools: &Toolchain<TToolCall, TToolResult>,
+    ) -> SessionResult<SessionOutput<TToolCall, TToolResult>> {
         if let Err(err) = session.agent_started().await {
             return SessionResult::SessionError(err.to_string());
         }
@@ -182,7 +187,7 @@ impl Agent<Value, Value> {
             return finish_session(session, SessionResult::Idle).await;
         }
         let mut last_reply = String::new();
-        let mut records: Vec<ToolCallRecord> = Vec::new();
+        let mut records: Vec<ToolCallRecord<TToolCall, TToolResult>> = Vec::new();
 
         while has_tool_calls || !pending.is_empty() {
             while has_tool_calls || !pending.is_empty() {
@@ -329,7 +334,19 @@ impl Agent<Value, Value> {
                 }
 
                 let mut interrupted = false;
-                for (tool_call_id, tool_name, arguments) in tool_calls {
+                for (tool_call_id, tool_name, arguments_json) in tool_calls {
+                    let arguments = match serde_json::from_value::<TToolCall>(arguments_json) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            return finish_session(
+                                session,
+                                SessionResult::SessionError(format!(
+                                    "invalid tool call arguments for `{tool_name}`: {err}"
+                                )),
+                            )
+                            .await;
+                        }
+                    };
                     if let Err(err) = session
                         .add_message(crate::Message::ToolCall {
                             tool_call_id: tool_call_id.clone(),
@@ -425,10 +442,14 @@ impl Agent<Value, Value> {
     }
 }
 
-async fn finish_session(
-    session: &mut Session,
-    result: SessionResult<SessionOutput>,
-) -> SessionResult<SessionOutput> {
+async fn finish_session<TToolCall, TToolResult>(
+    session: &mut Session<TToolCall, TToolResult>,
+    result: SessionResult<SessionOutput<TToolCall, TToolResult>>,
+) -> SessionResult<SessionOutput<TToolCall, TToolResult>>
+where
+    TToolCall: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    TToolResult: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+{
     if let Err(err) = session.agent_finished(&result).await {
         return SessionResult::SessionError(err.to_string());
     }
