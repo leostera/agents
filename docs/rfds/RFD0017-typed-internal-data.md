@@ -404,6 +404,9 @@ Implemented in this branch so far:
 19. Completed `borg-memory` tool constructor migration to typed adapters:
    - switched the remaining `Memory-getSchema` handler to `Tool::new_transcoded(...)` with an explicit empty request DTO
    - `borg-memory/src/tools.rs` production handlers now consistently use typed request decoding through `new_transcoded`
+20. Normalized exec provider-admin tool bridging on typed constructor path:
+   - changed `borg-exec` provider admin tool registration from `Tool::new(...)` to `Tool::new_transcoded(...)`
+   - kept dynamic provider payload handling unchanged, but removed another runtime `Tool::new` production usage
 
 Important behavior change from these updates:
 
@@ -412,7 +415,7 @@ Important behavior change from these updates:
 3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
 4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
 5. Port metadata still enters through `JsonPortContext`; removing that boundary JSON adapter remains pending.
-6. Some built-in tools still use `Tool::new(...)` with JSON arguments; taskgraph and memory production tool handlers are now fully migrated to typed ingress decoding, with remaining runtime dynamic adapters concentrated elsewhere (for example provider-admin bridging in exec).
+6. Most production handlers are now on typed ingress decoding; dynamic JSON tooling remains mainly in boundary/spec helpers and test scaffolding.
 
 Known blocker while validating this branch:
 
