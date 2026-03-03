@@ -427,6 +427,10 @@ Implemented in this branch so far:
 25. Fixed workspace build regressions in CLI tool adapters after typed tool-request migration:
    - updated `borg-cli` tool command shims (`codemode`, `memory`, `shell`, `taskgraph`) to pass typed arguments (`arguments: value.into()`)
    - restored clean `cargo build` for the workspace on this branch
+26. Removed JSON return contract from BorgFS runtime tool execution:
+   - changed `run_borg_fs_tool(...)` from `Result<Value>` to typed `Result<FsToolOutput>`
+   - introduced typed BorgFS output structs/enums (`FsToolOutput`, `FsToolCounts`) and updated local tests accordingly
+   - kept JSON serialization only at the tool response boundary (`ToolResultData::Text(serde_json::to_string(...))`)
 
 Important behavior change from these updates:
 
