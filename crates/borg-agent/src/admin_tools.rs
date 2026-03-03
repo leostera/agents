@@ -1,14 +1,53 @@
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 
 use crate::{
-    BorgToolCall, BorgToolResult, Tool, ToolRequest, ToolResponse, ToolResultData, ToolSpec,
+    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec,
     Toolchain,
 };
+
+#[derive(Debug, Clone, Deserialize)]
+struct ListAgentsArgs {
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct WhoAmIArgs {}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CreateAgentArgs {
+    #[serde(default)]
+    agent_id: Option<String>,
+    name: String,
+    model: String,
+    system_prompt: String,
+    #[serde(default)]
+    default_provider_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateAgentArgs {
+    agent_id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    system_prompt: Option<String>,
+    #[serde(default)]
+    default_provider_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DisableAgentArgs {
+    agent_id: String,
+}
 
 pub fn default_agent_admin_tool_specs() -> Vec<ToolSpec> {
     vec![
@@ -93,61 +132,59 @@ pub fn build_agent_admin_toolchain(
     let db_disable = db;
 
     Toolchain::builder()
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_transcoded(
             required_spec("Agents-listAgents")?,
             None,
-            move |request: ToolRequest<Value>| {
+            move |request: crate::ToolRequest<ListAgentsArgs>| {
                 let db = db_list.clone();
                 async move {
-                    let limit = request
-                        .arguments
-                        .get("limit")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(100) as usize;
+                    let limit = request.arguments.limit.unwrap_or(100);
                     let agents = db.list_agent_specs(limit).await?;
-                    json_text(json!({ "agents": agents }))
+                    json_text(&json!({ "agents": agents }))
                 }
             },
         ))?
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_transcoded(
             required_spec("Agents-whoAmI")?,
             None,
-            move |_request: ToolRequest<Value>| {
+            move |_request: crate::ToolRequest<WhoAmIArgs>| {
                 let agent_id = whoami_agent_id.clone();
                 let session_id = whoami_session_id.clone();
                 async move {
-                    json_text(json!({
+                    json_text(&json!({
                         "agent_id": agent_id,
                         "session_id": session_id
                     }))
                 }
             },
         ))?
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_transcoded(
             required_spec("Agents-createAgent")?,
             None,
-            move |request: ToolRequest<Value>| {
+            move |request: crate::ToolRequest<CreateAgentArgs>| {
                 let db = db_create.clone();
                 async move {
                     let agent_id = request
                         .arguments
-                        .get("agent_id")
-                        .and_then(Value::as_str)
+                        .agent_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
                         .map(Uri::parse)
                         .transpose()?
                         .unwrap_or_else(|| uri!("borg", "agent", &Uuid::now_v7().to_string()));
-                    let name = req_str(&request.arguments, "name")?;
-                    let model = req_str(&request.arguments, "model")?;
-                    let system_prompt = req_str(&request.arguments, "system_prompt")?;
-                    let default_provider_id =
-                        opt_trimmed_str(&request.arguments, "default_provider_id");
+                    let name = require_non_empty(&request.arguments.name, "name")?;
+                    let model = require_non_empty(&request.arguments.model, "model")?;
+                    let system_prompt =
+                        require_non_empty(&request.arguments.system_prompt, "system_prompt")?;
+                    let default_provider_id = option_non_empty(request.arguments.default_provider_id);
 
                     db.upsert_agent_spec(
                         &agent_id,
-                        name,
+                        &name,
                         default_provider_id.as_deref(),
-                        model,
-                        system_prompt,
+                        &model,
+                        &system_prompt,
                     )
                     .await?;
 
@@ -155,38 +192,29 @@ pub fn build_agent_admin_toolchain(
                         .get_agent_spec(&agent_id)
                         .await?
                         .ok_or_else(|| anyhow!("agent.not_found"))?;
-                    json_text(json!({ "agent": agent }))
+                    json_text(&json!({ "agent": agent }))
                 }
             },
         ))?
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_transcoded(
             required_spec("Agents-updateAgent")?,
             None,
-            move |request: ToolRequest<Value>| {
+            move |request: crate::ToolRequest<UpdateAgentArgs>| {
                 let db = db_update.clone();
                 async move {
-                    let agent_id = Uri::parse(req_str(&request.arguments, "agent_id")?)?;
+                    let agent_id = Uri::parse(&require_non_empty(&request.arguments.agent_id, "agent_id")?)?;
                     let existing = db
                         .get_agent_spec(&agent_id)
                         .await?
                         .ok_or_else(|| anyhow!("agent.not_found"))?;
 
-                    let name = opt_trimmed_str(&request.arguments, "name")
+                    let name = option_non_empty(request.arguments.name)
                         .unwrap_or_else(|| existing.name.clone());
-                    let model = opt_trimmed_str(&request.arguments, "model")
+                    let model = option_non_empty(request.arguments.model)
                         .unwrap_or_else(|| existing.model.clone());
-                    let system_prompt = request
-                        .arguments
-                        .get("system_prompt")
-                        .and_then(Value::as_str)
-                        .unwrap_or(existing.system_prompt.as_str())
-                        .to_string();
-                    let default_provider_id = request
-                        .arguments
-                        .get("default_provider_id")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .map(ToOwned::to_owned)
+                    let system_prompt = option_non_empty(request.arguments.system_prompt)
+                        .unwrap_or(existing.system_prompt);
+                    let default_provider_id = option_non_empty(request.arguments.default_provider_id)
                         .or(existing.default_provider_id.clone())
                         .filter(|value| !value.is_empty());
 
@@ -203,17 +231,17 @@ pub fn build_agent_admin_toolchain(
                         .get_agent_spec(&agent_id)
                         .await?
                         .ok_or_else(|| anyhow!("agent.not_found"))?;
-                    json_text(json!({ "agent": agent }))
+                    json_text(&json!({ "agent": agent }))
                 }
             },
         ))?
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_transcoded(
             required_spec("Agents-disableAgent")?,
             None,
-            move |request: ToolRequest<Value>| {
+            move |request: crate::ToolRequest<DisableAgentArgs>| {
                 let db = db_disable.clone();
                 async move {
-                    let agent_id = Uri::parse(req_str(&request.arguments, "agent_id")?)?;
+                    let agent_id = Uri::parse(&require_non_empty(&request.arguments.agent_id, "agent_id")?)?;
                     let updated = db.set_agent_spec_enabled(&agent_id, false).await?;
                     if updated == 0 {
                         return Err(anyhow!("agent.not_found"));
@@ -222,7 +250,7 @@ pub fn build_agent_admin_toolchain(
                         .get_agent_spec(&agent_id)
                         .await?
                         .ok_or_else(|| anyhow!("agent.not_found"))?;
-                    json_text(json!({ "agent": agent }))
+                    json_text(&json!({ "agent": agent }))
                 }
             },
         ))?
@@ -244,25 +272,23 @@ fn required_spec(name: &str) -> Result<ToolSpec> {
         .ok_or_else(|| anyhow!("missing agent admin tool spec {}", name))
 }
 
-fn json_text(value: Value) -> Result<ToolResponse<Value>> {
+fn json_text<T: Serialize>(value: &T) -> Result<ToolResponse<()>> {
     Ok(ToolResponse {
-        content: ToolResultData::Text(serde_json::to_string(&value)?),
+        content: ToolResultData::Text(serde_json::to_string(value)?),
     })
 }
 
-fn req_str<'a>(arguments: &'a Value, key: &str) -> Result<&'a str> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("validation_failed: missing {}", key))
+fn require_non_empty(value: &str, key: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("validation_failed: missing {}", key));
+    }
+    Ok(trimmed.to_string())
 }
 
-fn opt_trimmed_str(arguments: &Value, key: &str) -> Option<String> {
-    arguments
-        .get(key)
-        .and_then(Value::as_str)
+fn option_non_empty(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
