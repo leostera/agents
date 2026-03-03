@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use borg_agent::{ToolRequest, ToolResultData};
+use borg_agent::{BorgToolCall, BorgToolResult, ToolRequest, ToolResultData};
 use borg_memory::{
     FactArity, FactInput, FactValue, MemoryStore, Uri, build_memory_toolchain,
     default_memory_tool_specs,
@@ -197,15 +197,15 @@ async fn make_store(prefix: &str) -> MemoryStore {
     store
 }
 
-fn request(tool_name: &str, arguments: Value) -> ToolRequest {
+fn request(tool_name: &str, arguments: Value) -> ToolRequest<BorgToolCall> {
     ToolRequest {
         tool_call_id: format!("call_{}", Uuid::now_v7()),
         tool_name: tool_name.to_string(),
-        arguments,
+        arguments: arguments.into(),
     }
 }
 
-fn unwrap_text_json(content: ToolResultData) -> Value {
+fn unwrap_text_json(content: ToolResultData<BorgToolResult>) -> Value {
     match content {
         ToolResultData::Text(text) => serde_json::from_str(&text).expect("json text payload"),
         other => panic!("expected text payload, got {:?}", other),

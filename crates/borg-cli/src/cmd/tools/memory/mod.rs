@@ -469,7 +469,7 @@ async fn execute(
         .run(borg_agent::ToolRequest {
             tool_call_id: format!("cli-memory-{}", command.replace(' ', "-")),
             tool_name: tool_name.to_string(),
-            arguments,
+            arguments: arguments.into(),
         })
         .await?;
 

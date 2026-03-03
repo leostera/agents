@@ -61,7 +61,7 @@ async fn run_tool(command: &str, tool_name: &str, payload: &str) -> Result<Value
         .run(borg_agent::ToolRequest {
             tool_call_id: format!("cli-shell-{}", command),
             tool_name: tool_name.to_string(),
-            arguments,
+            arguments: arguments.into(),
         })
         .await?;
 

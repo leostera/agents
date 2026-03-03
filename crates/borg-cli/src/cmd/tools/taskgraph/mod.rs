@@ -805,7 +805,7 @@ async fn execute(
         .run(borg_agent::ToolRequest {
             tool_call_id: format!("cli-taskgraph-{}", command),
             tool_name: tool_name.to_string(),
-            arguments,
+            arguments: arguments.into(),
         })
         .await?;
 
