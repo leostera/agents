@@ -4,6 +4,7 @@ use borg_db::BorgDb;
 use borg_llm::{LlmRequest, Provider, ProviderBlock, StopReason};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::marker::PhantomData;
 use tracing::info;
 use tracing::{Instrument, error, info_span, warn};
 
@@ -69,16 +70,18 @@ the web or ask the user if they have the answer and wish you to remember it for 
 "#;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Agent {
+pub struct Agent<TToolCall = Value, TToolResult = Value> {
     pub agent_id: Uri,
     pub model: String,
     pub system_prompt: String,
     pub behavior_prompt: String,
     pub max_turns: usize,
     pub tools: Vec<ToolSpec>,
+    #[serde(skip)]
+    _marker: PhantomData<(TToolCall, TToolResult)>,
 }
 
-impl Agent {
+impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult> {
     pub fn new(agent_id: Uri) -> Self {
         Self {
             agent_id,
@@ -87,6 +90,7 @@ impl Agent {
             behavior_prompt: String::new(),
             max_turns: DEFAULT_MAX_TURNS,
             tools: Vec::new(),
+            _marker: PhantomData,
         }
     }
 
@@ -133,7 +137,9 @@ impl Agent {
         self.tools = tools;
         self
     }
+}
 
+impl Agent<Value, Value> {
     pub async fn run<'a, P: Provider>(
         &self,
         session: &mut Session,
