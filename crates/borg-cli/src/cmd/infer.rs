@@ -145,7 +145,7 @@ pub async fn run(_app: &BorgCliApp, cmd: InferCommand) -> Result<()> {
                 "{}",
                 serde_json::to_string(&json!({
                     "ok": true,
-                    "entity": "llm_test",
+                    "entity": "infer_test",
                     "model_id": model,
                     "gguf_path": gguf_path,
                     "prompt_tokens": generation_report.prompt_tokens,
