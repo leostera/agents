@@ -337,10 +337,10 @@ Implemented in this branch so far:
    - `ToolCallSummary::error_message` / `output_message` now match on typed tool result variants
 6. Removed `UserMessage` intermediate ingress DTO from active exec path:
    - session/toolchain wiring now uses explicit typed fields instead of passing a generic ingress object through runtime internals
-7. Typed user-turn metadata started in exec ingress path:
-   - metadata is now parsed into `UserMessageMetadata` (typed struct) instead of carrying `serde_json::Value`
-   - API boundary parses metadata with serde derive (`serde_json::from_value::<UserMessageMetadata>`)
-   - runtime consumers now read typed fields (`port`, `chat_id`, `message_id`, sender/chat refs) directly
+7. Removed `UserMessageMetadata` from exec runtime wiring:
+   - `borg-exec` no longer exports/depends on a `UserMessageMetadata` ingress struct
+   - API `ValidatedPortRequest.metadata` is currently passed through as boundary JSON into `JsonPortContext`
+   - runtime toolchain build path now takes explicit typed identifiers only (`user_id`, `session_id`, `agent_id`)
 
 Important behavior change from these updates:
 
@@ -348,7 +348,7 @@ Important behavior change from these updates:
 2. Existing tests that asserted schema-rejection behavior were updated to reflect callback-owned validation.
 3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
 4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
-5. Unknown metadata keys from API input are currently ignored by typed parse (intentional while we remove shapeless runtime JSON).
+5. Port metadata still enters through `JsonPortContext`; removing that boundary JSON adapter remains pending.
 
 Known blocker while validating this branch:
 

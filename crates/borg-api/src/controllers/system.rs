@@ -6,7 +6,7 @@ use axum::{
 };
 use base64::Engine;
 use borg_core::{Entity, Uri, uri};
-use borg_exec::{BorgCommand, BorgInput, BorgMessage, JsonPortContext, UserMessageMetadata};
+use borg_exec::{BorgCommand, BorgInput, BorgMessage, JsonPortContext};
 use borg_fs::{FileKind, PutFileMetadata};
 use borg_memory::{FactArity, FactValue, Uri as MemoryUri};
 use serde::{Deserialize, Serialize};
@@ -88,7 +88,7 @@ pub(crate) struct ValidatedPortRequest {
     pub text: String,
     pub session_id: Option<Uri>,
     pub agent_id: Option<Uri>,
-    pub metadata: UserMessageMetadata,
+    pub metadata: Value,
 }
 
 pub(crate) struct SystemController;
@@ -585,12 +585,7 @@ pub(crate) fn validate_port_request(
         text: payload.text,
         session_id,
         agent_id,
-        metadata: serde_json::from_value::<UserMessageMetadata>(
-            payload
-                .metadata
-                .unwrap_or(Value::Object(Default::default())),
-        )
-        .unwrap_or_default(),
+        metadata: payload.metadata.unwrap_or(Value::Object(Default::default())),
     })
 }
 
