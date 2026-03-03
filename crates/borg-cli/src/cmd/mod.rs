@@ -117,12 +117,28 @@ enum AdminCommand {
         #[command(subcommand)]
         cmd: AdminTasksCommand,
     },
+    #[command(about = "Session maintenance commands")]
+    Sessions {
+        #[command(subcommand)]
+        cmd: AdminSessionsCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
 enum AdminTasksCommand {
     #[command(about = "Delete all TaskGraph tasks")]
     ClearAllTasks {
+        #[arg(long, help = "Skip confirmation prompt")]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AdminSessionsCommand {
+    #[command(about = "Delete all sessions and their persisted messages")]
+    ClearSessions {
+        #[arg(long, help = "Required safety flag: clear all sessions")]
+        all: bool,
         #[arg(long, help = "Skip confirmation prompt")]
         yes: bool,
     },
@@ -150,6 +166,11 @@ pub async fn run(app: BorgCliApp, cli: Cli) -> Result<()> {
         Command::Admin { cmd } => match cmd {
             AdminCommand::Tasks { cmd } => match cmd {
                 AdminTasksCommand::ClearAllTasks { yes } => app.admin_tasks_clear_all(yes).await,
+            },
+            AdminCommand::Sessions { cmd } => match cmd {
+                AdminSessionsCommand::ClearSessions { all, yes } => {
+                    app.admin_sessions_clear_all(all, yes).await
+                }
             },
         },
         Command::Tools { cmd } => {

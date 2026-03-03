@@ -242,22 +242,31 @@ fn resolve_available_secret_value<'a>(
     available_secret: &str,
     secrets: &'a [borg_db::AppSecretRecord],
 ) -> Option<&'a str> {
-    if let Some(secret) = secrets.iter().find(|secret| secret.key == available_secret) {
-        return Some(secret.value.as_str());
-    }
-    let normalized_suffix = available_secret_to_secret_key(available_secret)?;
-    secrets
-        .iter()
-        .find(|secret| secret.key.eq_ignore_ascii_case(&normalized_suffix))
-        .map(|secret| secret.value.as_str())
+    available_secret_candidate_keys(available_secret)
+        .into_iter()
+        .find_map(|candidate| {
+            secrets
+                .iter()
+                .find(|secret| secret.key.eq_ignore_ascii_case(&candidate))
+                .map(|secret| secret.value.as_str())
+        })
 }
 
-fn available_secret_to_secret_key(available_secret: &str) -> Option<String> {
-    let segments = available_secret.split('_').collect::<Vec<_>>();
-    if segments.len() >= 3 && segments.first().is_some_and(|segment| *segment == "APP") {
-        return Some(segments[2..].join("_").to_ascii_lowercase());
+fn available_secret_candidate_keys(available_secret: &str) -> Vec<String> {
+    let trimmed = available_secret.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
     }
-    None
+    let mut keys = vec![trimmed.to_string(), trimmed.to_ascii_lowercase()];
+
+    // Common OAuth secret rows are keyed as access_token/refresh_token/scope/expires_at.
+    if let Some((_, suffix)) = trimmed.split_once('_') {
+        keys.push(suffix.to_ascii_lowercase());
+    }
+
+    keys.sort();
+    keys.dedup();
+    keys
 }
 
 fn is_task_worker_message(msg: &UserMessage) -> bool {

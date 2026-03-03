@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use borg_agent::{Agent, AgentTools, Message, Session, SessionResult, ToolResultData};
+use borg_agent::{
+    Agent, AgentTools, Message, Session, SessionResult, ToolRequest, ToolResultData, ToolRunner,
+};
 use borg_apps::default_tool_specs as default_apps_tool_specs;
 use borg_codemode::{
     CodeModeContext, CodeModeRuntime, default_tool_specs as default_codemode_tool_specs,
@@ -25,6 +27,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::BorgSupervisor;
 use crate::mailbox_envelope::ActorMailboxEnvelope;
+use crate::session_manager::SessionManager;
 use crate::tool_runner::build_exec_toolchain_with_context;
 
 fn temp_db_path() -> PathBuf {
@@ -141,6 +144,67 @@ fn default_agent_tools() -> Vec<borg_agent::ToolSpec> {
     let mut tools = default_codemode_tool_specs();
     tools.extend(default_apps_tool_specs());
     tools
+}
+
+#[tokio::test]
+async fn session_manager_resolve_agent_for_turn_refreshes_prompts_and_tools_each_call() {
+    let db = open_test_db().await;
+    let manager = SessionManager::new(db.clone(), "gpt-4o-mini".to_string());
+    let agent_id = uri!("borg", "agent", "refresh-test");
+
+    db.upsert_agent_spec(&agent_id, "refresh-test", None, "gpt-4o-mini", "prompt-v1")
+        .await
+        .unwrap();
+
+    let first = manager
+        .resolve_agent_for_turn(&agent_id, None)
+        .await
+        .unwrap();
+    assert_eq!(first.system_prompt, "prompt-v1");
+    assert!(
+        !first
+            .tools
+            .iter()
+            .any(|tool| tool.name == "CustomApp-doThing")
+    );
+
+    let app_id = uri!("borg", "app", "refresh-tools");
+    let capability_id = uri!("borg", "capability", "refresh-tools-do-thing");
+    db.upsert_app(
+        &app_id,
+        "Refresh Tools App",
+        "refresh-tools",
+        "test app",
+        "active",
+    )
+    .await
+    .unwrap();
+    db.upsert_app_capability(
+        &app_id,
+        &capability_id,
+        "CustomApp-doThing",
+        "Do a thing",
+        "codemode",
+        "Run this when needed.",
+        "active",
+    )
+    .await
+    .unwrap();
+    db.upsert_agent_spec(&agent_id, "refresh-test", None, "gpt-4o-mini", "prompt-v2")
+        .await
+        .unwrap();
+
+    let second = manager
+        .resolve_agent_for_turn(&agent_id, None)
+        .await
+        .unwrap();
+    assert_eq!(second.system_prompt, "prompt-v2");
+    assert!(
+        second
+            .tools
+            .iter()
+            .any(|tool| tool.name == "CustomApp-doThing")
+    );
 }
 
 #[tokio::test]
@@ -302,6 +366,109 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
             } if message.contains("async zero-arg function expression")
         )
     }));
+}
+
+#[tokio::test]
+async fn app_available_secret_is_exposed_in_borg_env_get() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let runtime = crate::BorgRuntime::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
+    );
+
+    let app_id = uri!("borg", "app", "github-env-test");
+    let connection_id = uri!("borg", "app-connection", "github-env-test");
+    let owner_user_id = uri!("borg", "user", "env-owner");
+    let secret_id = uri!("borg", "app-secret", "github-env-test-token");
+
+    db.upsert_app_with_metadata(
+        &app_id,
+        "GitHub Test",
+        "github-test",
+        "test app for env secret exposure",
+        "active",
+        false,
+        "custom",
+        "none",
+        &json!({}),
+        &["GITHUB_ACCESS_TOKEN".to_string()],
+    )
+    .await
+    .unwrap();
+
+    db.upsert_app_connection(
+        &app_id,
+        &connection_id,
+        Some(&owner_user_id),
+        None,
+        None,
+        "connected",
+        &json!({}),
+    )
+    .await
+    .unwrap();
+
+    // Stored key remains oauth-native (`access_token`), while exposed env key is `GITHUB_ACCESS_TOKEN`.
+    db.upsert_app_secret(
+        &app_id,
+        &secret_id,
+        Some(&connection_id),
+        "access_token",
+        "gho_test_123",
+        "oauth",
+    )
+    .await
+    .unwrap();
+
+    let msg = crate::types::UserMessage {
+        user_id: owner_user_id,
+        text: "inspect env".to_string(),
+        session_id: Some(uri!("borg", "session", "env-test")),
+        agent_id: Some(uri!("borg", "agent", "env-test")),
+        metadata: json!({}),
+    };
+
+    let toolchain = runtime
+        .build_toolchain(
+            &msg,
+            &uri!("borg", "session", "env-test"),
+            &uri!("borg", "agent", "env-test"),
+        )
+        .await
+        .unwrap();
+
+    let response = toolchain
+        .run(ToolRequest {
+            tool_call_id: "tool-call-env-1".to_string(),
+            tool_name: "CodeMode-executeCode".to_string(),
+            arguments: json!({
+                "hint": "verify app secret projection into env",
+                "code": "async () => ({ keys: Borg.env.keys(), token: Borg.env.get('GITHUB_ACCESS_TOKEN') })"
+            }),
+        })
+        .await
+        .unwrap();
+
+    match response.content {
+        ToolResultData::Execution { result, .. } => {
+            let keys = result
+                .get("keys")
+                .and_then(serde_json::Value::as_array)
+                .expect("keys array");
+            assert!(
+                keys.iter()
+                    .any(|value| value.as_str() == Some("GITHUB_ACCESS_TOKEN"))
+            );
+            assert_eq!(
+                result.get("token").and_then(serde_json::Value::as_str),
+                Some("gho_test_123")
+            );
+        }
+        other => panic!("unexpected tool response content: {other:?}"),
+    }
 }
 
 #[tokio::test]

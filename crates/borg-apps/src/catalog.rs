@@ -1,5 +1,6 @@
 use anyhow::Result;
 use borg_agent::ToolSpec;
+use borg_clockwork::default_clockwork_tool_specs;
 use borg_codemode::default_tool_specs as default_codemode_tool_specs;
 use borg_core::{Config, Uri};
 use borg_db::BorgDb;
@@ -49,6 +50,7 @@ impl DefaultAppsCatalog {
                 Self::build_shellmode_app(),
                 Self::build_memory_app(),
                 Self::build_taskgraph_app(),
+                Self::build_clockwork_app(),
                 Self::build_github_app(),
             ],
         }
@@ -171,6 +173,24 @@ impl DefaultAppsCatalog {
         }
     }
 
+    fn build_clockwork_app() -> DefaultApp {
+        DefaultApp {
+            app_id: "borg:app:clockwork-system",
+            name: "Clockwork System",
+            slug: "clockwork-system",
+            description: "Durable scheduler app for creating and managing one-shot and cron jobs that deliver Borg chat messages to actor sessions.",
+            status: "active",
+            auth_strategy: "none",
+            auth_config_json: json!({}),
+            available_secrets: Vec::new(),
+            capabilities: Self::tool_specs_to_capabilities(
+                "clockwork-system",
+                "codemode",
+                default_clockwork_tool_specs(),
+            ),
+        }
+    }
+
     fn build_github_app() -> DefaultApp {
         let config = Config::default();
         let mut auth_config_json = json!({
@@ -193,10 +213,10 @@ impl DefaultAppsCatalog {
             auth_strategy: "oauth2",
             auth_config_json,
             available_secrets: vec![
-                "APP_GITHUB_ACCESS_TOKEN".to_string(),
-                "APP_GITHUB_REFRESH_TOKEN".to_string(),
-                "APP_GITHUB_SCOPE".to_string(),
-                "APP_GITHUB_EXPIRES_AT".to_string(),
+                "GITHUB_ACCESS_TOKEN".to_string(),
+                "GITHUB_REFRESH_TOKEN".to_string(),
+                "GITHUB_SCOPE".to_string(),
+                "GITHUB_EXPIRES_AT".to_string(),
             ],
             capabilities: vec![DefaultCapability {
                 capability_id: "borg:capability:github-list-repos".to_string(),

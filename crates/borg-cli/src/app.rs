@@ -354,6 +354,44 @@ impl BorgCliApp {
         println!("cleared {} task(s) from taskgraph", deleted);
         Ok(())
     }
+
+    pub(crate) async fn admin_sessions_clear_all(&self, all: bool, yes: bool) -> Result<()> {
+        if !all {
+            anyhow::bail!("refusing to clear sessions without --all");
+        }
+        if !yes && !confirm_sessions_clear_all()? {
+            println!("aborted");
+            return Ok(());
+        }
+
+        let db = self.open_config_db().await?;
+        db.migrate().await?;
+
+        let mut deleted_sessions = 0_u64;
+        let mut deleted_messages = 0_u64;
+        loop {
+            let sessions = db.list_sessions(500, None, None).await?;
+            if sessions.is_empty() {
+                break;
+            }
+            for session in sessions {
+                deleted_messages += db.clear_session_history(&session.session_id).await?;
+                deleted_sessions += db.delete_session(&session.session_id).await?;
+            }
+        }
+
+        info!(
+            target: "borg_cli",
+            deleted_sessions,
+            deleted_messages,
+            "cleared all sessions and session history"
+        );
+        println!(
+            "cleared {} session(s) and {} message(s)",
+            deleted_sessions, deleted_messages
+        );
+        Ok(())
+    }
 }
 
 fn parse_single_arg<T: DeserializeOwned>(args: Vec<Value>, op_name: &str) -> Result<T> {
@@ -406,6 +444,15 @@ fn confirm_memory_clear() -> Result<bool> {
 
 fn confirm_taskgraph_clear_all() -> Result<bool> {
     print!("This will permanently delete all TaskGraph tasks. Continue? [y/N]: ");
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let normalized = input.trim().to_ascii_lowercase();
+    Ok(normalized == "y" || normalized == "yes")
+}
+
+fn confirm_sessions_clear_all() -> Result<bool> {
+    print!("This will permanently delete all sessions and session messages. Continue? [y/N]: ");
     io::stdout().flush()?;
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;

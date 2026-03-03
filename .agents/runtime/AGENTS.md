@@ -55,7 +55,10 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
   - `/model` to show current `agent_id` + model for the chat session.
   - `/model <model_name>` to persist model on the resolved agent spec.
 - Runtime toolchain now merges CodeMode + ShellMode + Memory + TaskGraph + Apps-listCapabilities in session turns.
+- Runtime toolchain now includes executable Clockwork tools (`Clockwork-*`) for scheduler job CRUD/list-runs.
 - Agent-visible tool specs now include active DB app capabilities (in addition to default runtime tools), so the LLM can call those capability tools directly by name.
+- Default app seeding includes `borg:app:clockwork-system` with Clockwork capabilities mirrored from runtime tool specs.
+- App `available_secrets` are exported into CodeMode env verbatim by the same key name (no `APP_` prefix translation).
 - `borg start` launches a Clockwork supervisor loop (1s poll cadence) as scheduler runtime scaffolding.
 
 ## Runtime Safety
