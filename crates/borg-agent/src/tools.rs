@@ -207,3 +207,9 @@ impl<TToolCall, TToolResult> ToolchainBuilder<TToolCall, TToolResult> {
         Ok(self.toolchain)
     }
 }
+
+pub type JsonToolRequest = ToolRequest<Value>;
+pub type JsonToolResponse = ToolResponse<Value>;
+pub type JsonToolResultData = ToolResultData<Value>;
+pub type JsonTool = Tool<Value, Value>;
+pub type JsonToolchain = Toolchain<Value, Value>;

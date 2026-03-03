@@ -350,6 +350,9 @@ Implemented in this branch so far:
    - LLM adapter now serializes typed tool-call arguments/results back to provider-facing JSON/text at the boundary
 10. Added regression coverage for typed dispatch:
    - new `borg-agent` test exercises a typed toolchain (`EchoArgs`/`EchoResult`) and verifies provider JSON arguments decode into strongly typed tool requests before tool execution
+11. Added explicit JSON boundary aliases in `borg-agent`:
+   - `JsonAgent`, `JsonSession`, `JsonContextManager`, `JsonMessage`, `JsonToolchain`, etc.
+   - these aliases keep legacy/default call paths readable while typed migrations can move to explicit non-JSON type parameters crate-by-crate
 
 Important behavior change from these updates:
 

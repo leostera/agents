@@ -77,3 +77,7 @@ pub enum SessionResult<T> {
     SessionError(String),
     Idle,
 }
+
+pub type JsonMessage = Message<Value, Value>;
+pub type JsonToolCallRecord = ToolCallRecord<Value, Value>;
+pub type JsonSessionOutput = SessionOutput<Value, Value>;
