@@ -1,5 +1,5 @@
 mod clockwork;
-mod llm;
+mod infer;
 mod ports;
 mod providers;
 pub mod tools;
@@ -74,9 +74,9 @@ enum Command {
         cmd: clockwork::ClockworkCommand,
     },
     #[command(about = "Local embedded inference commands")]
-    Llm {
+    Infer {
         #[command(subcommand)]
-        cmd: llm::LlmCommand,
+        cmd: infer::InferCommand,
     },
 }
 
@@ -215,8 +215,8 @@ pub async fn run(app: BorgCliApp, cli: Cli) -> Result<()> {
             }
             Ok(())
         }
-        Command::Llm { cmd } => {
-            if let Err(err) = llm::run(&app, cmd).await {
+        Command::Infer { cmd } => {
+            if let Err(err) = infer::run(&app, cmd).await {
                 println!(
                     "{}",
                     serde_json::to_string(&json!({ "ok": false, "error": err.to_string() }))?

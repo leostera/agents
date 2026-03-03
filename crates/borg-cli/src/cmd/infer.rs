@@ -13,7 +13,7 @@ use serde_json::json;
 use crate::app::BorgCliApp;
 
 #[derive(Subcommand, Debug)]
-pub enum LlmCommand {
+pub enum InferCommand {
     #[command(about = "List hardcoded local GGUF model entries")]
     Models,
     #[command(about = "Run a local embedded inference smoke test")]
@@ -44,9 +44,9 @@ pub enum LlmCommand {
     },
 }
 
-pub async fn run(_app: &BorgCliApp, cmd: LlmCommand) -> Result<()> {
+pub async fn run(_app: &BorgCliApp, cmd: InferCommand) -> Result<()> {
     match cmd {
-        LlmCommand::Models => {
+        InferCommand::Models => {
             let items = hardcoded_models()
                 .iter()
                 .map(|entry| {
@@ -62,7 +62,7 @@ pub async fn run(_app: &BorgCliApp, cmd: LlmCommand) -> Result<()> {
             );
             Ok(())
         }
-        LlmCommand::Test {
+        InferCommand::Test {
             model,
             gguf,
             prompt,

@@ -60,8 +60,8 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - App `available_secrets` are exported into CodeMode env verbatim by the same key name (no `APP_` prefix translation).
 - `borg start` launches a Clockwork supervisor loop (1s poll cadence) as scheduler runtime scaffolding.
 - Local inference smoke commands:
-  - `borg llm models` lists hardcoded GGUF entries from `borg-infer`.
-  - `borg llm test --model <id> --prompt <text> [--gguf <path>]` runs embedded generation with streaming + Ctrl-C cancel.
+  - `borg infer models` lists hardcoded GGUF entries from `borg-infer`.
+  - `borg infer test --model <id> --prompt <text> [--gguf <path>]` runs embedded generation with streaming + Ctrl-C cancel.
   - `borg providers set default embedded` updates runtime preferred provider settings (routing integration is follow-up).
 
 ## Runtime Safety
