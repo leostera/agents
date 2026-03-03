@@ -95,9 +95,9 @@ No DB-backed model registry in v0. `borg-infer` ships a hardcoded catalog and al
 
 ## CLI surface (v0)
 
-1. `borg llm models`
+1. `borg infer models`
    - lists hardcoded model ids and default GGUF paths from `borg-infer`
-2. `borg llm test --model <id> --prompt <text> [--gguf <path>]`
+2. `borg infer test --model <id> --prompt <text> [--gguf <path>]`
    - loads model
    - streams output to stdout
    - supports Ctrl-C cancellation
@@ -118,7 +118,7 @@ No DB-backed model registry in v0. `borg-infer` ships a hardcoded catalog and al
 
 ## Observability (v0)
 
-`borg llm test` prints summary metrics:
+`borg infer test` prints summary metrics:
 
 1. model load ms
 2. prompt tokens
