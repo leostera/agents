@@ -385,6 +385,10 @@ Implemented in this branch so far:
    - converted all `TaskGraph-*` handlers to `Tool::new_transcoded(...)` with typed request DTOs
    - removed `req_str`/`str_array` JSON walkers from taskgraph tool execution paths
    - pagination and status/default handling now come from typed request structs plus small normalization helpers
+15. Started migrating `borg-memory` tool ingress to typed DTOs:
+   - converted `Memory-newEntity`, `Memory-saveFacts`, and `Memory-searchMemory` to `Tool::new_transcoded(...)`
+   - replaced local `serde_json::from_value` argument decoding in those handlers with typed request structs
+   - kept wire/output format unchanged (`ToolResultData::Text`) to avoid behavior drift while continuing the migration
 
 Important behavior change from these updates:
 
@@ -393,7 +397,7 @@ Important behavior change from these updates:
 3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
 4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
 5. Port metadata still enters through `JsonPortContext`; removing that boundary JSON adapter remains pending.
-6. Some built-in tools still use `Tool::new(...)` with JSON arguments; taskgraph handlers are now fully on typed DTO inputs, and remaining crates should follow the same `new_transcoded` migration pattern.
+6. Some built-in tools still use `Tool::new(...)` with JSON arguments; taskgraph handlers are fully typed and memory handler migration is in progress.
 
 Known blocker while validating this branch:
 
