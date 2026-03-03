@@ -397,6 +397,10 @@ Implemented in this branch so far:
    - converted `Memory-search`, `Memory-createEntity`, `Memory-getEntity`, and `Memory-listFacts` to `Tool::new_transcoded(...)`
    - removed JSON map-walking in those handlers and moved option/default handling into typed request models
    - preserved all current output payloads and semantic behavior while changing only argument decoding
+18. Migrated `borg-memory` write/retract ingress wrappers to typed DTOs:
+   - converted `Memory-stateFacts` and `Memory-retractFacts` handlers to typed request structs
+   - removed ad-hoc object traversal for required fields in those handlers
+   - retained existing polymorphic value parsing (`parse_rfd_value`) and output shape while tightening top-level request typing
 
 Important behavior change from these updates:
 
@@ -405,7 +409,7 @@ Important behavior change from these updates:
 3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
 4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
 5. Port metadata still enters through `JsonPortContext`; removing that boundary JSON adapter remains pending.
-6. Some built-in tools still use `Tool::new(...)` with JSON arguments; taskgraph is fully typed and memory migration now also covers search/create/get/list plus schema define handlers.
+6. Some built-in tools still use `Tool::new(...)` with JSON arguments; taskgraph is fully typed and memory migration now covers state/retract, search/create/get/list, save/searchMemory/newEntity, and schema define handlers.
 
 Known blocker while validating this branch:
 
