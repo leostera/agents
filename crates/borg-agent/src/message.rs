@@ -7,7 +7,7 @@ use crate::ToolResultData;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Message {
+pub enum Message<TToolCall = Value, TToolResult = Value> {
     System {
         content: String,
     },
@@ -20,12 +20,12 @@ pub enum Message {
     ToolCall {
         tool_call_id: String,
         name: String,
-        arguments: Value,
+        arguments: TToolCall,
     },
     ToolResult {
         tool_call_id: String,
         name: String,
-        content: ToolResultData,
+        content: ToolResultData<TToolResult>,
     },
     SessionEvent {
         name: String,
@@ -54,16 +54,16 @@ pub enum SessionEndStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCallRecord {
+pub struct ToolCallRecord<TToolCall = Value, TToolResult = Value> {
     pub tool_name: String,
-    pub arguments: Value,
-    pub output: ToolResultData,
+    pub arguments: TToolCall,
+    pub output: ToolResultData<TToolResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionOutput {
+pub struct SessionOutput<TToolCall = Value, TToolResult = Value> {
     pub reply: String,
-    pub tool_calls: Vec<ToolCallRecord>,
+    pub tool_calls: Vec<ToolCallRecord<TToolCall, TToolResult>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
