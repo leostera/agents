@@ -381,6 +381,10 @@ Implemented in this branch so far:
 13. Extended the same explicit-typing rule to `borg-exec` output contracts:
    - `SessionOutput<TToolCall, TToolResult>` and `ToolCallSummary<TToolCall, TToolResult>` now require explicit type parameters at all call sites
    - no implicit `Value` default exists in `borg-exec` runtime-facing message/output types
+14. Migrated the remaining `borg-taskgraph` tool handlers away from ad-hoc `Value` parsing:
+   - converted all `TaskGraph-*` handlers to `Tool::new_transcoded(...)` with typed request DTOs
+   - removed `req_str`/`str_array` JSON walkers from taskgraph tool execution paths
+   - pagination and status/default handling now come from typed request structs plus small normalization helpers
 
 Important behavior change from these updates:
 
@@ -389,7 +393,7 @@ Important behavior change from these updates:
 3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
 4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
 5. Port metadata still enters through `JsonPortContext`; removing that boundary JSON adapter remains pending.
-6. Most built-in tools still use `Tool::new(...)` with JSON arguments; migrating those implementations to typed call/response structs is the next concrete step.
+6. Some built-in tools still use `Tool::new(...)` with JSON arguments; taskgraph handlers are now fully on typed DTO inputs, and remaining crates should follow the same `new_transcoded` migration pattern.
 
 Known blocker while validating this branch:
 
