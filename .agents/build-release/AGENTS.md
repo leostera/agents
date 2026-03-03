@@ -26,6 +26,8 @@ Scope: builds, workspace wiring, and command expectations.
 
 - Root web build must produce `packages/borg-app/dist`.
 - Backend onboarding server expects dist assets and fails loudly if missing.
+- `borg-codemode` build depends on SDK artifacts at `packages/borg-agent-sdk/dist/borg-agent-sdk.min.js`.
+  - If missing, run: `bun run --cwd packages/borg-agent-sdk build`.
 - Workspace-level Cargo config forces bundled RocksDB compilation via:
   - `.cargo/config.toml` with `ROCKSDB_COMPILE=1`
   - This avoids accidental linking to missing system `librocksdb.a` when global Cargo env overrides are present.
@@ -34,6 +36,7 @@ Scope: builds, workspace wiring, and command expectations.
 - Dev profile keeps dependency debuginfo disabled:
   - `[profile.dev.package."*"] debug = 0`
   - This shortens local rebuilds while preserving debuginfo for workspace crates.
+- Embedded local inference compiles via `crates/borg-infer` using `llama-cpp-2` when the crate feature `llama-cpp` is enabled.
 
 ## Commit Hygiene
 
