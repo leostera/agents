@@ -1,6 +1,6 @@
-use serde_json::Value;
+use serde::Serialize;
 
-pub fn format_tool_action_message(tool_name: &str, arguments: &Value) -> String {
+pub fn format_tool_action_message<T: Serialize>(tool_name: &str, arguments: &T) -> String {
     let label = match tool_name {
         "CodeMode-executeCode" => "Running code",
         "CodeMode-searchApis" => "Searching APIs",
@@ -16,7 +16,7 @@ pub fn format_tool_action_message(tool_name: &str, arguments: &Value) -> String 
         _ => "Running tool",
     };
     let pretty_args =
-        serde_json::to_string_pretty(arguments).unwrap_or_else(|_| arguments.to_string());
+        serde_json::to_string_pretty(arguments).unwrap_or_else(|_| "<invalid_args>".to_string());
     format!("Action: {label}\n{}", pretty_args.trim())
 }
 
