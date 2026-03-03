@@ -415,6 +415,11 @@ Implemented in this branch so far:
    - changed `borg_core::event::{SessionToolSchema, SessionContextSnapshot, Event}` to generic typed payload contracts
    - removed `serde_json::Value` from `borg-core` event definitions entirely (no default JSON payload types)
    - downstream crates compile cleanly with explicit typing where/if event types are instantiated
+23. Removed JSON-coupling from core entity property contracts:
+   - replaced `Entity.props: serde_json::Value` with typed `EntityProps` map (`BTreeMap<String, EntityPropValue>`)
+   - migrated memory entity projection/search code (`entity_graph`, `search_index`, `lib`) to typed property values, including many-arity list handling
+   - migrated API entity hydration path to emit typed entity properties (still serialized at HTTP boundary via serde)
+   - `FactValue::Json` is currently mapped to serialized text in entity projections as an interim compatibility step pending full typed-value normalization
 
 Important behavior change from these updates:
 
@@ -423,11 +428,12 @@ Important behavior change from these updates:
 3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
 4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
 5. Port metadata still enters through `JsonPortContext`; removing that boundary JSON adapter remains pending.
-6. Most production handlers are now on typed ingress decoding; core execution and event contracts are typed/generic, while dynamic JSON remains concentrated in boundary-oriented subsystems (JS runtime, provider APIs, DB codecs).
+6. Most production handlers are now on typed ingress decoding; core execution/event/entity contracts are typed/generic, while dynamic JSON remains concentrated in boundary-oriented subsystems (JS runtime, provider APIs, DB codecs).
 
 Known blocker while validating this branch:
 
 1. Workspace checks can be blocked by unrelated in-flight `borg-db` compile issues from parallel work (outside this RFD track). This does not change the typed-agent design direction, but it can temporarily reduce end-to-end check coverage on this branch.
+2. `cargo test -p borg-memory` integration tests (`rfd0005_*`) currently fail due older `ToolRequest`/`ToolResultData` generic signatures in those test files; this predates the entity-props migration and should be fixed in a dedicated test-update slice.
 
 Immediate follow-up work after this pass:
 

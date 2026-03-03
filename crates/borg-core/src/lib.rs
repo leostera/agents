@@ -7,7 +7,7 @@ mod telegram;
 mod uri;
 
 pub use config::Config;
-pub use entity::Entity;
+pub use entity::{Entity, EntityPropValue, EntityProps};
 pub use event::{Event, SessionContextSnapshot, SessionToolSchema};
 pub use execution::ExecutionResult;
 pub use telegram::TelegramUserId;

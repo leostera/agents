@@ -8,9 +8,8 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use borg_core::{Entity, Uri};
+use borg_core::{Entity, EntityPropValue, EntityProps, Uri};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Row, SqlitePool};
 use tracing::{debug, info};
@@ -63,7 +62,7 @@ impl SqliteEntityGraph {
         &self,
         entity_type: &str,
         label: &str,
-        props: &Value,
+        props: &EntityProps,
         natural_key: Option<&str>,
     ) -> Result<String> {
         self.ensure_migrated().await?;
@@ -109,7 +108,7 @@ impl SqliteEntityGraph {
         .bind(&entity_id)
         .bind(entity_type)
         .bind(label)
-        .bind(props.to_string())
+        .bind(serde_json::to_string(props)?)
         .bind(natural_key)
         .bind(created_at)
         .bind(now.clone())
@@ -134,7 +133,7 @@ impl SqliteEntityGraph {
         from_entity_id: &str,
         rel_type: &str,
         to_entity_id: &str,
-        props: &Value,
+        props: &EntityProps,
     ) -> Result<String> {
         self.ensure_migrated().await?;
         let pool = self.open_pool().await?;
@@ -157,7 +156,7 @@ impl SqliteEntityGraph {
         .bind(from_entity_id)
         .bind(&rel)
         .bind(to_entity_id)
-        .bind(props.to_string())
+        .bind(serde_json::to_string(props)?)
         .bind(now)
         .execute(&pool)
         .await?;
@@ -308,29 +307,29 @@ impl SqliteEntityGraph {
         let entity_type = format!("{}:kind:{}", namespace, kind);
         let natural_key = fact.entity.to_string();
         let field_key = field_uri_to_prop_key(fact.field.as_str());
-        let field_value = fact_value_to_json(&fact.value);
+        let field_value = fact_value_to_prop(&fact.value)?;
 
         let existing = self.get_entity(fact.entity.as_str()).await?;
         let mut props = existing
             .as_ref()
             .map(|entity| entity.props.clone())
-            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+            .unwrap_or_default();
 
-        if !props.is_object() {
-            props = Value::Object(serde_json::Map::new());
-        }
-        let obj = props
-            .as_object_mut()
-            .ok_or_else(|| anyhow!("props not object"))?;
-        obj.insert("uri".to_string(), Value::String(fact.entity.to_string()));
-        obj.insert("namespace".to_string(), Value::String(namespace.clone()));
-        obj.insert("kind".to_string(), Value::String(kind.clone()));
-        obj.insert("last_tx".to_string(), Value::String(fact.tx_id.to_string()));
-        obj.insert(
-            "last_stated_at".to_string(),
-            Value::String(fact.stated_at.to_rfc3339()),
+        props.insert("uri".to_string(), EntityPropValue::Text(fact.entity.to_string()));
+        props.insert(
+            "namespace".to_string(),
+            EntityPropValue::Text(namespace.clone()),
         );
-        self.upsert_field_value(obj, &field_key, field_value, fact.arity);
+        props.insert("kind".to_string(), EntityPropValue::Text(kind.clone()));
+        props.insert(
+            "last_tx".to_string(),
+            EntityPropValue::Text(fact.tx_id.to_string()),
+        );
+        props.insert(
+            "last_stated_at".to_string(),
+            EntityPropValue::Text(fact.stated_at.to_rfc3339()),
+        );
+        self.upsert_field_value(&mut props, &field_key, field_value, fact.arity);
 
         let mut label = existing
             .as_ref()
@@ -349,9 +348,9 @@ impl SqliteEntityGraph {
 
     fn upsert_field_value(
         &self,
-        object: &mut serde_json::Map<String, Value>,
+        object: &mut EntityProps,
         field_key: &str,
-        field_value: Value,
+        field_value: EntityPropValue,
         arity: FactArity,
     ) {
         match arity {
@@ -360,22 +359,25 @@ impl SqliteEntityGraph {
             }
             FactArity::Many => {
                 let Some(existing) = object.get_mut(field_key) else {
-                    object.insert(field_key.to_string(), Value::Array(vec![field_value]));
+                    object.insert(
+                        field_key.to_string(),
+                        EntityPropValue::List(vec![field_value]),
+                    );
                     return;
                 };
 
                 match existing {
-                    Value::Array(values) => {
+                    EntityPropValue::List(values) => {
                         if !values.contains(&field_value) {
                             values.push(field_value);
                         }
                     }
                     prior => {
                         if *prior == field_value {
-                            *prior = Value::Array(vec![field_value]);
+                            *prior = EntityPropValue::List(vec![field_value]);
                         } else {
                             let previous = prior.clone();
-                            *prior = Value::Array(vec![previous, field_value]);
+                            *prior = EntityPropValue::List(vec![previous, field_value]);
                         }
                     }
                 }
@@ -446,7 +448,7 @@ impl SqliteEntityGraph {
         pool: &SqlitePool,
         entity_id: &str,
         label: &str,
-        props: &Value,
+        props: &EntityProps,
         updated_at: &str,
     ) -> Result<()> {
         let Ok((namespace, kind, _)) = split_entity_uri(entity_id) else {
@@ -475,7 +477,7 @@ impl SqliteEntityGraph {
         .bind(entity_id)
         .bind(schema_kind)
         .bind(label)
-        .bind(props.to_string())
+        .bind(serde_json::to_string(props)?)
         .bind(updated_at)
         .execute(pool)
         .await?;
@@ -559,18 +561,16 @@ fn field_uri_to_prop_key(field_uri: &str) -> String {
     sanitize_identifier(candidate).to_lowercase()
 }
 
-fn fact_value_to_json(value: &FactValue) -> Value {
-    match value {
-        FactValue::Text(v) => Value::String(v.clone()),
-        FactValue::Integer(v) => Value::Number((*v).into()),
-        FactValue::Float(v) => serde_json::Number::from_f64(*v)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
-        FactValue::Boolean(v) => Value::Bool(*v),
-        FactValue::Bytes(v) => Value::Array(v.iter().map(|b| Value::Number((*b).into())).collect()),
-        FactValue::Ref(uri) => Value::String(uri.to_string()),
-        FactValue::Json(v) => v.clone(),
-    }
+fn fact_value_to_prop(value: &FactValue) -> Result<EntityPropValue> {
+    Ok(match value {
+        FactValue::Text(v) => EntityPropValue::Text(v.clone()),
+        FactValue::Integer(v) => EntityPropValue::Integer(*v),
+        FactValue::Float(v) => EntityPropValue::Float(*v),
+        FactValue::Boolean(v) => EntityPropValue::Boolean(*v),
+        FactValue::Bytes(v) => EntityPropValue::Bytes(v.clone()),
+        FactValue::Ref(uri) => EntityPropValue::Ref(Uri::parse(uri.as_str())?),
+        FactValue::Json(v) => EntityPropValue::Text(serde_json::to_string(v)?),
+    })
 }
 
 fn sanitize_identifier(input: &str) -> String {
