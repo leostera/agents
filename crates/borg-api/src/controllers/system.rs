@@ -6,12 +6,11 @@ use axum::{
 };
 use base64::Engine;
 use borg_core::{Entity, Uri, uri};
-use borg_exec::{BorgCommand, BorgInput, BorgMessage, JsonPortContext};
+use borg_exec::{BorgCommand, BorgInput, BorgMessage, HttpSessionContext, PortContext};
 use borg_fs::{FileKind, PutFileMetadata};
 use borg_memory::{FactArity, FactValue, Uri as MemoryUri};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::sync::Arc;
 use tracing::debug;
 
 use crate::AppState;
@@ -79,7 +78,6 @@ struct ValidatedHttpPortAudioRequest {
     language_hint: Option<String>,
     session_id: Option<Uri>,
     agent_id: Option<Uri>,
-    metadata: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +86,6 @@ pub(crate) struct ValidatedPortRequest {
     pub text: String,
     pub session_id: Option<Uri>,
     pub agent_id: Option<Uri>,
-    pub metadata: Value,
 }
 
 pub(crate) struct SystemController;
@@ -284,10 +281,7 @@ impl SystemController {
                             user_id: validated.user_id,
                             session_id: session_id.clone(),
                             input: forward_input,
-                            port_context: Arc::new(JsonPortContext::new(
-                                serde_json::to_value(&validated.metadata)
-                                    .unwrap_or_else(|_| Value::Object(Default::default())),
-                            )),
+                            port_context: PortContext::Http(HttpSessionContext::default()),
                         })
                         .await
                     {
@@ -422,7 +416,7 @@ impl SystemController {
                             duration_ms: validated.duration_ms,
                             language_hint: validated.language_hint,
                         },
-                        port_context: Arc::new(JsonPortContext::new(validated.metadata)),
+                        port_context: PortContext::Http(HttpSessionContext::default()),
                     })
                     .await
                 {
@@ -585,7 +579,6 @@ pub(crate) fn validate_port_request(
         text: payload.text,
         session_id,
         agent_id,
-        metadata: payload.metadata.unwrap_or(Value::Object(Default::default())),
     })
 }
 
@@ -681,9 +674,6 @@ fn validate_audio_port_request(
             .filter(|value| !value.is_empty()),
         session_id,
         agent_id,
-        metadata: payload
-            .metadata
-            .unwrap_or(Value::Object(Default::default())),
     })
 }
 
