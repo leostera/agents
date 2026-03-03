@@ -4,12 +4,11 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use borg_core::Uri;
 use borg_db::BorgDb;
 use chrono::Utc;
-use serde_json::{Value, json};
 use sqlx::{Row, Sqlite, Transaction};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use uuid::Uuid;
 
-use crate::model::{CommentRecord, EventRecord, ReviewState, TaskRecord, TaskStatus};
+use crate::model::{CommentRecord, EventRecord, ReviewState, TaskEventData, TaskRecord, TaskStatus};
 
 #[derive(Debug, Clone)]
 pub struct CreateTaskInput {
@@ -207,12 +206,13 @@ impl TaskGraphStore {
             &task_uri,
             session_uri,
             "task.created",
-            json!({
-                "assignee_agent_id": input.assignee_agent_id,
-                "assignee_session_uri": assignee_session_uri,
-                "reviewer_agent_id": creator_agent_id,
-                "reviewer_session_uri": reviewer_session_uri,
-            }),
+            TaskEventData::TaskCreated {
+                assignee_agent_id: input.assignee_agent_id,
+                assignee_session_uri,
+                reviewer_agent_id: creator_agent_id.to_string(),
+                reviewer_session_uri,
+                parent_uri: None,
+            },
         )
         .await?;
 
@@ -338,11 +338,11 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "task.updated",
-            json!({
-                "title": title,
-                "description": description,
-                "definition_of_done": definition_of_done,
-            }),
+            TaskEventData::TaskUpdated {
+                title,
+                description,
+                definition_of_done,
+            },
         )
         .await?;
 
@@ -400,12 +400,12 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "task.reassigned",
-            json!({
-                "old_assignee_agent_id": old_assignee_agent_id,
-                "old_assignee_session_uri": old_assignee_session_uri,
-                "new_assignee_agent_id": new_assignee_agent_id.trim(),
-                "new_assignee_session_uri": new_assignee_session_uri,
-            }),
+            TaskEventData::TaskReassigned {
+                old_assignee_agent_id,
+                old_assignee_session_uri,
+                new_assignee_agent_id: new_assignee_agent_id.trim().to_string(),
+                new_assignee_session_uri,
+            },
         )
         .await?;
 
@@ -456,7 +456,9 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "label.added",
-            json!({ "labels": labels }),
+            TaskEventData::Labels {
+                labels: labels.to_vec(),
+            },
         )
         .await?;
 
@@ -503,7 +505,9 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "label.removed",
-            json!({ "labels": labels }),
+            TaskEventData::Labels {
+                labels: labels.to_vec(),
+            },
         )
         .await?;
 
@@ -548,7 +552,9 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "task.parent_set",
-            json!({ "parent_uri": parent_uri }),
+            TaskEventData::ParentSet {
+                parent_uri: parent_uri.to_string(),
+            },
         )
         .await?;
 
@@ -577,7 +583,14 @@ impl TaskGraphStore {
             .execute(tx.as_mut())
             .await?;
 
-        append_event_tx(&mut tx, uri, session_uri, "task.parent_cleared", json!({})).await?;
+        append_event_tx(
+            &mut tx,
+            uri,
+            session_uri,
+            "task.parent_cleared",
+            TaskEventData::Empty {},
+        )
+        .await?;
 
         let out = load_task_tx(&mut tx, uri)
             .await?
@@ -682,7 +695,9 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "dep.added",
-            json!({ "blocked_by": blocked_by }),
+            TaskEventData::BlockedBy {
+                blocked_by: blocked_by.to_string(),
+            },
         )
         .await?;
 
@@ -726,7 +741,9 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "dep.removed",
-            json!({ "blocked_by": blocked_by }),
+            TaskEventData::BlockedBy {
+                blocked_by: blocked_by.to_string(),
+            },
         )
         .await?;
 
@@ -770,7 +787,9 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "task.duplicate_set",
-            json!({ "duplicate_of": duplicate_of }),
+            TaskEventData::DuplicateOf {
+                duplicate_of: duplicate_of.to_string(),
+            },
         )
         .await?;
 
@@ -808,7 +827,7 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "task.duplicate_cleared",
-            json!({}),
+            TaskEventData::Empty {},
         )
         .await?;
 
@@ -917,7 +936,9 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "reference.added",
-            json!({ "reference": reference }),
+            TaskEventData::Reference {
+                reference: reference.to_string(),
+            },
         )
         .await?;
 
@@ -961,7 +982,9 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "reference.removed",
-            json!({ "reference": reference }),
+            TaskEventData::Reference {
+                reference: reference.to_string(),
+            },
         )
         .await?;
 
@@ -1003,7 +1026,9 @@ impl TaskGraphStore {
                     uri,
                     session_uri,
                     "status.changed",
-                    json!({ "status": status.as_str() }),
+                    TaskEventData::Status {
+                        status: status.as_str().to_string(),
+                    },
                 )
                 .await?;
             }
@@ -1062,7 +1087,9 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "review.submitted",
-            json!({ "submitted_at": now }),
+            TaskEventData::ReviewSubmitted {
+                submitted_at: now.clone(),
+            },
         )
         .await?;
 
@@ -1110,7 +1137,9 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "review.approved",
-            json!({ "approved_at": now }),
+            TaskEventData::ReviewApproved {
+                approved_at: now.clone(),
+            },
         )
         .await?;
 
@@ -1165,11 +1194,11 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "review.changes_requested",
-            json!({
-                "changes_requested_at": now,
-                "return_to": return_to.as_str(),
-                "note": note,
-            }),
+            TaskEventData::ReviewChangesRequested {
+                changes_requested_at: now.clone(),
+                return_to: return_to.as_str().to_string(),
+                note: note.to_string(),
+            },
         )
         .await?;
 
@@ -1271,13 +1300,13 @@ impl TaskGraphStore {
                 &task_uri,
                 session_uri,
                 "task.created",
-                json!({
-                    "assignee_agent_id": subtask.assignee_agent_id,
-                    "assignee_session_uri": assignee_session_uri,
-                    "reviewer_agent_id": creator_agent_id,
-                    "reviewer_session_uri": reviewer_session_uri,
-                    "parent_uri": uri,
-                }),
+                TaskEventData::TaskCreated {
+                    assignee_agent_id: subtask.assignee_agent_id,
+                    assignee_session_uri,
+                    reviewer_agent_id: creator_agent_id.to_string(),
+                    reviewer_session_uri,
+                    parent_uri: Some(uri.to_string()),
+                },
             )
             .await?;
 
@@ -1297,7 +1326,9 @@ impl TaskGraphStore {
             uri,
             session_uri,
             "task.split",
-            json!({ "subtask_count": created.len() }),
+            TaskEventData::TaskSplit {
+                subtask_count: created.len() as i64,
+            },
         )
         .await?;
 
@@ -1340,7 +1371,9 @@ impl TaskGraphStore {
             task_uri,
             session_uri,
             "comment.added",
-            json!({ "comment_id": id }),
+            TaskEventData::CommentAdded {
+                comment_id: id.clone(),
+            },
         )
         .await?;
 
@@ -1476,7 +1509,7 @@ impl TaskGraphStore {
                 task_uri: row.get("task_uri"),
                 actor_session_uri: row.get("actor_session_uri"),
                 event_type: row.get("event_type"),
-                data: parse_json_or_empty(row.get("data_json")),
+                data: parse_event_data_or_empty(row.get("data_json")),
                 created_at: row.get("created_at"),
             })
             .collect();
@@ -1569,8 +1602,8 @@ fn normalized_limit(limit: usize) -> usize {
     limit.clamp(1, 100)
 }
 
-fn parse_json_or_empty(raw: String) -> Value {
-    serde_json::from_str(&raw).unwrap_or_else(|_| json!({}))
+fn parse_event_data_or_empty(raw: String) -> TaskEventData {
+    serde_json::from_str(&raw).unwrap_or_default()
 }
 
 fn ensure_non_empty(input: &str, code: &str) -> Result<()> {
@@ -1769,7 +1802,7 @@ async fn append_event_tx(
     task_uri: &str,
     actor_session_uri: &str,
     event_type: &str,
-    data: Value,
+    data: TaskEventData,
 ) -> Result<()> {
     let id = Uuid::now_v7().to_string();
     let now = now_rfc3339();
@@ -1780,7 +1813,7 @@ async fn append_event_tx(
     .bind(task_uri)
     .bind(actor_session_uri)
     .bind(event_type)
-    .bind(data.to_string())
+    .bind(serde_json::to_string(&data)?)
     .bind(now)
     .execute(tx.as_mut())
     .await?;
@@ -2018,7 +2051,9 @@ async fn cascade_discard_tx(
             &uri,
             actor_session_uri,
             event_type,
-            json!({ "status": "discarded" }),
+            TaskEventData::Status {
+                status: "discarded".to_string(),
+            },
         )
         .await?;
     }

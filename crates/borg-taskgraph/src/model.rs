@@ -80,6 +80,72 @@ pub struct EventRecord {
     pub actor_session_uri: String,
     #[serde(rename = "type")]
     pub event_type: String,
-    pub data: serde_json::Value,
+    pub data: TaskEventData,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum TaskEventData {
+    Empty {},
+    TaskCreated {
+        assignee_agent_id: String,
+        assignee_session_uri: String,
+        reviewer_agent_id: String,
+        reviewer_session_uri: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parent_uri: Option<String>,
+    },
+    TaskUpdated {
+        title: String,
+        description: String,
+        definition_of_done: String,
+    },
+    TaskReassigned {
+        old_assignee_agent_id: String,
+        old_assignee_session_uri: String,
+        new_assignee_agent_id: String,
+        new_assignee_session_uri: String,
+    },
+    Labels {
+        labels: Vec<String>,
+    },
+    ParentSet {
+        parent_uri: String,
+    },
+    BlockedBy {
+        blocked_by: String,
+    },
+    DuplicateOf {
+        duplicate_of: String,
+    },
+    Reference {
+        reference: String,
+    },
+    Status {
+        status: String,
+    },
+    ReviewSubmitted {
+        submitted_at: String,
+    },
+    ReviewApproved {
+        approved_at: String,
+    },
+    ReviewChangesRequested {
+        changes_requested_at: String,
+        return_to: String,
+        note: String,
+    },
+    TaskSplit {
+        subtask_count: i64,
+    },
+    CommentAdded {
+        comment_id: String,
+    },
+}
+
+impl Default for TaskEventData {
+    fn default() -> Self {
+        Self::Empty {}
+    }
 }

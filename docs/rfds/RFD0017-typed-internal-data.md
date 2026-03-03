@@ -431,6 +431,11 @@ Implemented in this branch so far:
    - changed `run_borg_fs_tool(...)` from `Result<Value>` to typed `Result<FsToolOutput>`
    - introduced typed BorgFS output structs/enums (`FsToolOutput`, `FsToolCounts`) and updated local tests accordingly
    - kept JSON serialization only at the tool response boundary (`ToolResultData::Text(serde_json::to_string(...))`)
+27. Replaced TaskGraph dynamic event payloads with explicit domain variants:
+   - changed `EventRecord.data` from `serde_json::Value` to typed `TaskEventData` enum in `borg-taskgraph` model
+   - updated all store event writes (`append_event_tx` callsites) to emit concrete domain variants (`TaskCreated`, `Status`, `ReviewChangesRequested`, etc.), eliminating dynamic field maps in runtime code
+   - updated supervisor notification payload typing to use `TaskEventData` directly
+   - kept DB boundary as serialized JSON text (`data_json`) while deserializing back into typed event variants on read
 
 Important behavior change from these updates:
 
@@ -439,7 +444,7 @@ Important behavior change from these updates:
 3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
 4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
 5. Port metadata still enters through `JsonPortContext`; removing that boundary JSON adapter remains pending.
-6. Most production handlers are now on typed ingress decoding; core execution/event/entity contracts are typed/generic, while dynamic JSON remains concentrated in boundary-oriented subsystems (JS runtime, provider APIs, DB codecs).
+6. Most production handlers are now on typed ingress decoding; core execution/event/entity contracts are typed/generic, and taskgraph event payloads are now typed domain variants, while dynamic JSON remains concentrated in boundary-oriented subsystems (JS runtime, provider APIs, DB codecs).
 
 Known blocker while validating this branch:
 

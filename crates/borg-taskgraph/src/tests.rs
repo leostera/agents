@@ -170,7 +170,8 @@ async fn toolchain_smoke_create_get() -> Result<()> {
                 "title": "hello",
                 "assignee_agent_id": "agent:worker",
                 "labels": ["initiative:test"]
-            }),
+            })
+            .into(),
         })
         .await?;
 
@@ -190,7 +191,7 @@ async fn toolchain_smoke_create_get() -> Result<()> {
         .run(borg_agent::ToolRequest {
             tool_call_id: "call-2".to_string(),
             tool_name: "TaskGraph-getTask".to_string(),
-            arguments: json!({ "uri": uri }),
+            arguments: json!({ "uri": uri }).into(),
         })
         .await?;
 
