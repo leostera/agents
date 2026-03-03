@@ -2,13 +2,20 @@ use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};
 use borg_llm::{ProviderBlock, ProviderMessage, UserBlock};
+use serde::Serialize;
 
 use crate::{Message, ToolResultData};
 
 const INTERRUPTED_TOOL_RESULT_MESSAGE: &str =
     "tool error: tool execution interrupted before a result was recorded";
 
-pub fn to_provider_messages(messages: &[Message]) -> Result<Vec<ProviderMessage>> {
+pub fn to_provider_messages<TToolCall, TToolResult>(
+    messages: &[Message<TToolCall, TToolResult>],
+) -> Result<Vec<ProviderMessage>>
+where
+    TToolCall: Serialize,
+    TToolResult: Serialize,
+{
     let mut pending_tool_calls: HashMap<String, String> = HashMap::new();
     let mut immediate_tool_call: Option<(String, String)> = None;
     let mut provider_messages = Vec::new();
@@ -71,7 +78,7 @@ pub fn to_provider_messages(messages: &[Message]) -> Result<Vec<ProviderMessage>
                     content: vec![ProviderBlock::ToolCall {
                         id: tool_call_id.clone(),
                         name: name.clone(),
-                        arguments_json: arguments.clone(),
+                        arguments_json: serde_json::to_value(arguments)?,
                     }],
                 });
             }
@@ -117,12 +124,17 @@ pub fn to_provider_messages(messages: &[Message]) -> Result<Vec<ProviderMessage>
     Ok(provider_messages)
 }
 
-pub fn tool_result_to_text(content: &ToolResultData) -> String {
+pub fn tool_result_to_text<TToolResult>(content: &ToolResultData<TToolResult>) -> String
+where
+    TToolResult: Serialize,
+{
     match content {
         ToolResultData::Text(text) => text.clone(),
         ToolResultData::Capabilities(items) => format!("capabilities: {}", items.len()),
         ToolResultData::Execution { result, duration } => {
-            format!("execution result in {}ms: {}", duration.as_millis(), result)
+            let serialized =
+                serde_json::to_string(result).unwrap_or_else(|_| "<invalid_result>".to_string());
+            format!("execution result in {}ms: {}", duration.as_millis(), serialized)
         }
         ToolResultData::Error { message } => format!("tool error: {}", message),
     }
