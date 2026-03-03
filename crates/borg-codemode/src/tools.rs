@@ -1,9 +1,21 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
-use serde_json::{Value, json};
+use serde::Deserialize;
+use serde_json::json;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::{CodeModeContext, CodeModeRuntime, sdk_types};
+
+#[derive(Debug, Clone, Deserialize)]
+struct SearchApisArgs {
+    query: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ExecuteCodeArgs {
+    hint: String,
+    code: String,
+}
 
 pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![
@@ -87,18 +99,20 @@ pub fn build_code_mode_toolchain_with_context(
     let execute_spec = required_default_tool_spec("CodeMode-executeCode")?;
 
     Toolchain::builder()
-        .add_tool(Tool::new(search_spec, None, move |request| async move {
-            let query = request
-                .arguments
-                .get("query")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("CodeMode-searchApis tool requires query"))?;
-            let _ = query;
-            Ok(ToolResponse {
-                content: ToolResultData::Text(sdk_types().to_string()),
-            })
-        }))?
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_transcoded(
+            search_spec,
+            None,
+            move |request: borg_agent::ToolRequest<SearchApisArgs>| async move {
+                let query = request.arguments.query.trim();
+                if query.is_empty() {
+                    return Err(anyhow!("CodeMode-searchApis tool requires query"));
+                }
+                Ok(ToolResponse::<()> {
+                    content: ToolResultData::Text(sdk_types().to_string()),
+                })
+            },
+        ))?
+        .add_tool(Tool::new_transcoded(
             execute_spec,
             Some(json!({
                 "type": "object",
@@ -124,16 +138,15 @@ pub fn build_code_mode_toolchain_with_context(
                 "required": ["Execution"],
                 "additionalProperties": false
             })),
-            move |request| {
+            move |request: borg_agent::ToolRequest<ExecuteCodeArgs>| {
                 let runtime = runtime.clone();
                 let context = context.clone();
                 async move {
-                    let code = request
-                        .arguments
-                        .get("code")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| anyhow!("CodeMode-executeCode tool requires code"))?;
-                    let code = code.to_string();
+                    let _hint = request.arguments.hint;
+                    let code = request.arguments.code.trim().to_string();
+                    if code.is_empty() {
+                        return Err(anyhow!("CodeMode-executeCode tool requires code"));
+                    }
                     let result = tokio::task::spawn_blocking(move || {
                         catch_unwind(AssertUnwindSafe(|| runtime.execute(&code, context)))
                     })
