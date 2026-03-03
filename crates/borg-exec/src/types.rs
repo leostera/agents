@@ -4,13 +4,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ToolCallSummary {
+pub struct ToolCallSummary<TToolCall = Value, TToolResult = Value> {
     pub tool_name: String,
-    pub arguments: Value,
-    pub output: ToolResultData,
+    pub arguments: TToolCall,
+    pub output: ToolResultData<TToolResult>,
 }
 
-impl ToolCallSummary {
+impl<TToolCall, TToolResult> ToolCallSummary<TToolCall, TToolResult>
+where
+    TToolCall: Serialize,
+    TToolResult: Serialize,
+{
     pub fn error_message(&self) -> Option<String> {
         match &self.output {
             ToolResultData::Error { message } => Some(message.clone()),
@@ -29,7 +33,8 @@ impl ToolCallSummary {
 
         match &self.output {
             ToolResultData::Execution { result, .. } => {
-                serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string())
+                serde_json::to_string_pretty(result)
+                    .unwrap_or_else(|_| "\"<invalid_result>\"".to_string())
             }
             ToolResultData::Text(text) => text.clone(),
             ToolResultData::Capabilities(capabilities) => {
@@ -41,9 +46,9 @@ impl ToolCallSummary {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SessionTurnOutput {
+pub struct SessionTurnOutput<TToolCall = Value, TToolResult = Value> {
     pub session_id: Uri,
     pub reply: Option<String>,
     #[serde(default)]
-    pub tool_calls: Vec<ToolCallSummary>,
+    pub tool_calls: Vec<ToolCallSummary<TToolCall, TToolResult>>,
 }

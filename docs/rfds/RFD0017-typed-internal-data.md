@@ -353,6 +353,9 @@ Implemented in this branch so far:
 11. Added explicit JSON boundary aliases in `borg-agent`:
    - `JsonAgent`, `JsonSession`, `JsonContextManager`, `JsonMessage`, `JsonToolchain`, etc.
    - these aliases keep legacy/default call paths readable while typed migrations can move to explicit non-JSON type parameters crate-by-crate
+12. Extended typed envelopes one layer up into `borg-exec`:
+   - `ToolCallSummary<TToolCall, TToolResult>` and `SessionOutput<TToolCall, TToolResult>` now accept typed arguments/results with `Value` defaults
+   - this keeps current behavior intact while allowing typed session output/tool summaries to propagate as downstream crates adopt concrete tool enums
 
 Important behavior change from these updates:
 
