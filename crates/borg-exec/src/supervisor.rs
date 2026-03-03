@@ -53,7 +53,7 @@ impl BorgSupervisor {
                 &msg.actor_id,
                 "CALL",
                 Some(&msg.session_id),
-                &ActorMailboxEnvelope::from_borg_message(&msg).to_json()?,
+                &serde_json::to_value(ActorMailboxEnvelope::from_borg_message(&msg))?,
                 None,
                 None,
             )
@@ -88,7 +88,7 @@ impl BorgSupervisor {
                 &msg.actor_id,
                 "CAST",
                 Some(&msg.session_id),
-                &ActorMailboxEnvelope::from_borg_message(&msg).to_json()?,
+                &serde_json::to_value(ActorMailboxEnvelope::from_borg_message(&msg))?,
                 None,
                 None,
             )
@@ -187,7 +187,7 @@ impl BorgSupervisor {
                 return Ok(());
             };
 
-            let env = match ActorMailboxEnvelope::from_json(&row.payload) {
+            let env = match serde_json::from_value::<ActorMailboxEnvelope>(row.payload.clone()) {
                 Ok(env) => env,
                 Err(err) => {
                     let _ = self

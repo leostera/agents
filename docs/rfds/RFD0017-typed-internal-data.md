@@ -283,6 +283,14 @@ Input/output correctness is defined by serde decode/encode of typed request/resp
 5. Introduce `ContextProvider` + `ContextChunk` contract in `borg-agent`; move Telegram-specific context provisioning out of `borg-agent`.
 6. Parameterize `Message` by typed tool request/response and adopt Borg runtime aliases.
 
+#### Progress notes (2026-03-03)
+
+1. `crates/borg-exec/src/port_context.rs` now uses a typed `PortContext` enum (`Telegram|Discord|Http|Unknown`) with typed per-port structs; JSON trait-object context methods were removed.
+2. `BorgMessage.port_context` and `PortMessage.port_context` now carry typed `PortContext` instead of `Arc<dyn PortContext>`.
+3. `ActorMailboxEnvelope.port_context` now carries typed `PortContext` (no internal `serde_json::Value` field), serialized/deserialized only at DB boundary with serde.
+4. Runtime/port call sites were updated to use enum accessors (`as_telegram`/`as_discord`) instead of downcasting JSON wrappers.
+5. `cargo test -p borg-exec` passes with these changes.
+
 ### Phase 3 - `borg-db` typed APIs
 
 1. Change session/actor mailbox methods to typed payload params and returns.
