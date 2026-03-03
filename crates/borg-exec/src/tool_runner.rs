@@ -1,7 +1,7 @@
 use anyhow::Result;
-use borg_agent::{BorgToolCall, BorgToolResult, 
-    Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain, ToolchainBuilder,
-    build_agent_admin_toolchain, default_agent_admin_tool_specs,
+use borg_agent::{
+    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
+    ToolchainBuilder, build_agent_admin_toolchain, default_agent_admin_tool_specs,
 };
 use borg_clockwork::build_clockwork_toolchain;
 use borg_codemode::{CodeModeContext, CodeModeRuntime, build_code_mode_toolchain_with_context};
@@ -13,6 +13,7 @@ use borg_memory::{MemoryStore, build_memory_toolchain};
 use borg_ports_tools::{build_port_admin_toolchain, default_port_admin_tool_specs};
 use borg_shellmode::{ShellModeRuntime, build_shell_mode_toolchain};
 use borg_taskgraph::{build_taskgraph_toolchain, build_taskgraph_worker_toolchain};
+use serde_json::Value;
 
 pub fn build_exec_toolchain_with_context(
     runtime: CodeModeRuntime,
@@ -71,20 +72,20 @@ fn build_provider_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
     for spec in default_provider_admin_tool_specs() {
         let db = db.clone();
         let name = spec.name.clone();
-        let tool = Tool::new(
+        let tool = Tool::new_transcoded(
             ToolSpec {
                 name: spec.name,
                 description: spec.description,
                 parameters: spec.parameters,
             },
             None,
-            move |request| {
+            move |request: borg_agent::ToolRequest<Value>| {
                 let db = db.clone();
                 let name = name.clone();
                 async move {
                     let value = run_provider_admin_tool(&db, &name, &request.arguments).await?;
                     Ok(ToolResponse {
-                        content: ToolResultData::Text(serde_json::to_string(&value)?),
+                        content: ToolResultData::<Value>::Text(serde_json::to_string(&value)?),
                     })
                 }
             },
