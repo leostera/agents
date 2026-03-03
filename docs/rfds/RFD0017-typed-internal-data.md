@@ -407,6 +407,10 @@ Implemented in this branch so far:
 20. Normalized exec provider-admin tool bridging on typed constructor path:
    - changed `borg-exec` provider admin tool registration from `Tool::new(...)` to `Tool::new_transcoded(...)`
    - kept dynamic provider payload handling unchanged, but removed another runtime `Tool::new` production usage
+21. Removed JSON-coupling from core execution contract:
+   - changed `borg_core::ExecutionResult` from a JSON-shaped struct to a generic typed payload (`ExecutionResult<TResult>`)
+   - `borg-shellmode` now returns a typed `ShellExecutionData { exit_code }` payload and no longer constructs ad-hoc JSON execution blobs
+   - `borg-codemode` now uses `ExecutionResult<Value>` explicitly, keeping JS JSON at the boundary while avoiding a JSON-fixed core contract
 
 Important behavior change from these updates:
 
@@ -415,7 +419,7 @@ Important behavior change from these updates:
 3. `ContextManager` now compacts only chunks marked `Compactable`; `Pinned` chunks are never compacted.
 4. Exec-level tool summaries no longer rely on JSON object-shape probing for errors.
 5. Port metadata still enters through `JsonPortContext`; removing that boundary JSON adapter remains pending.
-6. Most production handlers are now on typed ingress decoding; dynamic JSON tooling remains mainly in boundary/spec helpers and test scaffolding.
+6. Most production handlers are now on typed ingress decoding; core execution contracts are now typed/generic, and dynamic JSON remains concentrated in boundary-oriented subsystems (JS runtime, provider APIs, DB codecs).
 
 Known blocker while validating this branch:
 

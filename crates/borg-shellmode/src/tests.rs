@@ -10,30 +10,21 @@ fn executes_printf_command() {
         .unwrap();
     assert_eq!(result.stdout.trim(), "hello");
     assert_eq!(result.stderr, "");
-    assert_eq!(
-        result.result_json.get("exit_code"),
-        Some(&serde_json::json!(0))
-    );
+    assert_eq!(result.result.exit_code, 0);
 }
 
 #[test]
 fn returns_exit_code_on_success() {
     let rt = ShellModeRuntime::new();
     let result = rt.execute("true", ShellModeContext::default()).unwrap();
-    assert_eq!(
-        result.result_json.get("exit_code"),
-        Some(&serde_json::json!(0))
-    );
+    assert_eq!(result.result.exit_code, 0);
 }
 
 #[test]
 fn returns_exit_code_on_failure() {
     let rt = ShellModeRuntime::new();
     let result = rt.execute("exit 42", ShellModeContext::default()).unwrap();
-    assert_eq!(
-        result.result_json.get("exit_code"),
-        Some(&serde_json::json!(42))
-    );
+    assert_eq!(result.result.exit_code, 42);
 }
 
 #[test]
@@ -58,7 +49,7 @@ fn respects_timeout() {
     let rt = ShellModeRuntime::new();
     let ctx = ShellModeContext::default().with_timeout(1);
     let result = rt.execute("sleep 5", ctx);
-    assert!(result.is_err() || result.unwrap().result_json.get("exit_code").is_some());
+    assert!(result.is_err() || result.unwrap().result.exit_code >= -1);
 }
 
 #[test]
@@ -67,9 +58,8 @@ fn returns_duration_in_result() {
     let result = rt
         .execute("sleep 0.1", ShellModeContext::default())
         .unwrap();
-    let duration = result.result_json.get("duration").expect("duration field");
-    let secs = duration.get("secs").and_then(|v| v.as_u64()).unwrap_or(0);
-    let nanos = duration.get("nanos").and_then(|v| v.as_u64()).unwrap_or(0);
+    let secs = result.duration.as_secs();
+    let nanos = result.duration.subsec_nanos() as u64;
     assert!(secs > 0 || nanos > 0);
 }
 
@@ -79,12 +69,7 @@ fn handles_command_not_found() {
     let result = rt.execute("nonexistent_command_12345", ShellModeContext::default());
     assert!(
         result.is_err()
-            || result
-                .unwrap()
-                .result_json
-                .get("exit_code")
-                .map(|c| c != 0)
-                .unwrap_or(false)
+            || result.unwrap().result.exit_code != 0
     );
 }
 
