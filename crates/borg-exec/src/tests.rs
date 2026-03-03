@@ -437,7 +437,6 @@ async fn app_available_secret_is_exposed_in_borg_env_get() {
     let toolchain = runtime
         .build_toolchain(
             &owner_user_id,
-            &crate::types::UserMessageMetadata::default(),
             &uri!("borg", "session", "env-test"),
             &uri!("borg", "agent", "env-test"),
         )

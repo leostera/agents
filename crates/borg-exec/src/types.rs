@@ -3,28 +3,6 @@ use borg_core::Uri;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct UserMessageMetadata {
-    #[serde(default)]
-    pub port: Option<String>,
-    #[serde(default)]
-    pub chat_id: Option<i64>,
-    #[serde(default)]
-    pub chat_type: Option<String>,
-    #[serde(default)]
-    pub message_id: Option<i64>,
-    #[serde(default)]
-    pub thread_id: Option<i64>,
-    #[serde(default)]
-    pub sender_id: Option<i64>,
-    #[serde(default)]
-    pub sender_username: Option<String>,
-    #[serde(default)]
-    pub sender_first_name: Option<String>,
-    #[serde(default)]
-    pub sender_last_name: Option<String>,
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ToolCallSummary {
     pub tool_name: String,
