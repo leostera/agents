@@ -1,6 +1,5 @@
 use anyhow::Result;
 use borg_db::BorgDb;
-use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,7 +7,7 @@ use tokio::sync::{RwLock, mpsc};
 use tokio::time;
 use tracing::{debug, error, info};
 
-use crate::model::TaskStatus;
+use crate::model::{TaskEventData, TaskStatus};
 use crate::store::TaskGraphStore;
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -29,7 +28,7 @@ pub struct TaskNotification {
     pub parent_uri: Option<String>,
     pub old_status: Option<String>,
     pub new_status: String,
-    pub data: serde_json::Value,
+    pub data: TaskEventData,
 }
 
 #[derive(Debug, Clone)]
@@ -137,7 +136,7 @@ impl TaskGraphSupervisor {
                     parent_uri: store.get_task_parent(&uri).await?,
                     old_status: old_status.clone(),
                     new_status: new_status.clone(),
-                    data: json!({}),
+                    data: TaskEventData::Empty {},
                 };
 
                 if let Some(ref parent_uri) = notification.parent_uri {
@@ -214,14 +213,22 @@ impl TaskGraphSupervisor {
     }
 
     async fn notify_parent(notification: &TaskNotification, parent_uri: &str) -> Result<()> {
-        let event_json = json!({
-            "event_type": notification.event_type,
-            "child_uri": notification.task_uri,
-            "old_status": notification.old_status,
-            "new_status": notification.new_status,
-            "data": notification.data,
-        });
-
+        #[derive(serde::Serialize)]
+        struct ParentNotification<'a> {
+            event_type: &'a str,
+            child_uri: &'a str,
+            old_status: Option<&'a str>,
+            new_status: &'a str,
+            data: &'a TaskEventData,
+        }
+        let payload = ParentNotification {
+            event_type: &notification.event_type,
+            child_uri: &notification.task_uri,
+            old_status: notification.old_status.as_deref(),
+            new_status: &notification.new_status,
+            data: &notification.data,
+        };
+        let event_json = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
         info!(target: "borg_taskgraph", parent_uri = %parent_uri, child_uri = %notification.task_uri, "notifying parent agent about child status change: {}", event_json);
 
         Ok(())
