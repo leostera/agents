@@ -13,8 +13,10 @@ use borg_db::BorgDb;
 use borg_llm::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, StopReason, TranscriptionRequest,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Once;
+use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, trace};
 use tracing_subscriber::EnvFilter;
@@ -179,6 +181,16 @@ async fn make_session() -> Result<(Agent, Session)> {
     Ok((agent, session))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct EchoArgs {
+    text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct EchoResult {
+    echoed: String,
+}
+
 #[tokio::test]
 async fn a1_no_tool_completion() {
     info!(target: "borg_agent_test", test = "a1_no_tool_completion", "starting test");
@@ -266,6 +278,80 @@ async fn a3_multiple_tools_keep_order() {
         first_tool = first.tool_name.as_str(),
         second_tool = second.tool_name.as_str(),
         "validated tool call ordering"
+    );
+}
+
+#[tokio::test]
+async fn a17_typed_toolchain_decodes_provider_arguments() {
+    let db = make_test_db().await.unwrap();
+    let agent = Agent::<EchoArgs, EchoResult>::new(uri!("borg", "agent", "typed-agent"))
+        .with_system_prompt("system prompt");
+    let mut session = Session::<EchoArgs, EchoResult>::new(
+        uri!("borg", "session", "typed-session"),
+        agent.clone(),
+        db,
+    )
+    .await
+    .unwrap();
+    session
+        .add_message(Message::User {
+            content: "echo hello".to_string(),
+        })
+        .await
+        .unwrap();
+
+    let (provider, _requests_rx) = scripted_provider(vec![
+        Ok(assistant_tool_calls(vec![(
+            "tc-typed-1",
+            "echo",
+            json!({"text":"hello"}),
+        )])),
+        Ok(assistant_text("done")),
+    ]);
+
+    let (calls_tx, mut calls_rx) = mpsc::unbounded_channel::<ToolRequest<EchoArgs>>();
+    let toolchain = Toolchain::<EchoArgs, EchoResult>::builder()
+        .add_tool(
+            Tool::new_typed(
+                ToolSpec {
+                    name: "echo".to_string(),
+                    description: "echo typed args".to_string(),
+                    parameters: json!({
+                        "type":"object",
+                        "properties": { "text": { "type": "string" } },
+                        "required": ["text"],
+                        "additionalProperties": false
+                    }),
+                },
+                None,
+                move |request| {
+                    let calls_tx = calls_tx.clone();
+                    async move {
+                        calls_tx.send(request.clone()).unwrap();
+                        Ok(ToolResponse {
+                            content: ToolResultData::Execution {
+                                result: EchoResult {
+                                    echoed: request.arguments.text,
+                                },
+                                duration: Duration::from_millis(1),
+                            },
+                        })
+                    }
+                },
+            ),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+
+    let result = agent.run(&mut session, &provider, &toolchain).await;
+    assert!(matches!(result, SessionResult::Completed(Ok(_))));
+    let call = calls_rx.try_recv().unwrap();
+    assert_eq!(
+        call.arguments,
+        EchoArgs {
+            text: "hello".to_string()
+        }
     );
 }
 
@@ -522,7 +608,7 @@ async fn toolchain_does_not_validate_output_schema() {
 
 #[test]
 fn llm_adapter_rejects_orphan_tool_results() {
-    let messages = vec![
+    let messages: Vec<Message<Value, Value>> = vec![
         Message::System {
             content: "system".to_string(),
         },
@@ -552,7 +638,7 @@ fn llm_adapter_rejects_orphan_tool_results() {
 
 #[test]
 fn llm_adapter_rejects_non_adjacent_tool_result() {
-    let messages = vec![
+    let messages: Vec<Message<Value, Value>> = vec![
         Message::ToolCall {
             tool_call_id: "call_1".to_string(),
             name: "search".to_string(),
@@ -577,7 +663,7 @@ fn llm_adapter_rejects_non_adjacent_tool_result() {
 
 #[test]
 fn llm_adapter_auto_closes_dangling_tool_call_before_user_message() {
-    let messages = vec![
+    let messages: Vec<Message<Value, Value>> = vec![
         Message::System {
             content: "system".to_string(),
         },
@@ -614,7 +700,7 @@ fn llm_adapter_auto_closes_dangling_tool_call_before_user_message() {
 
 #[tokio::test]
 async fn context_window_splits_messages_into_typed_sections() {
-    let agent = Agent::new(uri!("borg", "agent", "context-sections"))
+    let agent = Agent::<Value, Value>::new(uri!("borg", "agent", "context-sections"))
         .with_system_prompt("system-prompt")
         .with_behavior_prompt("behavior-prompt")
         .with_tools(vec![ToolSpec {
@@ -659,7 +745,7 @@ async fn context_window_splits_messages_into_typed_sections() {
 
 #[tokio::test]
 async fn context_provider_input_messages_start_with_system_then_behavior() {
-    let agent = Agent::new(uri!("borg", "agent", "context-order"))
+    let agent = Agent::<Value, Value>::new(uri!("borg", "agent", "context-order"))
         .with_system_prompt("system-prompt")
         .with_behavior_prompt("behavior-prompt")
         .with_tools(vec![]);
@@ -685,7 +771,7 @@ async fn context_provider_input_messages_start_with_system_then_behavior() {
 
 #[tokio::test]
 async fn compaction_keeps_prompts_tools_and_capabilities_uncompacted() {
-    let agent = Agent::new(uri!("borg", "agent", "context-compact"))
+    let agent = Agent::<Value, Value>::new(uri!("borg", "agent", "context-compact"))
         .with_system_prompt("system-prompt")
         .with_behavior_prompt("behavior-prompt")
         .with_tools(vec![ToolSpec {
@@ -731,7 +817,7 @@ async fn compaction_keeps_prompts_tools_and_capabilities_uncompacted() {
 
 #[tokio::test]
 async fn context_filters_persisted_prompt_messages_from_ordered_history() {
-    let agent = Agent::new(uri!("borg", "agent", "context-dedup"))
+    let agent = Agent::<Value, Value>::new(uri!("borg", "agent", "context-dedup"))
         .with_system_prompt("system-prompt")
         .with_behavior_prompt("behavior-prompt")
         .with_tools(vec![]);
@@ -767,7 +853,7 @@ async fn context_filters_persisted_prompt_messages_from_ordered_history() {
 
 #[tokio::test]
 async fn context_manager_keeps_pinned_provider_chunks_uncompacted() {
-    let agent = Agent::new(uri!("borg", "agent", "context-pinned-provider"))
+    let agent = Agent::<Value, Value>::new(uri!("borg", "agent", "context-pinned-provider"))
         .with_system_prompt("system-prompt")
         .with_behavior_prompt("behavior-prompt")
         .with_tools(vec![]);
