@@ -821,6 +821,7 @@ dependencies = [
  "async-trait",
  "borg-agent",
  "borg-core",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",
