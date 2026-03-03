@@ -420,6 +420,13 @@ Implemented in this branch so far:
    - migrated memory entity projection/search code (`entity_graph`, `search_index`, `lib`) to typed property values, including many-arity list handling
    - migrated API entity hydration path to emit typed entity properties (still serialized at HTTP boundary via serde)
    - `FactValue::Json` is currently mapped to serialized text in entity projections as an interim compatibility step pending full typed-value normalization
+24. Updated `borg-memory` RFD0005 integration test harness to typed tool envelopes:
+   - switched helper signatures to `ToolRequest<BorgToolCall>` and `ToolResultData<BorgToolResult>`
+   - adapted JSON argument setup to explicit `BorgToolCall` conversion at test boundary
+   - restored full `cargo test -p borg-memory` pass after typed tool-request migration
+25. Fixed workspace build regressions in CLI tool adapters after typed tool-request migration:
+   - updated `borg-cli` tool command shims (`codemode`, `memory`, `shell`, `taskgraph`) to pass typed arguments (`arguments: value.into()`)
+   - restored clean `cargo build` for the workspace on this branch
 
 Important behavior change from these updates:
 
@@ -433,7 +440,6 @@ Important behavior change from these updates:
 Known blocker while validating this branch:
 
 1. Workspace checks can be blocked by unrelated in-flight `borg-db` compile issues from parallel work (outside this RFD track). This does not change the typed-agent design direction, but it can temporarily reduce end-to-end check coverage on this branch.
-2. `cargo test -p borg-memory` integration tests (`rfd0005_*`) currently fail due older `ToolRequest`/`ToolResultData` generic signatures in those test files; this predates the entity-props migration and should be fixed in a dedicated test-update slice.
 
 Immediate follow-up work after this pass:
 
