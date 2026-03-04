@@ -1,6 +1,6 @@
-# RFD0025 - Frontend Workspace Architecture for Faster, Consistent Product Development
+# RFD0025 - Frontend Architecture Reset: GraphQL-First Modular Web App
 
-- Feature Name: `frontend_workspace_architecture_v1`
+- Feature Name: `frontend_architecture_reset_graphql_first`
 - Start Date: `2026-03-04`
 - RFD PR: [leostera/borg#0000](https://github.com/leostera/borg/pull/0000)
 - Borg Issue: [leostera/borg#0000](https://github.com/leostera/borg/issues/0000)
@@ -8,363 +8,359 @@
 ## Summary
 [summary]: #summary
 
-This RFD proposes a frontend architecture reset for Borg’s TypeScript/React workspace so onboarding, dashboard, and devmode can evolve quickly without accumulating more large, tightly coupled files.  
-The proposal keeps `@borg/ui` and `@borg/i18n` as core assets, introduces explicit app-vs-library boundaries, adds TypeScript project references, formalizes feature/domain package structure, and defines a safe trial path for `tsgo` (`@typescript/native-preview`) as a speed optimization without risking release stability.
+This RFD proposes a clean-break frontend architecture for Borg’s TypeScript/React codebase.  
+We keep `@borg/ui` and `@borg/i18n`, move to an app-plus-packages workspace model, adopt GraphQL as the main frontend API contract (aligned with `RFD0023`), and simplify package internals so features own `graphql + model + ui` together with minimal boilerplate.
+
+This is a pre-deployment architecture reset. We do not preserve backward compatibility in frontend structure or API client usage.
 
 ## Motivation
 [motivation]: #motivation
 
-Current frontend velocity is limited by architecture coupling, not by React or TypeScript themselves.
+Current frontend friction is structural:
 
-Concrete issues in the current repo:
+1. Core files are too large and blend routing, side effects, and UI rendering:
+   1. `packages/borg-api/src/index.ts` (~1972 LOC)
+   2. `packages/borg-onboard/src/OnboardApp.tsx` (~1030 LOC)
+   3. `packages/borg-app/src/DashboardApp.tsx` (~870 LOC)
+2. Route resolution is manual instead of router-native.
+3. There is no TypeScript project reference graph across frontend packages.
+4. App shell imports package internals through root Vite aliases, weakening boundaries.
+5. API integration is broad and ad hoc in one client module, reducing feature ownership.
+6. Feature behavior tests are sparse outside `@borg/ui`.
 
-1. Large single-file orchestration in critical packages:
-   1. `packages/borg-api/src/index.ts` (~1972 LOC).
-   2. `packages/borg-onboard/src/OnboardApp.tsx` (~1030 LOC).
-   3. `packages/borg-app/src/DashboardApp.tsx` (~870 LOC).
-2. Manual route and URL parsing logic in app shell (`App.tsx`, `DashboardApp.tsx`) instead of router-native composition.
-3. No frontend `tsconfig` project graph in workspace packages (no package-level TypeScript project references), which blocks scalable type-checking and boundary validation.
-4. Root-level Vite aliasing directly to package source files creates tight coupling between app shell and every package internals.
-5. Workspace dependency ownership is unclear (heavy root dependency surface), which makes package contracts and reuse less explicit.
-6. Cross-cutting UX logic (loading, pending, mirrored chat behavior, error handling) is implemented ad hoc per screen instead of reusable feature/state modules.
-7. Test coverage is concentrated in `@borg/ui`; feature-level behavior and integration tests are sparse.
-
-Impact:
-
-1. Harder for contributors (and coding agents) to make safe changes.
-2. Slower iteration on product UX polish.
-3. High risk of regressions when touching onboarding/dashboard logic.
-4. Increasing inconsistency in interaction patterns and copy behavior.
+These issues reduce speed and consistency for onboarding and dashboard UX work.
 
 ## Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-### Mental model
+### Architecture decision
 
-Frontend code is organized into:
+Borg frontend should be a modular monolith, not runtime microfrontends and not islands-based rendering.
 
-1. `apps`: runnable surfaces.
-2. `packages`: reusable building blocks.
+Decision:
 
-Inside app code, we use explicit layers:
+1. One main web app shell.
+2. Many internal feature packages with explicit boundaries.
+3. One typed API contract via GraphQL schema + generated client types.
 
-1. `app` (entrypoint, providers, router wiring).
-2. `pages` (route-level composition).
-3. `features` (user flows/behaviors).
-4. `entities` (domain objects and reusable domain UI).
-5. `shared` (ui primitives, api client core, utilities, config).
+### Why this decision (expert patterns)
 
-This keeps design and behavior consistent while allowing independent feature development.
+Public lessons from Spotify and Linear suggest:
+
+1. Moving from highly fragmented client views to shared state/component architecture improves speed and consistency.
+2. Plugin/slice modularity inside one app shell scales better for product coherence than runtime-fragmented UIs.
+3. Strong client data contracts and local state models are critical for real-time app quality.
+
+Inference note:
+
+1. Spotify and Linear do not publish every internal detail.
+2. We use only public engineering material to infer patterns relevant to Borg.
+
+### Why not microfrontends now
+
+Microfrontends are useful for many independently shipping teams.  
+They also add runtime composition overhead, cross-app state complexity, shared dependency/version drift, and design consistency risk.
+
+Borg currently benefits more from one cohesive app with strict internal package boundaries.
+
+### Why not islands for primary app shell
+
+Islands architecture is excellent for mostly static, content-heavy pages with small interactive regions.  
+Borg is primarily an interaction-heavy product shell (chat, control panes, observability views), so full islands-first composition is not the best default.
 
 ### Target workspace shape
 
 ```text
 apps/
-  web/                         # main SPA (dashboard + onboard + devmode routes)
+  borg-admin/                           # main web runtime
 packages/
-  borg-ui/                     # primitives, tokens, shared visual language
-  borg-i18n/                   # translation catalogs and helpers
-  borg-api-client/             # split typed API client by domain
-  borg-domain-actors/
-  borg-domain-behaviors/
-  borg-domain-ports/
-  borg-domain-providers/
-  borg-feature-onboarding/
-  borg-feature-dashboard-control/
-  borg-feature-dashboard-observability/
-  borg-feature-devmode/
+  borg-ui/                              # primitives + tokens + shared UI language
+  borg-i18n/                            # catalogs + translation helpers
+  borg-graphql-client/                  # generated schema types + operation documents
+  borg-onboarding/
+  borg-dashboard-control/
+  borg-dashboard-observability/
+  borg-devmode/
   borg-test-utils/
-  borg-tsconfig/               # shared TS base configs
+  borg-tsconfig/
 ```
 
-Notes:
+### App model
 
-1. Existing packages can be migrated incrementally; rename can be phased.
-2. A package should expose a public API through `index.ts` and `exports`, never by deep imports.
-3. Feature packages own user intent flows end to end (view + state + API calls for that flow).
+Inside app/features we use explicit layers:
 
-### Route model
-
-The app shell uses `createBrowserRouter` and route modules.  
-Each top-level area (`/onboard`, `/devmode`, `/control/*`, etc.) is lazy-loaded and owns only route composition, not business logic internals.
+1. `app` (providers, router, shell composition)
+2. `pages` (route modules only)
+3. `features` (user workflows with colocated graphql/model/ui)
+4. `shared` (ui, graphql client, utilities)
 
 ```mermaid
 flowchart TD
-  A[User navigation] --> B[app/router.ts createBrowserRouter]
-  B --> C[Route module lazy-loaded]
-  C --> D[Page composition]
-  D --> E[Feature package actions/hooks]
-  E --> F[Domain package + API client]
-  F --> G[Borg API]
+  A[Route change] --> B[apps/borg-admin router]
+  B --> C[Lazy page module]
+  C --> D[Feature package]
+  D --> E[Feature graphql operation]
+  E --> F[/graphql]
 ```
-
-### Contributor workflow
-
-When adding or changing product behavior:
-
-1. Add/update a feature package for the flow.
-2. Use domain packages and API client modules via public exports.
-3. Keep route modules thin and declarative.
-4. Add story-level UI coverage (`@borg/ui` and feature stories) and at least one behavior test for the feature.
-5. Run typecheck/build from the workspace task graph.
-
-### What this means for LLM-assisted development
-
-1. Smaller, ownership-focused files reduce accidental edits.
-2. Public API boundaries reduce import ambiguity.
-3. Predictable folder conventions reduce planning overhead.
-4. A typed project graph improves automated refactors and confidence in generated changes.
 
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-## 1. Workspace boundaries
+## 1. Non-negotiable constraints
 
-Adopt `apps/*` + `packages/*` split:
+1. Frontend structure is a clean break; no compatibility layer for old package wiring.
+2. `borg-cli` remains the only binary crate.
+3. Frontend uses GraphQL as the primary typed integration contract.
+4. Package boundaries are enforced through package `exports` and lint checks.
 
-1. `apps/web` is the only web runtime entrypoint.
-2. Reusable logic/components live in packages.
-3. Keep Rust and CLI architecture unchanged (`borg-cli` remains the binary).
+## 1.1 Expert pattern mapping (what we copy)
 
-`package.json` workspaces should include both globs:
+1. Spotify web-player rewrite lesson:
+   1. Avoid fragmented iframe-style view architecture for Borg web shell.
+   2. Prefer shared state flow and shared component system.
+2. Spotify Backstage lesson:
+   1. Keep a single app instance with plugin-style modular packages.
+   2. Provide shared utility APIs and route indirection rather than hard-coding cross-feature paths.
+3. Linear sync architecture lesson:
+   1. Treat the client data model as first-class (typed local graph/cache + incremental updates).
+   2. Keep transport contracts strict and machine-validated.
+4. Linear multi-region lesson:
+   1. Keep frontend integration endpoints stable while backend complexity evolves behind a gateway/facade.
 
-1. `"apps/*"`
-2. `"packages/*"`
+## 2. Workspace boundaries
 
-## 2. Package contract rules
+`package.json` workspaces include:
 
-For every package:
+1. `apps/*`
+2. `packages/*`
 
-1. Must declare its own dependencies (no hidden root reliance).
-2. Must expose stable entrypoints via `exports`.
-3. Must not import another package via relative filesystem traversal.
-4. Must include a local `README.md` stating ownership and public API.
+Rules:
 
-For shared packages:
+1. `apps/borg-admin` is the only runtime entrypoint.
+2. Packages are importable only via published entrypoints.
+3. No deep imports into sibling package internals.
 
-1. `@borg/ui` remains primitive-first and style-system-owned.
-2. Add `@borg/ui` composition patterns for repeated UX blocks (chat shell variants, async state blocks, completion cards).
-3. `@borg/i18n` keeps catalogs; feature packages own message keys/namespaces.
+## 3. Routing architecture
 
-## 3. TypeScript build graph
+Replace manual pathname parsing with router-native modules:
 
-Add TypeScript project references:
+1. `apps/borg-admin/src/app/router.tsx` owns route tree.
+2. Route branches are lazy loaded.
+3. URL entity parsing moves to route params/loaders.
+4. Feature packages expose route-ready components and handlers.
 
-1. Root `tsconfig.base.json` in shared config package (`@borg/tsconfig`) or repo root.
-2. One `tsconfig.json` per app/package with `"composite": true`.
-3. Root `tsconfig.build.json` listing project `references`.
-4. Required scripts:
-   1. `typecheck`: `tsc -b tsconfig.build.json`.
-   2. `typecheck:watch`: `tsc -b -w tsconfig.build.json`.
+## 4. GraphQL-first API architecture
 
-This enables incremental typechecking, clearer boundaries, and better editor performance.
+GraphQL frontend contract:
 
-## 4. Routing architecture
+1. Backend exposes schema via `/graphql` (see `RFD0023`).
+2. Frontend generates typed artifacts from schema and operation documents.
+3. Feature packages own their own operation documents/fragments next to feature logic.
 
-Replace manual pathname parsing with router-native definitions:
+Client package shape:
 
-1. `apps/web/src/app/router.tsx` defines route tree.
-2. Use route-level lazy loading for large route branches.
-3. Feature packages provide route elements/loaders/actions as needed.
-4. URL parsing for entity IDs moves to route params, not ad hoc string slicing.
+```text
+packages/borg-graphql-client/
+  schema.graphql
+  src/generated/types.ts
+  src/generated/operations.ts
+  src/runtime/client.ts
+  src/runtime/cache.ts
+  src/index.ts
+```
 
-## 5. API client architecture
+Requirements:
 
-Refactor `@borg/api` single file into domain modules:
+1. All feature data reads/writes go through typed GraphQL operations.
+2. No hand-written `any` response parsing.
+3. Operation validation and type generation run in CI.
+4. GraphQL validation errors fail build/test workflows before runtime.
 
-1. `core/http.ts` (request, errors, base URL).
-2. `providers/client.ts`
-3. `actors/client.ts`
-4. `behaviors/client.ts`
-5. `ports/client.ts`
-6. `sessions/client.ts`
-7. `taskgraph/client.ts`
-8. etc.
+## 5. Simplified feature package contract
 
-Public entrypoint re-exports modules and shared types; internal helpers stay private.
-
-## 6. Feature package structure
-
-Each feature package follows:
+Feature package contract:
 
 ```text
 src/
-  index.ts                # public API
-  model/                  # state machine/hooks/actions
-  api/                    # feature-specific request orchestration
-  ui/                     # components for this feature
-  lib/                    # local helpers only
-  __tests__/              # behavior tests
+  index.ts
+  model/
+  graphql/
+  ui/
+  lib/
+  __tests__/
 ```
 
 Rules:
 
-1. `ui` may depend on `model`, never the reverse.
-2. `model` depends on domain/api packages, not page components.
-3. `index.ts` is the only cross-package import surface.
+1. `graphql` contains the feature’s queries/mutations/fragments and typed wrappers.
+2. `model` contains state machine/hooks/actions for that feature only.
+3. `ui` renders feature UI and depends on `model` and `@borg/ui`.
+4. `lib` contains small local helpers; no cross-feature business logic here.
+5. `index.ts` is the only cross-package import surface.
+6. Feature state transitions are unit-tested.
+7. We do not require separate domain/entity packages unless proven necessary later.
 
-## 7. Task runner and CI model
+## 6. UI consistency model
 
-Adopt a task graph runner for JS workspace tasks (recommended: Turborepo):
+`@borg/ui` remains source of truth for primitives and visual tokens.
 
-1. `build`, `test`, `typecheck`, `lint` as cacheable tasks.
-2. Package-level scripts remain the source of truth.
-3. CI runs affected tasks first; full run remains available.
+Add curated, reusable experience blocks:
 
-Rust build/test flow remains unchanged.
+1. chat thread variants
+2. async pending/error panels
+3. setup completion cards
+4. form-in-chat interaction blocks
 
-## 8. `tsgo` adoption plan
+This avoids repeatedly re-implementing behavior and styling in each feature package.
 
-We should adopt `tsgo` incrementally as a speed lane, not as the sole compiler path on day one.
+## 7. TypeScript and build graph
 
-Phase A (opt-in local):
+Add TypeScript project references:
 
-1. Add `@typescript/native-preview` as dev dependency.
-2. Add script `typecheck:fast`: `tsgo -b tsconfig.build.json`.
-3. Keep `typecheck` (`tsc -b`) as release gate.
+1. root `tsconfig.build.json` with references to app + packages
+2. per-package `tsconfig.json` with `composite: true`
+3. `typecheck`: `tsc -b tsconfig.build.json`
 
-Phase B (CI shadow mode):
+Add task graph runner (recommended: Turborepo):
 
-1. Add non-blocking CI job running `typecheck:fast`.
-2. Compare diagnostics drift and runtime.
-3. Track failures/regressions for two weeks.
+1. cacheable `build`, `test`, `typecheck`, `lint`
+2. affected-task execution in CI
 
-Phase C (promotion):
+## 8. `tsgo` adoption
 
-1. If drift is acceptable and no blocking gaps, allow `tsgo` as default local typecheck command.
-2. Keep `tsc -b` in CI release pipeline until parity confidence is high.
+Use `tsgo` as a performance lane with explicit guardrails:
 
-## 9. Migration strategy
+1. `typecheck:fast`: `tsgo -b tsconfig.build.json`
+2. Keep `typecheck` (`tsc -b`) as release truth until parity confidence is high
+3. Track diagnostics drift and runtime in CI telemetry
 
-### Recommended path: incremental rewrite by vertical slices
+Status note:
 
-Phase 0 (foundation, 1 week):
+1. `tsgo` is still a native preview effort.
+2. Recent status indicates meaningful progress (including build/project references support), but full parity and ecosystem fit still require validation in Borg’s workspace.
 
-1. Introduce `apps/web`.
-2. Add TS project references and typecheck scripts.
-3. Split API client into `core` + domain modules (no behavior changes).
+## 9. Implementation order (clean break)
 
-Phase 1 (shell and routing, 1 week):
-
-1. Move route definitions into router modules.
-2. Replace manual path resolver logic in current app shell.
-
-Phase 2 (feature extraction, 2-4 weeks):
-
-1. Extract onboarding flow into `borg-feature-onboarding`.
-2. Extract dashboard control flows by domain (providers/actors/ports/sessions).
-3. Extract observability/taskgraph/devmode features.
-
-Phase 3 (cleanup, 1-2 weeks):
-
-1. Remove deprecated aliases and dead code paths.
-2. Enforce package/public API boundaries in CI.
-3. Lock file-size and boundary rules.
-
-### Alternative path: clean-slate frontend shell
-
-A clean-slate web shell is acceptable if:
-
-1. We can freeze net-new dashboard features for a short window.
-2. We keep runtime/API contracts stable.
-3. We migrate one route family at a time behind parity checklists.
-
-This RFD recommends incremental rewrite first because it de-risks delivery and preserves momentum.
+1. Create `apps/borg-admin` shell and router, remove legacy path-switch logic.
+2. Create `borg-graphql-client` with schema, generated types, and runtime client.
+3. Split `@borg/api` responsibilities into GraphQL operation ownership per feature packages.
+4. Extract onboarding, control, observability, and devmode into simplified feature packages (`graphql + model + ui`).
+5. Rebuild page composition through route modules.
+6. Enforce boundary/lint rules and delete legacy wiring.
 
 ## 10. Acceptance criteria
 
-Architecture acceptance:
+Architecture:
 
-1. No core app/orchestration file exceeds 400 LOC.
-2. No package imports from another package internals (only exported entrypoints).
-3. Frontend workspace has a functioning `tsc -b` project reference graph.
-4. Manual pathname parsing for primary app routing is removed.
+1. No core orchestration file exceeds 400 LOC.
+2. No deep sibling imports across packages.
+3. Router no longer manually parses paths for primary navigation.
+4. Workspace has functioning `tsc -b` project graph.
+5. Feature packages follow the simplified colocated structure.
 
-Velocity/quality acceptance:
+GraphQL:
 
-1. Adding a new onboarding/dashboard interaction requires changes in <= 5 files in most cases.
-2. New feature flows include at least one behavior test.
-3. Shared UI behavior (loading/pending/errors/message rendering) uses shared patterns, not copy-paste.
-4. `typecheck` and `build:web` both run successfully in CI.
+1. Frontend data integration is GraphQL-first.
+2. All operations are type-generated from schema.
+3. Invalid operation/schema drift fails CI.
+4. Feature packages consume generated typed operations only.
 
-`tsgo` acceptance:
+Velocity/quality:
 
-1. `typecheck:fast` runs successfully on the workspace.
-2. CI shadow run shows acceptable diagnostic drift relative to `tsc -b`.
-3. Fallback to `tsc -b` remains documented and available.
+1. New onboarding/dashboard UX changes usually touch <= 5 files.
+2. Every feature package has behavior tests for core state transitions.
+3. Shared chat/pending/error UX primitives are reused, not duplicated.
+4. `build:web`, `typecheck`, and test suites pass on CI.
 
 ## Drawbacks
 [drawbacks]: #drawbacks
 
-1. Initial migration will temporarily slow feature delivery.
-2. More packages mean more explicit ownership and script maintenance.
-3. Introducing task graph tooling adds setup complexity.
-4. `tsgo` preview adoption can create confusion if parity gaps are not communicated.
+1. This reset is disruptive and requires concentrated refactor effort.
+2. GraphQL codegen/tooling adds workflow and CI complexity.
+3. Strict boundaries require discipline and occasional upfront boilerplate.
+4. `tsgo` preview behavior may occasionally diverge from `tsc`.
 
 ## Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
 ### Why this design
 
-1. It directly addresses current coupling points in this repo.
-2. It preserves proven assets (`@borg/ui`, `@borg/i18n`) while fixing orchestration structure.
-3. It improves both human and LLM contributor productivity through explicit boundaries.
-4. It keeps the runtime/backend model intact and limits risk to frontend architecture.
+1. It solves current coupling and inconsistency directly.
+2. It matches patterns used by high-scale product teams: modular internals with unified app experience.
+3. It maximizes type safety front-to-back through GraphQL schema contracts and generated types.
 
 ### Alternatives considered
 
-Alternative 1: keep current structure and only split largest files.
+Alternative 1: runtime microfrontends now.
 
-1. Rejected: helps short-term readability but does not solve package/routing/typegraph coupling.
+1. Rejected for current Borg stage due composition complexity and consistency risk.
 
-Alternative 2: full frontend rewrite immediately.
+Alternative 2: islands-first app shell.
 
-1. Not recommended as default: highest risk and likely short-term delivery stall.
-2. Acceptable only with strict feature freeze and route-by-route parity plan.
+1. Rejected for interaction-heavy dashboard/chat product needs.
 
-Alternative 3: adopt Nx-first full workspace rewrite.
+Alternative 3: keep REST-first frontend client.
 
-1. Possible, but heavier than needed for immediate Borg goals.
-2. Turborepo + TypeScript references gives a lower-friction path now.
+1. Rejected because GraphQL provides stronger schema-level typing and operation-level compile-time guarantees for complex entity relationships.
 
 ## Prior art
 [prior-art]: #prior-art
 
-1. TypeScript project references and build mode for scalable multi-project typechecking.
-2. React Router data routers and route-level lazy-loading patterns for large apps.
-3. Turborepo guidance on structuring monorepos as `apps/*` + `packages/*` with clear package contracts.
-4. Bun workspace docs and isolated installs for deterministic dependency behavior.
-5. Feature-Sliced layering/import-rule patterns for maintaining frontend boundaries.
-6. Storybook’s design-system documentation model for shared UI consistency and discoverability.
-7. Changesets workflow for multi-package versioning and release intent tracking.
+Spotify lessons:
+
+1. Spotify’s web-player rewrite described moving away from iframe-segmented views toward a shared React/Redux app, addressing state and consistency pain.
+2. Spotify’s Backstage ecosystem emphasizes plugin modularity and shared platform primitives over ad hoc page-level silos.
+3. Spotify’s larger app architecture work highlights explicit platform boundaries and reusable integration APIs.
+
+Linear lessons:
+
+1. Linear’s public sync architecture material emphasizes client-local state plus incremental sync packets for responsive UX.
+2. Linear’s multi-region architecture keeps complexity behind stable frontend entrypoints (global auth/routing facade and proxy strategy).
+3. Linear desktop packaging shows one core app surfaced on web and desktop, reinforcing a unified product shell strategy.
+
+Ecosystem lessons:
+
+1. GraphQL schema + validation + codegen provides strong type contracts from backend to frontend.
+2. Microfrontends are valuable in specific org/team topologies, not universally.
+3. Islands are a great fit for content pages, less so for deeply interactive app shells.
 
 ## Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-1. Do we keep all web surfaces in one app (`apps/web`) or split `onboard` into a dedicated deployable app later?
-2. Do we adopt Turborepo immediately or in phase 2 after package extraction starts?
-3. Should boundary enforcement be implemented via ESLint rule, custom import checker, or both?
-4. Which feature domains should migrate first after onboarding and providers?
+1. Which GraphQL client runtime should Borg standardize on (urql, Apollo, or minimal custom client + typed documents)?
+2. Do we model local-first optimistic state primarily in client cache, feature model layer, or both?
+3. Should devmode and onboarding remain in one app shell or split into separate app entrypoints later?
 
 ## Future possibilities
 [future-possibilities]: #future-possibilities
 
-1. Generate API client types directly from backend contracts/OpenAPI.
-2. Add visual regression checks for key user journeys (onboarding, provider setup, port setup).
-3. Introduce package-scoped preview apps for rapid UX prototyping.
-4. Promote `tsgo` to default CI typecheck once parity reaches stable confidence.
-5. Move toward independent package release/versioning for public SDK surfaces.
+1. Persisted GraphQL queries and operation allowlists.
+2. Unified schema registry and automated breaking-change detection.
+3. Visual regression coverage for critical onboarding/control flows.
+4. Full `tsgo` promotion after parity confidence and tooling maturity.
 
 ## Research references
 
 1. TypeScript project references: https://www.typescriptlang.org/docs/handbook/project-references
-2. React Router `createBrowserRouter` and lazy route guidance: https://reactrouter.com/api/data-routers/createBrowserRouter/
-3. Turborepo repository structure guidance: https://turborepo.dev/repo/docs/crafting-your-repository/structuring-a-repository
-4. Bun workspaces: https://bun.sh/docs/install/workspaces
-5. Bun isolated installs: https://bun.com/docs/pm/isolated-installs
-6. Feature-Sliced layers and import rule: https://feature-sliced.github.io/documentation/docs/reference/layers
-7. Storybook component docs: https://storybook.js.org/docs/9.0/writing-docs
-8. Changesets (monorepo versioning/changelogs): https://github.com/changesets/changesets
-9. TypeScript native preview announcement: https://devblogs.microsoft.com/typescript/announcing-typescript-native-previews/
-10. `@typescript/native-preview` npm package: https://www.npmjs.com/package/@typescript/native-preview
-11. `microsoft/typescript-go` status/feature parity notes: https://github.com/microsoft/typescript-go
+2. React Router `createBrowserRouter`: https://reactrouter.com/api/data-routers/createBrowserRouter/
+3. Turborepo structure guidance: https://turborepo.dev/docs/crafting-your-repository/structuring-a-repository
+4. Bun workspaces: https://bun.sh/docs/pm/workspaces
+5. Bun isolated installs: https://bun.sh/docs/install/isolated
+6. GraphQL schema docs: https://graphql.org/learn/schema/
+7. GraphQL validation docs: https://graphql.org/learn/validation/
+8. GraphQL serving over HTTP: https://graphql.org/learn/serving-over-http/
+9. GraphQL Code Generator TypedDocumentNode: https://the-guild.dev/graphql/codegen/plugins/typescript/typed-document-node
+10. TypeScript native preview announcement: https://devblogs.microsoft.com/typescript/announcing-typescript-native-previews/
+11. TypeScript native repo/status: https://github.com/microsoft/typescript-go
+12. Spotify web player rewrite: https://engineering.atspotify.com/2019/03/building-spotifys-new-web-player/
+13. Spotify desktop architecture evolution: https://engineering.atspotify.com/2021/09/building-spotifys-new-desktop-app-and-web-player/
+14. Spotify Backstage release architecture (part 2): https://engineering.atspotify.com/2026/02/how-we-release-the-spotify-app-part-2/
+15. Backstage architecture overview: https://backstage.io/docs/overview/architecture-overview
+16. Backstage app structure: https://backstage.spotify.com/learn/standing-up-backstage/3-app-structure/
+17. Linear sync engine notes: https://linear.app/now/scaling-the-linear-sync-engine
+18. Linear multi-region architecture: https://linear.app/now/how-we-built-multi-region-support-for-linear
+19. Linear incident postmortem (sync/client details): https://linear.app/blog/post-mortem-public-api-and-websocket-issues
+20. Linear desktop app changelog: https://linear.app/changelog/2019-04-25-linear-desktop-app
+21. Micro-frontends article (Martin Fowler): https://martinfowler.com/articles/micro-frontends.html
+22. Module Federation concepts: https://webpack.js.org/concepts/module-federation/
+23. Astro islands architecture: https://docs.astro.build/en/concepts/islands/
