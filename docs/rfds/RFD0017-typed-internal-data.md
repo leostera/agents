@@ -436,6 +436,23 @@ Implemented in this branch so far:
    - updated all store event writes (`append_event_tx` callsites) to emit concrete domain variants (`TaskCreated`, `Status`, `ReviewChangesRequested`, etc.), eliminating dynamic field maps in runtime code
    - updated supervisor notification payload typing to use `TaskEventData` directly
    - kept DB boundary as serialized JSON text (`data_json`) while deserializing back into typed event variants on read
+28. Removed direct `serde_json::Value` usage from Telegram tool-action formatting:
+   - `borg-ports` now decodes execute-call arguments into a typed `ExecuteCodeArgs` struct for presentation logic
+   - removed ad-hoc `Value::as_str` probing from `format_tool_action_message`
+29. Removed runtime `serde_json::Value` coupling from exec provider-admin tool wiring:
+   - `borg-exec::tool_runner` now bridges provider-admin calls through `ToolRequest<BorgToolCall>` rather than `ToolRequest<Value>`
+   - provider-admin adapter remains boundary-JSON aware, but exec runtime signatures no longer import `serde_json::Value`
+30. Tightened port config boundary handling while keeping DB JSON storage:
+   - `PortConfig` now carries `settings_json: String` from DB rows (serialized at DB boundary)
+   - Discord/Telegram ports parse config JSON immediately at `Port::new(...)` via typed config structs (`DiscordConfig` / `TelegramConfig`)
+31. Removed `serde_json::Value` from LLM provider call tracing internals:
+   - `ProviderCallTrace` now stores request/response payloads as serialized JSON strings instead of `Value`
+   - failure-reason extraction now uses typed serde structs (`ErrorBody`, `ErrorField`) parsed from response text
+   - this keeps provider boundary behavior intact while eliminating `Value` from trace persistence contracts
+32. Replaced memory fact-store runtime JSON payloads with typed recursive values:
+   - `borg-memory::FactValue` no longer contains `Json(Value)` and now supports explicit variants (`Date`, `DateTime`, `List(Vec<FactValue>)`)
+   - sqlite encode/decode still serializes list payloads into JSON text at DB boundary, but deserializes immediately back into typed `FactValue`
+   - updated memory tool parsing/range inference and API/entity projection adapters to use typed variants instead of `serde_json::Value`-backed fact payloads
 
 Important behavior change from these updates:
 

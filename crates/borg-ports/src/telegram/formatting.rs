@@ -1,4 +1,11 @@
 use borg_exec::{RuntimeToolCall, RuntimeToolResult, ToolCallSummary};
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+struct ExecuteCodeArgs {
+    hint: Option<String>,
+    code: Option<String>,
+}
 
 pub fn format_tool_action_message(
     call: &ToolCallSummary<RuntimeToolCall, RuntimeToolResult>,
@@ -12,28 +19,28 @@ pub fn format_tool_action_message(
     let tool_label = humanize_tool_name(tool_name);
 
     if tool_name == "CodeMode-executeCode" {
-        let hinted_title = parsed_args
+        let execute_args = parsed_args
             .as_ref()
-            .and_then(|args| args.get("hint"))
-            .and_then(serde_json::Value::as_str)
+            .and_then(|args| serde_json::from_value::<ExecuteCodeArgs>(args.clone()).ok());
+        let hinted_title = execute_args
+            .as_ref()
+            .and_then(|args| args.hint.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty());
         let Some(title) = hinted_title else {
             return format!(
                 "Action: {}\n{}",
                 "Invalid execute call: missing required `hint`",
-                parsed_args
+                execute_args
                     .as_ref()
-                    .and_then(|args| args.get("code"))
-                    .and_then(serde_json::Value::as_str)
+                    .and_then(|args| args.code.as_deref())
                     .unwrap_or(raw_args.as_str())
                     .trim()
             );
         };
-        if let Some(code) = parsed_args
+        if let Some(code) = execute_args
             .as_ref()
-            .and_then(|args| args.get("code"))
-            .and_then(serde_json::Value::as_str)
+            .and_then(|args| args.code.as_deref())
         {
             return format!("Action: {title}\n{}", code.trim());
         }

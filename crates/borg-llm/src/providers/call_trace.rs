@@ -3,7 +3,7 @@ use std::time::Instant;
 use borg_core::borgdir::BorgDir;
 use chrono::{DateTime, Utc};
 use reqwest::StatusCode;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 use sqlx::Connection;
 use tracing::{debug, error, info};
 use uuid::Uuid;
@@ -13,7 +13,7 @@ pub struct ProviderCallTrace {
     provider: String,
     capability: String,
     model: String,
-    request_json: Value,
+    request_json: String,
     sent_at: DateTime<Utc>,
     started: Instant,
 }
@@ -23,7 +23,7 @@ impl ProviderCallTrace {
         provider: impl Into<String>,
         capability: impl Into<String>,
         model: impl Into<String>,
-        request_json: Value,
+        request_json: impl Serialize,
     ) -> Self {
         let sent_at = Utc::now();
         let call_id = format!("borg:llm_call:{}", Uuid::new_v4());
@@ -34,7 +34,7 @@ impl ProviderCallTrace {
             provider,
             capability,
             model: model.into(),
-            request_json,
+            request_json: serde_json::to_string(&request_json).unwrap_or_else(|_| "{}".to_string()),
             sent_at,
             started: Instant::now(),
         };
@@ -50,7 +50,7 @@ impl ProviderCallTrace {
         call
     }
 
-    pub async fn succeeded(self, status: StatusCode, response_json: &Value) {
+    pub async fn succeeded(self, status: StatusCode, response_json: impl Serialize) {
         let received_at = Utc::now();
         let latency_ms = self.started.elapsed().as_millis() as u64;
         self.persist(
@@ -62,7 +62,7 @@ impl ProviderCallTrace {
             String::new(),
             latency_ms,
             received_at,
-            response_json.clone(),
+            serde_json::to_string(&response_json).unwrap_or_else(|_| "{}".to_string()),
         )
         .await;
         info!(
@@ -83,7 +83,7 @@ impl ProviderCallTrace {
     pub async fn failed(
         self,
         status: Option<StatusCode>,
-        response_json: Option<&Value>,
+        response_json_body: Option<&str>,
         response_body: Option<&str>,
         error_message: &str,
     ) {
@@ -91,14 +91,14 @@ impl ProviderCallTrace {
         let latency_ms = self.started.elapsed().as_millis() as u64;
         let status_reason = status.and_then(|value| value.canonical_reason());
         let response_body_opt = response_body;
-        let normalized_response_json = response_json
-            .cloned()
-            .or_else(|| response_body_opt.and_then(|body| serde_json::from_str::<Value>(body).ok()))
-            .unwrap_or_else(|| Value::Object(Default::default()));
+        let normalized_response_json = response_json_body
+            .or(response_body_opt)
+            .unwrap_or("{}")
+            .to_string();
         let response_body = response_body_opt.unwrap_or("").to_string();
         let error_message = error_message.to_string();
-        let http_reason = response_json
-            .and_then(extract_error_reason_from_json)
+        let http_reason = response_json_body
+            .and_then(extract_error_reason_from_body)
             .or_else(|| response_body_opt.and_then(extract_error_reason_from_body))
             .unwrap_or_else(|| status_reason.unwrap_or("unknown").to_string());
         self.persist(
@@ -140,7 +140,7 @@ impl ProviderCallTrace {
         response_body: String,
         latency_ms: u64,
         received_at: DateTime<Utc>,
-        response_json: Value,
+        response_json: String,
     ) {
         let config_path = BorgDir::new().config_db().to_string_lossy().to_string();
         let database_url = format!("sqlite://{config_path}");
@@ -225,8 +225,8 @@ impl ProviderCallTrace {
         .bind(i64::try_from(latency_ms).unwrap_or(i64::MAX))
         .bind(self.sent_at.to_rfc3339())
         .bind(received_at.to_rfc3339())
-        .bind(self.request_json.to_string())
-        .bind(response_json.to_string())
+        .bind(self.request_json.clone())
+        .bind(response_json)
         .bind(response_body)
         .execute(&mut conn)
         .await;
@@ -240,30 +240,54 @@ impl ProviderCallTrace {
     }
 }
 
-fn extract_error_reason_from_json(value: &Value) -> Option<String> {
-    value
-        .get("error")
-        .and_then(Value::as_object)
-        .and_then(|error| error.get("message"))
-        .and_then(Value::as_str)
-        .or_else(|| value.get("error").and_then(Value::as_str))
-        .or_else(|| value.get("message").and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|message| !message.is_empty())
-        .map(ToOwned::to_owned)
-}
-
 fn extract_error_reason_from_body(response_body: &str) -> Option<String> {
     let body = response_body.trim();
     if body.is_empty() {
         return None;
     }
 
-    if let Ok(json) = serde_json::from_str::<Value>(body) {
-        return extract_error_reason_from_json(&json);
+    if let Ok(json) = serde_json::from_str::<ErrorBody>(body) {
+        return json.error_message();
     }
 
     Some(body.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+struct ErrorMessageObject {
+    message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ErrorBody {
+    error: Option<ErrorField>,
+    message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ErrorField {
+    Text(String),
+    Object(ErrorMessageObject),
+}
+
+impl ErrorBody {
+    fn error_message(self) -> Option<String> {
+        match self.error {
+            Some(ErrorField::Text(text)) => normalize_message(text),
+            Some(ErrorField::Object(obj)) => obj.message.and_then(normalize_message),
+            None => self.message.and_then(normalize_message),
+        }
+    }
+}
+
+fn normalize_message(text: String) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 async fn ensure_payload_columns(conn: &mut sqlx::SqliteConnection) {

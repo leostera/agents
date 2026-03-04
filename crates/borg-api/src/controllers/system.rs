@@ -507,7 +507,9 @@ fn fact_value_to_prop(value: &FactValue) -> anyhow::Result<EntityPropValue> {
         FactValue::Boolean(v) => EntityPropValue::Boolean(*v),
         FactValue::Bytes(v) => EntityPropValue::Bytes(v.clone()),
         FactValue::Ref(v) => EntityPropValue::Ref(Uri::parse(v.as_str())?),
-        FactValue::Json(v) => EntityPropValue::Text(serde_json::to_string(v)?),
+        FactValue::Date(v) => EntityPropValue::Text(v.clone()),
+        FactValue::DateTime(v) => EntityPropValue::Text(v.clone()),
+        FactValue::List(v) => EntityPropValue::Text(serde_json::to_string(v)?),
     })
 }
 

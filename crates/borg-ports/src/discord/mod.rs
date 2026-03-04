@@ -3,7 +3,9 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_core::Uri;
-use borg_exec::{DiscordSessionContext, PortContext, RuntimeToolCall, RuntimeToolResult, SessionOutput};
+use borg_exec::{
+    DiscordSessionContext, PortContext, RuntimeToolCall, RuntimeToolResult, SessionOutput,
+};
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, GatewayIntents, Message};
 use serenity::client::{Client, Context, EventHandler};
@@ -90,7 +92,10 @@ impl DiscordPort {
         })
     }
 
-    async fn send_output(&self, output: SessionOutput<RuntimeToolCall, RuntimeToolResult>) -> Result<()> {
+    async fn send_output(
+        &self,
+        output: SessionOutput<RuntimeToolCall, RuntimeToolResult>,
+    ) -> Result<()> {
         let Some(ctx) = output.port_context.as_discord() else {
             return Ok(());
         };
@@ -120,7 +125,7 @@ impl DiscordPort {
 #[async_trait]
 impl Port for DiscordPort {
     async fn new(port_config: PortConfig) -> Result<Self> {
-        let discord_config: DiscordConfig = serde_json::from_value(port_config.settings.clone())?;
+        let discord_config: DiscordConfig = serde_json::from_str(&port_config.settings_json)?;
         let http = Arc::new(Http::new(&discord_config.bot_token));
         Ok(Self {
             port_id: port_config.port_id.clone(),

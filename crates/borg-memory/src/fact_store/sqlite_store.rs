@@ -9,7 +9,6 @@ use std::{
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sqlx::query::Query;
 use sqlx::sqlite::{SqliteArguments, SqliteConnectOptions, SqliteRow};
 use sqlx::{Decode, Encode, Row, Sqlite, SqlitePool, Type};
@@ -160,7 +159,9 @@ pub enum FactValue {
     Boolean(bool),
     Bytes(Vec<u8>),
     Ref(Uri),
-    Json(Value),
+    Date(String),
+    DateTime(String),
+    List(Vec<FactValue>),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -585,7 +586,17 @@ fn encode_value(
         ),
         FactValue::Bytes(v) => ("bytes", None, None, None, None, Some(v.clone()), None),
         FactValue::Ref(v) => ("ref", None, None, None, None, None, Some(v.to_string())),
-        FactValue::Json(v) => ("json", Some(v.to_string()), None, None, None, None, None),
+        FactValue::Date(v) => ("date", Some(v.clone()), None, None, None, None, None),
+        FactValue::DateTime(v) => ("datetime", Some(v.clone()), None, None, None, None, None),
+        FactValue::List(v) => (
+            "list",
+            Some(serde_json::to_string(v).unwrap_or_else(|_| "null".to_string())),
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
     }
 }
 
@@ -605,7 +616,13 @@ fn decode_value(
         "bool" => Ok(FactValue::Boolean(value_bool.unwrap_or_default() == 1)),
         "bytes" => Ok(FactValue::Bytes(value_bytes.unwrap_or_default())),
         "ref" => Ok(FactValue::Ref(Uri::parse(value_ref.unwrap_or_default())?)),
-        "json" => Ok(FactValue::Json(serde_json::from_str(
+        "date" => Ok(FactValue::Date(value_text.unwrap_or_default())),
+        "datetime" => Ok(FactValue::DateTime(value_text.unwrap_or_default())),
+        "list" => Ok(FactValue::List(serde_json::from_str(
+            value_text.as_deref().unwrap_or("null"),
+        )?)),
+        // Backward-compat: legacy rows encoded raw JSON typed objects.
+        "json" => Ok(FactValue::List(serde_json::from_str(
             value_text.as_deref().unwrap_or("null"),
         )?)),
         _ => Err(anyhow!("unsupported fact value kind: {}", kind)),

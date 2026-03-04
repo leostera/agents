@@ -13,7 +13,6 @@ use borg_memory::{MemoryStore, build_memory_toolchain};
 use borg_ports_tools::{build_port_admin_toolchain, default_port_admin_tool_specs};
 use borg_shellmode::{ShellModeRuntime, build_shell_mode_toolchain};
 use borg_taskgraph::{build_taskgraph_toolchain, build_taskgraph_worker_toolchain};
-use serde_json::Value;
 
 pub fn build_exec_toolchain_with_context(
     runtime: CodeModeRuntime,
@@ -79,13 +78,14 @@ fn build_provider_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                 parameters: spec.parameters,
             },
             None,
-            move |request: borg_agent::ToolRequest<Value>| {
+            move |request: borg_agent::ToolRequest<BorgToolCall>| {
                 let db = db.clone();
                 let name = name.clone();
                 async move {
-                    let value = run_provider_admin_tool(&db, &name, &request.arguments).await?;
+                    let arguments = request.arguments.to_value()?;
+                    let value = run_provider_admin_tool(&db, &name, &arguments).await?;
                     Ok(ToolResponse {
-                        content: ToolResultData::<Value>::Text(serde_json::to_string(&value)?),
+                        content: ToolResultData::<()>::Text(serde_json::to_string(&value)?),
                     })
                 }
             },

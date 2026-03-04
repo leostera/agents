@@ -4,7 +4,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use borg_core::Uri;
 use borg_exec::{RuntimeToolCall, RuntimeToolResult, SessionOutput};
-use serde_json::Value;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::PortMessage;
@@ -48,7 +47,7 @@ pub struct PortConfig {
     pub status: Status,
     pub privacy: Privacy,
     pub assigned_actor_id: Option<Uri>,
-    pub settings: Value,
+    pub settings_json: String,
 }
 
 impl PortConfig {
@@ -68,7 +67,7 @@ impl PortConfig {
                 Privacy::Private
             },
             assigned_actor_id: port_record.assigned_actor_id,
-            settings: port_record.settings,
+            settings_json: port_record.settings.to_string(),
         })
     }
 }
