@@ -254,8 +254,8 @@ async fn bridge_loop(
     outbound_tx: Sender<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
 ) {
     while let Some(message) = inbound_rx.recv().await {
-        let (session_id, legacy_actor_id) = match db
-            .resolve_port_session(&port_name, &message.conversation_key, None, None)
+        let session_id = match db
+            .resolve_port_session(&port_name, &message.conversation_key, None)
             .await
         {
             Ok(value) => value,
@@ -316,30 +316,33 @@ async fn bridge_loop(
             }
         }
 
-        let actor_id = select_actor_id(session_id.clone(), bound_actor_id, legacy_actor_id);
+        let actor_id = select_actor_id(session_id.clone(), bound_actor_id);
 
         let output = match sup
-            .call(BorgMessage {
-                actor_id,
-                user_id: message.user_id,
-                session_id,
-                input: match message.input {
-                    PortInput::Chat { text } => BorgInput::Chat { text },
-                    PortInput::Audio {
-                        file_id,
-                        mime_type,
-                        duration_ms,
-                        language_hint,
-                    } => BorgInput::Audio {
-                        file_id,
-                        mime_type,
-                        duration_ms,
-                        language_hint,
+            .call_with_progress(
+                BorgMessage {
+                    actor_id,
+                    user_id: message.user_id,
+                    session_id,
+                    input: match message.input {
+                        PortInput::Chat { text } => BorgInput::Chat { text },
+                        PortInput::Audio {
+                            file_id,
+                            mime_type,
+                            duration_ms,
+                            language_hint,
+                        } => BorgInput::Audio {
+                            file_id,
+                            mime_type,
+                            duration_ms,
+                            language_hint,
+                        },
+                        PortInput::Command(command) => BorgInput::Command(command),
                     },
-                    PortInput::Command(command) => BorgInput::Command(command),
+                    port_context: message.port_context,
                 },
-                port_context: message.port_context,
-            })
+                Some(outbound_tx.clone()),
+            )
             .await
         {
             Ok(value) => value,
@@ -382,15 +385,8 @@ async fn ensure_session_row(
     db.upsert_session(session_id, &users, port_id).await
 }
 
-fn select_actor_id(
-    session_id: Uri,
-    bound_actor_id: Option<Uri>,
-    legacy_actor_id: Option<Uri>,
-) -> Uri {
+fn select_actor_id(session_id: Uri, bound_actor_id: Option<Uri>) -> Uri {
     if let Some(actor_id) = bound_actor_id {
-        return actor_id;
-    }
-    if let Some(actor_id) = legacy_actor_id.filter(|value| value.as_str().contains(":actor:")) {
         return actor_id;
     }
     session_id
@@ -439,25 +435,12 @@ mod tests {
     }
 
     #[test]
-    fn select_actor_id_prefers_bound_actor_then_legacy_actor_then_session() {
+    fn select_actor_id_prefers_bound_actor_then_session() {
         let session = uri("borg:session:s1");
         let bound = uri("devmode:actor:bound");
-        let legacy = uri("devmode:actor:legacy");
-        let legacy_agent = uri("borg:agent:default");
 
-        assert_eq!(
-            select_actor_id(session.clone(), Some(bound.clone()), Some(legacy.clone())),
-            bound
-        );
-        assert_eq!(
-            select_actor_id(session.clone(), None, Some(legacy.clone())),
-            legacy
-        );
-        assert_eq!(
-            select_actor_id(session.clone(), None, Some(legacy_agent)),
-            session
-        );
-        assert_eq!(select_actor_id(session.clone(), None, None), session);
+        assert_eq!(select_actor_id(session.clone(), Some(bound.clone())), bound);
+        assert_eq!(select_actor_id(session.clone(), None), session);
     }
 
     #[test]

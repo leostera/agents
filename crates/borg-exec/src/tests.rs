@@ -230,6 +230,7 @@ async fn session_manager_resolve_agent_for_turn_refreshes_prompts_and_tools_each
 async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
     init_test_tracing();
     let db = open_test_db().await;
+    let session_db = db.clone();
     let agent = Agent::new(uri!("borg", "agent", "exec-e2e"))
         .with_system_prompt("Use tools when needed and provide a final concise answer.")
         .with_tools(default_agent_tools());
@@ -330,6 +331,19 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
             ProviderMessage::ToolResult { name, .. } if name == "CodeMode-executeCode"
         )
     }));
+
+    let tool_calls = session_db.list_tool_calls(20).await.unwrap();
+    assert!(tool_calls.len() >= 2);
+    assert!(
+        tool_calls
+            .iter()
+            .any(|record| record.tool_name == "CodeMode-searchApis")
+    );
+    assert!(
+        tool_calls
+            .iter()
+            .any(|record| record.tool_name == "CodeMode-executeCode")
+    );
 }
 
 #[tokio::test]

@@ -13,6 +13,8 @@ const DEFAULT_TIMEOUT_SECS: u64 = 30;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ShellExecutionData {
     pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 #[derive(Debug, Clone)]
@@ -86,7 +88,11 @@ impl ShellModeRuntime {
         Ok(ExecutionResult {
             stdout: stdout.clone(),
             stderr: stderr.clone(),
-            result: ShellExecutionData { exit_code },
+            result: ShellExecutionData {
+                exit_code,
+                stdout,
+                stderr,
+            },
             duration,
         })
     }

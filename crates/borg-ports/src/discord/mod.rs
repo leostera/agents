@@ -104,12 +104,12 @@ impl DiscordPort {
         }
         let channel = ChannelId::new(ctx.channel_id);
 
-        if let Some(reply) = output.reply {
-            self.send_text(channel, reply).await?;
-        }
         for call in output.tool_calls {
             let body = format_tool_action_message(&call.tool_name, &call.arguments);
             self.send_text(channel, body).await?;
+        }
+        if let Some(reply) = output.reply {
+            self.send_text(channel, reply).await?;
         }
         Ok(())
     }

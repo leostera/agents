@@ -9,6 +9,7 @@ use borg_core::Uri;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc::Sender;
 use tracing::{info, warn};
 
 const STALE_IN_PROGRESS_SECONDS: u64 = 300;
@@ -49,6 +50,14 @@ impl BorgSupervisor {
         &self,
         msg: BorgMessage,
     ) -> anyhow::Result<SessionOutput<BorgToolCall, BorgToolResult>> {
+        self.call_with_progress(msg, None).await
+    }
+
+    pub async fn call_with_progress(
+        &self,
+        msg: BorgMessage,
+        progress_tx: Option<Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
+    ) -> anyhow::Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         let actor_message_id = self
             .runtime
             .db
@@ -68,6 +77,7 @@ impl BorgSupervisor {
             .send(ActorCommand::Call {
                 actor_message_id: actor_message_id.clone(),
                 msg,
+                progress_tx,
                 response_tx: tx,
             })
             .await

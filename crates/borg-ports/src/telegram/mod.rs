@@ -79,13 +79,13 @@ impl TelegramPort {
 
         let chat_id = ChatId(ctx.chat_id);
 
-        if let Some(reply) = output.reply {
-            self.send_text(chat_id, reply).await?;
-        }
-
         for call in output.tool_calls {
             let body = format_tool_action_message(&call.tool_name, &call.arguments);
             self.send_text(chat_id, body).await?;
+        }
+
+        if let Some(reply) = output.reply {
+            self.send_text(chat_id, reply).await?;
         }
 
         Ok(())

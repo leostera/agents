@@ -5,8 +5,10 @@ use borg_llm::{LlmRequest, Provider, ProviderBlock, StopReason};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+use tokio::sync::mpsc::UnboundedSender;
 use tracing::info;
 use tracing::{Instrument, error, info_span, warn};
+use uuid::Uuid;
 
 use crate::{
     Session, SessionOutput, SessionResult, ToolCallRecord, ToolRequest, ToolResultData, ToolSpec,
@@ -149,6 +151,17 @@ where
         session: &mut Session<TToolCall, TToolResult>,
         provider: &P,
         tools: &Toolchain<TToolCall, TToolResult>,
+    ) -> SessionResult<SessionOutput<TToolCall, TToolResult>> {
+        self.run_with_tool_events(session, provider, tools, None)
+            .await
+    }
+
+    pub async fn run_with_tool_events<P: Provider>(
+        &self,
+        session: &mut Session<TToolCall, TToolResult>,
+        provider: &P,
+        tools: &Toolchain<TToolCall, TToolResult>,
+        tool_event_tx: Option<&UnboundedSender<ToolCallRecord<TToolCall, TToolResult>>>,
     ) -> SessionResult<SessionOutput<TToolCall, TToolResult>> {
         if let Err(err) = session.agent_started().await {
             return SessionResult::SessionError(err.to_string());
@@ -381,7 +394,7 @@ where
 
                     if let Err(err) = session
                         .add_message(crate::Message::ToolResult {
-                            tool_call_id,
+                            tool_call_id: tool_call_id.clone(),
                             name: tool_name.clone(),
                             content: output.clone(),
                         })
@@ -394,11 +407,30 @@ where
                         .await;
                     }
 
-                    records.push(ToolCallRecord {
-                        tool_name,
-                        arguments,
+                    let record = ToolCallRecord {
+                        tool_name: tool_name.clone(),
+                        arguments: arguments.clone(),
                         output: output.clone(),
-                    });
+                    };
+                    if let Some(tx) = tool_event_tx {
+                        let _ = tx.send(record.clone());
+                    }
+                    records.push(record);
+
+                    let persisted_call_id = format!("{tool_call_id}:{}", Uuid::now_v7());
+                    if let Err(err) = session
+                        .record_tool_call(&persisted_call_id, &tool_name, &arguments, &output)
+                        .await
+                    {
+                        warn!(
+                            target: "borg_agent",
+                            session_id = %session.session_id,
+                            call_id = %persisted_call_id,
+                            tool_name = %tool_name,
+                            error = %err,
+                            "failed to persist tool call"
+                        );
+                    }
 
                     let steering = session.pop_steering_messages();
                     if !steering.is_empty() {

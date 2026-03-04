@@ -1,10 +1,13 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{BorgToolCall, BorgToolResult, Message, Session, SessionResult};
+use borg_agent::{
+    BorgToolCall, BorgToolResult, Message, Session, SessionResult, ToolCallRecord, Toolchain,
+};
 use borg_core::Uri;
 use borg_llm::TranscriptionRequest;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
@@ -13,6 +16,15 @@ use crate::mailbox::ActorCommand;
 use crate::message::{BorgCommand, BorgInput, BorgMessage, SessionOutput, ToolCallSummary};
 use crate::port_context::TelegramSessionContext;
 use crate::runtime::BorgRuntime;
+
+const TOOLCHAIN_CACHE_TTL: Duration = Duration::from_secs(60);
+
+struct CachedToolchain {
+    user_id: Uri,
+    agent_id: Uri,
+    built_at: Instant,
+    toolchain: Arc<Toolchain<BorgToolCall, BorgToolResult>>,
+}
 
 pub struct ActorHandle {
     pub actor_id: Uri,
@@ -51,6 +63,7 @@ struct SessionState {
     session: Session<BorgToolCall, BorgToolResult>,
     agent_id: Uri,
     behavior_id: Option<Uri>,
+    cached_toolchain: Option<CachedToolchain>,
 }
 
 struct Actor {
@@ -84,7 +97,7 @@ impl Actor {
                 Some(cmd) = self.rx.recv() => {
                     match cmd {
                         ActorCommand::Cast { actor_message_id, msg } => {
-                            let result = self.process_message(msg).await;
+                            let result = self.process_message(msg, None).await;
                             if let Err(err) = &result {
                                 let _ = self
                                     .runtime
@@ -98,9 +111,10 @@ impl Actor {
                         ActorCommand::Call {
                             actor_message_id,
                             msg,
+                            progress_tx,
                             response_tx,
                         } => {
-                            let result = self.process_message(msg).await;
+                            let result = self.process_message(msg, progress_tx).await;
                             if let Err(err) = &result {
                                 let _ = self
                                     .runtime
@@ -128,6 +142,7 @@ impl Actor {
     async fn process_message(
         &mut self,
         msg: BorgMessage,
+        progress_tx: Option<mpsc::Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
     ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         if !self.sessions.contains_key(&msg.session_id) {
             let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
@@ -138,6 +153,7 @@ impl Actor {
                     session,
                     agent_id,
                     behavior_id,
+                    cached_toolchain: None,
                 },
             );
         }
@@ -149,7 +165,10 @@ impl Actor {
             .ok_or_else(|| anyhow!("session state missing for {}", msg.session_id))?;
 
         let result = match &msg.input {
-            BorgInput::Chat { text } => self.process_chat_message(&mut state, &msg, text).await,
+            BorgInput::Chat { text } => {
+                self.process_chat_message(&mut state, &msg, text, progress_tx.as_ref())
+                    .await
+            }
             BorgInput::Audio {
                 file_id,
                 mime_type,
@@ -163,6 +182,7 @@ impl Actor {
                     mime_type.as_deref(),
                     *duration_ms,
                     language_hint.as_deref(),
+                    progress_tx.as_ref(),
                 )
                 .await
             }
@@ -195,6 +215,7 @@ impl Actor {
         state: &mut SessionState,
         msg: &BorgMessage,
         text: &str,
+        progress_tx: Option<&mpsc::Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
     ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         state
             .session
@@ -203,7 +224,7 @@ impl Actor {
             })
             .await?;
 
-        self.process_text_turn(state, msg).await
+        self.process_text_turn(state, msg, progress_tx).await
     }
 
     async fn process_audio_message(
@@ -214,6 +235,7 @@ impl Actor {
         mime_type_hint: Option<&str>,
         _duration_ms: Option<u64>,
         language_hint: Option<&str>,
+        progress_tx: Option<&mpsc::Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
     ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         let (file_record, audio_bytes) = self.runtime.files.read_all(file_id).await?;
         let mime_type = mime_type_hint
@@ -245,13 +267,14 @@ impl Actor {
             })
             .await?;
 
-        self.process_text_turn(state, msg).await
+        self.process_text_turn(state, msg, progress_tx).await
     }
 
     async fn process_text_turn(
         &self,
         state: &mut SessionState,
         msg: &BorgMessage,
+        progress_tx: Option<&mpsc::Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
     ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
         state.agent_id = agent_id;
@@ -263,29 +286,73 @@ impl Actor {
             .await?;
 
         let llm = self.runtime.llm().await?;
-        let toolchain = self
-            .runtime
-            .build_toolchain(&msg.user_id, &msg.session_id, &state.agent_id)
-            .await?;
-        match state
+        let toolchain = self.toolchain_for_turn(state, msg).await?;
+
+        let mut tool_event_tx: Option<
+            mpsc::UnboundedSender<ToolCallRecord<BorgToolCall, BorgToolResult>>,
+        > = None;
+        let mut tool_event_task = None;
+        if let Some(progress_tx) = progress_tx {
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            tool_event_tx = Some(tx);
+            let session_id = state.session.session_id.clone();
+            let port_context = msg.port_context.clone();
+            let progress_tx = progress_tx.clone();
+            tool_event_task = Some(tokio::spawn(async move {
+                while let Some(call) = rx.recv().await {
+                    if progress_tx
+                        .send(SessionOutput {
+                            session_id: session_id.clone(),
+                            reply: None,
+                            tool_calls: vec![ToolCallSummary {
+                                tool_name: call.tool_name,
+                                arguments: call.arguments,
+                                output: call.output,
+                            }],
+                            port_context: port_context.clone(),
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }));
+        }
+
+        let run_result = state
             .session
             .agent
             .clone()
-            .run(&mut state.session, &llm, &toolchain)
-            .await
-        {
+            .run_with_tool_events(
+                &mut state.session,
+                &llm,
+                toolchain.as_ref(),
+                tool_event_tx.as_ref(),
+            )
+            .await;
+        drop(tool_event_tx);
+        if let Some(task) = tool_event_task {
+            let _ = task.await;
+        }
+
+        match run_result {
             SessionResult::Completed(Ok(output)) => Ok(SessionOutput {
                 session_id: state.session.session_id.clone(),
                 reply: Some(output.reply),
-                tool_calls: output
-                    .tool_calls
-                    .iter()
-                    .map(|call| ToolCallSummary {
-                        tool_name: call.tool_name.clone(),
-                        arguments: call.arguments.clone(),
-                        output: call.output.clone(),
-                    })
-                    .collect(),
+                tool_calls: if progress_tx.is_some() {
+                    Vec::new()
+                } else {
+                    output
+                        .tool_calls
+                        .iter()
+                        .map(|call| ToolCallSummary {
+                            tool_name: call.tool_name.clone(),
+                            arguments: call.arguments.clone(),
+                            output: call.output.clone(),
+                        })
+                        .collect()
+                },
                 port_context: msg.port_context.clone(),
             }),
             SessionResult::Completed(Err(err)) => {
@@ -448,8 +515,8 @@ impl Actor {
 
         let agent_id = self.actor_id.clone();
         let existing = self.runtime.db.get_agent_spec(&agent_id).await?;
-        let model = if let Some(spec) = existing {
-            spec.model
+        let model = if let Some(spec) = existing.as_ref() {
+            spec.model.clone()
         } else {
             self.resolve_behavior_default_model(
                 behavior
@@ -469,18 +536,59 @@ impl Actor {
             .and_then(|record| record.preferred_provider_id.as_deref());
         let agent_name = actor.name.clone();
 
-        self.runtime
-            .db
-            .upsert_agent_spec(
-                &agent_id,
-                &agent_name,
-                default_provider_id,
-                &model,
-                system_prompt,
-            )
-            .await?;
+        let needs_upsert = existing
+            .as_ref()
+            .map(|spec| {
+                spec.name != agent_name
+                    || spec.model != model
+                    || spec.system_prompt != system_prompt
+                    || spec.default_provider_id.as_deref() != default_provider_id
+            })
+            .unwrap_or(true);
+
+        if needs_upsert {
+            self.runtime
+                .db
+                .upsert_agent_spec(
+                    &agent_id,
+                    &agent_name,
+                    default_provider_id,
+                    &model,
+                    system_prompt,
+                )
+                .await?;
+        }
 
         Ok((agent_id, Some(actor.default_behavior_id)))
+    }
+
+    async fn toolchain_for_turn(
+        &self,
+        state: &mut SessionState,
+        msg: &BorgMessage,
+    ) -> Result<Arc<Toolchain<BorgToolCall, BorgToolResult>>> {
+        if let Some(cache) = &state.cached_toolchain
+            && cache.user_id == msg.user_id
+            && cache.agent_id == state.agent_id
+            && cache.built_at.elapsed() < TOOLCHAIN_CACHE_TTL
+        {
+            return Ok(cache.toolchain.clone());
+        }
+
+        let toolchain = Arc::new(
+            self.runtime
+                .build_toolchain(&msg.user_id, &msg.session_id, &state.agent_id)
+                .await?,
+        );
+
+        state.cached_toolchain = Some(CachedToolchain {
+            user_id: msg.user_id.clone(),
+            agent_id: state.agent_id.clone(),
+            built_at: Instant::now(),
+            toolchain: toolchain.clone(),
+        });
+
+        Ok(toolchain)
     }
 
     async fn resolve_behavior_default_model(&self, preferred_provider_id: Option<&str>) -> String {
