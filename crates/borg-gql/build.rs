@@ -51,7 +51,7 @@ async fn generate_schema_artifacts() -> anyhow::Result<()> {
     let schema =
         async_graphql::Schema::build(sdl::QueryRoot, sdl::MutationRoot, sdl::SubscriptionRoot)
             .data(context::BorgGqlData::new(db, memory))
-            .limit_depth(12)
+            .limit_depth(100)
             .limit_complexity(4_000)
             .finish();
     let schema_sdl = schema.sdl();

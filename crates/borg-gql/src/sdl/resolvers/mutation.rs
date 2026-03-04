@@ -12,7 +12,7 @@ impl MutationRoot {
     ///     name: "Planner"
     ///     systemPrompt: "You plan work."
     ///     defaultBehaviorId: $behavior
-    ///     status: "RUNNING"
+    ///     status: RUNNING
     ///   }) { id name status }
     /// }
     /// ```
@@ -28,7 +28,7 @@ impl MutationRoot {
                 &input.name,
                 &input.system_prompt,
                 &input.default_behavior_id.0,
-                &input.status,
+                input.status.as_db_str(),
             )
             .await
             .map_err(map_anyhow)?;
@@ -65,7 +65,7 @@ impl MutationRoot {
     ///     name: "default"
     ///     systemPrompt: "..."
     ///     sessionTurnConcurrency: "serial"
-    ///     status: "ACTIVE"
+    ///     status: ACTIVE
     ///     requiredCapabilities: ["TaskGraph-listTasks"]
     ///   }) { id name status requiredCapabilities }
     /// }
@@ -92,7 +92,7 @@ impl MutationRoot {
                 input.preferred_provider_id.as_deref(),
                 &required,
                 &input.session_turn_concurrency,
-                &input.status,
+                input.status.as_db_str(),
             )
             .await
             .map_err(map_anyhow)?;
@@ -338,7 +338,7 @@ impl MutationRoot {
     ///     name: "GitHub"
     ///     slug: "github"
     ///     description: "GitHub integration"
-    ///     status: "ACTIVE"
+    ///     status: ACTIVE
     ///     builtIn: false
     ///     source: "custom"
     ///     authStrategy: "oauth2"
@@ -359,7 +359,7 @@ impl MutationRoot {
                 &input.name,
                 &input.slug,
                 &input.description,
-                &input.status,
+                input.status.as_db_str(),
                 input.built_in,
                 &input.source,
                 &input.auth_strategy,
@@ -390,7 +390,7 @@ impl MutationRoot {
     ///     hint: "List GitHub issues"
     ///     mode: "READ"
     ///     instructions: "Use filters when possible"
-    ///     status: "ACTIVE"
+    ///     status: ACTIVE
     ///   }) { id name status }
     /// }
     /// ```
@@ -408,7 +408,7 @@ impl MutationRoot {
                 &input.hint,
                 &input.mode,
                 &input.instructions,
-                &input.status,
+                input.status.as_db_str(),
             )
             .await
             .map_err(map_anyhow)?;
@@ -432,7 +432,7 @@ impl MutationRoot {
     ///     appId: $app
     ///     connectionId: $conn
     ///     ownerUserId: $owner
-    ///     status: "CONNECTED"
+    ///     status: CONNECTED
     ///   }) { id appId status }
     /// }
     /// ```
@@ -454,7 +454,7 @@ impl MutationRoot {
                 input.owner_user_id.as_ref().map(|uri| &uri.0),
                 input.provider_account_id.as_deref(),
                 input.external_user_id.as_deref(),
-                &input.status,
+                input.status.as_db_str(),
                 &connection_json,
             )
             .await

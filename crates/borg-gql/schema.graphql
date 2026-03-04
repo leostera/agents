@@ -20,7 +20,7 @@ type Actor implements Node {
 	id: Uri!
 	name: String!
 	systemPrompt: String!
-	status: String!
+	status: ActorStatusValue!
 	createdAt: DateTime!
 	updatedAt: DateTime!
 	"""
@@ -75,6 +75,32 @@ type ActorEdge {
 }
 
 """
+Lifecycle states for actor records.
+"""
+enum ActorStatusValue {
+	"""
+	Actor can receive and execute new work.
+	"""
+	RUNNING
+	"""
+	Actor is intentionally paused.
+	"""
+	PAUSED
+	"""
+	Actor is disabled and should not run.
+	"""
+	DISABLED
+	"""
+	Actor encountered a terminal/error state.
+	"""
+	ERROR
+	"""
+	Actor row contains an unrecognized status value.
+	"""
+	UNKNOWN
+}
+
+"""
 External app integration definition.
 
 Apps represent integrated systems (for example GitHub) and own capabilities,
@@ -94,7 +120,7 @@ type App implements Node {
 	name: String!
 	slug: String!
 	description: String!
-	status: String!
+	status: AppStatusValue!
 	builtIn: Boolean!
 	source: String!
 	authStrategy: String!
@@ -149,7 +175,7 @@ type AppCapability {
 	hint: String!
 	mode: String!
 	instructions: String!
-	status: String!
+	status: AppCapabilityStatusValue!
 	createdAt: DateTime!
 	updatedAt: DateTime!
 }
@@ -183,6 +209,32 @@ type AppCapabilityEdge {
 }
 
 """
+Lifecycle states for app capability rows.
+"""
+enum AppCapabilityStatusValue {
+	"""
+	Capability is enabled and invokable.
+	"""
+	ACTIVE
+	"""
+	Capability exists but is currently inactive.
+	"""
+	INACTIVE
+	"""
+	Capability is disabled.
+	"""
+	DISABLED
+	"""
+	Capability is deprecated and retained for compatibility.
+	"""
+	DEPRECATED
+	"""
+	Capability row contains an unrecognized status value.
+	"""
+	UNKNOWN
+}
+
+"""
 Linked external account for an app integration.
 
 Usage notes:
@@ -200,10 +252,40 @@ type AppConnection {
 	ownerUserId: Uri
 	providerAccountId: String
 	externalUserId: String
-	status: String!
+	status: AppConnectionStatusValue!
 	createdAt: DateTime!
 	updatedAt: DateTime!
 	connection: JsonValue! @deprecated(reason: "Legacy JSON connection payload. Prefer typed fields over time.")
+}
+
+"""
+Connection states for external app accounts.
+"""
+enum AppConnectionStatusValue {
+	"""
+	Connection is healthy and ready for use.
+	"""
+	CONNECTED
+	"""
+	Connection exists but is not currently authenticated.
+	"""
+	DISCONNECTED
+	"""
+	Connection setup is in progress.
+	"""
+	PENDING
+	"""
+	Connection exists but is intentionally revoked.
+	"""
+	REVOKED
+	"""
+	Connection is in an error state.
+	"""
+	ERROR
+	"""
+	Connection row contains an unrecognized status value.
+	"""
+	UNKNOWN
 }
 
 """
@@ -313,6 +395,32 @@ type AppSecretEdge {
 }
 
 """
+Lifecycle states for app integration definitions.
+"""
+enum AppStatusValue {
+	"""
+	App integration is enabled and available.
+	"""
+	ACTIVE
+	"""
+	App integration exists but is currently inactive.
+	"""
+	INACTIVE
+	"""
+	App integration is disabled.
+	"""
+	DISABLED
+	"""
+	App integration is archived and preserved for history.
+	"""
+	ARCHIVED
+	"""
+	App row contains an unrecognized status value.
+	"""
+	UNKNOWN
+}
+
+"""
 Appends a new timeline message to an existing session.
 
 Example:
@@ -380,7 +488,7 @@ type Behavior implements Node {
 	"""
 	requiredCapabilities: [String!]!
 	sessionTurnConcurrency: String!
-	status: String!
+	status: BehaviorStatusValue!
 	createdAt: DateTime!
 	updatedAt: DateTime!
 }
@@ -414,6 +522,32 @@ type BehaviorEdge {
 }
 
 """
+Lifecycle states for behavior profiles.
+"""
+enum BehaviorStatusValue {
+	"""
+	Behavior is available for actor assignment.
+	"""
+	ACTIVE
+	"""
+	Behavior exists but is currently inactive.
+	"""
+	INACTIVE
+	"""
+	Behavior is disabled and should not be used.
+	"""
+	DISABLED
+	"""
+	Behavior is deprecated but retained for migration windows.
+	"""
+	DEPRECATED
+	"""
+	Behavior row contains an unrecognized status value.
+	"""
+	UNKNOWN
+}
+
+"""
 Durable scheduler job definition for automated actor execution.
 
 Usage notes:
@@ -428,7 +562,7 @@ Example:
 type ClockworkJob {
 	id: String!
 	kind: String!
-	status: String!
+	status: ClockworkJobStatusValue!
 	targetActorId: Uri
 	targetSessionId: Uri
 	messageType: String!
@@ -526,6 +660,32 @@ type ClockworkJobRunEdge {
 	Materialized node for this edge.
 	"""
 	node: ClockworkJobRun!
+}
+
+"""
+Runtime lifecycle states for scheduler jobs.
+"""
+enum ClockworkJobStatusValue {
+	"""
+	Job is active and eligible to run.
+	"""
+	ACTIVE
+	"""
+	Job is paused and should not be scheduled.
+	"""
+	PAUSED
+	"""
+	Job has been cancelled.
+	"""
+	CANCELLED
+	"""
+	Job completed and will not run again.
+	"""
+	COMPLETED
+	"""
+	Job row contains an unrecognized status value.
+	"""
+	UNKNOWN
 }
 
 """
@@ -893,7 +1053,7 @@ type MutationRoot {
 	name: "Planner"
 	systemPrompt: "You plan work."
 	defaultBehaviorId: $behavior
-	status: "RUNNING"
+	status: RUNNING
 	}) { id name status }
 	}
 	```
@@ -919,7 +1079,7 @@ type MutationRoot {
 	name: "default"
 	systemPrompt: "..."
 	sessionTurnConcurrency: "serial"
-	status: "ACTIVE"
+	status: ACTIVE
 	requiredCapabilities: ["TaskGraph-listTasks"]
 	}) { id name status requiredCapabilities }
 	}
@@ -1025,7 +1185,7 @@ type MutationRoot {
 	name: "GitHub"
 	slug: "github"
 	description: "GitHub integration"
-	status: "ACTIVE"
+	status: ACTIVE
 	builtIn: false
 	source: "custom"
 	authStrategy: "oauth2"
@@ -1048,7 +1208,7 @@ type MutationRoot {
 	hint: "List GitHub issues"
 	mode: "READ"
 	instructions: "Use filters when possible"
-	status: "ACTIVE"
+	status: ACTIVE
 	}) { id name status }
 	}
 	```
@@ -1064,7 +1224,7 @@ type MutationRoot {
 	appId: $app
 	connectionId: $conn
 	ownerUserId: $owner
-	status: "CONNECTED"
+	status: CONNECTED
 	}) { id appId status }
 	}
 	```
@@ -1926,13 +2086,13 @@ type QueryRoot {
 	Example:
 	```graphql
 	query {
-	clockworkJobs(first: 20, status: "active") {
+	clockworkJobs(first: 20, status: ACTIVE) {
 	edges { node { id kind status runs(first: 5) { edges { node { id firedAt } } } } }
 	}
 	}
 	```
 	"""
-	clockworkJobs(first: Int, after: String, status: String): ClockworkJobConnection!
+	clockworkJobs(first: Int, after: String, status: ClockworkJobStatusValue): ClockworkJobConnection!
 	"""
 	Fetches one task by URI.
 	
@@ -2910,7 +3070,7 @@ input UpdateTaskInputGql {
 Creates or updates an actor definition in Borg's control-plane graph.
 
 Example:
-`{ id: "borg:actor:planner", name: "Planner", defaultBehaviorId: "borg:behavior:default", status: "RUNNING" }`
+`{ id: "borg:actor:planner", name: "Planner", defaultBehaviorId: "borg:behavior:default", status: RUNNING }`
 """
 input UpsertActorInput {
 	"""
@@ -2932,7 +3092,7 @@ input UpsertActorInput {
 	"""
 	Actor lifecycle status (for example `RUNNING`).
 	"""
-	status: String!
+	status: ActorStatusValue!
 }
 
 """
@@ -2969,14 +3129,14 @@ input UpsertAppCapabilityInput {
 	"""
 	Capability lifecycle status.
 	"""
-	status: String!
+	status: AppCapabilityStatusValue!
 }
 
 """
 Creates or updates an external-account connection row for an app.
 
 Example:
-`{ appId: "borg:app:github", connectionId: "borg:app-connection:octocat", status: "CONNECTED" }`
+`{ appId: "borg:app:github", connectionId: "borg:app-connection:octocat", status: CONNECTED }`
 """
 input UpsertAppConnectionInput {
 	"""
@@ -3002,7 +3162,7 @@ input UpsertAppConnectionInput {
 	"""
 	Connection lifecycle status.
 	"""
-	status: String!
+	status: AppConnectionStatusValue!
 	"""
 	Transitional JSON metadata for this connection.
 	"""
@@ -3013,7 +3173,7 @@ input UpsertAppConnectionInput {
 Creates or updates an app integration definition.
 
 Example:
-`{ id: "borg:app:github", name: "GitHub", slug: "github", status: "ACTIVE", authStrategy: "oauth2" }`
+`{ id: "borg:app:github", name: "GitHub", slug: "github", status: ACTIVE, authStrategy: "oauth2" }`
 """
 input UpsertAppInput {
 	"""
@@ -3035,7 +3195,7 @@ input UpsertAppInput {
 	"""
 	App lifecycle status.
 	"""
-	status: String!
+	status: AppStatusValue!
 	"""
 	Whether this app is bundled by Borg.
 	"""
@@ -3098,7 +3258,7 @@ Usage notes:
 - `requiredCapabilities` should contain runtime tool/capability names.
 
 Example:
-`{ id: "borg:behavior:default", name: "default", sessionTurnConcurrency: "serial", status: "ACTIVE" }`
+`{ id: "borg:behavior:default", name: "default", sessionTurnConcurrency: "serial", status: ACTIVE }`
 """
 input UpsertBehaviorInput {
 	"""
@@ -3128,7 +3288,7 @@ input UpsertBehaviorInput {
 	"""
 	Behavior lifecycle status.
 	"""
-	status: String!
+	status: BehaviorStatusValue!
 }
 
 """

@@ -479,7 +479,7 @@ impl SessionNotificationObject {
 /// Creates or updates an actor definition in Borg's control-plane graph.
 ///
 /// Example:
-/// `{ id: "borg:actor:planner", name: "Planner", defaultBehaviorId: "borg:behavior:default", status: "RUNNING" }`
+/// `{ id: "borg:actor:planner", name: "Planner", defaultBehaviorId: "borg:behavior:default", status: RUNNING }`
 #[derive(InputObject)]
 struct UpsertActorInput {
     /// Stable actor URI (`borg:actor:*`).
@@ -491,7 +491,7 @@ struct UpsertActorInput {
     /// Behavior URI linked as actor default.
     default_behavior_id: UriScalar,
     /// Actor lifecycle status (for example `RUNNING`).
-    status: String,
+    status: ActorStatusValue,
 }
 
 /// Creates or updates a behavior profile that actors can run with.
@@ -500,7 +500,7 @@ struct UpsertActorInput {
 /// - `requiredCapabilities` should contain runtime tool/capability names.
 ///
 /// Example:
-/// `{ id: "borg:behavior:default", name: "default", sessionTurnConcurrency: "serial", status: "ACTIVE" }`
+/// `{ id: "borg:behavior:default", name: "default", sessionTurnConcurrency: "serial", status: ACTIVE }`
 #[derive(InputObject)]
 struct UpsertBehaviorInput {
     /// Stable behavior URI (`borg:behavior:*`).
@@ -517,7 +517,7 @@ struct UpsertBehaviorInput {
     /// Turn execution policy (for example `serial`).
     session_turn_concurrency: String,
     /// Behavior lifecycle status.
-    status: String,
+    status: BehaviorStatusValue,
 }
 
 /// Creates or updates a runtime ingress/egress port configuration.
@@ -593,7 +593,7 @@ struct UpsertProviderInput {
 /// Creates or updates an app integration definition.
 ///
 /// Example:
-/// `{ id: "borg:app:github", name: "GitHub", slug: "github", status: "ACTIVE", authStrategy: "oauth2" }`
+/// `{ id: "borg:app:github", name: "GitHub", slug: "github", status: ACTIVE, authStrategy: "oauth2" }`
 #[derive(InputObject)]
 struct UpsertAppInput {
     /// Stable app URI (`borg:app:*`).
@@ -605,7 +605,7 @@ struct UpsertAppInput {
     /// Description shown in clients/admin screens.
     description: String,
     /// App lifecycle status.
-    status: String,
+    status: AppStatusValue,
     /// Whether this app is bundled by Borg.
     #[graphql(default)]
     built_in: bool,
@@ -639,13 +639,13 @@ struct UpsertAppCapabilityInput {
     /// Detailed execution instructions for this capability.
     instructions: String,
     /// Capability lifecycle status.
-    status: String,
+    status: AppCapabilityStatusValue,
 }
 
 /// Creates or updates an external-account connection row for an app.
 ///
 /// Example:
-/// `{ appId: "borg:app:github", connectionId: "borg:app-connection:octocat", status: "CONNECTED" }`
+/// `{ appId: "borg:app:github", connectionId: "borg:app-connection:octocat", status: CONNECTED }`
 #[derive(InputObject)]
 struct UpsertAppConnectionInput {
     /// Parent app URI.
@@ -659,7 +659,7 @@ struct UpsertAppConnectionInput {
     /// External user/account identifier.
     external_user_id: Option<String>,
     /// Connection lifecycle status.
-    status: String,
+    status: AppConnectionStatusValue,
     /// Transitional JSON metadata for this connection.
     connection: Option<JsonValue>,
 }
@@ -981,8 +981,8 @@ impl ActorObject {
         &self.record.system_prompt
     }
 
-    async fn status(&self) -> &str {
-        &self.record.status
+    async fn status(&self) -> ActorStatusValue {
+        ActorStatusValue::from_raw(&self.record.status)
     }
 
     async fn created_at(&self) -> DateTime<Utc> {
@@ -1133,8 +1133,8 @@ impl BehaviorObject {
         &self.record.session_turn_concurrency
     }
 
-    async fn status(&self) -> &str {
-        &self.record.status
+    async fn status(&self) -> BehaviorStatusValue {
+        BehaviorStatusValue::from_raw(&self.record.status)
     }
 
     async fn created_at(&self) -> DateTime<Utc> {
@@ -1778,8 +1778,8 @@ impl AppObject {
         &self.record.description
     }
 
-    async fn status(&self) -> &str {
-        &self.record.status
+    async fn status(&self) -> AppStatusValue {
+        AppStatusValue::from_raw(&self.record.status)
     }
 
     async fn built_in(&self) -> bool {
@@ -1986,8 +1986,8 @@ impl AppCapabilityObject {
         &self.record.instructions
     }
 
-    async fn status(&self) -> &str {
-        &self.record.status
+    async fn status(&self) -> AppCapabilityStatusValue {
+        AppCapabilityStatusValue::from_raw(&self.record.status)
     }
 
     async fn created_at(&self) -> DateTime<Utc> {
@@ -2042,8 +2042,8 @@ impl AppExternalConnectionObject {
         self.record.external_user_id.as_deref()
     }
 
-    async fn status(&self) -> &str {
-        &self.record.status
+    async fn status(&self) -> AppConnectionStatusValue {
+        AppConnectionStatusValue::from_raw(&self.record.status)
     }
 
     async fn created_at(&self) -> DateTime<Utc> {
@@ -2146,8 +2146,8 @@ impl ClockworkJobObject {
         &self.record.kind
     }
 
-    async fn status(&self) -> &str {
-        &self.record.status
+    async fn status(&self) -> ClockworkJobStatusValue {
+        ClockworkJobStatusValue::from_raw(&self.record.status)
     }
 
     async fn target_actor_id(&self) -> Option<UriScalar> {
@@ -3398,6 +3398,232 @@ enum Node {
     MemoryEntity(MemoryEntityObject),
     Policy(PolicyObject),
     User(UserObject),
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+/// Lifecycle states for actor records.
+enum ActorStatusValue {
+    /// Actor can receive and execute new work.
+    Running,
+    /// Actor is intentionally paused.
+    Paused,
+    /// Actor is disabled and should not run.
+    Disabled,
+    /// Actor encountered a terminal/error state.
+    Error,
+    /// Actor row contains an unrecognized status value.
+    Unknown,
+}
+
+impl ActorStatusValue {
+    fn from_raw(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "running" => Self::Running,
+            "paused" => Self::Paused,
+            "disabled" => Self::Disabled,
+            "error" | "failed" => Self::Error,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Running => "RUNNING",
+            Self::Paused => "PAUSED",
+            Self::Disabled => "DISABLED",
+            Self::Error => "ERROR",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+/// Lifecycle states for behavior profiles.
+enum BehaviorStatusValue {
+    /// Behavior is available for actor assignment.
+    Active,
+    /// Behavior exists but is currently inactive.
+    Inactive,
+    /// Behavior is disabled and should not be used.
+    Disabled,
+    /// Behavior is deprecated but retained for migration windows.
+    Deprecated,
+    /// Behavior row contains an unrecognized status value.
+    Unknown,
+}
+
+impl BehaviorStatusValue {
+    fn from_raw(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "active" => Self::Active,
+            "inactive" => Self::Inactive,
+            "disabled" => Self::Disabled,
+            "deprecated" => Self::Deprecated,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Active => "ACTIVE",
+            Self::Inactive => "INACTIVE",
+            Self::Disabled => "DISABLED",
+            Self::Deprecated => "DEPRECATED",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+/// Lifecycle states for app integration definitions.
+enum AppStatusValue {
+    /// App integration is enabled and available.
+    Active,
+    /// App integration exists but is currently inactive.
+    Inactive,
+    /// App integration is disabled.
+    Disabled,
+    /// App integration is archived and preserved for history.
+    Archived,
+    /// App row contains an unrecognized status value.
+    Unknown,
+}
+
+impl AppStatusValue {
+    fn from_raw(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "active" => Self::Active,
+            "inactive" => Self::Inactive,
+            "disabled" => Self::Disabled,
+            "archived" => Self::Archived,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Inactive => "inactive",
+            Self::Disabled => "disabled",
+            Self::Archived => "archived",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+/// Lifecycle states for app capability rows.
+enum AppCapabilityStatusValue {
+    /// Capability is enabled and invokable.
+    Active,
+    /// Capability exists but is currently inactive.
+    Inactive,
+    /// Capability is disabled.
+    Disabled,
+    /// Capability is deprecated and retained for compatibility.
+    Deprecated,
+    /// Capability row contains an unrecognized status value.
+    Unknown,
+}
+
+impl AppCapabilityStatusValue {
+    fn from_raw(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "active" => Self::Active,
+            "inactive" => Self::Inactive,
+            "disabled" => Self::Disabled,
+            "deprecated" => Self::Deprecated,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Inactive => "inactive",
+            Self::Disabled => "disabled",
+            Self::Deprecated => "deprecated",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+/// Connection states for external app accounts.
+enum AppConnectionStatusValue {
+    /// Connection is healthy and ready for use.
+    Connected,
+    /// Connection exists but is not currently authenticated.
+    Disconnected,
+    /// Connection setup is in progress.
+    Pending,
+    /// Connection exists but is intentionally revoked.
+    Revoked,
+    /// Connection is in an error state.
+    Error,
+    /// Connection row contains an unrecognized status value.
+    Unknown,
+}
+
+impl AppConnectionStatusValue {
+    fn from_raw(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "connected" => Self::Connected,
+            "disconnected" => Self::Disconnected,
+            "pending" => Self::Pending,
+            "revoked" => Self::Revoked,
+            "error" | "failed" => Self::Error,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Connected => "connected",
+            Self::Disconnected => "disconnected",
+            Self::Pending => "pending",
+            Self::Revoked => "revoked",
+            Self::Error => "error",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+/// Runtime lifecycle states for scheduler jobs.
+enum ClockworkJobStatusValue {
+    /// Job is active and eligible to run.
+    Active,
+    /// Job is paused and should not be scheduled.
+    Paused,
+    /// Job has been cancelled.
+    Cancelled,
+    /// Job completed and will not run again.
+    Completed,
+    /// Job row contains an unrecognized status value.
+    Unknown,
+}
+
+impl ClockworkJobStatusValue {
+    fn from_raw(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "active" => Self::Active,
+            "paused" => Self::Paused,
+            "cancelled" => Self::Cancelled,
+            "completed" => Self::Completed,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Paused => "paused",
+            Self::Cancelled => "cancelled",
+            Self::Completed => "completed",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]

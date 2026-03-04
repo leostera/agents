@@ -25,7 +25,7 @@ async fn test_schema() -> anyhow::Result<BorgGqlSchema> {
     let memory = MemoryStore::new(&memory_path, &search_path)?;
     memory.migrate().await?;
 
-    Ok(build_schema(db, memory))
+    Ok(BorgGqlServer::new(db, memory).schema())
 }
 
 #[tokio::test]
@@ -300,6 +300,136 @@ async fn schema_has_node_interface_and_core_types() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn status_fields_and_inputs_use_enum_types() -> anyhow::Result<()> {
+    let schema = test_schema().await?;
+
+    let query = r#"
+          query {
+            actor: __type(name: "Actor") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            behavior: __type(name: "Behavior") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            app: __type(name: "App") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            appCapability: __type(name: "AppCapability") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            appConnection: __type(name: "AppConnection") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            clockworkJob: __type(name: "ClockworkJob") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            upsertActorInput: __type(name: "UpsertActorInput") { inputFields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            upsertBehaviorInput: __type(name: "UpsertBehaviorInput") { inputFields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            upsertAppInput: __type(name: "UpsertAppInput") { inputFields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            upsertAppCapabilityInput: __type(name: "UpsertAppCapabilityInput") { inputFields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            upsertAppConnectionInput: __type(name: "UpsertAppConnectionInput") { inputFields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            queryRoot: __type(name: "QueryRoot") {
+              fields {
+                name
+                args { name type { kind name ofType { kind name ofType { kind name } } } }
+              }
+            }
+          }
+        "#;
+
+    let response = schema.execute(query).await;
+    assert!(response.errors.is_empty(), "{:#?}", response.errors);
+    let data = response.data.into_json()?;
+
+    fn leaf_type_name(ty: &serde_json::Value) -> Option<&str> {
+        let kind = ty.get("kind")?.as_str()?;
+        match kind {
+            "NON_NULL" | "LIST" => leaf_type_name(ty.get("ofType")?),
+            _ => ty.get("name")?.as_str(),
+        }
+    }
+
+    fn field_type_name(type_json: &serde_json::Value, field_name: &str) -> anyhow::Result<String> {
+        let fields = type_json["fields"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("missing fields"))?;
+        let field = fields
+            .iter()
+            .find(|f| f["name"].as_str() == Some(field_name))
+            .ok_or_else(|| anyhow::anyhow!("missing field {field_name}"))?;
+        leaf_type_name(&field["type"])
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("missing type for field {field_name}"))
+    }
+
+    fn input_field_type_name(
+        type_json: &serde_json::Value,
+        field_name: &str,
+    ) -> anyhow::Result<String> {
+        let fields = type_json["inputFields"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("missing inputFields"))?;
+        let field = fields
+            .iter()
+            .find(|f| f["name"].as_str() == Some(field_name))
+            .ok_or_else(|| anyhow::anyhow!("missing input field {field_name}"))?;
+        leaf_type_name(&field["type"])
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("missing type for input field {field_name}"))
+    }
+
+    assert_eq!(
+        field_type_name(&data["actor"], "status")?,
+        "ActorStatusValue"
+    );
+    assert_eq!(
+        field_type_name(&data["behavior"], "status")?,
+        "BehaviorStatusValue"
+    );
+    assert_eq!(field_type_name(&data["app"], "status")?, "AppStatusValue");
+    assert_eq!(
+        field_type_name(&data["appCapability"], "status")?,
+        "AppCapabilityStatusValue"
+    );
+    assert_eq!(
+        field_type_name(&data["appConnection"], "status")?,
+        "AppConnectionStatusValue"
+    );
+    assert_eq!(
+        field_type_name(&data["clockworkJob"], "status")?,
+        "ClockworkJobStatusValue"
+    );
+
+    assert_eq!(
+        input_field_type_name(&data["upsertActorInput"], "status")?,
+        "ActorStatusValue"
+    );
+    assert_eq!(
+        input_field_type_name(&data["upsertBehaviorInput"], "status")?,
+        "BehaviorStatusValue"
+    );
+    assert_eq!(
+        input_field_type_name(&data["upsertAppInput"], "status")?,
+        "AppStatusValue"
+    );
+    assert_eq!(
+        input_field_type_name(&data["upsertAppCapabilityInput"], "status")?,
+        "AppCapabilityStatusValue"
+    );
+    assert_eq!(
+        input_field_type_name(&data["upsertAppConnectionInput"], "status")?,
+        "AppConnectionStatusValue"
+    );
+
+    let query_fields = data["queryRoot"]["fields"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing QueryRoot fields"))?;
+    let clockwork_jobs_field = query_fields
+        .iter()
+        .find(|field| field["name"].as_str() == Some("clockworkJobs"))
+        .ok_or_else(|| anyhow::anyhow!("missing QueryRoot.clockworkJobs"))?;
+    let status_arg = clockwork_jobs_field["args"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing clockworkJobs args"))?
+        .iter()
+        .find(|arg| arg["name"].as_str() == Some("status"))
+        .ok_or_else(|| anyhow::anyhow!("missing clockworkJobs.status arg"))?;
+    let status_arg_type = leaf_type_name(&status_arg["type"])
+        .ok_or_else(|| anyhow::anyhow!("missing clockworkJobs.status type"))?;
+    assert_eq!(status_arg_type, "ClockworkJobStatusValue");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn root_fields_are_documented_with_examples() -> anyhow::Result<()> {
     let schema = test_schema().await?;
     let query = r#"
@@ -538,4 +668,57 @@ fn static_schema_snapshot_is_generated() {
     assert!(schema.contains("interface Node"));
     assert!(schema.contains("type MutationRoot"));
     assert!(schema.contains("type SubscriptionRoot"));
+}
+
+#[tokio::test]
+async fn introspection_query_supports_graphiql_depth() -> anyhow::Result<()> {
+    let schema = test_schema().await?;
+
+    let response = schema
+        .execute(
+            r#"
+            query {
+              __type(name: "Actor") {
+                fields {
+                  type {
+                    ofType {
+                      ofType {
+                        ofType {
+                          ofType {
+                            ofType {
+                              ofType {
+                                ofType {
+                                  ofType {
+                                    ofType {
+                                      ofType {
+                                        ofType {
+                                          ofType {
+                                            ofType {
+                                              ofType {
+                                                name
+                                                kind
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            "#,
+        )
+        .await;
+
+    assert!(response.errors.is_empty(), "{:#?}", response.errors);
+    Ok(())
 }

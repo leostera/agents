@@ -30,15 +30,6 @@ const DEFAULT_GQL_BIND_ADDR: &str = "127.0.0.1:4008";
 /// GraphQL schema type used by Borg clients.
 pub type BorgGqlSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
 
-/// Creates a ready-to-serve GraphQL schema.
-pub fn build_schema(db: BorgDb, memory: MemoryStore) -> BorgGqlSchema {
-    Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
-        .data(BorgGqlData::new(db, memory))
-        .limit_depth(12)
-        .limit_complexity(4_000)
-        .finish()
-}
-
 /// Self-contained GraphQL server container.
 #[derive(Clone)]
 pub struct BorgGqlServer {
@@ -50,7 +41,11 @@ impl BorgGqlServer {
     /// Creates a GraphQL server from runtime stores.
     pub fn new(db: BorgDb, memory: MemoryStore) -> Self {
         Self {
-            schema: build_schema(db, memory),
+            schema: Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
+                .data(BorgGqlData::new(db, memory))
+                .limit_depth(100)
+                .limit_complexity(4_000)
+                .finish(),
             bind: DEFAULT_GQL_BIND_ADDR.to_string(),
         }
     }
@@ -142,7 +137,7 @@ impl BorgGqlServer {
         let mut stream = async_graphql::http::WebSocket::new(schema, input, protocol)
             .keepalive_timeout(Duration::from_secs(30))
             .map(|message| match message {
-                WsMessage::Text(text) => Message::Text(text.into()),
+                WsMessage::Text(text) => Message::Text(text),
                 WsMessage::Close(code, status) => Message::Close(Some(CloseFrame {
                     code,
                     reason: status.into(),

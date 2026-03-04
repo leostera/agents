@@ -543,7 +543,7 @@ impl QueryRoot {
     /// Example:
     /// ```graphql
     /// query {
-    ///   clockworkJobs(first: 20, status: "active") {
+    ///   clockworkJobs(first: 20, status: ACTIVE) {
     ///     edges { node { id kind status runs(first: 5) { edges { node { id firedAt } } } } }
     ///   }
     /// }
@@ -553,7 +553,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
         first: Option<i32>,
         after: Option<String>,
-        status: Option<String>,
+        status: Option<ClockworkJobStatusValue>,
     ) -> GqlResult<ClockworkJobConnection> {
         let data = ctx_data(ctx)?;
         let first = data.normalize_first(first)?;
@@ -562,7 +562,7 @@ impl QueryRoot {
 
         let jobs = data
             .db
-            .list_clockwork_jobs(fetch_limit, status.as_deref())
+            .list_clockwork_jobs(fetch_limit, status.map(ClockworkJobStatusValue::as_db_str))
             .await
             .map_err(map_anyhow)?;
         let (page, has_next_page) = apply_offset_pagination(jobs, start, first);
