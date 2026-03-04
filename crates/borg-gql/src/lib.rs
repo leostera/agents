@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
+use std::time::Duration;
 
+use async_graphql::futures_util::stream::{self, BoxStream};
+use async_graphql::futures_util::{Stream, StreamExt};
 use async_graphql::{
-    Context, Description, EmptySubscription, Enum, Error, ErrorExtensions, InputObject,
-    InputValueError, InputValueResult, Interface, Object, Result as GqlResult, Scalar, ScalarType,
-    Schema, SimpleObject, Value,
+    Context, Description, Enum, Error, ErrorExtensions, InputObject, InputValueError,
+    InputValueResult, Interface, Object, Result as GqlResult, Scalar, ScalarType, Schema,
+    SimpleObject, Subscription, Value,
 };
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -23,10 +26,13 @@ use serde::Deserialize;
 use serde_json::json;
 
 /// GraphQL schema type used by Borg clients.
-pub type BorgGqlSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
+pub type BorgGqlSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
 
 const DEFAULT_PAGE_SIZE: usize = 25;
 const MAX_PAGE_SIZE: usize = 200;
+const DEFAULT_SUBSCRIPTION_POLL_MS: u64 = 500;
+const MIN_SUBSCRIPTION_POLL_MS: u64 = 100;
+const MAX_SUBSCRIPTION_POLL_MS: u64 = 5_000;
 
 /// Runtime context for GraphQL resolvers.
 #[derive(Clone)]
@@ -62,7 +68,7 @@ impl BorgGqlData {
 
 /// Creates a ready-to-serve GraphQL schema.
 pub fn build_schema(db: BorgDb, memory: MemoryStore) -> BorgGqlSchema {
-    Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+    Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .data(BorgGqlData::new(db, memory))
         .limit_depth(12)
         .limit_complexity(4_000)
@@ -323,6 +329,102 @@ fn parse_string_array(value: &serde_json::Value) -> Vec<String> {
 
 fn encode_task_cursor(created_at: &str, id: &str) -> String {
     URL_SAFE_NO_PAD.encode(format!("{created_at}|{id}"))
+}
+
+fn normalize_poll_interval_ms(raw: Option<i32>) -> GqlResult<u64> {
+    let value = raw.unwrap_or(DEFAULT_SUBSCRIPTION_POLL_MS as i32);
+    if value <= 0 {
+        return Err(gql_error_with_code(
+            "pollIntervalMs must be greater than zero",
+            "BAD_REQUEST",
+        ));
+    }
+
+    Ok((value as u64).clamp(MIN_SUBSCRIPTION_POLL_MS, MAX_SUBSCRIPTION_POLL_MS))
+}
+
+async fn resolve_session_stream_start_index(
+    data: &BorgGqlData,
+    session_id: &Uri,
+    after_message_index: Option<i64>,
+) -> GqlResult<i64> {
+    let session_exists = data
+        .db
+        .get_session(session_id)
+        .await
+        .map_err(map_anyhow)?
+        .is_some();
+    if !session_exists {
+        return Err(gql_error_with_code("session not found", "NOT_FOUND"));
+    }
+
+    if let Some(after) = after_message_index {
+        if after < -1 {
+            return Err(gql_error_with_code(
+                "afterMessageIndex must be greater than or equal to -1",
+                "BAD_REQUEST",
+            ));
+        }
+        return Ok(after.saturating_add(1));
+    }
+
+    let total = data
+        .db
+        .count_session_messages(session_id)
+        .await
+        .map_err(map_anyhow)?;
+    Ok(total as i64)
+}
+
+fn session_message_subscription_stream(
+    data: BorgGqlData,
+    session_id: Uri,
+    start_index: i64,
+    poll_interval_ms: u64,
+) -> impl Stream<Item = GqlResult<SessionMessageObject>> {
+    let ticker = tokio::time::interval(Duration::from_millis(poll_interval_ms));
+
+    stream::unfold(
+        (data, session_id, start_index, ticker),
+        |(data, session_id, mut next_index, mut ticker)| async move {
+            loop {
+                ticker.tick().await;
+
+                let total = match data.db.count_session_messages(&session_id).await {
+                    Ok(value) => value as i64,
+                    Err(err) => {
+                        return Some((
+                            Err(map_anyhow(err)),
+                            (data, session_id, next_index, ticker),
+                        ));
+                    }
+                };
+
+                if next_index >= total {
+                    continue;
+                }
+
+                let index = next_index;
+                next_index += 1;
+
+                match data.db.get_session_message(&session_id, index).await {
+                    Ok(Some(record)) => {
+                        return Some((
+                            Ok(SessionMessageObject::new(record)),
+                            (data, session_id, next_index, ticker),
+                        ));
+                    }
+                    Ok(None) => continue,
+                    Err(err) => {
+                        return Some((
+                            Err(map_anyhow(err)),
+                            (data, session_id, next_index, ticker),
+                        ));
+                    }
+                }
+            }
+        },
+    )
 }
 
 #[derive(Clone, Description)]
@@ -2215,6 +2317,223 @@ impl MutationRoot {
             "runPortHttp is not available in standalone borg-gql",
             "BAD_REQUEST",
         ))
+    }
+}
+
+#[derive(Clone, Description)]
+/// Root subscription entrypoint for real-time Borg streams.
+///
+/// Usage notes:
+/// - Subscription transport is expected to run over WebSockets (`graphql-transport-ws`).
+/// - Use `sessionChat` for full timeline streaming.
+/// - Use `sessionNotifications` for notification-friendly filtered events.
+///
+/// Example:
+/// ```graphql
+/// subscription($session: Uri!) {
+///   sessionChat(sessionId: $session) {
+///     messageIndex
+///     messageType
+///     role
+///     text
+///   }
+/// }
+/// ```
+pub struct SubscriptionRoot;
+
+#[Subscription(use_type_description)]
+impl SubscriptionRoot {
+    /// Streams new messages from a session timeline as they are appended.
+    ///
+    /// Usage notes:
+    /// - When `afterMessageIndex` is omitted, the stream starts from "now" (tail-follow mode).
+    /// - Provide `afterMessageIndex` to replay from a known point.
+    /// - `pollIntervalMs` is clamped to safe server bounds.
+    ///
+    /// Example:
+    /// ```graphql
+    /// subscription($session: Uri!, $after: Int) {
+    ///   sessionChat(sessionId: $session, afterMessageIndex: $after, pollIntervalMs: 500) {
+    ///     id
+    ///     messageIndex
+    ///     messageType
+    ///     role
+    ///     text
+    ///   }
+    /// }
+    /// ```
+    async fn session_chat(
+        &self,
+        ctx: &Context<'_>,
+        session_id: UriScalar,
+        after_message_index: Option<i64>,
+        poll_interval_ms: Option<i32>,
+    ) -> BoxStream<'static, GqlResult<SessionMessageObject>> {
+        let setup = async {
+            let data = ctx_data(ctx)?.clone();
+            let start =
+                resolve_session_stream_start_index(&data, &session_id.0, after_message_index)
+                    .await?;
+            let poll_ms = normalize_poll_interval_ms(poll_interval_ms)?;
+
+            Ok::<_, Error>(session_message_subscription_stream(
+                data,
+                session_id.0,
+                start,
+                poll_ms,
+            ))
+        }
+        .await;
+
+        match setup {
+            Ok(stream) => stream.boxed(),
+            Err(err) => stream::once(async move { Err(err) }).boxed(),
+        }
+    }
+
+    /// Streams session notifications derived from new timeline messages.
+    ///
+    /// Usage notes:
+    /// - By default, user-authored messages are filtered out.
+    /// - Set `includeUserMessages: true` to receive all roles.
+    ///
+    /// Example:
+    /// ```graphql
+    /// subscription($session: Uri!) {
+    ///   sessionNotifications(sessionId: $session) {
+    ///     id
+    ///     kind
+    ///     title
+    ///     text
+    ///     sessionMessage { messageIndex messageType role }
+    ///   }
+    /// }
+    /// ```
+    async fn session_notifications(
+        &self,
+        ctx: &Context<'_>,
+        session_id: UriScalar,
+        after_message_index: Option<i64>,
+        poll_interval_ms: Option<i32>,
+        include_user_messages: Option<bool>,
+    ) -> BoxStream<'static, GqlResult<SessionNotificationObject>> {
+        let setup = async {
+            let data = ctx_data(ctx)?.clone();
+            let start =
+                resolve_session_stream_start_index(&data, &session_id.0, after_message_index)
+                    .await?;
+            let poll_ms = normalize_poll_interval_ms(poll_interval_ms)?;
+            let include_users = include_user_messages.unwrap_or(false);
+
+            let stream = session_message_subscription_stream(data, session_id.0, start, poll_ms)
+                .filter_map(move |item| async move {
+                    match item {
+                        Ok(message) => {
+                            let parsed = message.parsed();
+                            let is_user = parsed.role.as_deref() == Some("user");
+                            if is_user && !include_users {
+                                return None;
+                            }
+                            Some(Ok(SessionNotificationObject::from_message(message)))
+                        }
+                        Err(err) => Some(Err(err)),
+                    }
+                });
+
+            Ok::<_, Error>(stream)
+        }
+        .await;
+
+        match setup {
+            Ok(stream) => stream.boxed(),
+            Err(err) => stream::once(async move { Err(err) }).boxed(),
+        }
+    }
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+/// Notification kind classification for `SessionNotification`.
+enum SessionNotificationKind {
+    /// Assistant-authored response message.
+    AssistantReply,
+    /// Tool call or tool result activity.
+    ToolActivity,
+    /// Session lifecycle or system event message.
+    SessionEvent,
+    /// Fallback generic message classification.
+    Message,
+}
+
+#[derive(SimpleObject, Clone, Description)]
+/// Notification payload projected from a session message.
+///
+/// Usage notes:
+/// - Notifications are fully typed and include the underlying `sessionMessage`.
+/// - `kind` is derived from `messageType`/`role`.
+struct SessionNotificationObject {
+    /// Stable notification identifier (`sessionId:messageIndex`).
+    id: String,
+    /// Kind classification for UI routing and badges.
+    kind: SessionNotificationKind,
+    /// Short user-facing title.
+    title: String,
+    /// Session URI this notification belongs to.
+    session_id: UriScalar,
+    /// Source message index.
+    message_index: i64,
+    /// Source message type.
+    message_type: String,
+    /// Source role, when available.
+    role: Option<String>,
+    /// Source text content, when available.
+    text: Option<String>,
+    /// Source message timestamp.
+    created_at: DateTime<Utc>,
+    /// Full underlying message object.
+    session_message: SessionMessageObject,
+}
+
+impl SessionNotificationObject {
+    fn from_message(message: SessionMessageObject) -> Self {
+        let parsed = message.parsed();
+        let (kind, title) = match parsed.message_type.as_str() {
+            "assistant" => (
+                SessionNotificationKind::AssistantReply,
+                "Assistant reply".to_string(),
+            ),
+            "tool_call" => (
+                SessionNotificationKind::ToolActivity,
+                "Tool call requested".to_string(),
+            ),
+            "tool_result" => (
+                SessionNotificationKind::ToolActivity,
+                "Tool result received".to_string(),
+            ),
+            "session_event" => (
+                SessionNotificationKind::SessionEvent,
+                "Session event".to_string(),
+            ),
+            _ => (
+                SessionNotificationKind::Message,
+                "Session message".to_string(),
+            ),
+        };
+
+        Self {
+            id: format!(
+                "{}:{}",
+                message.record.session_id, message.record.message_index
+            ),
+            kind,
+            title,
+            session_id: message.record.session_id.clone().into(),
+            message_index: message.record.message_index,
+            message_type: parsed.message_type,
+            role: parsed.role,
+            text: parsed.text,
+            created_at: message.record.created_at,
+            session_message: message,
+        }
     }
 }
 
@@ -5230,6 +5549,7 @@ fn parse_session_message(payload: &serde_json::Value) -> ParsedSessionMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_graphql::futures_util::StreamExt;
 
     fn tmp_path(prefix: &str, ext: &str) -> String {
         let mut path = std::env::temp_dir();
@@ -5644,11 +5964,122 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn subscription_session_chat_streams_new_messages() -> anyhow::Result<()> {
+        let schema = test_schema().await?;
+        let data = schema.data::<BorgGqlData>().expect("gql data").clone();
+
+        let session_id = Uri::from_parts("borg", "session", Some("sub-chat"))?;
+        let user_id = Uri::from_parts("borg", "user", Some("sub-user"))?;
+        let port_id = Uri::from_parts("borg", "port", Some("http"))?;
+        data.db
+            .upsert_session(&session_id, &[user_id], &port_id)
+            .await?;
+
+        let request = async_graphql::Request::new(
+            r#"
+              subscription($session: Uri!) {
+                sessionChat(sessionId: $session, afterMessageIndex: -1, pollIntervalMs: 100) {
+                  messageIndex
+                  messageType
+                  role
+                  text
+                }
+              }
+            "#,
+        )
+        .variables(async_graphql::Variables::from_json(
+            json!({ "session": session_id }),
+        ));
+
+        let mut stream = schema.execute_stream(request);
+
+        data.db
+            .append_session_message(
+                &session_id,
+                &json!({"type":"assistant","role":"assistant","content":"hello from subscription"}),
+            )
+            .await?;
+
+        let response = tokio::time::timeout(Duration::from_secs(3), stream.next())
+            .await
+            .map_err(|_| anyhow::anyhow!("timed out waiting for subscription event"))?
+            .ok_or_else(|| anyhow::anyhow!("subscription ended unexpectedly"))?;
+
+        assert!(response.errors.is_empty(), "{:#?}", response.errors);
+        let payload = response.data.into_json()?;
+        assert_eq!(payload["sessionChat"]["messageType"], "assistant");
+        assert_eq!(payload["sessionChat"]["role"], "assistant");
+        assert_eq!(payload["sessionChat"]["text"], "hello from subscription");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn subscription_notifications_filter_user_messages_by_default() -> anyhow::Result<()> {
+        let schema = test_schema().await?;
+        let data = schema.data::<BorgGqlData>().expect("gql data").clone();
+
+        let session_id = Uri::from_parts("borg", "session", Some("sub-notifications"))?;
+        let user_id = Uri::from_parts("borg", "user", Some("sub-user-2"))?;
+        let port_id = Uri::from_parts("borg", "port", Some("http"))?;
+        data.db
+            .upsert_session(&session_id, &[user_id], &port_id)
+            .await?;
+
+        let request = async_graphql::Request::new(
+            r#"
+              subscription($session: Uri!) {
+                sessionNotifications(sessionId: $session, afterMessageIndex: -1, pollIntervalMs: 100) {
+                  kind
+                  messageType
+                  role
+                  text
+                }
+              }
+            "#,
+        )
+        .variables(async_graphql::Variables::from_json(
+            json!({ "session": session_id }),
+        ));
+
+        let mut stream = schema.execute_stream(request);
+
+        data.db
+            .append_session_message(
+                &session_id,
+                &json!({"type":"user","role":"user","content":"user message"}),
+            )
+            .await?;
+        data.db
+            .append_session_message(
+                &session_id,
+                &json!({"type":"assistant","role":"assistant","content":"assistant notification"}),
+            )
+            .await?;
+
+        let response = tokio::time::timeout(Duration::from_secs(3), stream.next())
+            .await
+            .map_err(|_| anyhow::anyhow!("timed out waiting for notification event"))?
+            .ok_or_else(|| anyhow::anyhow!("subscription ended unexpectedly"))?;
+
+        assert!(response.errors.is_empty(), "{:#?}", response.errors);
+        let payload = response.data.into_json()?;
+        assert_eq!(payload["sessionNotifications"]["kind"], "ASSISTANT_REPLY");
+        assert_eq!(payload["sessionNotifications"]["messageType"], "assistant");
+        assert_eq!(payload["sessionNotifications"]["role"], "assistant");
+        assert_eq!(
+            payload["sessionNotifications"]["text"],
+            "assistant notification"
+        );
+        Ok(())
+    }
+
     #[test]
     fn static_schema_snapshot_is_generated() {
         let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("schema.graphql");
         let schema = std::fs::read_to_string(schema_path).expect("generated schema.graphql");
         assert!(schema.contains("interface Node"));
         assert!(schema.contains("type MutationRoot"));
+        assert!(schema.contains("type SubscriptionRoot"));
     }
 }

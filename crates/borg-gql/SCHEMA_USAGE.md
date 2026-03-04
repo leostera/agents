@@ -886,6 +886,56 @@ mutation($actor: Uri!, $session: Uri!, $user: Uri!) {
 }
 ```
 
+## Subscription Recipes (Real-time)
+
+Subscriptions are exposed from `SubscriptionRoot` and intended for WebSocket transport.
+
+### Session chat stream
+
+Use `sessionChat` to stream new timeline rows as they are appended.
+
+Usage notes:
+- Omit `afterMessageIndex` to start tail-follow mode from "now".
+- Provide `afterMessageIndex` to resume from a known checkpoint.
+- `pollIntervalMs` is clamped server-side for safety.
+
+```graphql
+subscription($session: Uri!, $after: Int) {
+  sessionChat(sessionId: $session, afterMessageIndex: $after, pollIntervalMs: 500) {
+    id
+    messageIndex
+    messageType
+    role
+    text
+    createdAt
+  }
+}
+```
+
+### Session notifications stream
+
+Use `sessionNotifications` for a notification-friendly stream derived from session messages.
+
+Usage notes:
+- By default, user-authored messages are filtered out.
+- Set `includeUserMessages: true` to receive all message roles.
+- `kind` gives stable UI routing (`ASSISTANT_REPLY`, `TOOL_ACTIVITY`, `SESSION_EVENT`, `MESSAGE`).
+
+```graphql
+subscription($session: Uri!) {
+  sessionNotifications(sessionId: $session, pollIntervalMs: 500) {
+    id
+    kind
+    title
+    messageType
+    role
+    text
+    createdAt
+    sessionMessage { messageIndex messageType role }
+  }
+}
+```
+
 ## Transitional JSON Fields
 
 Some fields are still `JsonValue` for compatibility with legacy DB columns (for example app auth config, session message payload, policy JSON).

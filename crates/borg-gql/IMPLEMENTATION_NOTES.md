@@ -8,9 +8,11 @@
 - runtime wrappers (`runActorChat`, `runPortHttp`) are placeholders returning typed errors until runtime integration.
 - `build.rs` now generates a static `schema.graphql` snapshot during crate build so frontend codegen/inspection can consume a deterministic SDL artifact.
 - `SCHEMA_USAGE.md` now includes concrete usage notes + examples for all entity domains and mutation families.
-
-TODO while stabilizing compile/tests:
-- fix macro/typing issues from large schema file and prune dead code.
-- keep mutation input for `appendSessionMessage` typed-only path consistent.
-- ensure Node interface works with all object ID fields.
-- harden task status test to avoid auth edge cases if needed.
+- subscriptions are implemented in `SubscriptionRoot`:
+  - `sessionChat(sessionId, afterMessageIndex, pollIntervalMs)`
+  - `sessionNotifications(sessionId, afterMessageIndex, pollIntervalMs, includeUserMessages)`
+- subscription implementation follows practical GraphQL subscription guidance:
+  - tail-follow defaults for chat streams (avoid replay unless cursor/index provided)
+  - bounded poll interval to protect server resources
+  - typed notification payloads (no unstructured JSON envelopes)
+  - documentation/examples embedded directly in SDL via GraphQL descriptions

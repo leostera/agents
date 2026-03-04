@@ -2273,6 +2273,78 @@ input SessionMessageInput {
 }
 
 """
+Notification kind classification for `SessionNotification`.
+"""
+enum SessionNotificationKind {
+	"""
+	Assistant-authored response message.
+	"""
+	ASSISTANT_REPLY
+	"""
+	Tool call or tool result activity.
+	"""
+	TOOL_ACTIVITY
+	"""
+	Session lifecycle or system event message.
+	"""
+	SESSION_EVENT
+	"""
+	Fallback generic message classification.
+	"""
+	MESSAGE
+}
+
+"""
+Notification payload projected from a session message.
+
+Usage notes:
+- Notifications are fully typed and include the underlying `sessionMessage`.
+- `kind` is derived from `messageType`/`role`.
+"""
+type SessionNotificationObject {
+	"""
+	Stable notification identifier (`sessionId:messageIndex`).
+	"""
+	id: String!
+	"""
+	Kind classification for UI routing and badges.
+	"""
+	kind: SessionNotificationKind!
+	"""
+	Short user-facing title.
+	"""
+	title: String!
+	"""
+	Session URI this notification belongs to.
+	"""
+	sessionId: Uri!
+	"""
+	Source message index.
+	"""
+	messageIndex: Int!
+	"""
+	Source message type.
+	"""
+	messageType: String!
+	"""
+	Source role, when available.
+	"""
+	role: String
+	"""
+	Source text content, when available.
+	"""
+	text: String
+	"""
+	Source message timestamp.
+	"""
+	createdAt: DateTime!
+	"""
+	Full underlying message object.
+	"""
+	sessionMessage: SessionMessage!
+}
+
+"""
 Input payload for `setTaskStatus`.
 
 Example:
@@ -2291,6 +2363,72 @@ input SetTaskStatusInput {
 	Target status value.
 	"""
 	status: TaskStatusValue!
+}
+
+"""
+Root subscription entrypoint for real-time Borg streams.
+
+Usage notes:
+- Subscription transport is expected to run over WebSockets (`graphql-transport-ws`).
+- Use `sessionChat` for full timeline streaming.
+- Use `sessionNotifications` for notification-friendly filtered events.
+
+Example:
+```graphql
+subscription($session: Uri!) {
+sessionChat(sessionId: $session) {
+messageIndex
+messageType
+role
+text
+}
+}
+```
+"""
+type SubscriptionRoot {
+	"""
+	Streams new messages from a session timeline as they are appended.
+	
+	Usage notes:
+	- When `afterMessageIndex` is omitted, the stream starts from "now" (tail-follow mode).
+	- Provide `afterMessageIndex` to replay from a known point.
+	- `pollIntervalMs` is clamped to safe server bounds.
+	
+	Example:
+	```graphql
+	subscription($session: Uri!, $after: Int) {
+	sessionChat(sessionId: $session, afterMessageIndex: $after, pollIntervalMs: 500) {
+	id
+	messageIndex
+	messageType
+	role
+	text
+	}
+	}
+	```
+	"""
+	sessionChat(sessionId: Uri!, afterMessageIndex: Int, pollIntervalMs: Int): SessionMessage!
+	"""
+	Streams session notifications derived from new timeline messages.
+	
+	Usage notes:
+	- By default, user-authored messages are filtered out.
+	- Set `includeUserMessages: true` to receive all roles.
+	
+	Example:
+	```graphql
+	subscription($session: Uri!) {
+	sessionNotifications(sessionId: $session) {
+	id
+	kind
+	title
+	text
+	sessionMessage { messageIndex messageType role }
+	}
+	}
+	```
+	"""
+	sessionNotifications(sessionId: Uri!, afterMessageIndex: Int, pollIntervalMs: Int, includeUserMessages: Boolean): SessionNotificationObject!
 }
 
 """
@@ -3164,4 +3302,5 @@ directive @specifiedBy(url: String!) on SCALAR
 schema {
 	query: QueryRoot
 	mutation: MutationRoot
+	subscription: SubscriptionRoot
 }
