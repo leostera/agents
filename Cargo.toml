@@ -5,6 +5,7 @@ members = [
   "crates/borg-apps",
   "crates/borg-cli",
   "crates/borg-clockwork",
+  "crates/borg-gql",
   "crates/borg-cmd",
   "crates/borg-taskgraph",
   "crates/borg-core",
@@ -22,6 +23,7 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
+async-graphql = { version = "7", features = ["chrono"] }
 anyhow = "1"
 axum = { version = "0.7", features = ["json"] }
 base64 = "0.22"

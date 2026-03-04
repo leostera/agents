@@ -2,11 +2,22 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[path = "src/lib.rs"]
-mod schema_module;
+#[path = "src/context.rs"]
+mod context;
+#[path = "src/scalars.rs"]
+mod scalars;
+#[path = "src/sdl/mod.rs"]
+mod sdl;
 
 fn main() {
     println!("cargo:rerun-if-changed=src/lib.rs");
+    println!("cargo:rerun-if-changed=src/context.rs");
+    println!("cargo:rerun-if-changed=src/scalars.rs");
+    println!("cargo:rerun-if-changed=src/sdl/mod.rs");
+    println!("cargo:rerun-if-changed=src/sdl/resolvers/mod.rs");
+    println!("cargo:rerun-if-changed=src/sdl/resolvers/query.rs");
+    println!("cargo:rerun-if-changed=src/sdl/resolvers/mutation.rs");
+    println!("cargo:rerun-if-changed=src/sdl/resolvers/subscription.rs");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=Cargo.toml");
 
@@ -37,7 +48,12 @@ async fn generate_schema_artifacts() -> anyhow::Result<()> {
     let memory = borg_memory::MemoryStore::new(&memory_path, &search_path)?;
     memory.migrate().await?;
 
-    let schema = schema_module::build_schema(db, memory);
+    let schema =
+        async_graphql::Schema::build(sdl::QueryRoot, sdl::MutationRoot, sdl::SubscriptionRoot)
+            .data(context::BorgGqlData::new(db, memory))
+            .limit_depth(12)
+            .limit_complexity(4_000)
+            .finish();
     let schema_sdl = schema.sdl();
 
     let schema_path = manifest_dir.join("schema.graphql");

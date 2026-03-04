@@ -3,6 +3,7 @@ use axum::{
     http::{HeaderValue, Method},
     routing::{get, post, put},
 };
+use borg_gql::BorgGqlServer;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
@@ -20,6 +21,10 @@ use super::system::SystemController;
 use crate::AppState;
 
 pub(crate) fn app_router(state: AppState) -> Router {
+    let gql_router: Router<AppState> = BorgGqlServer::new(state.db.clone(), state.memory.clone())
+        .router()
+        .with_state(());
+
     Router::new()
         .route("/", get(DashboardController::index))
         .route("/dashboard", get(DashboardController::index))
@@ -291,6 +296,7 @@ pub(crate) fn app_router(state: AppState) -> Router {
             "/api/sessions/:session_id/context",
             get(DbController::get_any_port_session_context),
         )
+        .merge(gql_router)
         .layer(http_trace_layer())
         .layer(cors_layer())
         .with_state(state)

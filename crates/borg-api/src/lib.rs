@@ -313,6 +313,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn gql_post_endpoint_executes_query() {
+        let app = test_app("gql-post").await;
+        let (status, body) = request_json(
+            &app,
+            Method::POST,
+            "/gql",
+            json!({"query":"{ __typename }"}),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["data"]["__typename"], "QueryRoot");
+    }
+
+    #[tokio::test]
+    async fn gql_get_endpoint_executes_query() {
+        let app = test_app("gql-get").await;
+        let (status, body) =
+            request_no_body(&app, Method::GET, "/gql?query=%7B__typename%7D").await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["data"]["__typename"], "QueryRoot");
+    }
+
+    #[tokio::test]
+    async fn gql_graphiql_endpoint_serves_html() {
+        let app = test_app("gql-graphiql").await;
+        let (status, headers, body) = request_no_body_raw(&app, Method::GET, "/gql/graphiql").await;
+
+        assert_eq!(status, StatusCode::OK);
+        let content_type = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(content_type.contains("text/html"));
+
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains("Borg GraphQL"));
+    }
+
+    #[tokio::test]
     async fn providers_crud_endpoints_work() {
         let app = test_app("providers").await;
         let (status, _) = request_json(
@@ -929,8 +970,7 @@ mod tests {
             Method::PUT,
             "/api/ports/borg:port:telegram/bindings/borg:user:chat1",
             json!({
-                "session_id":"borg:session:s1",
-                "agent_id":"borg:agent:default"
+                "session_id":"borg:session:s1"
             }),
         )
         .await;

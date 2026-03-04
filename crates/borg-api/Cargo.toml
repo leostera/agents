@@ -13,6 +13,7 @@ borg-core = { path = "../borg-core" }
 borg-apps = { path = "../borg-apps" }
 borg-exec = { path = "../borg-exec" }
 borg-fs = { path = "../borg-fs" }
+borg-gql = { path = "../borg-gql" }
 borg-llm = { path = "../borg-llm" }
 borg-memory = { path = "../borg-memory" }
 borg-taskgraph = { path = "../borg-taskgraph" }
