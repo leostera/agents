@@ -110,7 +110,7 @@ flowchart TD
 Current UI state:
 - Single SPA root is `packages/borg-app`.
 - `/dashboard` renders the dashboard shell.
-- `/onboard` route is currently a placeholder while onboarding chat UX is rebuilt.
+- `/onboard` route mounts `@borg/onboard`, a chat-first setup flow for provider/local mode, assistant creation, and first channel connection.
 
 ## 8. Port Delivery Order
 ```mermaid

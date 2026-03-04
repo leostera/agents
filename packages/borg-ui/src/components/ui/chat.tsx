@@ -2,7 +2,7 @@
 
 import { ArrowUp, Square } from "lucide-react";
 import * as React from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { cn } from "@/lib/utils";
@@ -20,6 +20,7 @@ export type ChatMessageItem = {
 type ChatThreadProps = {
   messages: ChatMessageItem[];
   isLoading?: boolean;
+  showEmptyState?: boolean;
   emptyTitle?: string;
   emptyDescription?: string;
   className?: string;
@@ -29,6 +30,7 @@ type ChatThreadProps = {
 export function ChatThread({
   messages,
   isLoading = false,
+  showEmptyState = true,
   emptyTitle = "No messages yet",
   emptyDescription = "Session messages will appear here.",
   className,
@@ -45,12 +47,16 @@ export function ChatThread({
       className={cn("flex h-full min-h-0 flex-col bg-background", className)}
     >
       <div className="relative min-h-0 flex-1 overflow-x-auto overflow-y-auto px-4 pt-4">
-        {messages.length === 0 ? (
+        {messages.length === 0 && showEmptyState ? (
           <div className="mx-auto flex h-full min-h-[260px] w-full max-w-3xl flex-col items-start justify-center px-2">
             <p className="font-semibold text-2xl">{emptyTitle}</p>
             <p className="text-muted-foreground mt-2 text-lg">
               {emptyDescription}
             </p>
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="mx-auto flex h-full min-h-[260px] w-full max-w-3xl flex-col px-2">
+            <div ref={endRef} />
           </div>
         ) : (
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 pb-4">
@@ -77,10 +83,13 @@ type ChatMessageProps = {
 
 export function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === "user";
+  const isAssistantPending =
+    message.role === "assistant" && Boolean(message.pending);
   const timestampLabel =
     typeof message.timestamp === "string" && message.timestamp.trim().length > 0
       ? message.timestamp
       : "just now";
+  const pendingLabel = message.role === "user" ? "sending..." : "thinking...";
   const toneClass =
     message.role === "assistant"
       ? "text-foreground"
@@ -89,7 +98,12 @@ export function ChatMessage({ message }: ChatMessageProps) {
         : "bg-muted text-foreground";
 
   return (
-    <article className={cn("flex", isUser ? "justify-end" : "justify-start")}>
+    <article
+      className={cn(
+        "chat-message-enter flex",
+        isUser ? "justify-end" : "justify-start"
+      )}
+    >
       <div
         className={cn(
           "max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm",
@@ -99,19 +113,29 @@ export function ChatMessage({ message }: ChatMessageProps) {
         )}
       >
         <div className="chat-markdown markdown-body text-sm">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {message.text}
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            urlTransform={(url, key, node) => {
+              if (typeof url === "string" && url.startsWith("tg://")) {
+                return url;
+              }
+              return defaultUrlTransform(url, key, node);
+            }}
+          >
+            {isAssistantPending ? "_thinking..._" : message.text}
           </ReactMarkdown>
         </div>
-        <div
-          className={cn(
-            "mt-1 flex items-center gap-2 text-[10px] opacity-70",
-            isUser ? "justify-end" : "justify-start"
-          )}
-        >
-          <p>{timestampLabel}</p>
-          {message.pending ? <span>sending...</span> : null}
-        </div>
+        {isAssistantPending ? null : (
+          <div
+            className={cn(
+              "mt-1 flex items-center gap-2 text-[10px] opacity-70",
+              isUser ? "justify-end" : "justify-start"
+            )}
+          >
+            <p>{timestampLabel}</p>
+            {message.pending ? <span>{pendingLabel}</span> : null}
+          </div>
+        )}
       </div>
     </article>
   );

@@ -2,6 +2,7 @@ pub(crate) mod actors;
 pub(crate) mod apps;
 pub(crate) mod behaviors;
 pub(crate) mod common;
+pub(crate) mod dashboard;
 pub(crate) mod db;
 pub(crate) mod devmode;
 pub(crate) mod fs;

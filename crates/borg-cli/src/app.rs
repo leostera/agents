@@ -127,7 +127,18 @@ impl BorgCliApp {
         self.start_clockwork_supervisor(db.clone());
         info!(target: "borg_cli", "clockwork supervisor started");
 
-        let api_server = BorgApiServer::new(bind, runtime, supervisor);
+        let dashboard_url = format!("http://{bind}/");
+        info!(
+            target: "borg_cli",
+            dashboard_url = %dashboard_url,
+            "open admin dashboard"
+        );
+        let api_server = BorgApiServer::new(
+            bind,
+            runtime,
+            supervisor,
+            self.borg_dir.assets().to_path_buf(),
+        );
         api_server.run().await
     }
 

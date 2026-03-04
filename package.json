@@ -6,8 +6,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "bun run build:web && bun run build:rust",
-    "build:rust": "cargo build -p borg-cli",
+    "build": "bun run build:web",
     "build:storybook": "storybook build -c packages/borg-ui/.storybook -o packages/borg-ui/storybook-static",
     "build:web": "bun run vite build",
     "check": "biome check --formatter-enabled=true --linter-enabled=false ./packages",

@@ -22,7 +22,8 @@ Scope: `packages/*` web workspaces, chat UX, composer behavior, and i18n.
 
 - Provider selection should look like a user reply.
 - API key input + connect action should be user-side reply step.
-- Supported providers in onboarding are `openai` and `openrouter`.
+- Supported cloud providers in onboarding are `openai` and `openrouter`.
+- Onboarding also supports a local-mode path (no provider credentials) for first-run setup.
 - API key save endpoint is `POST /api/providers/:provider` (provider comes from the user choice).
 - Preserve sequential reveal:
   - next prompt appears after previous animation/step completion.

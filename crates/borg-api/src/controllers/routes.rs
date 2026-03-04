@@ -10,6 +10,7 @@ use tracing::Level;
 use super::actors::ActorsController;
 use super::apps::AppsController;
 use super::behaviors::BehaviorsController;
+use super::dashboard::DashboardController;
 use super::db::DbController;
 use super::devmode::DevModeController;
 use super::fs::FsController;
@@ -20,8 +21,9 @@ use crate::AppState;
 
 pub(crate) fn app_router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(SystemController::ui_dashboard))
-        .route("/dashboard", get(SystemController::ui_dashboard))
+        .route("/", get(DashboardController::index))
+        .route("/dashboard", get(DashboardController::index))
+        .route("/assets/*path", get(DashboardController::asset))
         .route("/health", get(SystemController::health))
         .route("/ports/http", post(SystemController::ports_http))
         .route(
@@ -278,6 +280,7 @@ pub(crate) fn app_router(state: AppState) -> Router {
                 .put(PortActorBindingsController::upsert_port_actor_binding)
                 .delete(PortActorBindingsController::delete_port_actor_binding),
         )
+        .fallback(get(DashboardController::spa_fallback))
         .route(
             "/api/ports/:port_uri/sessions/:session_id/context",
             get(DbController::get_port_session_context)

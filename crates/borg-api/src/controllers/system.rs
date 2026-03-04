@@ -2,7 +2,7 @@ use axum::{
     Json,
     extract::{Path as AxumPath, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
-    response::{Html, IntoResponse},
+    response::IntoResponse,
 };
 use base64::Engine;
 use borg_core::{Entity, EntityPropValue, Uri, uri};
@@ -94,17 +94,6 @@ impl SystemController {
     pub(crate) async fn health() -> impl IntoResponse {
         debug!(target: "borg_api", "health endpoint called");
         Json(json!({ "status": HEALTH_STATUS_OK }))
-    }
-
-    pub(crate) async fn ui_dashboard(State(state): State<AppState>) -> impl IntoResponse {
-        debug!(target: "borg_api", "ui dashboard endpoint called");
-        let entities_count = state
-            .memory
-            .search("movie", None, 10_000)
-            .await
-            .map(|v| v.len())
-            .unwrap_or(0);
-        Html(Self::render_dashboard(entities_count))
     }
 
     pub(crate) async fn memory_search(
@@ -452,12 +441,6 @@ impl SystemController {
             }
             Err(err) => err,
         }
-    }
-
-    fn render_dashboard(entities_count: usize) -> String {
-        format!(
-            "<!doctype html><html><head><meta charset=\"utf-8\"><title>Borg Dashboard</title></head><body><h1>Borg Dashboard</h1><ul><li>Memory entities: {entities_count}</li></ul></body></html>"
-        )
     }
 }
 

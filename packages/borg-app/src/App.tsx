@@ -1,6 +1,7 @@
 import { DevModeApp } from "@borg/devmode";
 import { createI18n } from "@borg/i18n";
-import { Card, TooltipProvider } from "@borg/ui";
+import { OnboardApp } from "@borg/onboard";
+import { TooltipProvider } from "@borg/ui";
 import React, { useMemo } from "react";
 import { DashboardApp } from "./DashboardApp";
 
@@ -29,13 +30,7 @@ export function App() {
   if (pathname === ONBOARD_PATH) {
     return (
       <TooltipProvider>
-        <section className="p-6">
-          <Card title="Onboarding">
-            <p className="text-sm text-muted-foreground">
-              Onboarding is being rebuilt in `borg-app`.
-            </p>
-          </Card>
-        </section>
+        <OnboardApp />
       </TooltipProvider>
     );
   }

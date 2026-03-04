@@ -1,4 +1,5 @@
 mod controllers;
+mod dashboard;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -10,6 +11,7 @@ use borg_exec::{BorgRuntime, BorgSupervisor};
 use borg_fs::BorgFs;
 use borg_memory::MemoryStore;
 use borg_ports::BorgPortsSupervisor;
+use dashboard::DashboardService;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
@@ -24,6 +26,7 @@ pub(crate) struct AppState {
     pub(crate) memory: MemoryStore,
     pub(crate) files: BorgFs,
     pub(crate) supervisor: BorgSupervisor,
+    pub(crate) dashboard: DashboardService,
 }
 
 impl FromRef<AppState> for BorgDb {
@@ -39,7 +42,12 @@ pub struct BorgApiServer {
 }
 
 impl BorgApiServer {
-    pub fn new(bind: String, runtime: Arc<BorgRuntime>, supervisor: BorgSupervisor) -> Self {
+    pub fn new(
+        bind: String,
+        runtime: Arc<BorgRuntime>,
+        supervisor: BorgSupervisor,
+        dashboard_assets_dir: std::path::PathBuf,
+    ) -> Self {
         let ports_supervisor =
             BorgPortsSupervisor::new(runtime.clone(), Arc::new(supervisor.clone()));
         Self {
@@ -49,6 +57,7 @@ impl BorgApiServer {
                 memory: runtime.memory.clone(),
                 files: runtime.files.clone(),
                 supervisor: supervisor.clone(),
+                dashboard: DashboardService::new(dashboard_assets_dir),
             },
             ports_supervisor,
         }
@@ -65,11 +74,18 @@ impl BorgApiServer {
                 );
             }
         });
+        let dashboard_sync = self.state.dashboard.sync_static_media_assets().await?;
+        self.state.dashboard.log_sync_result(dashboard_sync);
         let router = app_router(self.state);
 
         let addr: SocketAddr = self.bind.parse()?;
         let listener = TcpListener::bind(addr).await?;
         info!(target: "borg_api", address = %addr, "http api server listening");
+        info!(
+            target: "borg_api",
+            dashboard_url = %format!("http://{addr}/"),
+            "open admin dashboard"
+        );
 
         let shutdown = async {
             tokio::signal::ctrl_c()
@@ -90,6 +106,7 @@ impl BorgApiServer {
 #[cfg(test)]
 mod tests {
     use super::{AppState, HttpPortRequest, app_router, validate_port_request};
+    use crate::dashboard::DashboardService;
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode, header};
     use borg_codemode::CodeModeRuntime;
@@ -145,6 +162,7 @@ mod tests {
             memory,
             files,
             supervisor,
+            dashboard: DashboardService::new(root.join("assets")),
         };
         app_router(state)
     }
@@ -207,6 +225,30 @@ mod tests {
         (status, parsed)
     }
 
+    async fn request_no_body_raw(
+        app: &axum::Router,
+        method: Method,
+        path: &str,
+    ) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .body(Body::empty())
+                    .expect("build request"),
+            )
+            .await
+            .expect("request should succeed");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        (status, headers, bytes.to_vec())
+    }
+
     #[test]
     fn validate_port_request_rejects_invalid_uri_fields() {
         let request = HttpPortRequest {
@@ -232,6 +274,42 @@ mod tests {
         assert_eq!(parsed.user_id.as_str(), "borg:user:test");
         assert_eq!(parsed.session_id.unwrap().as_str(), "borg:session:123");
         assert_eq!(parsed.agent_id.unwrap().as_str(), "borg:agent:default");
+    }
+
+    #[tokio::test]
+    async fn dashboard_index_is_served_from_root() {
+        let app = test_app("dashboard-root").await;
+        let (status, headers, body) = request_no_body_raw(&app, Method::GET, "/").await;
+        assert_eq!(status, StatusCode::OK);
+        let content_type = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(
+            content_type.contains("text/html"),
+            "expected html content type, got {content_type}"
+        );
+        let body_text = String::from_utf8_lossy(&body);
+        assert!(body_text.contains("<!doctype html>") || body_text.contains("<!DOCTYPE html>"));
+    }
+
+    #[tokio::test]
+    async fn dashboard_spa_fallback_serves_index_for_client_routes() {
+        let app = test_app("dashboard-spa-fallback").await;
+        let (status, headers, _) = request_no_body_raw(&app, Method::GET, "/control/apps").await;
+        assert_eq!(status, StatusCode::OK);
+        let content_type = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(content_type.contains("text/html"));
+    }
+
+    #[tokio::test]
+    async fn dashboard_spa_fallback_does_not_swallow_api_namespace() {
+        let app = test_app("dashboard-api-fallback-guard").await;
+        let (status, _, _) = request_no_body_raw(&app, Method::GET, "/api/not-real").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
