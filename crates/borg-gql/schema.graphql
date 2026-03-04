@@ -1,0 +1,3167 @@
+"""
+GraphQL `Actor` object.
+
+Usage notes:
+- Represents a runnable actor spec (`borg:actor:*`).
+- Use `defaultBehavior` and `sessions` for common workspace screens.
+
+Example:
+```graphql
+{ actor(id: "borg:actor:planner") { id name defaultBehavior { id name } } }
+```
+"""
+type Actor implements Node {
+	"""
+	Stable actor URI.
+	"""
+	id: Uri!
+	name: String!
+	systemPrompt: String!
+	status: String!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	"""
+	Default behavior used by this actor.
+	
+	Example:
+	```graphql
+	{ actor(id: "borg:actor:planner") { defaultBehavior { id name preferredProviderId } } }
+	```
+	"""
+	defaultBehavior: Behavior
+	"""
+	Sessions this actor has participated in.
+	
+	Usage notes:
+	- Backed by actor mailbox activity.
+	
+	Example:
+	```graphql
+	{ actor(id: "borg:actor:planner") { sessions(first: 5) { edges { node { id updatedAt } } } } }
+	```
+	"""
+	sessions(first: Int, after: String): SessionConnection!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type ActorConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [ActorEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type ActorEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: Actor!
+}
+
+"""
+GraphQL `App` object for capability/auth integrations.
+
+Usage notes:
+- Parent object for capabilities, external connections, and secrets.
+- `authConfig` is transitional JSON; prefer typed auth fields as they are added.
+
+Example:
+```graphql
+{ appBySlug(slug: "github") { id slug capabilities(first: 5) { edges { node { name mode } } } } }
+```
+"""
+type App implements Node {
+	id: Uri!
+	name: String!
+	slug: String!
+	description: String!
+	status: String!
+	builtIn: Boolean!
+	source: String!
+	authStrategy: String!
+	availableSecrets: [String!]!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	authConfig: JsonValue! @deprecated(reason: "Legacy JSON auth config. Prefer typed auth fields over time.")
+	"""
+	Capability definitions available on this app.
+	
+	Example:
+	```graphql
+	{ appBySlug(slug: "github") { capabilities(first: 20) { edges { node { id name mode } } } } }
+	```
+	"""
+	capabilities(first: Int, after: String): AppCapabilityConnection!
+	"""
+	External account connections for this app.
+	
+	Example:
+	```graphql
+	{ appBySlug(slug: "github") { connections(first: 20) { edges { node { id status ownerUserId } } } } }
+	```
+	"""
+	connections(first: Int, after: String): AppExternalConnectionConnection!
+	"""
+	Secrets available to this app (optionally filtered by connection).
+	
+	Example:
+	```graphql
+	{ appBySlug(slug: "github") { secrets(first: 20) { edges { node { id key kind } } } } }
+	```
+	"""
+	secrets(first: Int, after: String, connectionId: Uri): AppSecretConnection!
+}
+
+"""
+GraphQL `AppCapability` object linked to an app.
+
+Usage notes:
+- Capability rows describe app operations exposed to runtime/LLMs.
+
+Example:
+```graphql
+{ appBySlug(slug: "github") { capabilities(first: 5) { edges { node { id name mode status } } } } }
+```
+"""
+type AppCapability {
+	id: Uri!
+	appId: Uri!
+	name: String!
+	hint: String!
+	mode: String!
+	instructions: String!
+	status: String!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type AppCapabilityConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [AppCapabilityEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type AppCapabilityEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: AppCapability!
+}
+
+"""
+GraphQL `AppConnection` object representing an external account connection.
+
+Usage notes:
+- Represents one user/account connection to an app integration.
+- `connection` is transitional JSON metadata.
+
+Example:
+```graphql
+{ appBySlug(slug: "github") { connections(first: 5) { edges { node { id ownerUserId status } } } } }
+```
+"""
+type AppConnection {
+	id: Uri!
+	appId: Uri!
+	ownerUserId: Uri
+	providerAccountId: String
+	externalUserId: String
+	status: String!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	connection: JsonValue! @deprecated(reason: "Legacy JSON connection payload. Prefer typed fields over time.")
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type AppEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: App!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type AppExternalConnectionConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [AppExternalConnectionEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type AppExternalConnectionEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: AppConnection!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type AppListConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [AppEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+GraphQL `AppSecret` object for scoped secret material.
+
+Usage notes:
+- Secrets can be global per-app or scoped to `connectionId`.
+
+Example:
+```graphql
+{ appBySlug(slug: "github") { secrets(first: 5) { edges { node { id key kind connectionId } } } } }
+```
+"""
+type AppSecret {
+	id: Uri!
+	appId: Uri!
+	connectionId: Uri
+	key: String!
+	value: String!
+	kind: String!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type AppSecretConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [AppSecretEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type AppSecretEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: AppSecret!
+}
+
+"""
+Input payload for `appendSessionMessage`.
+
+Example:
+`{ sessionId: "borg:session:s1", messageType: "user", role: "user", text: "Hello" }`
+"""
+input AppendSessionMessageInput {
+	"""
+	Target session URI.
+	"""
+	sessionId: Uri!
+	"""
+	Message type (`user`, `assistant`, ...).
+	"""
+	messageType: String
+	"""
+	Logical role (`user`, `assistant`, ...).
+	"""
+	role: String
+	"""
+	Message text content.
+	"""
+	text: String
+	"""
+	Transitional raw payload.
+	"""
+	payload: JsonValue
+}
+
+"""
+GraphQL `Behavior` object attached to actors.
+
+Usage notes:
+- Behaviors define prompts, preferred provider, and required capabilities.
+- `requiredCapabilities` maps directly to runtime capability names.
+
+Example:
+```graphql
+{ behavior(id: "borg:behavior:default") { id name requiredCapabilities preferredProvider { provider } } }
+```
+"""
+type Behavior implements Node {
+	id: Uri!
+	name: String!
+	systemPrompt: String!
+	preferredProviderId: String
+	"""
+	Provider preferred by this behavior.
+	
+	Example:
+	```graphql
+	{ behavior(id: "borg:behavior:default") { preferredProvider { provider providerKind } } }
+	```
+	"""
+	preferredProvider: Provider
+	"""
+	Capability names required by this behavior.
+	
+	Example:
+	```graphql
+	{ behavior(id: "borg:behavior:default") { requiredCapabilities } }
+	```
+	"""
+	requiredCapabilities: [String!]!
+	sessionTurnConcurrency: String!
+	status: String!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type BehaviorConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [BehaviorEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type BehaviorEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: Behavior!
+}
+
+"""
+GraphQL `ClockworkJob` object for scheduler plans.
+
+Usage notes:
+- Defines recurring/queued actor execution plans.
+- Use `runs` to inspect execution history.
+
+Example:
+```graphql
+{ clockworkJob(jobId: "daily-digest") { id kind status nextRunAt runs(first: 5) { edges { node { id firedAt } } } } }
+```
+"""
+type ClockworkJob {
+	id: String!
+	kind: String!
+	status: String!
+	targetActorId: Uri
+	targetSessionId: Uri
+	messageType: String!
+	nextRunAt: DateTime
+	lastRunAt: DateTime
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	payload: JsonValue! @deprecated(reason: "Legacy JSON payload. Prefer typed fields over time.")
+	headers: JsonValue! @deprecated(reason: "Legacy JSON headers. Prefer typed fields over time.")
+	scheduleSpec: JsonValue! @deprecated(reason: "Legacy JSON schedule spec. Prefer typed schedule fields over time.")
+	"""
+	Historical run rows for this clockwork job.
+	
+	Example:
+	```graphql
+	{ clockworkJob(jobId: "daily") { runs(first: 10) { edges { node { id firedAt messageId } } } } }
+	```
+	"""
+	runs(first: Int, after: String): ClockworkJobRunConnection!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type ClockworkJobConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [ClockworkJobEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type ClockworkJobEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: ClockworkJob!
+}
+
+"""
+GraphQL `ClockworkJobRun` object for executed scheduler runs.
+
+Usage notes:
+- Immutable execution row emitted by clockwork runtime.
+
+Example:
+```graphql
+{ clockworkJob(jobId: "daily-digest") { runs(first: 5) { edges { node { id scheduledFor firedAt messageId } } } } }
+```
+"""
+type ClockworkJobRun {
+	id: String!
+	jobId: String!
+	scheduledFor: DateTime!
+	firedAt: DateTime!
+	targetActorId: Uri
+	targetSessionId: Uri
+	messageId: String!
+	createdAt: DateTime!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type ClockworkJobRunConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [ClockworkJobRunEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type ClockworkJobRunEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: ClockworkJobRun!
+}
+
+"""
+Input payload for `createClockworkJob`.
+
+Example:
+`{ jobId: "daily-digest", kind: "cron", actorId: "borg:actor:planner", sessionId: "borg:session:s1" }`
+"""
+input CreateClockworkJobInputGql {
+	"""
+	Stable job identifier.
+	"""
+	jobId: String!
+	"""
+	Scheduler kind (`cron`, ...).
+	"""
+	kind: String!
+	"""
+	Actor URI executed by this job.
+	"""
+	actorId: Uri!
+	"""
+	Session URI used as job context.
+	"""
+	sessionId: Uri!
+	"""
+	Message envelope type.
+	"""
+	messageType: String!
+	"""
+	Job payload (transitional JSON).
+	"""
+	payload: JsonValue!
+	"""
+	Optional job headers (transitional JSON).
+	"""
+	headers: JsonValue
+	"""
+	Schedule specification (transitional JSON).
+	"""
+	scheduleSpec: JsonValue!
+	"""
+	Optional explicit first run timestamp (RFC3339 string).
+	"""
+	nextRunAt: String
+}
+
+"""
+Input payload for `createTask`.
+
+Example:
+`{ sessionUri: "borg:session:s1", creatorAgentId: "borg:actor:creator", assigneeAgentId: "borg:actor:assignee", title: "Ship docs" }`
+"""
+input CreateTaskInputGql {
+	"""
+	Session URI authoring the task create event.
+	"""
+	sessionUri: Uri!
+	"""
+	Creator actor URI.
+	"""
+	creatorAgentId: Uri!
+	"""
+	Short task title.
+	"""
+	title: String!
+	"""
+	Task description/body.
+	"""
+	description: String! = ""
+	"""
+	Completion criteria.
+	"""
+	definitionOfDone: String! = ""
+	"""
+	Assignee actor URI.
+	"""
+	assigneeAgentId: Uri!
+	"""
+	Parent task URI when creating a subtask.
+	"""
+	parentUri: Uri
+	"""
+	Task URIs that block this task.
+	"""
+	blockedBy: [Uri!]! = []
+	"""
+	Related entity/task URIs.
+	"""
+	references: [Uri!]! = []
+	"""
+	User-defined labels.
+	"""
+	labels: [String!]! = []
+}
+
+"""
+Implement the DateTime<Utc> scalar
+
+The input/output is a string in RFC3339 format.
+"""
+scalar DateTime
+
+scalar JsonValue
+
+"""
+GraphQL `MemoryEntity` object from the memory graph.
+
+Usage notes:
+- Entity vertex with typed property map (`props`).
+- `facts` exposes fact rows that target this entity.
+
+Example:
+```graphql
+{ memoryEntity(id: "borg:entity:alice") { id label props { key value { kind text } } } }
+```
+"""
+type MemoryEntity implements Node {
+	id: Uri!
+	entityType: Uri!
+	label: String!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	"""
+	Property map on the entity, projected as typed key/value pairs.
+	
+	Example:
+	```graphql
+	{ memoryEntity(id: "borg:entity:alice") { props { key value { kind text reference } } } }
+	```
+	"""
+	props: [MemoryPropertyObject!]!
+	"""
+	Facts that target this memory entity.
+	
+	Example:
+	```graphql
+	{ memoryEntity(id: "borg:entity:alice") { facts(first: 20) { edges { node { field value { kind text } } } } } }
+	```
+	"""
+	facts(first: Int, after: String, fieldId: Uri, includeRetracted: Boolean): MemoryFactConnection!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type MemoryEntityConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [MemoryEntityEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type MemoryEntityEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: MemoryEntity!
+}
+
+"""
+GraphQL `MemoryFact` object from the fact store.
+
+Usage notes:
+- Immutable fact rows with typed value projection.
+- Use `isRetracted` for audit-aware consumers.
+
+Example:
+```graphql
+{ memoryFacts(first: 5) { edges { node { id field arity value { kind text } isRetracted } } } }
+```
+"""
+type MemoryFact {
+	"""
+	Fact URI.
+	"""
+	id: Uri!
+	"""
+	Source URI that asserted this fact.
+	"""
+	source: Uri!
+	"""
+	Entity URI that this fact targets.
+	"""
+	entity: Uri!
+	"""
+	Field URI for this fact.
+	"""
+	field: Uri!
+	"""
+	Fact field cardinality (`ONE` or `MANY`).
+	"""
+	arity: MemoryFactArity!
+	"""
+	Typed value projection for the fact payload.
+	"""
+	value: MemoryValueObject!
+	"""
+	Transaction URI that wrote this fact row.
+	"""
+	txId: Uri!
+	"""
+	Timestamp when the fact was stated.
+	"""
+	statedAt: DateTime!
+	"""
+	Whether the fact has been retracted.
+	"""
+	isRetracted: Boolean!
+}
+
+"""
+Cardinality of a memory fact field.
+"""
+enum MemoryFactArity {
+	ONE
+	MANY
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type MemoryFactConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [MemoryFactEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type MemoryFactEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: MemoryFact!
+}
+
+"""
+One key/value pair from `MemoryEntity.props`.
+"""
+type MemoryPropertyObject {
+	"""
+	Property key name.
+	"""
+	key: String!
+	"""
+	Typed property value.
+	"""
+	value: MemoryValueObject!
+}
+
+"""
+Discriminator for `MemoryValueObject`.
+"""
+enum MemoryValueKind {
+	TEXT
+	INTEGER
+	FLOAT
+	BOOLEAN
+	BYTES
+	REF
+	DATE
+	DATE_TIME
+	LIST
+}
+
+"""
+Typed value projection used by memory entities/facts.
+
+Usage notes:
+- Inspect `kind` first, then read the matching typed field.
+- Non-matching fields remain `null`.
+"""
+type MemoryValueObject {
+	"""
+	Value discriminator.
+	"""
+	kind: MemoryValueKind!
+	"""
+	String value when `kind = TEXT`.
+	"""
+	text: String
+	"""
+	Integer value when `kind = INTEGER`.
+	"""
+	integer: Int
+	"""
+	Floating-point value when `kind = FLOAT`.
+	"""
+	float: Float
+	"""
+	Boolean value when `kind = BOOLEAN`.
+	"""
+	boolean: Boolean
+	"""
+	Base64-url encoded bytes when `kind = BYTES`.
+	"""
+	bytesBase64: String
+	"""
+	URI reference when `kind = REF`.
+	"""
+	reference: Uri
+	"""
+	Date value (`YYYY-MM-DD`) when `kind = DATE`.
+	"""
+	date: String
+	"""
+	Date-time value (RFC3339) when `kind = DATE_TIME`.
+	"""
+	datetime: String
+	"""
+	Nested typed values when `kind = LIST`.
+	"""
+	list: [MemoryValueObject!]
+}
+
+"""
+Root mutation entrypoint for control-plane and task/memory writes.
+
+Usage notes:
+- Mutations return the written object whenever possible.
+- URI arguments are strictly validated by the `Uri` scalar.
+- Runtime wrapper mutations are intentionally stubbed until `borg-api` integration.
+
+Example:
+```graphql
+mutation {
+upsertProvider(input: { provider: "openai", providerKind: "openai", enabled: true }) {
+provider
+enabled
+}
+}
+```
+"""
+type MutationRoot {
+	"""
+	Creates or updates an actor.
+	
+	Example:
+	```graphql
+	mutation($id: Uri!, $behavior: Uri!) {
+	upsertActor(input: {
+	id: $id
+	name: "Planner"
+	systemPrompt: "You plan work."
+	defaultBehaviorId: $behavior
+	status: "RUNNING"
+	}) { id name status }
+	}
+	```
+	"""
+	upsertActor(input: UpsertActorInput!): Actor!
+	"""
+	Deletes an actor by URI.
+	
+	Example:
+	```graphql
+	mutation($id: Uri!) { deleteActor(id: $id) }
+	```
+	"""
+	deleteActor(id: Uri!): Boolean!
+	"""
+	Creates or updates a behavior.
+	
+	Example:
+	```graphql
+	mutation($id: Uri!) {
+	upsertBehavior(input: {
+	id: $id
+	name: "default"
+	systemPrompt: "..."
+	sessionTurnConcurrency: "serial"
+	status: "ACTIVE"
+	requiredCapabilities: ["TaskGraph-listTasks"]
+	}) { id name status requiredCapabilities }
+	}
+	```
+	"""
+	upsertBehavior(input: UpsertBehaviorInput!): Behavior!
+	"""
+	Deletes a behavior by URI.
+	
+	Example:
+	```graphql
+	mutation($id: Uri!) { deleteBehavior(id: $id) }
+	```
+	"""
+	deleteBehavior(id: Uri!): Boolean!
+	"""
+	Creates or updates a port.
+	
+	Usage notes:
+	- `assignedActorId` is mirrored into `settings.actor_id` for compatibility.
+	- `settings` must be a JSON object when provided.
+	
+	Example:
+	```graphql
+	mutation {
+	upsertPort(input: {
+	name: "http"
+	provider: "custom"
+	enabled: true
+	allowsGuests: true
+	}) { id name enabled allowsGuests }
+	}
+	```
+	"""
+	upsertPort(input: UpsertPortInput!): Port!
+	"""
+	Creates or updates a port/session binding.
+	
+	Example:
+	```graphql
+	mutation($session: Uri!, $key: Uri!) {
+	upsertPortBinding(input: {
+	portName: "telegram"
+	conversationKey: $key
+	sessionId: $session
+	}) { portName conversationKey sessionId }
+	}
+	```
+	"""
+	upsertPortBinding(input: UpsertPortBindingInput!): PortBinding!
+	"""
+	Creates or updates a port/actor binding.
+	
+	Usage notes:
+	- Pass `actorId: null` to clear the actor binding.
+	
+	Example:
+	```graphql
+	mutation($key: Uri!, $actor: Uri!) {
+	upsertPortActorBinding(input: {
+	portName: "telegram"
+	conversationKey: $key
+	actorId: $actor
+	}) { portName conversationKey actorId }
+	}
+	```
+	"""
+	upsertPortActorBinding(input: UpsertPortActorBindingInput!): PortActorBinding!
+	"""
+	Creates or updates a provider.
+	
+	Example:
+	```graphql
+	mutation {
+	upsertProvider(input: {
+	provider: "openrouter"
+	providerKind: "openrouter"
+	apiKey: "sk-***"
+	enabled: true
+	defaultTextModel: "openai/gpt-4.1-mini"
+	}) { provider providerKind enabled }
+	}
+	```
+	"""
+	upsertProvider(input: UpsertProviderInput!): Provider!
+	"""
+	Deletes a provider and associated usage summary.
+	
+	Example:
+	```graphql
+	mutation { deleteProvider(provider: "openrouter") }
+	```
+	"""
+	deleteProvider(provider: String!): Boolean!
+	"""
+	Creates or updates an app.
+	
+	Example:
+	```graphql
+	mutation($id: Uri!) {
+	upsertApp(input: {
+	id: $id
+	name: "GitHub"
+	slug: "github"
+	description: "GitHub integration"
+	status: "ACTIVE"
+	builtIn: false
+	source: "custom"
+	authStrategy: "oauth2"
+	availableSecrets: ["GITHUB_TOKEN"]
+	}) { id slug status }
+	}
+	```
+	"""
+	upsertApp(input: UpsertAppInput!): App!
+	"""
+	Creates or updates an app capability.
+	
+	Example:
+	```graphql
+	mutation($app: Uri!, $cap: Uri!) {
+	upsertAppCapability(input: {
+	appId: $app
+	capabilityId: $cap
+	name: "issues.list"
+	hint: "List GitHub issues"
+	mode: "READ"
+	instructions: "Use filters when possible"
+	status: "ACTIVE"
+	}) { id name status }
+	}
+	```
+	"""
+	upsertAppCapability(input: UpsertAppCapabilityInput!): AppCapability!
+	"""
+	Creates or updates an app connection.
+	
+	Example:
+	```graphql
+	mutation($app: Uri!, $conn: Uri!, $owner: Uri) {
+	upsertAppConnection(input: {
+	appId: $app
+	connectionId: $conn
+	ownerUserId: $owner
+	status: "CONNECTED"
+	}) { id appId status }
+	}
+	```
+	"""
+	upsertAppConnection(input: UpsertAppConnectionInput!): AppConnection!
+	"""
+	Creates or updates an app secret.
+	
+	Example:
+	```graphql
+	mutation($app: Uri!, $secret: Uri!) {
+	upsertAppSecret(input: {
+	appId: $app
+	secretId: $secret
+	key: "GITHUB_TOKEN"
+	value: "..."
+	kind: "token"
+	}) { id key kind }
+	}
+	```
+	"""
+	upsertAppSecret(input: UpsertAppSecretInput!): AppSecret!
+	"""
+	Creates or updates a session.
+	
+	Example:
+	```graphql
+	mutation($id: Uri!, $user: Uri!, $port: Uri!) {
+	upsertSession(input: { sessionId: $id, users: [$user], port: $port }) { id users portId }
+	}
+	```
+	"""
+	upsertSession(input: UpsertSessionInput!): Session!
+	"""
+	Appends a session message.
+	
+	Usage notes:
+	- Prefer typed fields (`messageType`, `role`, `text`) over raw `payload`.
+	
+	Example:
+	```graphql
+	mutation($session: Uri!) {
+	appendSessionMessage(input: {
+	sessionId: $session
+	messageType: "user"
+	role: "user"
+	text: "Hello"
+	}) { id messageIndex messageType role text }
+	}
+	```
+	"""
+	appendSessionMessage(input: AppendSessionMessageInput!): SessionMessage!
+	"""
+	Updates an existing session message.
+	
+	Example:
+	```graphql
+	mutation($session: Uri!) {
+	patchSessionMessage(input: {
+	sessionId: $session
+	messageIndex: 0
+	message: { messageType: "user", role: "user", text: "Updated text" }
+	}) { id messageIndex text }
+	}
+	```
+	"""
+	patchSessionMessage(input: PatchSessionMessageInput!): SessionMessage!
+	"""
+	Creates a clockwork job.
+	
+	Example:
+	```graphql
+	mutation($actor: Uri!, $session: Uri!) {
+	createClockworkJob(input: {
+	jobId: "daily-standup"
+	kind: "cron"
+	actorId: $actor
+	sessionId: $session
+	messageType: "user"
+	payload: { text: "Daily standup" }
+	scheduleSpec: { cron: "0 9 * * 1-5" }
+	}) { id status nextRunAt }
+	}
+	```
+	"""
+	createClockworkJob(input: CreateClockworkJobInputGql!): ClockworkJob!
+	"""
+	Updates mutable clockwork job fields.
+	
+	Example:
+	```graphql
+	mutation {
+	updateClockworkJob(
+	jobId: "daily-standup",
+	patch: { scheduleSpec: { cron: "0 10 * * 1-5" } }
+	) { id status scheduleSpec }
+	}
+	```
+	"""
+	updateClockworkJob(jobId: String!, patch: UpdateClockworkJobInputGql!): ClockworkJob!
+	"""
+	Pauses an active clockwork job.
+	
+	Example:
+	```graphql
+	mutation { pauseClockworkJob(jobId: "daily-standup") }
+	```
+	"""
+	pauseClockworkJob(jobId: String!): Boolean!
+	"""
+	Resumes a paused clockwork job.
+	
+	Example:
+	```graphql
+	mutation { resumeClockworkJob(jobId: "daily-standup") }
+	```
+	"""
+	resumeClockworkJob(jobId: String!): Boolean!
+	"""
+	Cancels a clockwork job.
+	
+	Example:
+	```graphql
+	mutation { cancelClockworkJob(jobId: "daily-standup") }
+	```
+	"""
+	cancelClockworkJob(jobId: String!): Boolean!
+	"""
+	Creates a task in the taskgraph store.
+	
+	Example:
+	```graphql
+	mutation($session: Uri!, $creator: Uri!, $assignee: Uri!) {
+	createTask(input: {
+	sessionUri: $session
+	creatorAgentId: $creator
+	assigneeAgentId: $assignee
+	title: "Ship borg-gql docs"
+	description: "Document all schema entrypoints"
+	}) { id title status }
+	}
+	```
+	"""
+	createTask(input: CreateTaskInputGql!): Task!
+	"""
+	Updates mutable task text fields.
+	
+	Example:
+	```graphql
+	mutation($task: Uri!, $session: Uri!) {
+	updateTask(input: {
+	taskId: $task
+	sessionUri: $session
+	title: "Updated title"
+	}) { id title updatedAt }
+	}
+	```
+	"""
+	updateTask(input: UpdateTaskInputGql!): Task!
+	"""
+	Moves a task to a new allowed status.
+	
+	Usage notes:
+	- Auth/session constraints follow taskgraph rules (assignee/reviewer checks).
+	
+	Example:
+	```graphql
+	mutation($task: Uri!, $session: Uri!) {
+	setTaskStatus(input: { taskId: $task, sessionUri: $session, status: DOING }) {
+	id
+	status
+	}
+	}
+	```
+	"""
+	setTaskStatus(input: SetTaskStatusInput!): Task!
+	"""
+	Placeholder runtime wrapper; enabled after `borg-api` integration.
+	
+	Usage notes:
+	- Currently returns `BAD_REQUEST`.
+	- Keep frontend contracts ready for upcoming runtime integration.
+	
+	Example:
+	```graphql
+	mutation($actor: Uri!, $session: Uri!, $user: Uri!) {
+	runActorChat(input: {
+	actorId: $actor
+	sessionId: $session
+	userId: $user
+	text: "Summarize pending tasks"
+	}) { ok message }
+	}
+	```
+	"""
+	runActorChat(input: RunActorChatInput!): RunActorChatResult!
+	"""
+	Placeholder runtime wrapper; enabled after `borg-api` integration.
+	
+	Usage notes:
+	- Currently returns `BAD_REQUEST`.
+	- Expected to mirror `POST /ports/http` behavior in a later phase.
+	
+	Example:
+	```graphql
+	mutation($user: Uri!) {
+	runPortHttp(input: { userId: $user, text: "Hello" }) { ok message }
+	}
+	```
+	"""
+	runPortHttp(input: RunPortHttpInput!): RunPortHttpResult!
+}
+
+"""
+Unified node interface for cross-entity graph traversal.
+
+Example:
+```graphql
+query($id: Uri!) {
+node(id: $id) {
+id
+... on Session { updatedAt }
+}
+}
+```
+"""
+interface Node {
+	id: Uri!
+}
+
+"""
+Cursor pagination metadata shared by all `*Connection` types.
+
+Usage notes:
+- Reuse `endCursor` as the next request's `after` argument.
+- Stop paginating when `hasNextPage` is `false`.
+
+Example:
+```graphql
+{
+actors(first: 20) {
+pageInfo { hasNextPage endCursor }
+}
+}
+```
+"""
+type PageInfo {
+	"""
+	Whether more pages are available after `endCursor`.
+	"""
+	hasNextPage: Boolean!
+	"""
+	Opaque cursor for fetching the next page.
+	"""
+	endCursor: String
+}
+
+"""
+Input payload for `patchSessionMessage`.
+
+Example:
+`{ sessionId: "borg:session:s1", messageIndex: 0, message: { text: "Updated" } }`
+"""
+input PatchSessionMessageInput {
+	"""
+	Target session URI.
+	"""
+	sessionId: Uri!
+	"""
+	Zero-based message index in the session timeline.
+	"""
+	messageIndex: Int!
+	"""
+	Replacement message payload.
+	"""
+	message: SessionMessageInput!
+}
+
+"""
+GraphQL `Policy` object.
+
+Usage notes:
+- Control-plane policy row.
+- `uses` traverses entities policy is attached to.
+
+Example:
+```graphql
+{ policies(first: 5) { edges { node { id uses(first: 5) { edges { node { entityId } } } } } } }
+```
+"""
+type Policy implements Node {
+	id: Uri!
+	policy: JsonValue! @deprecated(reason: "Legacy JSON policy payload. Prefer typed policy fields over time.")
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	"""
+	Entities that this policy is attached to.
+	
+	Example:
+	```graphql
+	{ policy(id: "borg:policy:p1") { uses(first: 20) { edges { node { entityId createdAt } } } } }
+	```
+	"""
+	uses(first: Int, after: String): PolicyUseConnection!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type PolicyConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [PolicyEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type PolicyEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: Policy!
+}
+
+"""
+GraphQL `PolicyUse` relationship object.
+
+Example:
+```graphql
+{ policies(first: 1) { edges { node { uses(first: 5) { edges { node { policyId entityId } } } } } } }
+```
+"""
+type PolicyUse {
+	"""
+	Policy URI.
+	"""
+	policyId: Uri!
+	"""
+	Target entity URI that policy applies to.
+	"""
+	entityId: Uri!
+	"""
+	Attachment timestamp.
+	"""
+	createdAt: DateTime!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type PolicyUseConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [PolicyUseEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type PolicyUseEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: PolicyUse!
+}
+
+"""
+GraphQL `Port` object for ingress/egress routing configuration.
+
+Usage notes:
+- Ports bind external channels (`http`, `telegram`, ...) to session routing.
+- `bindings` and `actorBindings` expose live routing maps.
+
+Example:
+```graphql
+{ port(name: "telegram") { id provider enabled bindings(first: 5) { edges { node { conversationKey sessionId } } } } }
+```
+"""
+type Port implements Node {
+	id: Uri!
+	name: String!
+	provider: String!
+	enabled: Boolean!
+	allowsGuests: Boolean!
+	assignedActorId: Uri
+	activeSessions: Int!
+	updatedAt: DateTime
+	settings: JsonValue! @deprecated(reason: "Legacy JSON settings. Prefer typed fields over time.")
+	"""
+	Optional default actor explicitly assigned to this port.
+	
+	Example:
+	```graphql
+	{ port(name: "telegram") { assignedActor { id name status } } }
+	```
+	"""
+	assignedActor: Actor
+	"""
+	Session binding rows for this port.
+	
+	Example:
+	```graphql
+	{ port(name: "telegram") { bindings(first: 10) { edges { node { conversationKey sessionId } } } } }
+	```
+	"""
+	bindings(first: Int, after: String): PortBindingConnection!
+	"""
+	Actor binding rows for this port.
+	
+	Example:
+	```graphql
+	{ port(name: "telegram") { actorBindings(first: 10) { edges { node { conversationKey actorId } } } } }
+	```
+	"""
+	actorBindings(first: Int, after: String): PortActorBindingConnection!
+}
+
+"""
+GraphQL `PortActorBinding` object mapping `conversationKey -> actorId`.
+
+Usage notes:
+- Stores actor override independent of session binding.
+- `actorId = null` means no override exists.
+
+Example:
+```graphql
+{ port(name: "telegram") { actorBindings(first: 5) { edges { node { conversationKey actorId } } } } }
+```
+"""
+type PortActorBinding {
+	id: String!
+	portName: String!
+	conversationKey: Uri!
+	actorId: Uri
+	"""
+	Expanded actor object for this actor binding row.
+	"""
+	actor: Actor
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type PortActorBindingConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [PortActorBindingEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type PortActorBindingEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: PortActorBinding!
+}
+
+"""
+GraphQL `PortBinding` object mapping `conversationKey -> sessionId`.
+
+Usage notes:
+- Canonical ingress-session routing row.
+- `actor` resolves optional per-conversation actor override.
+
+Example:
+```graphql
+{ port(name: "telegram") { bindings(first: 5) { edges { node { conversationKey sessionId actor { id } } } } } }
+```
+"""
+type PortBinding {
+	id: String!
+	portName: String!
+	conversationKey: Uri!
+	sessionId: Uri!
+	"""
+	Resolved session object for this binding.
+	
+	Example:
+	```graphql
+	{ port(name: "telegram") { bindings(first: 1) { edges { node { session { id updatedAt } } } } } }
+	```
+	"""
+	session: Session
+	"""
+	Actor bound to this conversation key, if any.
+	
+	Example:
+	```graphql
+	{ port(name: "telegram") { bindings(first: 1) { edges { node { actor { id name } } } } } }
+	```
+	"""
+	actor: Actor
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type PortBindingConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [PortBindingEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type PortBindingEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: PortBinding!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type PortConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [PortEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type PortEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: Port!
+}
+
+"""
+GraphQL `Provider` object for LLM provider configuration/usage.
+
+Usage notes:
+- `provider` is the configuration key.
+- `providerKind` maps to adapter family when needed.
+
+Example:
+```graphql
+{ provider(provider: "openai") { provider providerKind enabled defaultTextModel } }
+```
+"""
+type Provider implements Node {
+	id: Uri!
+	provider: String!
+	providerKind: String!
+	apiKey: String!
+	baseUrl: String
+	enabled: Boolean!
+	tokensUsed: Int!
+	lastUsed: DateTime
+	defaultTextModel: String
+	defaultAudioModel: String
+	createdAt: DateTime!
+	updatedAt: DateTime!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type ProviderConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [ProviderEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type ProviderEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: Provider!
+}
+
+"""
+Root query entrypoint for the Borg entity graph.
+
+Usage notes:
+- Use `node(id: Uri!)` for generic cross-entity lookup.
+- Use typed roots (`actor`, `tasks`, `apps`, etc.) for stronger discoverability.
+- Connection fields use cursor pagination via `first` + `after`.
+- For full operation recipes, see `crates/borg-gql/SCHEMA_USAGE.md`.
+
+Example:
+```graphql
+query {
+actors(first: 5) {
+edges { node { id name status } }
+}
+}
+```
+"""
+type QueryRoot {
+	"""
+	Fetches a single graph node by URI and resolves the concrete runtime type.
+	
+	Usage notes:
+	- Works for actor/behavior/session/port/provider/app/task/policy/user/memory entities.
+	- Use inline fragments to read type-specific fields.
+	
+	Example:
+	```graphql
+	query($id: Uri!) {
+	node(id: $id) {
+	id
+	... on Actor { name status }
+	}
+	}
+	```
+	"""
+	node(id: Uri!): Node
+	"""
+	Fetches one actor by URI.
+	
+	Example:
+	```graphql
+	query($id: Uri!) { actor(id: $id) { id name status } }
+	```
+	"""
+	actor(id: Uri!): Actor
+	"""
+	Lists actors ordered by most-recent update.
+	
+	Usage notes:
+	- `first` defaults to 25 and is capped server-side.
+	- Pass the previous `endCursor` into `after` to paginate.
+	
+	Example:
+	```graphql
+	query {
+	actors(first: 10) {
+	edges { cursor node { id name } }
+	pageInfo { hasNextPage endCursor }
+	}
+	}
+	```
+	"""
+	actors(first: Int, after: String): ActorConnection!
+	"""
+	Fetches one behavior by URI.
+	
+	Example:
+	```graphql
+	query($id: Uri!) { behavior(id: $id) { id name preferredProviderId } }
+	```
+	"""
+	behavior(id: Uri!): Behavior
+	"""
+	Lists behaviors ordered by most-recent update.
+	
+	Example:
+	```graphql
+	query {
+	behaviors(first: 20) {
+	edges { node { id name status requiredCapabilities } }
+	}
+	}
+	```
+	"""
+	behaviors(first: Int, after: String): BehaviorConnection!
+	"""
+	Fetches one session by URI.
+	
+	Example:
+	```graphql
+	query($id: Uri!) { session(id: $id) { id users portId updatedAt } }
+	```
+	"""
+	session(id: Uri!): Session
+	"""
+	Lists sessions ordered by most-recent update.
+	
+	Usage notes:
+	- Optional filters: `portId` and `userId`.
+	- Use nested `messages` for chat timeline reads.
+	
+	Example:
+	```graphql
+	query($port: Uri!) {
+	sessions(first: 10, portId: $port) {
+	edges { node { id updatedAt } }
+	}
+	}
+	```
+	"""
+	sessions(first: Int, after: String, portId: Uri, userId: Uri): SessionConnection!
+	"""
+	Fetches one port by canonical port name (for example `http`, `telegram`).
+	
+	Example:
+	```graphql
+	query { port(name: "http") { id name provider enabled } }
+	```
+	"""
+	port(name: String!): Port
+	"""
+	Fetches one port by URI.
+	
+	Example:
+	```graphql
+	query($id: Uri!) { portById(id: $id) { id name allowsGuests } }
+	```
+	"""
+	portById(id: Uri!): Port
+	"""
+	Lists ports ordered by activity.
+	
+	Usage notes:
+	- Includes `activeSessions` and binding relations for routing debugging.
+	
+	Example:
+	```graphql
+	query {
+	ports(first: 20) {
+	edges { node { name provider activeSessions } }
+	}
+	}
+	```
+	"""
+	ports(first: Int, after: String): PortConnection!
+	"""
+	Fetches one provider by provider key.
+	
+	Example:
+	```graphql
+	query { provider(provider: "openai") { id provider providerKind enabled } }
+	```
+	"""
+	provider(provider: String!): Provider
+	"""
+	Lists configured model providers.
+	
+	Example:
+	```graphql
+	query {
+	providers(first: 10) {
+	edges { node { provider providerKind defaultTextModel tokensUsed } }
+	}
+	}
+	```
+	"""
+	providers(first: Int, after: String): ProviderConnection!
+	"""
+	Fetches one app by URI.
+	
+	Example:
+	```graphql
+	query($id: Uri!) { app(id: $id) { id name slug status } }
+	```
+	"""
+	app(id: Uri!): App
+	"""
+	Fetches one app by slug.
+	
+	Example:
+	```graphql
+	query { appBySlug(slug: "github") { id name capabilities(first: 5) { edges { node { name } } } } }
+	```
+	"""
+	appBySlug(slug: String!): App
+	"""
+	Lists apps available in Borg.
+	
+	Example:
+	```graphql
+	query {
+	apps(first: 25) {
+	edges { node { id slug authStrategy availableSecrets } }
+	}
+	}
+	```
+	"""
+	apps(first: Int, after: String): AppListConnection!
+	"""
+	Fetches one clockwork job by `jobId`.
+	
+	Example:
+	```graphql
+	query { clockworkJob(jobId: "daily-digest") { id status nextRunAt } }
+	```
+	"""
+	clockworkJob(jobId: String!): ClockworkJob
+	"""
+	Lists clockwork jobs with optional status filtering.
+	
+	Example:
+	```graphql
+	query {
+	clockworkJobs(first: 20, status: "active") {
+	edges { node { id kind status runs(first: 5) { edges { node { id firedAt } } } } }
+	}
+	}
+	```
+	"""
+	clockworkJobs(first: Int, after: String, status: String): ClockworkJobConnection!
+	"""
+	Fetches one task by URI.
+	
+	Example:
+	```graphql
+	query($id: Uri!) {
+	task(id: $id) {
+	id title status
+	comments(first: 10) { edges { node { id body } } }
+	}
+	}
+	```
+	"""
+	task(id: Uri!): Task
+	"""
+	Lists top-level taskgraph tasks.
+	
+	Usage notes:
+	- Cursor format follows taskgraph ordering (`createdAt`, `id`).
+	- Traverse children via `Task.children`.
+	
+	Example:
+	```graphql
+	query {
+	tasks(first: 15) {
+	edges { node { id title status parentUri } }
+	}
+	}
+	```
+	"""
+	tasks(first: Int, after: String): TaskConnection!
+	"""
+	Fetches one memory entity by URI.
+	
+	Example:
+	```graphql
+	query($id: Uri!) { memoryEntity(id: $id) { id label props { key value { kind text } } } }
+	```
+	"""
+	memoryEntity(id: Uri!): MemoryEntity
+	"""
+	Searches memory entities by free text plus optional namespace/kind filters.
+	
+	Example:
+	```graphql
+	query {
+	memoryEntities(queryText: "alice", kind: "person", first: 10) {
+	edges { node { id label } }
+	}
+	}
+	```
+	"""
+	memoryEntities(queryText: String!, ns: String, kind: String, first: Int, after: String): MemoryEntityConnection!
+	"""
+	Fetches one fact row by fact URI string.
+	
+	Example:
+	```graphql
+	query($id: String!) { memoryFact(id: $id) { id arity value { kind text } } }
+	```
+	"""
+	memoryFact(id: String!): MemoryFact
+	"""
+	Lists fact rows with optional entity/field filters.
+	
+	Usage notes:
+	- Set `includeRetracted: true` for audit/replay tooling.
+	
+	Example:
+	```graphql
+	query($entity: Uri!) {
+	memoryFacts(entityId: $entity, first: 20) {
+	edges { node { id field value { kind text reference } } }
+	}
+	}
+	```
+	"""
+	memoryFacts(entityId: Uri, fieldId: Uri, includeRetracted: Boolean, first: Int, after: String): MemoryFactConnection!
+	"""
+	Fetches one policy by URI.
+	
+	Example:
+	```graphql
+	query($id: Uri!) { policy(id: $id) { id uses(first: 10) { edges { node { entityId } } } } }
+	```
+	"""
+	policy(id: Uri!): Policy
+	"""
+	Lists policies.
+	
+	Example:
+	```graphql
+	query { policies(first: 25) { edges { node { id updatedAt } } } }
+	```
+	"""
+	policies(first: Int, after: String): PolicyConnection!
+	"""
+	Fetches one user by URI.
+	
+	Example:
+	```graphql
+	query($id: Uri!) { user(id: $id) { id createdAt updatedAt } }
+	```
+	"""
+	user(id: Uri!): User
+	"""
+	Lists users.
+	
+	Example:
+	```graphql
+	query { users(first: 50) { edges { node { id updatedAt } } } }
+	```
+	"""
+	users(first: Int, after: String): UserConnection!
+}
+
+"""
+Task review lifecycle timestamps.
+
+Usage notes:
+- A field is `null` until that transition happened.
+"""
+type ReviewStateObject {
+	"""
+	Timestamp when task entered review.
+	"""
+	submittedAt: String
+	"""
+	Timestamp when task was approved.
+	"""
+	approvedAt: String
+	"""
+	Timestamp when changes were requested.
+	"""
+	changesRequestedAt: String
+}
+
+"""
+Placeholder input payload for `runActorChat`.
+
+Usage notes:
+- Reserved for future runtime integration.
+"""
+input RunActorChatInput {
+	"""
+	Actor URI to execute.
+	"""
+	actorId: Uri!
+	"""
+	Session URI context.
+	"""
+	sessionId: Uri!
+	"""
+	User URI authoring the request.
+	"""
+	userId: Uri!
+	"""
+	User text to send.
+	"""
+	text: String!
+}
+
+"""
+Placeholder response shape for `runActorChat`.
+"""
+type RunActorChatResult {
+	"""
+	Whether the runtime call succeeded.
+	"""
+	ok: Boolean!
+	"""
+	Human-readable status message.
+	"""
+	message: String!
+}
+
+"""
+Placeholder input payload for `runPortHttp`.
+
+Usage notes:
+- Reserved for future runtime integration.
+"""
+input RunPortHttpInput {
+	"""
+	User URI authoring the request.
+	"""
+	userId: Uri!
+	"""
+	User text to send.
+	"""
+	text: String!
+	"""
+	Optional existing session URI.
+	"""
+	sessionId: Uri
+	"""
+	Optional explicit actor URI override.
+	"""
+	actorId: Uri
+}
+
+"""
+Placeholder response shape for `runPortHttp`.
+"""
+type RunPortHttpResult {
+	"""
+	Whether the runtime call succeeded.
+	"""
+	ok: Boolean!
+	"""
+	Human-readable status message.
+	"""
+	message: String!
+}
+
+"""
+GraphQL `Session` object representing a conversation timeline.
+
+Usage notes:
+- Session is the primary unit for chat/task execution context.
+- Traverse into `messages` for timeline rows and `port` for ingress metadata.
+
+Example:
+```graphql
+{ session(id: "borg:session:s1") { id users portId messages(first: 5) { edges { node { messageIndex text } } } } }
+```
+"""
+type Session implements Node {
+	id: Uri!
+	users: [Uri!]!
+	portId: Uri!
+	updatedAt: DateTime!
+	"""
+	Port metadata associated with this session.
+	
+	Example:
+	```graphql
+	{ session(id: "borg:session:s1") { port { id name provider } } }
+	```
+	"""
+	port: Port
+	"""
+	Messages ordered by `messageIndex` ascending.
+	
+	Usage notes:
+	- Use `after` with connection cursor for incremental timeline sync.
+	
+	Example:
+	```graphql
+	{ session(id: "borg:session:s1") { messages(first: 20) { edges { node { messageIndex role text } } } } }
+	```
+	"""
+	messages(first: Int, after: String): SessionMessageConnection!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type SessionConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [SessionEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type SessionEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: Session!
+}
+
+"""
+GraphQL `SessionMessage` object for one indexed timeline row.
+
+Usage notes:
+- Prefer `messageType`, `role`, and `text` over deprecated `payload`.
+- `messageIndex` is zero-based and monotonic within a session.
+
+Example:
+```graphql
+{ session(id: "borg:session:s1") { messages(first: 5) { edges { node { messageIndex messageType role text } } } } }
+```
+"""
+type SessionMessage {
+	id: Uri!
+	sessionId: Uri!
+	messageIndex: Int!
+	createdAt: DateTime!
+	messageType: String!
+	role: String
+	text: String
+	payload: JsonValue! @deprecated(reason: "Legacy JSON payload. Prefer typed fields (`messageType`, `role`, `text`).")
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type SessionMessageConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [SessionMessageEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type SessionMessageEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: SessionMessage!
+}
+
+"""
+Typed message patch input used by session message mutations.
+
+Usage notes:
+- Prefer typed fields over `payload` for new clients.
+- At least one field should be set.
+"""
+input SessionMessageInput {
+	"""
+	Message type (`user`, `assistant`, `tool_call`, ...).
+	"""
+	messageType: String
+	"""
+	Logical role (`user`, `assistant`, `tool`, ...).
+	"""
+	role: String
+	"""
+	Primary human-readable content.
+	"""
+	text: String
+	"""
+	Transitional raw payload.
+	"""
+	payload: JsonValue
+}
+
+"""
+Input payload for `setTaskStatus`.
+
+Example:
+`{ taskId: "borg:task:t1", sessionUri: "borg:session:s-assignee", status: DOING }`
+"""
+input SetTaskStatusInput {
+	"""
+	Task URI to transition.
+	"""
+	taskId: Uri!
+	"""
+	Session URI authoring the status transition.
+	"""
+	sessionUri: Uri!
+	"""
+	Target status value.
+	"""
+	status: TaskStatusValue!
+}
+
+"""
+GraphQL `Task` object from TaskGraph.
+
+Usage notes:
+- Task is the core work item in durable taskgraph storage.
+- `parent`/`children` and `comments`/`events` provide graph + audit traversal.
+
+Example:
+```graphql
+{ task(id: "borg:task:t1") { id title status children(first: 5) { edges { node { id title } } } } }
+```
+"""
+type Task implements Node {
+	id: Uri!
+	title: String!
+	description: String!
+	definitionOfDone: String!
+	status: TaskStatusValue!
+	assigneeAgentId: String!
+	assigneeSessionId: Uri
+	reviewerAgentId: String!
+	reviewerSessionId: Uri
+	labels: [String!]!
+	parentUri: Uri
+	blockedBy: [Uri!]!
+	duplicateOf: Uri
+	references: [Uri!]!
+	createdAt: String!
+	updatedAt: String!
+	"""
+	Review state timestamps for this task.
+	
+	Example:
+	```graphql
+	{ task(id: "borg:task:t1") { review { submittedAt approvedAt changesRequestedAt } } }
+	```
+	"""
+	review: ReviewStateObject!
+	"""
+	Parent task object, if this task is a subtask.
+	
+	Example:
+	```graphql
+	{ task(id: "borg:task:t-child") { parent { id title status } } }
+	```
+	"""
+	parent: Task
+	"""
+	Child task rows directly under this task.
+	
+	Example:
+	```graphql
+	{ task(id: "borg:task:t-parent") { children(first: 20) { edges { node { id title status } } } } }
+	```
+	"""
+	children(first: Int, after: String): TaskConnection!
+	"""
+	Comment timeline for this task.
+	
+	Example:
+	```graphql
+	{ task(id: "borg:task:t1") { comments(first: 20) { edges { node { id body authorSessionUri } } } } }
+	```
+	"""
+	comments(first: Int, after: String): TaskCommentConnection!
+	"""
+	Event timeline for this task.
+	
+	Example:
+	```graphql
+	{ task(id: "borg:task:t1") { events(first: 20) { edges { node { id type createdAt } } } } }
+	```
+	"""
+	events(first: Int, after: String): TaskEventConnection!
+}
+
+"""
+GraphQL `TaskComment` object.
+
+Usage notes:
+- Comment timeline entries attached to a task.
+
+Example:
+```graphql
+{ task(id: "borg:task:t1") { comments(first: 5) { edges { node { id body createdAt } } } } }
+```
+"""
+type TaskComment {
+	"""
+	Stable comment identifier.
+	"""
+	id: String!
+	"""
+	Task URI that this comment belongs to.
+	"""
+	taskUri: Uri
+	"""
+	Session URI that authored this comment.
+	"""
+	authorSessionUri: Uri
+	"""
+	Comment body text.
+	"""
+	body: String!
+	"""
+	Comment creation timestamp.
+	"""
+	createdAt: String!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type TaskCommentConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [TaskCommentEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type TaskCommentEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: TaskComment!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type TaskConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [TaskEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type TaskEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: Task!
+}
+
+"""
+GraphQL `TaskEvent` object.
+
+Usage notes:
+- Event timeline entries with typed payload projection in `data`.
+
+Example:
+```graphql
+{ task(id: "borg:task:t1") { events(first: 5) { edges { node { id type data { kind status } } } } } }
+```
+"""
+type TaskEvent {
+	"""
+	Stable event identifier.
+	"""
+	id: String!
+	"""
+	Task URI that emitted this event.
+	"""
+	taskUri: Uri
+	"""
+	Session URI that triggered the event.
+	"""
+	actorSessionUri: Uri
+	type: String!
+	"""
+	Event payload projected into typed optional fields.
+	
+	Usage notes:
+	- Read `kind` first, then use matching payload fields.
+	
+	Example:
+	```graphql
+	{ task(id: "borg:task:t1") { events(first: 1) { edges { node { type data { kind status note } } } } } }
+	```
+	"""
+	data: TaskEventDataObject!
+	"""
+	Event creation timestamp.
+	"""
+	createdAt: String!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type TaskEventConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [TaskEventEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Typed projection of task event payload data.
+
+Usage notes:
+- `kind` indicates which subset of optional fields is populated.
+- Consumers should branch on `kind` before reading event-specific fields.
+"""
+type TaskEventDataObject {
+	"""
+	Event type/kind copied from the event row.
+	"""
+	kind: String!
+	"""
+	New assignee actor ID when relevant.
+	"""
+	assigneeAgentId: String
+	"""
+	New assignee session URI when relevant.
+	"""
+	assigneeSessionUri: String
+	"""
+	Reviewer actor ID when relevant.
+	"""
+	reviewerAgentId: String
+	"""
+	Reviewer session URI when relevant.
+	"""
+	reviewerSessionUri: String
+	"""
+	Parent task URI when relevant.
+	"""
+	parentUri: String
+	"""
+	Updated title when relevant.
+	"""
+	title: String
+	"""
+	Updated description when relevant.
+	"""
+	description: String
+	"""
+	Updated definition-of-done when relevant.
+	"""
+	definitionOfDone: String
+	"""
+	Previous assignee actor ID when relevant.
+	"""
+	oldAssigneeAgentId: String
+	"""
+	Previous assignee session URI when relevant.
+	"""
+	oldAssigneeSessionUri: String
+	"""
+	Replacement assignee actor ID when relevant.
+	"""
+	newAssigneeAgentId: String
+	"""
+	Replacement assignee session URI when relevant.
+	"""
+	newAssigneeSessionUri: String
+	"""
+	Label list payload when relevant.
+	"""
+	labels: [String!]
+	"""
+	Blocking dependency URI when relevant.
+	"""
+	blockedBy: String
+	"""
+	Duplicate-of URI when relevant.
+	"""
+	duplicateOf: String
+	"""
+	Reference URI when relevant.
+	"""
+	reference: String
+	"""
+	Status value when relevant.
+	"""
+	status: String
+	"""
+	Review submit timestamp when relevant.
+	"""
+	submittedAt: String
+	"""
+	Review approval timestamp when relevant.
+	"""
+	approvedAt: String
+	"""
+	Review changes-requested timestamp when relevant.
+	"""
+	changesRequestedAt: String
+	"""
+	Return status destination when relevant.
+	"""
+	returnTo: String
+	"""
+	Free-text note when relevant.
+	"""
+	note: String
+	"""
+	Subtask count delta when relevant.
+	"""
+	subtaskCount: Int
+	"""
+	Created comment ID when relevant.
+	"""
+	commentId: String
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type TaskEventEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: TaskEvent!
+}
+
+"""
+TaskGraph status values accepted by `setTaskStatus`.
+"""
+enum TaskStatusValue {
+	"""
+	Newly created task.
+	"""
+	PENDING
+	"""
+	Work in progress.
+	"""
+	DOING
+	"""
+	Awaiting review.
+	"""
+	REVIEW
+	"""
+	Completed successfully.
+	"""
+	DONE
+	"""
+	Explicitly discarded.
+	"""
+	DISCARDED
+}
+
+"""
+Input payload for `updateClockworkJob`.
+
+Usage notes:
+- Only pass fields that need to change.
+- `nextRunAt` set to `null` clears the existing schedule override.
+"""
+input UpdateClockworkJobInputGql {
+	"""
+	New scheduler kind.
+	"""
+	kind: String
+	"""
+	New target actor URI.
+	"""
+	actorId: Uri
+	"""
+	New target session URI.
+	"""
+	sessionId: Uri
+	"""
+	New message type.
+	"""
+	messageType: String
+	"""
+	New payload (transitional JSON).
+	"""
+	payload: JsonValue
+	"""
+	New headers (transitional JSON).
+	"""
+	headers: JsonValue
+	"""
+	New schedule spec (transitional JSON).
+	"""
+	scheduleSpec: JsonValue
+	"""
+	New next run timestamp (RFC3339 string).
+	"""
+	nextRunAt: String
+}
+
+"""
+Input payload for `updateTask`.
+
+Usage notes:
+- This mutation only patches text fields.
+- Leave fields as `null` to keep previous values.
+"""
+input UpdateTaskInputGql {
+	"""
+	Task URI to patch.
+	"""
+	taskId: Uri!
+	"""
+	Session URI authoring the update event.
+	"""
+	sessionUri: Uri!
+	"""
+	Optional new title.
+	"""
+	title: String
+	"""
+	Optional new description.
+	"""
+	description: String
+	"""
+	Optional new definition of done.
+	"""
+	definitionOfDone: String
+}
+
+"""
+Input payload for `upsertActor`.
+
+Example:
+`{ id: "borg:actor:planner", name: "Planner", defaultBehaviorId: "borg:behavior:default", status: "RUNNING" }`
+"""
+input UpsertActorInput {
+	"""
+	Stable actor URI (`borg:actor:*`).
+	"""
+	id: Uri!
+	"""
+	Human-readable actor name.
+	"""
+	name: String!
+	"""
+	System prompt used when running this actor.
+	"""
+	systemPrompt: String!
+	"""
+	Behavior URI linked as actor default.
+	"""
+	defaultBehaviorId: Uri!
+	"""
+	Actor lifecycle status (for example `RUNNING`).
+	"""
+	status: String!
+}
+
+"""
+Input payload for `upsertAppCapability`.
+
+Example:
+`{ appId: "borg:app:github", capabilityId: "borg:capability:issues-list", name: "issues.list", mode: "READ" }`
+"""
+input UpsertAppCapabilityInput {
+	"""
+	Parent app URI.
+	"""
+	appId: Uri!
+	"""
+	Capability URI.
+	"""
+	capabilityId: Uri!
+	"""
+	Capability display name.
+	"""
+	name: String!
+	"""
+	Short hint for UI/LLM tooltips.
+	"""
+	hint: String!
+	"""
+	Capability mode (`READ`, `WRITE`, ...).
+	"""
+	mode: String!
+	"""
+	Detailed execution instructions for this capability.
+	"""
+	instructions: String!
+	"""
+	Capability lifecycle status.
+	"""
+	status: String!
+}
+
+"""
+Input payload for `upsertAppConnection`.
+
+Example:
+`{ appId: "borg:app:github", connectionId: "borg:app-connection:octocat", status: "CONNECTED" }`
+"""
+input UpsertAppConnectionInput {
+	"""
+	Parent app URI.
+	"""
+	appId: Uri!
+	"""
+	Stable connection URI.
+	"""
+	connectionId: Uri!
+	"""
+	Owning user URI.
+	"""
+	ownerUserId: Uri
+	"""
+	Provider account identifier.
+	"""
+	providerAccountId: String
+	"""
+	External user/account identifier.
+	"""
+	externalUserId: String
+	"""
+	Connection lifecycle status.
+	"""
+	status: String!
+	"""
+	Transitional JSON metadata for this connection.
+	"""
+	connection: JsonValue
+}
+
+"""
+Input payload for `upsertApp`.
+
+Example:
+`{ id: "borg:app:github", name: "GitHub", slug: "github", status: "ACTIVE", authStrategy: "oauth2" }`
+"""
+input UpsertAppInput {
+	"""
+	Stable app URI (`borg:app:*`).
+	"""
+	id: Uri!
+	"""
+	Human-readable app name.
+	"""
+	name: String!
+	"""
+	URL-safe app slug.
+	"""
+	slug: String!
+	"""
+	Description shown in clients/admin screens.
+	"""
+	description: String!
+	"""
+	App lifecycle status.
+	"""
+	status: String!
+	"""
+	Whether this app is bundled by Borg.
+	"""
+	builtIn: Boolean! = false
+	"""
+	App source origin (`builtin`, `custom`, ...).
+	"""
+	source: String!
+	"""
+	Authentication strategy (`none`, `oauth2`, ...).
+	"""
+	authStrategy: String!
+	"""
+	Transitional JSON auth config.
+	"""
+	authConfig: JsonValue
+	"""
+	Secret keys this app expects to read.
+	"""
+	availableSecrets: [String!]! = []
+}
+
+"""
+Input payload for `upsertAppSecret`.
+
+Example:
+`{ appId: "borg:app:github", secretId: "borg:app-secret:token", key: "GITHUB_TOKEN", kind: "token" }`
+"""
+input UpsertAppSecretInput {
+	"""
+	Parent app URI.
+	"""
+	appId: Uri!
+	"""
+	Stable secret URI.
+	"""
+	secretId: Uri!
+	"""
+	Optional scoped connection URI.
+	"""
+	connectionId: Uri
+	"""
+	Secret key name.
+	"""
+	key: String!
+	"""
+	Secret value.
+	"""
+	value: String!
+	"""
+	Secret kind (`token`, `password`, ...).
+	"""
+	kind: String!
+}
+
+"""
+Input payload for `upsertBehavior`.
+
+Usage notes:
+- `requiredCapabilities` should contain runtime tool/capability names.
+
+Example:
+`{ id: "borg:behavior:default", name: "default", sessionTurnConcurrency: "serial", status: "ACTIVE" }`
+"""
+input UpsertBehaviorInput {
+	"""
+	Stable behavior URI (`borg:behavior:*`).
+	"""
+	id: Uri!
+	"""
+	Human-readable behavior label.
+	"""
+	name: String!
+	"""
+	System prompt attached to this behavior.
+	"""
+	systemPrompt: String!
+	"""
+	Preferred provider key (for example `openai`, `openrouter`).
+	"""
+	preferredProviderId: String
+	"""
+	Capability names required by this behavior.
+	"""
+	requiredCapabilities: [String!]! = []
+	"""
+	Turn execution policy (for example `serial`).
+	"""
+	sessionTurnConcurrency: String!
+	"""
+	Behavior lifecycle status.
+	"""
+	status: String!
+}
+
+"""
+Input payload for `upsertPortActorBinding`.
+
+Example:
+`{ portName: "telegram", conversationKey: "borg:conversation:123", actorId: "borg:actor:planner" }`
+"""
+input UpsertPortActorBindingInput {
+	"""
+	Port name (`http`, `telegram`, ...).
+	"""
+	portName: String!
+	"""
+	Conversation key used for routing.
+	"""
+	conversationKey: Uri!
+	"""
+	Actor URI or `null` to clear binding.
+	"""
+	actorId: Uri
+}
+
+"""
+Input payload for `upsertPortBinding`.
+
+Example:
+`{ portName: "telegram", conversationKey: "borg:conversation:123", sessionId: "borg:session:s1" }`
+"""
+input UpsertPortBindingInput {
+	"""
+	Port name (`http`, `telegram`, ...).
+	"""
+	portName: String!
+	"""
+	Stable conversation key for ingress routing.
+	"""
+	conversationKey: Uri!
+	"""
+	Target long-lived session URI.
+	"""
+	sessionId: Uri!
+}
+
+"""
+Input payload for `upsertPort`.
+
+Example:
+`{ name: "telegram", provider: "telegram", enabled: true, allowsGuests: false }`
+"""
+input UpsertPortInput {
+	"""
+	Port name (for example `http`, `telegram`).
+	"""
+	name: String!
+	"""
+	Port provider/transport family.
+	"""
+	provider: String!
+	"""
+	Whether the port can ingest traffic.
+	"""
+	enabled: Boolean!
+	"""
+	Whether unauthenticated users are accepted.
+	"""
+	allowsGuests: Boolean!
+	"""
+	Optional default actor for this port.
+	"""
+	assignedActorId: Uri
+	"""
+	Optional JSON settings object.
+	"""
+	settings: JsonValue
+}
+
+"""
+Input payload for `upsertProvider`.
+
+Example:
+`{ provider: "openai", providerKind: "openai", enabled: true, defaultTextModel: "gpt-4.1-mini" }`
+"""
+input UpsertProviderInput {
+	"""
+	Provider key (`openai`, `openrouter`, ...).
+	"""
+	provider: String!
+	"""
+	Provider family/kind. Defaults to `provider` when omitted.
+	"""
+	providerKind: String
+	"""
+	API key/token for this provider.
+	"""
+	apiKey: String
+	"""
+	Optional base URL override.
+	"""
+	baseUrl: String
+	"""
+	Enable or disable the provider.
+	"""
+	enabled: Boolean
+	"""
+	Preferred default model for text generation.
+	"""
+	defaultTextModel: String
+	"""
+	Preferred default model for audio/transcription.
+	"""
+	defaultAudioModel: String
+}
+
+"""
+Input payload for `upsertSession`.
+
+Example:
+`{ sessionId: "borg:session:s1", users: ["borg:user:u1"], port: "borg:port:http" }`
+"""
+input UpsertSessionInput {
+	"""
+	Session URI (`borg:session:*`).
+	"""
+	sessionId: Uri!
+	"""
+	Participant user URIs.
+	"""
+	users: [Uri!]!
+	"""
+	Owning ingress port URI.
+	"""
+	port: Uri!
+}
+
+scalar Uri
+
+"""
+GraphQL `User` object.
+
+Usage notes:
+- Minimal control-plane user row.
+- `profile` is transitional JSON.
+
+Example:
+```graphql
+{ users(first: 10) { edges { node { id createdAt updatedAt } } } }
+```
+"""
+type User implements Node {
+	id: Uri!
+	profile: JsonValue! @deprecated(reason: "Legacy JSON profile payload. Prefer typed profile fields over time.")
+	createdAt: DateTime!
+	updatedAt: DateTime!
+}
+
+"""
+Standard GraphQL connection wrapper.
+"""
+type UserConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [UserEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Cursor edge wrapper for connection pagination.
+"""
+type UserEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: User!
+}
+
+"""
+Marks an element of a GraphQL schema as no longer supported.
+"""
+directive @deprecated(reason: String = "No longer supported") on FIELD_DEFINITION | ARGUMENT_DEFINITION | INPUT_FIELD_DEFINITION | ENUM_VALUE
+"""
+Directs the executor to include this field or fragment only when the `if` argument is true.
+"""
+directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Directs the executor to skip this field or fragment when the `if` argument is true.
+"""
+directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Provides a scalar specification URL for specifying the behavior of custom scalar types.
+"""
+directive @specifiedBy(url: String!) on SCALAR
+schema {
+	query: QueryRoot
+	mutation: MutationRoot
+}
