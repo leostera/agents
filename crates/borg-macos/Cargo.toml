@@ -1,0 +1,18 @@
+[package]
+name = "borg-macos"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+borg-core = { path = "../borg-core" }
+borg-agent = { path = "../borg-agent" }
+tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-notification-sys = "0.6.9"
+
+[dev-dependencies]
+cpal = "0.17"

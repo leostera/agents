@@ -9,6 +9,8 @@ use borg_core::Uri;
 use borg_db::BorgDb;
 use borg_fs::{BorgFs, build_borg_fs_toolchain, default_borg_fs_tool_specs};
 use borg_llm::{default_provider_admin_tool_specs, run_provider_admin_tool};
+#[cfg(target_os = "macos")]
+use borg_macos::{MacOsRuntime, build_macos_toolchain};
 use borg_memory::{MemoryStore, build_memory_toolchain};
 use borg_ports_tools::{build_port_admin_toolchain, default_port_admin_tool_specs};
 use borg_shellmode::{ShellModeRuntime, build_shell_mode_toolchain};
@@ -39,14 +41,26 @@ pub fn build_exec_toolchain_with_context(
         build_agent_admin_toolchain(db.clone(), current_session_id, current_agent_id)?;
     let port_admin = build_port_admin_toolchain(db.clone())?;
     let provider_admin = build_provider_admin_toolchain(db)?;
-    code.merge(shell)?
+    let merged = code
+        .merge(shell)?
         .merge(ltm)?
         .merge(fs_tools)?
         .merge(taskgraph)?
         .merge(clockwork)?
         .merge(agent_admin)?
         .merge(port_admin)?
-        .merge(provider_admin)
+        .merge(provider_admin)?;
+
+    #[cfg(target_os = "macos")]
+    {
+        let macos = build_macos_toolchain(MacOsRuntime::default())?;
+        return merged.merge(macos);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(merged)
+    }
 }
 
 pub fn default_exec_admin_tool_specs() -> Vec<ToolSpec> {

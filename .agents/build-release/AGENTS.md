@@ -21,6 +21,17 @@ Scope: builds, workspace wiring, and command expectations.
 - CLI runtime:
   - `cargo run -p borg-cli -- init`
   - `cargo run -p borg-cli -- start`
+- macOS spike builds:
+  - `cargo test -p borg-macos`
+  - `scripts/macos/spike_menu_build.sh`
+  - `scripts/macos/spike_menu_run.sh`
+  - `scripts/macos/spike_voicewake_run.sh`
+- iOS companion spike builds:
+  - `scripts/ios/spike_companion_build.sh`
+  - `scripts/ios/spike_companion_test.sh`
+  - `scripts/ios/spike_companion_decode_fixture.sh`
+  - `scripts/ios/spike_companion_push_to_sim.sh`
+  - `scripts/ios/spike_companion_ios_build.sh` (may require installing iOS simulator/runtime components in Xcode)
 
 ## Build Guarantees
 
@@ -37,6 +48,7 @@ Scope: builds, workspace wiring, and command expectations.
   - `[profile.dev.package."*"] debug = 0`
   - This shortens local rebuilds while preserving debuginfo for workspace crates.
 - Embedded local inference compiles via `crates/borg-infer` using `llama-cpp-2` unconditionally.
+- Swift package spikes may emit a benign linker warning referencing `/opt/homebrew/opt/mariadb-connector-c/lib/mariadb`; this does not block `BorgMenuSpike` build/run.
 
 ## Commit Hygiene
 

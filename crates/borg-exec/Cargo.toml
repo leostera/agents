@@ -12,6 +12,7 @@ borg-llm = { path = "../borg-llm" }
 borg-memory = { path = "../borg-memory" }
 borg-codemode = { path = "../borg-codemode" }
 borg-shellmode = { path = "../borg-shellmode" }
+borg-macos = { path = "../borg-macos" }
 borg-fs = { path = "../borg-fs" }
 borg-apps = { path = "../borg-apps" }
 borg-taskgraph = { path = "../borg-taskgraph" }

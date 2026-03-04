@@ -13,6 +13,7 @@ members = [
   "crates/borg-infer",
   "crates/borg-llm",
   "crates/borg-memory",
+  "crates/borg-macos",
   "crates/borg-ports",
   "crates/borg-ports-tools",
   "crates/borg-codemode",

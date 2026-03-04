@@ -9,6 +9,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - `BorgDir` in `borg-core` is source of truth for `~/.borg/*` layout.
 - Embedded local inference v0 lives in `borg-infer` (separate from `borg-llm` provider orchestration).
 - `borg-llm` exposes a Hugging Face GGUF downloader that caches model files under `~/.borg/models/<org>/<model>/<revision>/...`.
+- macOS-local tool runtime lives in `borg-macos` and is merged into exec toolchains on macOS targets.
 
 ## Session-First Model
 - Session is the primary LLM interaction unit.
@@ -55,9 +56,12 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
   - `/model` to show current `agent_id` + model for the chat session.
   - `/model <model_name>` to persist model on the resolved agent spec.
 - Runtime toolchain now merges CodeMode + ShellMode + Memory + BorgFS + TaskGraph + Apps-listCapabilities in session turns.
+- Runtime toolchain merges `MacOS-*` tools from `borg-macos` on `target_os=macos`.
+- `borg-macos` notifications prefer native crate delivery (`mac-notification-sys`) with `osascript` fallback.
 - Runtime toolchain now includes executable Clockwork tools (`Clockwork-*`) for scheduler job CRUD/list-runs.
 - Agent-visible tool specs now include active DB app capabilities (in addition to default runtime tools), so the LLM can call those capability tools directly by name.
 - Default app seeding includes `borg:app:clockwork-system` with Clockwork capabilities mirrored from runtime tool specs.
+- Default app seeding includes `borg:app:macos-system` on macOS, with capabilities mirrored from `borg-macos` tool specs.
 - App `available_secrets` are exported into CodeMode env verbatim by the same key name (no `APP_` prefix translation).
 - `borg start` launches a Clockwork supervisor loop (1s poll cadence) as scheduler runtime scaffolding.
 - Local inference smoke commands:

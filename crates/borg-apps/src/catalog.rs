@@ -4,6 +4,7 @@ use borg_clockwork::default_clockwork_tool_specs;
 use borg_codemode::default_tool_specs as default_codemode_tool_specs;
 use borg_core::{Config, Uri};
 use borg_db::BorgDb;
+use borg_macos::default_tool_specs as default_macos_tool_specs;
 use borg_memory::default_memory_tool_specs;
 use borg_shellmode::default_tool_specs as default_shellmode_tool_specs;
 use borg_taskgraph::default_taskgraph_tool_specs;
@@ -44,16 +45,20 @@ pub struct DefaultAppsCatalog {
 
 impl DefaultAppsCatalog {
     pub fn new() -> Self {
-        Self {
-            apps: vec![
-                Self::build_codemode_app(),
-                Self::build_shellmode_app(),
-                Self::build_memory_app(),
-                Self::build_taskgraph_app(),
-                Self::build_clockwork_app(),
-                Self::build_github_app(),
-            ],
+        let mut apps = vec![
+            Self::build_codemode_app(),
+            Self::build_shellmode_app(),
+            Self::build_memory_app(),
+            Self::build_taskgraph_app(),
+            Self::build_clockwork_app(),
+            Self::build_github_app(),
+        ];
+
+        if cfg!(target_os = "macos") {
+            apps.push(Self::build_macos_app());
         }
+
+        Self { apps }
     }
 
     pub async fn install_missing(&self, db: &BorgDb) -> Result<InstallSummary> {
@@ -232,6 +237,24 @@ Call `GET https://api.github.com/user/repos` with `Authorization: Bearer <token>
                 .to_string(),
                 status: "active".to_string(),
             }],
+        }
+    }
+
+    fn build_macos_app() -> DefaultApp {
+        DefaultApp {
+            app_id: "borg:app:macos-system",
+            name: "macOS System",
+            slug: "macos-system",
+            description: "Core local macOS automation app for shortcuts, AppleScript templates, notifications, and host-level actions.",
+            status: "active",
+            auth_strategy: "none",
+            auth_config_json: json!({}),
+            available_secrets: Vec::new(),
+            capabilities: Self::tool_specs_to_capabilities(
+                "macos-system",
+                "shell",
+                default_macos_tool_specs(),
+            ),
         }
     }
 
