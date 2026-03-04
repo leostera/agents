@@ -11,7 +11,7 @@
     "build:www": "bun run --cwd www build",
     "build:storybook": "storybook build -c packages/borg-ui/.storybook -o packages/borg-ui/storybook-static",
     "build:web": "bun run vite build",
-    "check": "biome check --formatter-enabled=true --linter-enabled=false ./apps ./packages",
+    "check": "biome check --formatter-enabled=true --linter-enabled=false ./apps ./packages && bun run typecheck:fast",
     "dev": "bun run vite",
     "dev:www": "bun run --cwd www dev",
     "fix": "biome check --formatter-enabled=true --linter-enabled=true --write ./apps ./packages",
