@@ -20,8 +20,8 @@ Current frontend friction is structural:
 
 1. Core files are too large and blend routing, side effects, and UI rendering:
    1. `packages/borg-api/src/index.ts` (~1972 LOC)
-   2. `packages/borg-onboard/src/OnboardApp.tsx` (~1030 LOC)
-   3. `packages/borg-app/src/DashboardApp.tsx` (~870 LOC)
+   2. `packages/borg-onboarding/src/OnboardApp.tsx` (~1030 LOC)
+   3. `packages/borg-dashboard-control/src/DashboardApp.tsx` (~870 LOC)
 2. Route resolution is manual instead of router-native.
 3. There is no TypeScript project reference graph across frontend packages.
 4. App shell imports package internals through root Vite aliases, weakening boundaries.
@@ -144,7 +144,7 @@ Rules:
 
 Replace manual pathname parsing with router-native modules:
 
-1. `apps/borg-admin/src/app/router.tsx` owns route tree.
+1. `apps/borg-admin/src/routes.tsx` owns route tree.
 2. Route branches are lazy loaded.
 3. URL entity parsing moves to route params/loaders.
 4. Feature packages expose route-ready components and handlers.
@@ -160,8 +160,9 @@ GraphQL frontend contract:
 Client package shape:
 
 ```text
+crates/borg-gql/
+  schema.graphql                        # canonical schema source
 packages/borg-graphql-client/
-  schema.graphql
   src/generated/types.ts
   src/generated/operations.ts
   src/runtime/client.ts

@@ -1,1 +1,1 @@
-export { DashboardApp as DashboardControlApp } from "./DashboardApp";
+export { StandaloneDashboardControlApp as DashboardControlApp } from "./app/StandaloneDashboardControlApp";

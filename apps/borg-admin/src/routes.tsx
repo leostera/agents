@@ -1,4 +1,7 @@
-import { DashboardControlApp } from "@borg/dashboard-control";
+import {
+  DashboardLayout,
+  dashboardControlRoutes,
+} from "@borg/dashboard-control";
 import { DevModeApp } from "@borg/devmode";
 import { OnboardingApp } from "@borg/onboarding";
 import { TooltipProvider } from "@borg/ui";
@@ -9,29 +12,31 @@ function WithTooltip({ children }: { children: React.ReactNode }) {
   return <TooltipProvider>{children}</TooltipProvider>;
 }
 
-export const router = createBrowserRouter([
-  {
-    path: "/onboard",
-    element: (
-      <WithTooltip>
-        <OnboardingApp />
-      </WithTooltip>
-    ),
-  },
-  {
-    path: "/devmode/*",
-    element: (
-      <WithTooltip>
-        <DevModeApp />
-      </WithTooltip>
-    ),
-  },
-  {
-    path: "*",
-    element: (
-      <WithTooltip>
-        <DashboardControlApp />
-      </WithTooltip>
-    ),
-  },
-]);
+export const router: ReturnType<typeof createBrowserRouter> =
+  createBrowserRouter([
+    {
+      path: "/onboard",
+      element: (
+        <WithTooltip>
+          <OnboardingApp />
+        </WithTooltip>
+      ),
+    },
+    {
+      path: "/devmode/*",
+      element: (
+        <WithTooltip>
+          <DevModeApp />
+        </WithTooltip>
+      ),
+    },
+    {
+      path: "/",
+      element: (
+        <WithTooltip>
+          <DashboardLayout />
+        </WithTooltip>
+      ),
+      children: dashboardControlRoutes,
+    },
+  ]);

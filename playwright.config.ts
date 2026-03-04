@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
-  testDir: "packages/borg-app/e2e",
+  testDir: "apps/borg-admin/e2e",
   testMatch: "**/*.e2e.ts",
   timeout: 30_000,
   expect: {

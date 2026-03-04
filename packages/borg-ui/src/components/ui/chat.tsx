@@ -115,11 +115,11 @@ export function ChatMessage({ message }: ChatMessageProps) {
         <div className="chat-markdown markdown-body text-sm">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
-            urlTransform={(url, key, node) => {
+            urlTransform={(url) => {
               if (typeof url === "string" && url.startsWith("tg://")) {
                 return url;
               }
-              return defaultUrlTransform(url, key, node);
+              return defaultUrlTransform(url);
             }}
           >
             {isAssistantPending ? "_thinking..._" : message.text}

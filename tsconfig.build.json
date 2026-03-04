@@ -1,0 +1,15 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/borg-api" },
+    { "path": "packages/borg-ui" },
+    { "path": "packages/borg-i18n" },
+    { "path": "packages/borg-explorer" },
+    { "path": "packages/borg-devmode" },
+    { "path": "packages/borg-onboarding" },
+    { "path": "packages/borg-dashboard-control" },
+    { "path": "packages/borg-dashboard-observability" },
+    { "path": "packages/borg-graphql-client" },
+    { "path": "apps/borg-admin" }
+  ]
+}

@@ -51,6 +51,9 @@
         "@testing-library/jest-dom": "^6.9.1",
         "@testing-library/react": "^16.3.2",
         "@testing-library/user-event": "^14.6.1",
+        "@types/react": "^18.3.28",
+        "@types/react-dom": "^18.3.7",
+        "@typescript/native-preview": "^7.0.0-dev.20260303.1",
         "@vitejs/plugin-react-swc": "^3.11.0",
         "@vitest/browser-playwright": "^4.0.18",
         "@vitest/coverage-v8": "^4.0.18",
@@ -58,8 +61,22 @@
         "jsdom": "^28.1.0",
         "playwright": "^1.58.2",
         "storybook": "^10.2.13",
+        "typescript": "^5.9.3",
         "vite": "^7.3.1",
         "vitest": "^4.0.18",
+      },
+    },
+    "apps/borg-admin": {
+      "name": "@borg/admin",
+      "version": "0.1.0",
+      "dependencies": {
+        "@borg/dashboard-control": "workspace:*",
+        "@borg/devmode": "workspace:*",
+        "@borg/i18n": "workspace:*",
+        "@borg/onboarding": "workspace:*",
+        "@borg/ui": "workspace:*",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
       },
     },
     "packages/borg-agent-sdk": {
@@ -73,18 +90,24 @@
       "name": "@borg/api",
       "version": "0.1.0",
     },
-    "packages/borg-app": {
-      "name": "@borg/app",
+    "packages/borg-dashboard-control": {
+      "name": "@borg/dashboard-control",
       "version": "0.1.0",
       "dependencies": {
         "@borg/api": "workspace:*",
-        "@borg/devmode": "workspace:*",
         "@borg/explorer": "workspace:*",
-        "@borg/i18n": "workspace:*",
         "@borg/ui": "workspace:*",
-        "@iconify/react": "^5.2.1",
+        "lucide-react": "^0.474.0",
         "react": "^18.3.1",
         "react-dom": "^18.3.1",
+        "react-router-dom": "^6.30.3",
+      },
+    },
+    "packages/borg-dashboard-observability": {
+      "name": "@borg/dashboard-observability",
+      "version": "0.1.0",
+      "dependencies": {
+        "react": "^18.3.1",
       },
     },
     "packages/borg-devmode": {
@@ -110,9 +133,27 @@
         "react-dom": "^18.0.0",
       },
     },
+    "packages/borg-graphql-client": {
+      "name": "@borg/graphql-client",
+      "version": "0.1.0",
+      "dependencies": {
+        "react": "^18.3.1",
+      },
+    },
     "packages/borg-i18n": {
       "name": "@borg/i18n",
       "version": "0.1.0",
+    },
+    "packages/borg-onboarding": {
+      "name": "@borg/onboarding",
+      "version": "0.1.0",
+      "dependencies": {
+        "@borg/api": "workspace:*",
+        "@borg/i18n": "workspace:*",
+        "@borg/ui": "workspace:*",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+      },
     },
     "packages/borg-ui": {
       "name": "@borg/ui",
@@ -229,17 +270,25 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.4.4", "", { "os": "win32", "cpu": "x64" }, "sha512-gnOHKVPFAAPrpoPt2t+Q6FZ7RPry/FDV3GcpU53P3PtLNnQjBmKyN2Vh/JtqXet+H4pme8CC76rScwdjDcT1/A=="],
 
+    "@borg/admin": ["@borg/admin@workspace:apps/borg-admin"],
+
     "@borg/agent-sdk": ["@borg/agent-sdk@workspace:packages/borg-agent-sdk"],
 
     "@borg/api": ["@borg/api@workspace:packages/borg-api"],
 
-    "@borg/app": ["@borg/app@workspace:packages/borg-app"],
+    "@borg/dashboard-control": ["@borg/dashboard-control@workspace:packages/borg-dashboard-control"],
+
+    "@borg/dashboard-observability": ["@borg/dashboard-observability@workspace:packages/borg-dashboard-observability"],
 
     "@borg/devmode": ["@borg/devmode@workspace:packages/borg-devmode"],
 
     "@borg/explorer": ["@borg/explorer@workspace:packages/borg-explorer"],
 
+    "@borg/graphql-client": ["@borg/graphql-client@workspace:packages/borg-graphql-client"],
+
     "@borg/i18n": ["@borg/i18n@workspace:packages/borg-i18n"],
+
+    "@borg/onboarding": ["@borg/onboarding@workspace:packages/borg-onboarding"],
 
     "@borg/ui": ["@borg/ui@workspace:packages/borg-ui"],
 
@@ -899,7 +948,11 @@
 
     "@types/pg-pool": ["@types/pg-pool@2.0.6", "", { "dependencies": { "@types/pg": "*" } }, "sha512-TaAUE5rq2VQYxab5Ts7WZhKNmuN78Q6PiFonTDdpbx8a1H0M1vhy3rhiMjl+e2iHmogyMw7jZF4FrE6eJUy5HQ=="],
 
-    "@types/react": ["@types/react@19.2.14", "", { "dependencies": { "csstype": "^3.2.2" } }, "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w=="],
+    "@types/prop-types": ["@types/prop-types@15.7.15", "", {}, "sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw=="],
+
+    "@types/react": ["@types/react@18.3.28", "", { "dependencies": { "@types/prop-types": "*", "csstype": "^3.2.2" } }, "sha512-z9VXpC7MWrhfWipitjNdgCauoMLRdIILQsAEV+ZesIzBq/oUlxk0m3ApZuMFCXdnS4U7KrI+l3WRUEGQ8K1QKw=="],
+
+    "@types/react-dom": ["@types/react-dom@18.3.7", "", { "peerDependencies": { "@types/react": "^18.0.0" } }, "sha512-MEe3UeoENYVFXzoXEWsvcpg6ZvlrFNlOQ7EOsvhI3CfAXwzPfO8Qwuxd40nepsYKqyyVQnTdEfv68q91yLcKrQ=="],
 
     "@types/resolve": ["@types/resolve@1.20.6", "", {}, "sha512-A4STmOXPhMUtHH+S6ymgE2GiBSMqf4oTvcQZMcHzokuTLVYzXTB8ttjcgxOVaAp2lGwEdzZ0J+cRbbeevQj1UQ=="],
 
@@ -914,6 +967,22 @@
     "@types/validate-npm-package-name": ["@types/validate-npm-package-name@4.0.2", "", {}, "sha512-lrpDziQipxCEeK5kWxvljWYhUvOiB2A9izZd9B2AFarYAkqZshb4lPbRs7zKEic6eGtH8V/2qJW+dPp9OtF6bw=="],
 
     "@types/yauzl": ["@types/yauzl@2.10.3", "", { "dependencies": { "@types/node": "*" } }, "sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q=="],
+
+    "@typescript/native-preview": ["@typescript/native-preview@7.0.0-dev.20260304.1", "", { "optionalDependencies": { "@typescript/native-preview-darwin-arm64": "7.0.0-dev.20260304.1", "@typescript/native-preview-darwin-x64": "7.0.0-dev.20260304.1", "@typescript/native-preview-linux-arm": "7.0.0-dev.20260304.1", "@typescript/native-preview-linux-arm64": "7.0.0-dev.20260304.1", "@typescript/native-preview-linux-x64": "7.0.0-dev.20260304.1", "@typescript/native-preview-win32-arm64": "7.0.0-dev.20260304.1", "@typescript/native-preview-win32-x64": "7.0.0-dev.20260304.1" }, "bin": { "tsgo": "bin/tsgo.js" } }, "sha512-Xj0ZeHEy+yJ/bIg6psPwl0POvBf1j5u7IZAXsUqgvgWbMIvdM9JOGmhpifcj6j28LcXM6GTvXUoXwlatxJ73Qg=="],
+
+    "@typescript/native-preview-darwin-arm64": ["@typescript/native-preview-darwin-arm64@7.0.0-dev.20260304.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-TnTUxYt+dShRSoeOldx7VlKoEG+bvPHnyPEBImlNc7c3WP0AHYyNHrNg6EbLbzkOorARtd06J3Vk+XYzkrRzZg=="],
+
+    "@typescript/native-preview-darwin-x64": ["@typescript/native-preview-darwin-x64@7.0.0-dev.20260304.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-1nwXX1zbyYI3sDKdaR8NsBdM7LmE0J6OzVtlWgEJ/8YR7oC2/HY6/SfShF3DHHcEOHOFxRLbkJ9zVTJJspWLCw=="],
+
+    "@typescript/native-preview-linux-arm": ["@typescript/native-preview-linux-arm@7.0.0-dev.20260304.1", "", { "os": "linux", "cpu": "arm" }, "sha512-TXZClCJVteK2f9gcI+I7o1Sxgq3qdMtraXOP9GZF8o0sKCLdDWENN8uORfZSeQv2qOJohcKvrrEz6LLSSngvEg=="],
+
+    "@typescript/native-preview-linux-arm64": ["@typescript/native-preview-linux-arm64@7.0.0-dev.20260304.1", "", { "os": "linux", "cpu": "arm64" }, "sha512-cw+xqroXtsk/yVTKbelcPWMd6oZdET9kNWmigyc189KWwzOu2eq2EPXPQsrhEigq8O3j0xW0z3q2oqG+smOiXg=="],
+
+    "@typescript/native-preview-linux-x64": ["@typescript/native-preview-linux-x64@7.0.0-dev.20260304.1", "", { "os": "linux", "cpu": "x64" }, "sha512-EXufnN4PG0HYBHYbHXQXXRXtaQKuKBT3e6nxPhKnwpBBgy2MgWDIxzroTLvI9+SllhbJQzHNZOWiB+SU+KdCNw=="],
+
+    "@typescript/native-preview-win32-arm64": ["@typescript/native-preview-win32-arm64@7.0.0-dev.20260304.1", "", { "os": "win32", "cpu": "arm64" }, "sha512-Be9yyDDbT/PEdNlhG+NXT47fwuiIeN0+/9BkeRKkiLgzY8DqQIC9w5FRWmwAJ+9PVa2sKr5cjD1SpJDHGrPIrA=="],
+
+    "@typescript/native-preview-win32-x64": ["@typescript/native-preview-win32-x64@7.0.0-dev.20260304.1", "", { "os": "win32", "cpu": "x64" }, "sha512-lg/w+rZ9NIUoqSsk2TbtDsqyD9nW0/rhTMYd14RFP7vuNijLrTbl7GPiMhFtMxaqCSOFapwbql7/3lU4BKHB6g=="],
 
     "@ungap/structured-clone": ["@ungap/structured-clone@1.3.0", "", {}, "sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g=="],
 

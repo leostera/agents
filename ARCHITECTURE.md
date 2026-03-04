@@ -1,6 +1,6 @@
 # Borg Architecture
 
-Last updated: 2026-02-27
+Last updated: 2026-03-04
 
 ## 1. Purpose
 Borg is a local-first, single-binary runtime (`borg-cli`) with durable state in `~/.borg/*`.
@@ -109,8 +109,9 @@ flowchart TD
 
 Current UI state:
 - Single SPA root is `apps/borg-admin`.
-- `/dashboard` renders the dashboard shell.
-- `/onboard` route mounts `@borg/onboarding`, a chat-first setup flow for provider/local mode, assistant creation, and first channel connection.
+- `/` renders dashboard control via router-native route modules from `@borg/dashboard-control`.
+- `/onboard` mounts `@borg/onboarding`, a chat-first setup flow for provider/local mode, assistant creation, and first channel connection.
+- `/devmode/*` mounts `@borg/devmode`.
 
 ## 8. Port Delivery Order
 ```mermaid

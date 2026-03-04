@@ -255,7 +255,12 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
                 selectedValue={form.chatModel}
                 onSelectedValueChange={(value) =>
                   setForm((current) =>
-                    current ? { ...current, chatModel: value ?? null } : current
+                    current
+                      ? {
+                          ...current,
+                          chatModel: typeof value === "string" ? value : null,
+                        }
+                      : current
                   )
                 }
               >
@@ -284,7 +289,10 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
                 onSelectedValueChange={(value) =>
                   setForm((current) =>
                     current
-                      ? { ...current, audioModel: value ?? null }
+                      ? {
+                          ...current,
+                          audioModel: typeof value === "string" ? value : null,
+                        }
                       : current
                   )
                 }

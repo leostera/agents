@@ -726,11 +726,13 @@ export function OnboardApp() {
   );
 
   React.useEffect(() => {
+    const portId = setup.portId;
+    const actorId = setup.actorId;
     if (
       (step !== "testMessage" && step !== "complete") ||
       setup.channel !== "telegram" ||
-      !setup.portId ||
-      !setup.actorId
+      !portId ||
+      !actorId
     ) {
       return;
     }
@@ -743,9 +745,9 @@ export function OnboardApp() {
       try {
         let sessionId = mirroredSessionId;
         if (!sessionId) {
-          const bindings = await borgApi.listPortBindings(setup.portId, 50);
+          const bindings = await borgApi.listPortBindings(portId, 50);
           const match =
-            bindings.find((binding) => binding.agent_id === setup.actorId) ??
+            bindings.find((binding) => binding.agent_id === actorId) ??
             bindings[0];
           sessionId = match?.session_id ?? null;
           if (sessionId) {

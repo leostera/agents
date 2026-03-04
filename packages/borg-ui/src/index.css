@@ -3,9 +3,11 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/noto-sans";
 @source "../**/*.{ts,tsx}";
-@source "../../borg-app/src/**/*.{ts,tsx}";
 @source "../../borg-devmode/src/**/*.{ts,tsx}";
 @source "../../borg-explorer/src/**/*.{ts,tsx}";
+@source "../../borg-dashboard-control/src/**/*.{ts,tsx}";
+@source "../../borg-onboarding/src/**/*.{ts,tsx}";
+@source "../../../apps/borg-admin/src/**/*.{ts,tsx}";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -213,6 +215,19 @@
 
   .chat-markdown li + li {
     margin-top: 0.2rem;
+  }
+
+  /* react-markdown + GFM often wraps list item text in <p>; keep bullets/numbers inline */
+  .chat-markdown li > p {
+    display: inline;
+    margin: 0;
+  }
+
+  /* ensure nested lists under a list-item paragraph still get spacing and block layout */
+  .chat-markdown li > p + ul,
+  .chat-markdown li > p + ol {
+    display: block;
+    margin-top: 0.35rem;
   }
 
   .chat-markdown a {

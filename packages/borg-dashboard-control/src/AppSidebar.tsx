@@ -33,7 +33,7 @@ type SectionGroup = {
 type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
   title?: string;
   activeId: string;
-  onSelect: (id: string) => void;
+  onSelectSection: (id: string) => void;
   onOpenCommandMenu?: () => void;
   groups: SectionGroup[];
   username: string;
@@ -43,7 +43,7 @@ type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
 export function AppSidebar({
   title = "Borg",
   activeId,
-  onSelect,
+  onSelectSection,
   onOpenCommandMenu,
   groups,
   username,
@@ -104,7 +104,7 @@ export function AppSidebar({
                     <SidebarMenuItem key={section.id} className="space-y-1">
                       <SidebarMenuButton
                         isActive={isParentActive}
-                        onClick={() => onSelect(section.id)}
+                        onClick={() => onSelectSection(section.id)}
                         className="h-9 justify-start rounded-lg text-[13px] font-medium"
                       >
                         <Icon className="size-4" />
@@ -118,7 +118,7 @@ export function AppSidebar({
                               <SidebarMenuButton
                                 key={child.id}
                                 isActive={activeId === child.id}
-                                onClick={() => onSelect(child.id)}
+                                onClick={() => onSelectSection(child.id)}
                                 className="h-8 justify-start rounded-md text-[12px] font-medium"
                               >
                                 <ChildIcon className="size-3.5" />

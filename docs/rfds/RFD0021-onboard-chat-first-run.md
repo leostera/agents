@@ -8,7 +8,7 @@
 ## Summary
 [summary]: #summary
 
-This RFD replaces the current `/onboard` placeholder with a chat-first onboarding flow implemented in `@borg/onboard` and mounted by `borg-app`. The flow is optimized for non-programmers who can follow a few guided steps.
+This RFD replaces the current `/onboard` placeholder with a chat-first onboarding flow implemented in `@borg/onboarding` and mounted by `apps/borg-admin`. The flow is optimized for non-programmers who can follow a few guided steps.
 
 Moment of truth: onboarding is successful when a non-programmer can message their new Telegram bot and receive a useful reply.
 
@@ -111,7 +111,7 @@ flowchart TD
 This RFD defines:
 
 1. chat UX contract for `/onboard`
-2. package boundary with dedicated `@borg/onboard`
+2. package boundary with dedicated `@borg/onboarding`
 3. creation sequence for provider/behavior/actor/port
 4. validation and error UX requirements
 5. test-message completion contract
@@ -124,8 +124,8 @@ This RFD does not define:
 
 ### Package boundary
 
-1. `packages/borg-onboard`: flow state machine, onboarding transcript, onboarding mutations, completion view
-2. `packages/borg-app`: route mount only for `/onboard`
+1. `packages/borg-onboarding`: flow state machine, onboarding transcript, onboarding mutations, completion view
+2. `apps/borg-admin`: route mount for `/onboard`
 3. `packages/borg-ui`: shared chat primitives (`ChatThread`, `ChatComposerShell`, etc.)
 
 ### API contract
@@ -224,8 +224,8 @@ Completion view on `/onboard` must include:
 
 ### Rollout plan
 
-1. create `packages/borg-onboard` and implement flow state machine
-2. mount onboarding package from `packages/borg-app` at `/onboard`
+1. create `packages/borg-onboarding` and implement flow state machine
+2. mount onboarding package from `apps/borg-admin` at `/onboard`
 3. add onboarding copy to `@borg/i18n`
 4. add tests for state transitions and validation failure states
 5. validate manually with `bun run dev` and built SPA path

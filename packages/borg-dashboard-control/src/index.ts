@@ -1,4 +1,8 @@
 import "./app.css";
 
-export { DashboardApp } from "./DashboardApp";
-export { DashboardControlApp } from "./feature";
+export { DashboardLayout } from "./app/DashboardLayout";
+export {
+  dashboardControlRoutes,
+  resolveActiveSectionId,
+} from "./app/routing";
+export { StandaloneDashboardControlApp as DashboardControlApp } from "./app/StandaloneDashboardControlApp";

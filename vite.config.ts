@@ -67,13 +67,6 @@ export default defineConfig({
         ),
       },
       {
-        find: "@borg/onboard",
-        replacement: path.resolve(
-          dirname,
-          "packages/borg-onboard/src/index.ts"
-        ),
-      },
-      {
         find: "@borg/onboarding",
         replacement: path.resolve(
           dirname,
