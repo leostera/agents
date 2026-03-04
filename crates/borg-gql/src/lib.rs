@@ -150,7 +150,7 @@ struct PageInfo {
 macro_rules! connection_types {
     ($edge:ident, $conn:ident, $node_ty:ty) => {
         #[derive(SimpleObject, Clone)]
-        /// Cursor edge wrapper for connection pagination.
+        /// Relay-style edge carrying one node plus cursor for forward pagination.
         struct $edge {
             /// Opaque edge cursor to pass back into `after`.
             cursor: String,
@@ -159,7 +159,7 @@ macro_rules! connection_types {
         }
 
         #[derive(SimpleObject, Clone)]
-        /// Standard GraphQL connection wrapper.
+        /// Relay-style page container for cursor-based list traversal.
         struct $conn {
             /// Returned edges for the current page.
             edges: Vec<$edge>,
@@ -2452,7 +2452,7 @@ impl SubscriptionRoot {
 }
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
-/// Notification kind classification for `SessionNotification`.
+/// High-level classification for UI routing of session notifications.
 enum SessionNotificationKind {
     /// Assistant-authored response message.
     AssistantReply,
@@ -2537,7 +2537,7 @@ impl SessionNotificationObject {
     }
 }
 
-/// Input payload for `upsertActor`.
+/// Creates or updates an actor definition in Borg's control-plane graph.
 ///
 /// Example:
 /// `{ id: "borg:actor:planner", name: "Planner", defaultBehaviorId: "borg:behavior:default", status: "RUNNING" }`
@@ -2555,7 +2555,7 @@ struct UpsertActorInput {
     status: String,
 }
 
-/// Input payload for `upsertBehavior`.
+/// Creates or updates a behavior profile that actors can run with.
 ///
 /// Usage notes:
 /// - `requiredCapabilities` should contain runtime tool/capability names.
@@ -2581,7 +2581,7 @@ struct UpsertBehaviorInput {
     status: String,
 }
 
-/// Input payload for `upsertPort`.
+/// Creates or updates a runtime ingress/egress port configuration.
 ///
 /// Example:
 /// `{ name: "telegram", provider: "telegram", enabled: true, allowsGuests: false }`
@@ -2601,7 +2601,7 @@ struct UpsertPortInput {
     settings: Option<JsonValue>,
 }
 
-/// Input payload for `upsertPortBinding`.
+/// Creates or updates the conversation-to-session routing row for a port.
 ///
 /// Example:
 /// `{ portName: "telegram", conversationKey: "borg:conversation:123", sessionId: "borg:session:s1" }`
@@ -2615,7 +2615,7 @@ struct UpsertPortBindingInput {
     session_id: UriScalar,
 }
 
-/// Input payload for `upsertPortActorBinding`.
+/// Creates or updates the conversation-to-actor override row for a port.
 ///
 /// Example:
 /// `{ portName: "telegram", conversationKey: "borg:conversation:123", actorId: "borg:actor:planner" }`
@@ -2629,7 +2629,7 @@ struct UpsertPortActorBindingInput {
     actor_id: Option<UriScalar>,
 }
 
-/// Input payload for `upsertProvider`.
+/// Creates or updates an LLM provider configuration entry.
 ///
 /// Example:
 /// `{ provider: "openai", providerKind: "openai", enabled: true, defaultTextModel: "gpt-4.1-mini" }`
@@ -2651,7 +2651,7 @@ struct UpsertProviderInput {
     default_audio_model: Option<String>,
 }
 
-/// Input payload for `upsertApp`.
+/// Creates or updates an app integration definition.
 ///
 /// Example:
 /// `{ id: "borg:app:github", name: "GitHub", slug: "github", status: "ACTIVE", authStrategy: "oauth2" }`
@@ -2681,7 +2681,7 @@ struct UpsertAppInput {
     available_secrets: Vec<String>,
 }
 
-/// Input payload for `upsertAppCapability`.
+/// Creates or updates a capability exposed by an app integration.
 ///
 /// Example:
 /// `{ appId: "borg:app:github", capabilityId: "borg:capability:issues-list", name: "issues.list", mode: "READ" }`
@@ -2703,7 +2703,7 @@ struct UpsertAppCapabilityInput {
     status: String,
 }
 
-/// Input payload for `upsertAppConnection`.
+/// Creates or updates an external-account connection row for an app.
 ///
 /// Example:
 /// `{ appId: "borg:app:github", connectionId: "borg:app-connection:octocat", status: "CONNECTED" }`
@@ -2725,7 +2725,7 @@ struct UpsertAppConnectionInput {
     connection: Option<JsonValue>,
 }
 
-/// Input payload for `upsertAppSecret`.
+/// Creates or updates secret material attached to an app or app connection.
 ///
 /// Example:
 /// `{ appId: "borg:app:github", secretId: "borg:app-secret:token", key: "GITHUB_TOKEN", kind: "token" }`
@@ -2745,7 +2745,7 @@ struct UpsertAppSecretInput {
     kind: String,
 }
 
-/// Input payload for `upsertSession`.
+/// Creates or updates a long-lived session in the Borg runtime graph.
 ///
 /// Example:
 /// `{ sessionId: "borg:session:s1", users: ["borg:user:u1"], port: "borg:port:http" }`
@@ -2759,7 +2759,7 @@ struct UpsertSessionInput {
     port: UriScalar,
 }
 
-/// Typed message patch input used by session message mutations.
+/// Typed session message shape used by append/patch mutations.
 ///
 /// Usage notes:
 /// - Prefer typed fields over `payload` for new clients.
@@ -2776,7 +2776,7 @@ struct SessionMessageInput {
     payload: Option<JsonValue>,
 }
 
-/// Input payload for `appendSessionMessage`.
+/// Appends a new timeline message to an existing session.
 ///
 /// Example:
 /// `{ sessionId: "borg:session:s1", messageType: "user", role: "user", text: "Hello" }`
@@ -2794,7 +2794,7 @@ struct AppendSessionMessageInput {
     payload: Option<JsonValue>,
 }
 
-/// Input payload for `patchSessionMessage`.
+/// Replaces one indexed timeline message inside a session.
 ///
 /// Example:
 /// `{ sessionId: "borg:session:s1", messageIndex: 0, message: { text: "Updated" } }`
@@ -2808,7 +2808,7 @@ struct PatchSessionMessageInput {
     message: SessionMessageInput,
 }
 
-/// Input payload for `createClockworkJob`.
+/// Creates a new clockwork scheduler job definition.
 ///
 /// Example:
 /// `{ jobId: "daily-digest", kind: "cron", actorId: "borg:actor:planner", sessionId: "borg:session:s1" }`
@@ -2834,7 +2834,7 @@ struct CreateClockworkJobInputGql {
     next_run_at: Option<String>,
 }
 
-/// Input payload for `updateClockworkJob`.
+/// Patches mutable fields on an existing clockwork scheduler job.
 ///
 /// Usage notes:
 /// - Only pass fields that need to change.
@@ -2859,7 +2859,7 @@ struct UpdateClockworkJobInputGql {
     next_run_at: Option<String>,
 }
 
-/// Input payload for `createTask`.
+/// Creates a new durable taskgraph task.
 ///
 /// Example:
 /// `{ sessionUri: "borg:session:s1", creatorAgentId: "borg:actor:creator", assigneeAgentId: "borg:actor:assignee", title: "Ship docs" }`
@@ -2892,7 +2892,7 @@ struct CreateTaskInputGql {
     labels: Vec<String>,
 }
 
-/// Input payload for `updateTask`.
+/// Patches editable text fields on an existing taskgraph task.
 ///
 /// Usage notes:
 /// - This mutation only patches text fields.
@@ -2911,7 +2911,7 @@ struct UpdateTaskInputGql {
     definition_of_done: Option<String>,
 }
 
-/// Input payload for `setTaskStatus`.
+/// Requests a task status transition under taskgraph rules.
 ///
 /// Example:
 /// `{ taskId: "borg:task:t1", sessionUri: "borg:session:s-assignee", status: DOING }`
@@ -2925,7 +2925,7 @@ struct SetTaskStatusInput {
     status: TaskStatusValue,
 }
 
-/// Placeholder input payload for `runActorChat`.
+/// Future runtime input shape for direct actor chat execution.
 ///
 /// Usage notes:
 /// - Reserved for future runtime integration.
@@ -2941,7 +2941,7 @@ struct RunActorChatInput {
     text: String,
 }
 
-/// Placeholder input payload for `runPortHttp`.
+/// Future runtime input shape mirroring HTTP port execution.
 ///
 /// Usage notes:
 /// - Reserved for future runtime integration.
@@ -3004,7 +3004,10 @@ impl From<AppendSessionMessageInput> for SessionMessageInput {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `Actor` object.
+/// Runtime actor definition.
+///
+/// An actor is a named, long-lived Borg worker/persona with a default behavior
+/// and its own session participation history.
 ///
 /// Usage notes:
 /// - Represents a runnable actor spec (`borg:actor:*`).
@@ -3115,7 +3118,10 @@ impl ActorObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `Behavior` object attached to actors.
+/// Actor behavior profile.
+///
+/// A behavior captures system prompt, capability requirements, and model
+/// routing preferences that shape how an actor responds.
 ///
 /// Usage notes:
 /// - Behaviors define prompts, preferred provider, and required capabilities.
@@ -3202,7 +3208,10 @@ impl BehaviorObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `Session` object representing a conversation timeline.
+/// Conversation and execution timeline container.
+///
+/// A session is Borg's primary runtime context: messages append here, ports
+/// resolve into this identity, and actors operate within this thread.
 ///
 /// Usage notes:
 /// - Session is the primary unit for chat/task execution context.
@@ -3335,7 +3344,10 @@ impl SessionObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `SessionMessage` object for one indexed timeline row.
+/// Persisted timeline entry inside a session.
+///
+/// Session messages represent user inputs, assistant outputs, tool activity, and
+/// lifecycle events as ordered records.
 ///
 /// Usage notes:
 /// - Prefer `messageType`, `role`, and `text` over deprecated `payload`.
@@ -3398,7 +3410,10 @@ impl SessionMessageObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `Port` object for ingress/egress routing configuration.
+/// External transport adapter configuration.
+///
+/// Ports model how Borg receives/sends traffic (for example HTTP, Telegram) and
+/// how incoming conversations map into long-lived sessions.
 ///
 /// Usage notes:
 /// - Ports bind external channels (`http`, `telegram`, ...) to session routing.
@@ -3570,7 +3585,10 @@ impl PortObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `PortBinding` object mapping `conversationKey -> sessionId`.
+/// Conversation routing edge from a port to a session.
+///
+/// This row preserves session continuity for repeated messages in the same
+/// external conversation.
 ///
 /// Usage notes:
 /// - Canonical ingress-session routing row.
@@ -3648,7 +3666,10 @@ impl PortBindingObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `PortActorBinding` object mapping `conversationKey -> actorId`.
+/// Conversation-specific actor override edge.
+///
+/// This row pins a conversation to a specific actor independently from the
+/// session binding.
 ///
 /// Usage notes:
 /// - Stores actor override independent of session binding.
@@ -3698,7 +3719,10 @@ impl PortActorBindingObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `Provider` object for LLM provider configuration/usage.
+/// LLM provider configuration and usage counters.
+///
+/// Provider rows hold credentials, default models, and operational metadata for
+/// model routing.
 ///
 /// Usage notes:
 /// - `provider` is the configuration key.
@@ -3774,7 +3798,10 @@ impl ProviderObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `App` object for capability/auth integrations.
+/// External app integration definition.
+///
+/// Apps represent integrated systems (for example GitHub) and own capabilities,
+/// account connections, and secret scopes.
 ///
 /// Usage notes:
 /// - Parent object for capabilities, external connections, and secrets.
@@ -3975,7 +4002,7 @@ impl AppObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `AppCapability` object linked to an app.
+/// App operation that can be invoked by runtime/tooling.
 ///
 /// Usage notes:
 /// - Capability rows describe app operations exposed to runtime/LLMs.
@@ -4034,7 +4061,7 @@ impl AppCapabilityObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `AppConnection` object representing an external account connection.
+/// Linked external account for an app integration.
 ///
 /// Usage notes:
 /// - Represents one user/account connection to an app integration.
@@ -4095,7 +4122,7 @@ impl AppExternalConnectionObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `AppSecret` object for scoped secret material.
+/// Secret row scoped to an app or a specific app connection.
 ///
 /// Usage notes:
 /// - Secrets can be global per-app or scoped to `connectionId`.
@@ -4150,7 +4177,7 @@ impl AppSecretObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `ClockworkJob` object for scheduler plans.
+/// Durable scheduler job definition for automated actor execution.
 ///
 /// Usage notes:
 /// - Defines recurring/queued actor execution plans.
@@ -4272,7 +4299,7 @@ impl ClockworkJobObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `ClockworkJobRun` object for executed scheduler runs.
+/// Immutable execution record emitted when a clockwork job fires.
 ///
 /// Usage notes:
 /// - Immutable execution row emitted by clockwork runtime.
@@ -4329,7 +4356,10 @@ impl ClockworkJobRunObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `Task` object from TaskGraph.
+/// Durable taskgraph work item.
+///
+/// Tasks carry assignment, dependencies, audit history, and review lifecycle
+/// state for explicit multi-step work.
 ///
 /// Usage notes:
 /// - Task is the core work item in durable taskgraph storage.
@@ -4627,7 +4657,7 @@ struct ReviewStateObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `TaskComment` object.
+/// Human/agent comment attached to a task timeline.
 ///
 /// Usage notes:
 /// - Comment timeline entries attached to a task.
@@ -4677,7 +4707,7 @@ impl TaskCommentObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `TaskEvent` object.
+/// Structured audit event emitted by taskgraph transitions.
 ///
 /// Usage notes:
 /// - Event timeline entries with typed payload projection in `data`.
@@ -4745,7 +4775,7 @@ impl TaskEventObject {
 }
 
 #[derive(SimpleObject, Clone)]
-/// Typed projection of task event payload data.
+/// Typed projection of task event payload details.
 ///
 /// Usage notes:
 /// - `kind` indicates which subset of optional fields is populated.
@@ -4889,7 +4919,7 @@ impl TaskEventDataObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `MemoryEntity` object from the memory graph.
+/// Canonical entity node in Borg long-term memory.
 ///
 /// Usage notes:
 /// - Entity vertex with typed property map (`props`).
@@ -5004,7 +5034,7 @@ impl MemoryEntityObject {
 }
 
 #[derive(SimpleObject, Clone)]
-/// One key/value pair from `MemoryEntity.props`.
+/// One typed property entry on a memory entity.
 struct MemoryPropertyObject {
     /// Property key name.
     key: String,
@@ -5013,7 +5043,7 @@ struct MemoryPropertyObject {
 }
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
-/// Discriminator for `MemoryValueObject`.
+/// Type discriminator for normalized memory values.
 enum MemoryValueKind {
     Text,
     Integer,
@@ -5027,7 +5057,7 @@ enum MemoryValueKind {
 }
 
 #[derive(SimpleObject, Clone)]
-/// Typed value projection used by memory entities/facts.
+/// Normalized typed value used by memory properties and facts.
 ///
 /// Usage notes:
 /// - Inspect `kind` first, then read the matching typed field.
@@ -5163,7 +5193,7 @@ impl MemoryValueObject {
 }
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
-/// Cardinality of a memory fact field.
+/// Cardinality contract for a memory fact field.
 enum MemoryFactArity {
     One,
     Many,
@@ -5179,7 +5209,7 @@ impl From<FactArity> for MemoryFactArity {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `MemoryFact` object from the fact store.
+/// Immutable fact assertion row in long-term memory storage.
 ///
 /// Usage notes:
 /// - Immutable fact rows with typed value projection.
@@ -5248,7 +5278,7 @@ impl MemoryFactObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `Policy` object.
+/// Policy definition node used for governance/control-plane rules.
 ///
 /// Usage notes:
 /// - Control-plane policy row.
@@ -5330,7 +5360,7 @@ impl PolicyObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `PolicyUse` relationship object.
+/// Edge indicating where a policy is applied in the entity graph.
 ///
 /// Example:
 /// ```graphql
@@ -5365,7 +5395,7 @@ impl PolicyUseObject {
 }
 
 #[derive(Clone, Description)]
-/// GraphQL `User` object.
+/// Control-plane user/principal record.
 ///
 /// Usage notes:
 /// - Minimal control-plane user row.
@@ -5472,7 +5502,7 @@ impl From<TaskStatusValue> for TaskStatus {
 }
 
 #[derive(SimpleObject)]
-/// Placeholder response shape for `runActorChat`.
+/// Future runtime response contract for direct actor chat execution.
 struct RunActorChatResult {
     /// Whether the runtime call succeeded.
     ok: bool,
@@ -5481,7 +5511,7 @@ struct RunActorChatResult {
 }
 
 #[derive(SimpleObject)]
-/// Placeholder response shape for `runPortHttp`.
+/// Future runtime response contract for HTTP-port style execution.
 struct RunPortHttpResult {
     /// Whether the runtime call succeeded.
     ok: bool,
