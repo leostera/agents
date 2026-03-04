@@ -1,5 +1,7 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain};
+use borg_agent::{
+    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
+};
 use borg_core::Uri;
 use borg_db::BorgDb;
 use serde::{Deserialize, Serialize};
@@ -114,7 +116,8 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
             move |request: borg_agent::ToolRequest<CreatePortArgs>| {
                 let db = db_create.clone();
                 async move {
-                    let port_uri = Uri::parse(&require_non_empty(&request.arguments.port_uri, "port_uri")?)?;
+                    let port_uri =
+                        Uri::parse(&require_non_empty(&request.arguments.port_uri, "port_uri")?)?;
                     let port_name = port_name_from_uri(&port_uri)?;
                     if db.get_port(&port_name).await?.is_some() {
                         return Err(anyhow!("port.already_exists"));
@@ -156,7 +159,8 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
             move |request: borg_agent::ToolRequest<UpdatePortArgs>| {
                 let db = db_update.clone();
                 async move {
-                    let port_uri = Uri::parse(&require_non_empty(&request.arguments.port_uri, "port_uri")?)?;
+                    let port_uri =
+                        Uri::parse(&require_non_empty(&request.arguments.port_uri, "port_uri")?)?;
                     let port_name = port_name_from_uri(&port_uri)?;
                     let existing = db
                         .get_port(&port_name)
@@ -166,7 +170,10 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                     let provider = option_non_empty(request.arguments.provider)
                         .unwrap_or(existing.provider.clone());
                     let enabled = request.arguments.enabled.unwrap_or(existing.enabled);
-                    let allows_guests = request.arguments.allows_guests.unwrap_or(existing.allows_guests);
+                    let allows_guests = request
+                        .arguments
+                        .allows_guests
+                        .unwrap_or(existing.allows_guests);
                     let default_agent_id = request
                         .arguments
                         .default_agent_id

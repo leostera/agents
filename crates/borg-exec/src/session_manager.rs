@@ -1,7 +1,7 @@
 use anyhow::Result;
-use borg_agent::{BorgToolCall, BorgToolResult, 
-    Agent, ContextChunk, ContextManager, Message, Session, SessionEventPayload,
-    StaticContextProvider, ToolSpec,
+use borg_agent::{
+    Agent, BorgToolCall, BorgToolResult, ContextChunk, ContextManager, Message, Session,
+    SessionEventPayload, StaticContextProvider, ToolSpec,
 };
 use borg_apps::BorgApps;
 use borg_apps::default_tool_specs as default_apps_tool_specs;
@@ -101,7 +101,9 @@ impl SessionManager {
 
         let messages = self.db.list_session_messages(session_id, 0, 64).await?;
         for message in messages {
-            let Ok(message) = serde_json::from_value::<Message<BorgToolCall, BorgToolResult>>(message) else {
+            let Ok(message) =
+                serde_json::from_value::<Message<BorgToolCall, BorgToolResult>>(message)
+            else {
                 continue;
             };
             if let Message::SessionEvent {

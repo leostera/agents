@@ -3,8 +3,8 @@ use crate::mailbox::ActorCommand;
 use crate::mailbox_envelope::ActorMailboxEnvelope;
 use crate::message::{BorgMessage, SessionOutput};
 use crate::runtime::BorgRuntime;
-use borg_agent::{BorgToolCall, BorgToolResult};
 use anyhow::anyhow;
+use borg_agent::{BorgToolCall, BorgToolResult};
 use borg_core::Uri;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -45,7 +45,10 @@ impl BorgSupervisor {
         Ok(())
     }
 
-    pub async fn call(&self, msg: BorgMessage) -> anyhow::Result<SessionOutput<BorgToolCall, BorgToolResult>> {
+    pub async fn call(
+        &self,
+        msg: BorgMessage,
+    ) -> anyhow::Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         let actor_message_id = self
             .runtime
             .db

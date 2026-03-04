@@ -6,7 +6,7 @@ use borg_apps::DefaultAppsCatalog;
 use borg_codemode::CodeModeRuntime;
 use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
-use borg_exec::{BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, JsonPortContext};
+use borg_exec::{BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, PortContext};
 use borg_fs::BorgFs;
 use borg_memory::{FactInput, MemoryStore, SearchQuery};
 use borg_shellmode::ShellModeRuntime;
@@ -88,11 +88,6 @@ impl BorgCliApp {
                 };
                 let user_id = Uri::from_parts("borg", "user", Some("taskgraph"))
                     .expect("valid synthetic taskgraph user uri");
-                let payload = json!({
-                    "port": "taskgraph",
-                    "task_uri": task.task_uri,
-                    "assignee_agent_id": task.assignee_agent_id,
-                });
                 let text = format!(
                     "This is your task: {}\n\
                      Task URI: {}\n\
@@ -111,7 +106,7 @@ impl BorgCliApp {
                         user_id,
                         session_id,
                         input: BorgInput::Chat { text },
-                        port_context: std::sync::Arc::new(JsonPortContext::new(payload)),
+                        port_context: PortContext::Unknown,
                     })
                     .await
                 {

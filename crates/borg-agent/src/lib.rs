@@ -18,8 +18,8 @@ pub use message::{
 };
 pub use session::Session;
 pub use tools::{
-    BorgToolCall, BorgToolResult, BorgToolchain, CapabilitySummary, Tool, ToolRequest, ToolResponse,
-    ToolResultData, ToolSpec, Toolchain, ToolchainBuilder, to_provider_tool_specs,
+    BorgToolCall, BorgToolResult, BorgToolchain, CapabilitySummary, Tool, ToolRequest,
+    ToolResponse, ToolResultData, ToolSpec, Toolchain, ToolchainBuilder, to_provider_tool_specs,
 };
 
 #[cfg(test)]

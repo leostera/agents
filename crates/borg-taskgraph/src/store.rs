@@ -8,7 +8,9 @@ use sqlx::{Row, Sqlite, Transaction};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use uuid::Uuid;
 
-use crate::model::{CommentRecord, EventRecord, ReviewState, TaskEventData, TaskRecord, TaskStatus};
+use crate::model::{
+    CommentRecord, EventRecord, ReviewState, TaskEventData, TaskRecord, TaskStatus,
+};
 
 #[derive(Debug, Clone)]
 pub struct CreateTaskInput {

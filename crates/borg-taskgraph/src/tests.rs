@@ -179,13 +179,16 @@ async fn toolchain_smoke_create_get() -> Result<()> {
         borg_agent::ToolResultData::Text(raw) => raw,
         _ => panic!("unexpected output variant"),
     };
-    let created: serde_json::Value = serde_json::from_str(&payload)?;
-    let uri = created
-        .get("task")
-        .and_then(|task| task.get("uri"))
-        .and_then(serde_json::Value::as_str)
-        .expect("uri")
-        .to_string();
+    #[derive(serde::Deserialize)]
+    struct CreatedTask {
+        uri: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct CreatedPayload {
+        task: CreatedTask,
+    }
+    let created: CreatedPayload = serde_json::from_str(&payload)?;
+    let uri = created.task.uri;
 
     let get = toolchain
         .run(borg_agent::ToolRequest {
@@ -197,14 +200,16 @@ async fn toolchain_smoke_create_get() -> Result<()> {
 
     match get.content {
         borg_agent::ToolResultData::Text(raw) => {
-            let value: serde_json::Value = serde_json::from_str(&raw)?;
-            assert_eq!(
-                value
-                    .get("task")
-                    .and_then(|task| task.get("title"))
-                    .and_then(serde_json::Value::as_str),
-                Some("hello")
-            );
+            #[derive(serde::Deserialize)]
+            struct TaskTitle {
+                title: String,
+            }
+            #[derive(serde::Deserialize)]
+            struct TaskPayload {
+                task: TaskTitle,
+            }
+            let value: TaskPayload = serde_json::from_str(&raw)?;
+            assert_eq!(value.task.title, "hello");
         }
         _ => panic!("unexpected output variant"),
     }

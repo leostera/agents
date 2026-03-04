@@ -134,7 +134,11 @@ where
         ToolResultData::Execution { result, duration } => {
             let serialized =
                 serde_json::to_string(result).unwrap_or_else(|_| "<invalid_result>".to_string());
-            format!("execution result in {}ms: {}", duration.as_millis(), serialized)
+            format!(
+                "execution result in {}ms: {}",
+                duration.as_millis(),
+                serialized
+            )
         }
         ToolResultData::Error { message } => format!("tool error: {}", message),
     }

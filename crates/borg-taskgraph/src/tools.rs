@@ -632,447 +632,555 @@ struct TaskGraphTools;
 impl TaskGraphTools {
     fn create_task(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-createTask")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<CreateTaskArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = request.arguments.session_uri.trim().to_string();
-                let creator_agent_id = request.arguments.creator_agent_id.trim().to_string();
-                let title = request.arguments.title.trim().to_string();
-                let assignee_agent_id = request.arguments.assignee_agent_id.trim().to_string();
-                if session_uri.is_empty()
-                    || creator_agent_id.is_empty()
-                    || title.is_empty()
-                    || assignee_agent_id.is_empty()
-                {
-                    return Err(anyhow!("task.validation_failed: missing required fields"));
-                }
-                let input = CreateTaskInput {
-                    title,
-                    description: request
-                        .arguments
-                        .description
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string(),
-                    definition_of_done: request
-                        .arguments
-                        .definition_of_done
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string(),
-                    assignee_agent_id,
-                    parent_uri: option_non_empty(request.arguments.parent_uri),
-                    blocked_by: normalize_strs(request.arguments.blocked_by),
-                    references: normalize_strs(request.arguments.references),
-                    labels: normalize_strs(request.arguments.labels),
-                };
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<CreateTaskArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = request.arguments.session_uri.trim().to_string();
+                    let creator_agent_id = request.arguments.creator_agent_id.trim().to_string();
+                    let title = request.arguments.title.trim().to_string();
+                    let assignee_agent_id = request.arguments.assignee_agent_id.trim().to_string();
+                    if session_uri.is_empty()
+                        || creator_agent_id.is_empty()
+                        || title.is_empty()
+                        || assignee_agent_id.is_empty()
+                    {
+                        return Err(anyhow!("task.validation_failed: missing required fields"));
+                    }
+                    let input = CreateTaskInput {
+                        title,
+                        description: request
+                            .arguments
+                            .description
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string(),
+                        definition_of_done: request
+                            .arguments
+                            .definition_of_done
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string(),
+                        assignee_agent_id,
+                        parent_uri: option_non_empty(request.arguments.parent_uri),
+                        blocked_by: normalize_strs(request.arguments.blocked_by),
+                        references: normalize_strs(request.arguments.references),
+                        labels: normalize_strs(request.arguments.labels),
+                    };
 
-                let task = store
-                    .create_task(&session_uri, &creator_agent_id, input)
-                    .await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+                    let task = store
+                        .create_task(&session_uri, &creator_agent_id, input)
+                        .await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn get_task(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-getTask")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<GetTaskArgs>| {
-            let store = store.clone();
-            async move {
-                let uri = request.arguments.uri.trim().to_string();
-                if uri.is_empty() {
-                    return Err(anyhow!("task.validation_failed: missing uri"));
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<GetTaskArgs>| {
+                let store = store.clone();
+                async move {
+                    let uri = request.arguments.uri.trim().to_string();
+                    if uri.is_empty() {
+                        return Err(anyhow!("task.validation_failed: missing uri"));
+                    }
+                    let task = store.get_task(&uri).await?;
+                    json_text(json!({ "task": task }))
                 }
-                let task = store.get_task(&uri).await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+            },
+        ))
     }
 
     fn update_task_fields(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-updateTaskFields")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<UpdateTaskFieldsArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = request.arguments.session_uri.trim().to_string();
-                let uri = request.arguments.uri.trim().to_string();
-                if session_uri.is_empty() || uri.is_empty() {
-                    return Err(anyhow!("task.validation_failed: missing required fields"));
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<UpdateTaskFieldsArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = request.arguments.session_uri.trim().to_string();
+                    let uri = request.arguments.uri.trim().to_string();
+                    if session_uri.is_empty() || uri.is_empty() {
+                        return Err(anyhow!("task.validation_failed: missing required fields"));
+                    }
+                    let patch = TaskPatch {
+                        title: option_non_empty(request.arguments.patch.title),
+                        description: option_non_empty(request.arguments.patch.description),
+                        definition_of_done: option_non_empty(
+                            request.arguments.patch.definition_of_done,
+                        ),
+                    };
+                    let task = store.update_task_fields(&session_uri, &uri, patch).await?;
+                    json_text(json!({ "task": task }))
                 }
-                let patch = TaskPatch {
-                    title: option_non_empty(request.arguments.patch.title),
-                    description: option_non_empty(request.arguments.patch.description),
-                    definition_of_done: option_non_empty(request.arguments.patch.definition_of_done),
-                };
-                let task = store.update_task_fields(&session_uri, &uri, patch).await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+            },
+        ))
     }
 
     fn reassign_assignee(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-reassignAssignee")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<ReassignAssigneeArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let assignee_agent_id =
-                    required_str(request.arguments.assignee_agent_id, "assignee_agent_id")?;
-                let task = store
-                    .reassign_assignee(&session_uri, &uri, &assignee_agent_id)
-                    .await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<ReassignAssigneeArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let assignee_agent_id =
+                        required_str(request.arguments.assignee_agent_id, "assignee_agent_id")?;
+                    let task = store
+                        .reassign_assignee(&session_uri, &uri, &assignee_agent_id)
+                        .await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn add_task_labels(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-addTaskLabels")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriUriLabelsArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let labels = normalize_strs(Some(request.arguments.labels));
-                let task = store.add_task_labels(&session_uri, &uri, &labels).await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriUriLabelsArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let labels = normalize_strs(Some(request.arguments.labels));
+                    let task = store.add_task_labels(&session_uri, &uri, &labels).await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn remove_task_labels(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-removeTaskLabels")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriUriLabelsArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let labels = normalize_strs(Some(request.arguments.labels));
-                let task = store.remove_task_labels(&session_uri, &uri, &labels).await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriUriLabelsArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let labels = normalize_strs(Some(request.arguments.labels));
+                    let task = store
+                        .remove_task_labels(&session_uri, &uri, &labels)
+                        .await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn set_task_parent(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-setTaskParent")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SetTaskParentArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let parent_uri = required_str(request.arguments.parent_uri, "parent_uri")?;
-                let (child, parent) = store
-                    .set_task_parent(&session_uri, &uri, &parent_uri)
-                    .await?;
-                json_text(json!({ "child": child, "parent": parent }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SetTaskParentArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let parent_uri = required_str(request.arguments.parent_uri, "parent_uri")?;
+                    let (child, parent) = store
+                        .set_task_parent(&session_uri, &uri, &parent_uri)
+                        .await?;
+                    json_text(json!({ "child": child, "parent": parent }))
+                }
+            },
+        ))
     }
 
     fn clear_task_parent(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-clearTaskParent")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let task = store.clear_task_parent(&session_uri, &uri).await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let task = store.clear_task_parent(&session_uri, &uri).await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn list_task_children(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-listTaskChildren")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<UriListArgs>| {
-            let store = store.clone();
-            async move {
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let params = list_params(request.arguments.cursor, request.arguments.limit);
-                let (children, next_cursor) = store.list_task_children(&uri, params).await?;
-                json_text(json!({ "children": children, "next_cursor": next_cursor }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<UriListArgs>| {
+                let store = store.clone();
+                async move {
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let params = list_params(request.arguments.cursor, request.arguments.limit);
+                    let (children, next_cursor) = store.list_task_children(&uri, params).await?;
+                    json_text(json!({ "children": children, "next_cursor": next_cursor }))
+                }
+            },
+        ))
     }
 
     fn add_task_blocked_by(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-addTaskBlockedBy")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriUriBlockedByArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let blocked_by = required_str(request.arguments.blocked_by, "blocked_by")?;
-                let task = store
-                    .add_task_blocked_by(&session_uri, &uri, &blocked_by)
-                    .await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriUriBlockedByArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let blocked_by = required_str(request.arguments.blocked_by, "blocked_by")?;
+                    let task = store
+                        .add_task_blocked_by(&session_uri, &uri, &blocked_by)
+                        .await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn remove_task_blocked_by(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-removeTaskBlockedBy")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriUriBlockedByArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let blocked_by = required_str(request.arguments.blocked_by, "blocked_by")?;
-                let task = store
-                    .remove_task_blocked_by(&session_uri, &uri, &blocked_by)
-                    .await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriUriBlockedByArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let blocked_by = required_str(request.arguments.blocked_by, "blocked_by")?;
+                    let task = store
+                        .remove_task_blocked_by(&session_uri, &uri, &blocked_by)
+                        .await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn set_task_duplicate_of(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-setTaskDuplicateOf")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriUriDuplicateOfArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let duplicate_of = required_str(request.arguments.duplicate_of, "duplicate_of")?;
-                let task = store
-                    .set_task_duplicate_of(&session_uri, &uri, &duplicate_of)
-                    .await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriUriDuplicateOfArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let duplicate_of =
+                        required_str(request.arguments.duplicate_of, "duplicate_of")?;
+                    let task = store
+                        .set_task_duplicate_of(&session_uri, &uri, &duplicate_of)
+                        .await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn clear_task_duplicate_of(
         store: TaskGraphStore,
     ) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-clearTaskDuplicateOf")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let task = store.clear_task_duplicate_of(&session_uri, &uri).await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let task = store.clear_task_duplicate_of(&session_uri, &uri).await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn list_duplicated_by(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-listDuplicatedBy")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<UriListArgs>| {
-            let store = store.clone();
-            async move {
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let params = list_params(request.arguments.cursor, request.arguments.limit);
-                let (tasks, next_cursor) = store.list_duplicated_by(&uri, params).await?;
-                json_text(json!({ "tasks": tasks, "next_cursor": next_cursor }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<UriListArgs>| {
+                let store = store.clone();
+                async move {
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let params = list_params(request.arguments.cursor, request.arguments.limit);
+                    let (tasks, next_cursor) = store.list_duplicated_by(&uri, params).await?;
+                    json_text(json!({ "tasks": tasks, "next_cursor": next_cursor }))
+                }
+            },
+        ))
     }
 
     fn add_task_reference(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-addTaskReference")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriUriReferenceArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let reference = required_str(request.arguments.reference, "reference")?;
-                let task = store
-                    .add_task_reference(&session_uri, &uri, &reference)
-                    .await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriUriReferenceArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let reference = required_str(request.arguments.reference, "reference")?;
+                    let task = store
+                        .add_task_reference(&session_uri, &uri, &reference)
+                        .await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn remove_task_reference(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-removeTaskReference")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriUriReferenceArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let reference = required_str(request.arguments.reference, "reference")?;
-                let task = store
-                    .remove_task_reference(&session_uri, &uri, &reference)
-                    .await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriUriReferenceArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let reference = required_str(request.arguments.reference, "reference")?;
+                    let task = store
+                        .remove_task_reference(&session_uri, &uri, &reference)
+                        .await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn set_task_status(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-setTaskStatus")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SetTaskStatusArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let status = parse_status(&required_str(request.arguments.status, "status")?)?;
-                let task = store.set_task_status(&session_uri, &uri, status).await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SetTaskStatusArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let status = parse_status(&required_str(request.arguments.status, "status")?)?;
+                    let task = store.set_task_status(&session_uri, &uri, status).await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn submit_review(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-submitReview")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let task = store.submit_review(&session_uri, &uri).await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let task = store.submit_review(&session_uri, &uri).await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn approve_review(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-approveReview")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let task = store.approve_review(&session_uri, &uri).await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let task = store.approve_review(&session_uri, &uri).await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn request_review_changes(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-requestReviewChanges")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<RequestReviewChangesArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let note = required_str(request.arguments.note, "note")?;
-                let return_to = parse_status(
-                    request
-                        .arguments
-                        .return_to
-                        .as_deref()
-                        .unwrap_or("doing"),
-                )?;
-                let task = store
-                    .request_review_changes(&session_uri, &uri, return_to, &note)
-                    .await?;
-                json_text(json!({ "task": task }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<RequestReviewChangesArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let note = required_str(request.arguments.note, "note")?;
+                    let return_to =
+                        parse_status(request.arguments.return_to.as_deref().unwrap_or("doing"))?;
+                    let task = store
+                        .request_review_changes(&session_uri, &uri, return_to, &note)
+                        .await?;
+                    json_text(json!({ "task": task }))
+                }
+            },
+        ))
     }
 
     fn split_task_into_subtasks(
         store: TaskGraphStore,
     ) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-splitTaskIntoSubtasks")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SplitTaskIntoSubtasksArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let creator_agent_id =
-                    required_str(request.arguments.creator_agent_id, "creator_agent_id")?;
-                let uri = required_str(request.arguments.uri, "uri")?;
-                let subtasks = request
-                    .arguments
-                    .subtasks
-                    .into_iter()
-                    .map(|subtask| {
-                        Ok(SplitSubtaskInput {
-                            title: required_str(subtask.title, "subtask title")?,
-                            description: subtask.description.unwrap_or_default().trim().to_string(),
-                            definition_of_done: subtask
-                                .definition_of_done
-                                .unwrap_or_default()
-                                .trim()
-                                .to_string(),
-                            assignee_agent_id: required_str(
-                                subtask.assignee_agent_id,
-                                "subtask assignee_agent_id",
-                            )?,
-                            labels: normalize_strs(subtask.labels),
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SplitTaskIntoSubtasksArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let creator_agent_id =
+                        required_str(request.arguments.creator_agent_id, "creator_agent_id")?;
+                    let uri = required_str(request.arguments.uri, "uri")?;
+                    let subtasks = request
+                        .arguments
+                        .subtasks
+                        .into_iter()
+                        .map(|subtask| {
+                            Ok(SplitSubtaskInput {
+                                title: required_str(subtask.title, "subtask title")?,
+                                description: subtask
+                                    .description
+                                    .unwrap_or_default()
+                                    .trim()
+                                    .to_string(),
+                                definition_of_done: subtask
+                                    .definition_of_done
+                                    .unwrap_or_default()
+                                    .trim()
+                                    .to_string(),
+                                assignee_agent_id: required_str(
+                                    subtask.assignee_agent_id,
+                                    "subtask assignee_agent_id",
+                                )?,
+                                labels: normalize_strs(subtask.labels),
+                            })
                         })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                let (parent, created) = store
-                    .split_task_into_subtasks(&session_uri, &creator_agent_id, &uri, subtasks)
-                    .await?;
-                json_text(json!({ "parent": parent, "created": created }))
-            }
-        }))
+                        .collect::<Result<Vec<_>>>()?;
+                    let (parent, created) = store
+                        .split_task_into_subtasks(&session_uri, &creator_agent_id, &uri, subtasks)
+                        .await?;
+                    json_text(json!({ "parent": parent, "created": created }))
+                }
+            },
+        ))
     }
 
     fn add_comment(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-addComment")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<AddCommentArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let task_uri = required_str(request.arguments.task_uri, "task_uri")?;
-                let body = required_str(request.arguments.body, "body")?;
-                let comment = store.add_comment(&session_uri, &task_uri, &body).await?;
-                json_text(json!({ "comment": comment }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<AddCommentArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let task_uri = required_str(request.arguments.task_uri, "task_uri")?;
+                    let body = required_str(request.arguments.body, "body")?;
+                    let comment = store.add_comment(&session_uri, &task_uri, &body).await?;
+                    json_text(json!({ "comment": comment }))
+                }
+            },
+        ))
     }
 
     fn list_comments(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-listComments")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<TaskUriListArgs>| {
-            let store = store.clone();
-            async move {
-                let task_uri = required_str(request.arguments.task_uri, "task_uri")?;
-                let params = list_params(request.arguments.cursor, request.arguments.limit);
-                let (comments, next_cursor) = store.list_comments(&task_uri, params).await?;
-                json_text(json!({ "comments": comments, "next_cursor": next_cursor }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<TaskUriListArgs>| {
+                let store = store.clone();
+                async move {
+                    let task_uri = required_str(request.arguments.task_uri, "task_uri")?;
+                    let params = list_params(request.arguments.cursor, request.arguments.limit);
+                    let (comments, next_cursor) = store.list_comments(&task_uri, params).await?;
+                    json_text(json!({ "comments": comments, "next_cursor": next_cursor }))
+                }
+            },
+        ))
     }
 
     fn list_events(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-listEvents")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<TaskUriListArgs>| {
-            let store = store.clone();
-            async move {
-                let task_uri = required_str(request.arguments.task_uri, "task_uri")?;
-                let params = list_params(request.arguments.cursor, request.arguments.limit);
-                let (events, next_cursor) = store.list_events(&task_uri, params).await?;
-                json_text(json!({ "events": events, "next_cursor": next_cursor }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<TaskUriListArgs>| {
+                let store = store.clone();
+                async move {
+                    let task_uri = required_str(request.arguments.task_uri, "task_uri")?;
+                    let params = list_params(request.arguments.cursor, request.arguments.limit);
+                    let (events, next_cursor) = store.list_events(&task_uri, params).await?;
+                    json_text(json!({ "events": events, "next_cursor": next_cursor }))
+                }
+            },
+        ))
     }
 
     fn next_task(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-nextTask")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriLimitArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let limit = request.arguments.limit.unwrap_or(1);
-                let tasks = store.next_task(&session_uri, limit).await?;
-                json_text(json!({ "tasks": tasks }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriLimitArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let limit = request.arguments.limit.unwrap_or(1);
+                    let tasks = store.next_task(&session_uri, limit).await?;
+                    json_text(json!({ "tasks": tasks }))
+                }
+            },
+        ))
     }
 
     fn reconcile_in_progress(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
         let spec = required_spec("TaskGraph-reconcileInProgress")?;
-        Ok(Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<SessionUriLimitArgs>| {
-            let store = store.clone();
-            async move {
-                let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                let limit = request.arguments.limit.unwrap_or(25);
-                let tasks = store.reconcile_in_progress(&session_uri, limit).await?;
-                json_text(json!({ "tasks": tasks }))
-            }
-        }))
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<SessionUriLimitArgs>| {
+                let store = store.clone();
+                async move {
+                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let limit = request.arguments.limit.unwrap_or(25);
+                    let tasks = store.reconcile_in_progress(&session_uri, limit).await?;
+                    json_text(json!({ "tasks": tasks }))
+                }
+            },
+        ))
     }
 }
 

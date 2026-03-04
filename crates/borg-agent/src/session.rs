@@ -58,10 +58,7 @@ where
         Ok(())
     }
 
-    pub fn set_context_manager(
-        &mut self,
-        context_manager: ContextManager<TToolCall, TToolResult>,
-    ) {
+    pub fn set_context_manager(&mut self, context_manager: ContextManager<TToolCall, TToolResult>) {
         self.context_manager = context_manager;
     }
 

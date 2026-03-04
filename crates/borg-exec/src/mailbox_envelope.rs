@@ -115,7 +115,10 @@ mod tests {
         assert_eq!(decoded.actor_id, msg.actor_id);
         assert_eq!(decoded.user_id, msg.user_id);
         assert_eq!(decoded.session_id, msg.session_id);
-        assert_eq!(serde_json::to_value(&decoded.port_context).expect("ctx"), port_ctx);
+        assert_eq!(
+            serde_json::to_value(&decoded.port_context).expect("ctx"),
+            port_ctx
+        );
         match decoded.input {
             BorgInput::Chat { text } => assert_eq!(text, "hello"),
             _ => panic!("expected chat input"),

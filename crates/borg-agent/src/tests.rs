@@ -76,10 +76,12 @@ fn scripted_provider(
 
 fn scripted_toolchain(
     outputs: Vec<Result<ToolResponse<Value>, String>>,
-) -> Result<(Toolchain<Value, Value>, mpsc::UnboundedReceiver<ToolRequest<Value>>)> {
+) -> Result<(
+    Toolchain<Value, Value>,
+    mpsc::UnboundedReceiver<ToolRequest<Value>>,
+)> {
     let (calls_tx, calls_rx) = mpsc::unbounded_channel::<ToolRequest<Value>>();
-    let (outputs_tx, outputs_rx) =
-        mpsc::unbounded_channel::<Result<ToolResponse<Value>, String>>();
+    let (outputs_tx, outputs_rx) = mpsc::unbounded_channel::<Result<ToolResponse<Value>, String>>();
     for output in outputs {
         outputs_tx.send(output)?;
     }
@@ -89,7 +91,7 @@ fn scripted_toolchain(
     for tool_name in ["search", "execute"] {
         let calls_tx = calls_tx.clone();
         let outputs_rx = Arc::clone(&outputs_rx);
-        toolchain.register(Tool::new(
+        toolchain.register(Tool::new_typed(
             ToolSpec {
                 name: tool_name.to_string(),
                 description: format!("scripted {}", tool_name),
@@ -313,35 +315,33 @@ async fn a17_typed_toolchain_decodes_provider_arguments() {
 
     let (calls_tx, mut calls_rx) = mpsc::unbounded_channel::<ToolRequest<EchoArgs>>();
     let toolchain = Toolchain::<EchoArgs, EchoResult>::builder()
-        .add_tool(
-            Tool::new_typed(
-                ToolSpec {
-                    name: "echo".to_string(),
-                    description: "echo typed args".to_string(),
-                    parameters: json!({
-                        "type":"object",
-                        "properties": { "text": { "type": "string" } },
-                        "required": ["text"],
-                        "additionalProperties": false
-                    }),
-                },
-                None,
-                move |request| {
-                    let calls_tx = calls_tx.clone();
-                    async move {
-                        calls_tx.send(request.clone()).unwrap();
-                        Ok(ToolResponse {
-                            content: ToolResultData::Execution {
-                                result: EchoResult {
-                                    echoed: request.arguments.text,
-                                },
-                                duration: Duration::from_millis(1),
+        .add_tool(Tool::new_typed(
+            ToolSpec {
+                name: "echo".to_string(),
+                description: "echo typed args".to_string(),
+                parameters: json!({
+                    "type":"object",
+                    "properties": { "text": { "type": "string" } },
+                    "required": ["text"],
+                    "additionalProperties": false
+                }),
+            },
+            None,
+            move |request| {
+                let calls_tx = calls_tx.clone();
+                async move {
+                    calls_tx.send(request.clone()).unwrap();
+                    Ok(ToolResponse {
+                        content: ToolResultData::Execution {
+                            result: EchoResult {
+                                echoed: request.arguments.text,
                             },
-                        })
-                    }
-                },
-            ),
-        )
+                            duration: Duration::from_millis(1),
+                        },
+                    })
+                }
+            },
+        ))
         .unwrap()
         .build()
         .unwrap();
@@ -492,7 +492,7 @@ async fn injected_toolchain_helper_still_works() {
     init_test_tracing();
     info!(target: "borg_agent_test", test = "injected_toolchain_helper_still_works", "starting test");
     let tools = Toolchain::<Value, Value>::builder()
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_typed(
             ToolSpec {
                 name: "search".to_string(),
                 description: "search".to_string(),
@@ -529,7 +529,7 @@ async fn injected_toolchain_helper_still_works() {
 #[tokio::test]
 async fn toolchain_delegates_input_validation_to_tool_callback() {
     let toolchain = Toolchain::<Value, Value>::builder()
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_typed(
             ToolSpec {
                 name: "search".to_string(),
                 description: "search".to_string(),
@@ -565,7 +565,7 @@ async fn toolchain_delegates_input_validation_to_tool_callback() {
 #[tokio::test]
 async fn toolchain_does_not_validate_output_schema() {
     let toolchain = Toolchain::<Value, Value>::builder()
-        .add_tool(Tool::new(
+        .add_tool(Tool::new_typed(
             ToolSpec {
                 name: "execute".to_string(),
                 description: "execute".to_string(),

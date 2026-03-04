@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use borg_core::Uri;
 use borg_exec::{BorgCommand, PortContext};
 
@@ -25,5 +23,5 @@ pub struct PortMessage {
     pub conversation_key: Uri,
     pub user_id: Uri,
     pub input: PortInput,
-    pub port_context: Arc<dyn PortContext>,
+    pub port_context: PortContext,
 }
