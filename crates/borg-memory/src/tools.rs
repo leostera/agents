@@ -1577,10 +1577,12 @@ fn parse_rfd_value(value: &Value) -> Result<FactValue> {
         if values.is_empty() {
             return Err(anyhow!("value arrays must be non-empty"));
         }
+        let mut items = Vec::with_capacity(values.len());
         for item in values {
             validate_typed_value(item)?;
+            items.push(parse_rfd_value(item)?);
         }
-        return Ok(FactValue::Json(value.clone()));
+        return Ok(FactValue::List(items));
     }
     validate_typed_value(value)?;
     if let Some(text) = value.get("string").and_then(Value::as_str) {
@@ -1592,8 +1594,11 @@ fn parse_rfd_value(value: &Value) -> Result<FactValue> {
     if let Some(boolean) = value.get("bool").and_then(Value::as_bool) {
         return Ok(FactValue::Boolean(boolean));
     }
-    if value.get("date").is_some() || value.get("datetime").is_some() {
-        return Ok(FactValue::Json(value.clone()));
+    if let Some(raw) = value.get("date").and_then(Value::as_str) {
+        return Ok(FactValue::Date(raw.to_string()));
+    }
+    if let Some(raw) = value.get("datetime").and_then(Value::as_str) {
+        return Ok(FactValue::DateTime(raw.to_string()));
     }
     if let Some(uri) = value.get("uri").and_then(Value::as_str) {
         return Ok(FactValue::Ref(Uri::parse(uri)?));
@@ -1637,7 +1642,9 @@ fn fact_value_to_tool_json(value: &FactValue) -> Value {
         FactValue::Boolean(v) => json!({ "bool": v }),
         FactValue::Bytes(v) => json!({ "bytes": v }),
         FactValue::Ref(uri) => json!({ "uri": uri.to_string() }),
-        FactValue::Json(v) => v.clone(),
+        FactValue::Date(v) => json!({ "date": v }),
+        FactValue::DateTime(v) => json!({ "datetime": v }),
+        FactValue::List(v) => Value::Array(v.iter().map(fact_value_to_tool_json).collect()),
     }
 }
 
@@ -1801,10 +1808,7 @@ async fn list_facts_for_entity_group(
 fn extract_uri_value(value: &FactValue) -> Option<String> {
     match value {
         FactValue::Ref(uri) => Some(uri.to_string()),
-        FactValue::Json(Value::Object(object)) => object
-            .get("uri")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
+        FactValue::List(items) => items.iter().find_map(extract_uri_value),
         _ => None,
     }
 }
@@ -1920,7 +1924,7 @@ async fn build_fact_warnings(
                     Some(fact),
                 ));
             }
-        } else if matches!(fact.value, FactValue::Json(_))
+        } else if matches!(fact.value, FactValue::List(_))
             && !is_valid_typed_value_json(&fact.value)
         {
             warnings.push(warning_json(
@@ -1986,52 +1990,27 @@ async fn load_entity_kinds(memory: &MemoryStore, entity_uri: &Uri) -> Result<Vec
 
 async fn infer_value_ranges(memory: &MemoryStore, value: &FactValue) -> Result<Vec<String>> {
     let mut ranges = Vec::new();
-    match value {
-        FactValue::Text(_) => ranges.push("borg:type:string".to_string()),
-        FactValue::Integer(_) | FactValue::Float(_) => ranges.push("borg:type:number".to_string()),
-        FactValue::Boolean(_) => ranges.push("borg:type:bool".to_string()),
-        FactValue::Ref(uri) => {
-            ranges.push("borg:type:uri".to_string());
-            ranges.extend(load_entity_kinds(memory, uri).await?);
-        }
-        FactValue::Json(value) => {
-            if let Value::Array(items) = value {
-                for item in items {
-                    ranges.extend(infer_json_typed_value_ranges(memory, item).await?);
+    let mut stack = vec![value];
+    while let Some(current) = stack.pop() {
+        match current {
+            FactValue::Text(_) => ranges.push("borg:type:string".to_string()),
+            FactValue::Integer(_) | FactValue::Float(_) => {
+                ranges.push("borg:type:number".to_string())
+            }
+            FactValue::Boolean(_) => ranges.push("borg:type:bool".to_string()),
+            FactValue::Date(_) => ranges.push("borg:type:date".to_string()),
+            FactValue::DateTime(_) => ranges.push("borg:type:datetime".to_string()),
+            FactValue::Ref(uri) => {
+                ranges.push("borg:type:uri".to_string());
+                ranges.extend(load_entity_kinds(memory, uri).await?);
+            }
+            FactValue::List(values) => {
+                for nested in values {
+                    stack.push(nested);
                 }
-            } else {
-                ranges.extend(infer_json_typed_value_ranges(memory, value).await?);
             }
+            FactValue::Bytes(_) => {}
         }
-        FactValue::Bytes(_) => {}
-    }
-    ranges.sort();
-    ranges.dedup();
-    Ok(ranges)
-}
-
-async fn infer_json_typed_value_ranges(memory: &MemoryStore, value: &Value) -> Result<Vec<String>> {
-    let Some(object) = value.as_object() else {
-        return Ok(Vec::new());
-    };
-    let Some((key, inner)) = object.iter().next() else {
-        return Ok(Vec::new());
-    };
-    let mut ranges = Vec::new();
-    match key.as_str() {
-        "string" => ranges.push("borg:type:string".to_string()),
-        "date" => ranges.push("borg:type:date".to_string()),
-        "datetime" => ranges.push("borg:type:datetime".to_string()),
-        "number" => ranges.push("borg:type:number".to_string()),
-        "bool" => ranges.push("borg:type:bool".to_string()),
-        "uri" => {
-            ranges.push("borg:type:uri".to_string());
-            if let Some(uri) = inner.as_str() {
-                let uri = Uri::parse(uri)?;
-                ranges.extend(load_entity_kinds(memory, &uri).await?);
-            }
-        }
-        _ => {}
     }
     ranges.sort();
     ranges.dedup();
@@ -2062,26 +2041,10 @@ fn warning_json(
 }
 
 fn is_valid_typed_value_json(value: &FactValue) -> bool {
-    let FactValue::Json(inner) = value else {
+    let FactValue::List(inner) = value else {
         return true;
     };
-    if let Value::Array(items) = inner {
-        return !items.is_empty() && items.iter().all(is_one_typed_value_object);
-    }
-    is_one_typed_value_object(inner)
-}
-
-fn is_one_typed_value_object(value: &Value) -> bool {
-    let Some(object) = value.as_object() else {
-        return false;
-    };
-    object.len() == 1
-        && object.keys().all(|key| {
-            matches!(
-                key.as_str(),
-                "string" | "number" | "bool" | "date" | "datetime" | "uri"
-            )
-        })
+    !inner.is_empty()
 }
 
 fn required_default_tool_spec(name: &str) -> Result<ToolSpec> {

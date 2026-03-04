@@ -3,9 +3,9 @@ pub mod cli;
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use borg_core::{Entity, EntityProps};
 #[cfg(test)]
 use borg_core::EntityPropValue;
+use borg_core::{Entity, EntityProps};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, info, warn};

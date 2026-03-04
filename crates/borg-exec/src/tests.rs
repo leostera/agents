@@ -18,6 +18,7 @@ use borg_llm::{
 };
 use borg_memory::MemoryStore;
 use borg_shellmode::ShellModeRuntime;
+use serde::Deserialize;
 use serde_json::json;
 use sqlx::Row;
 use tokio::sync::mpsc;
@@ -130,18 +131,24 @@ fn assistant_text(text: &str) -> LlmAssistantMessage {
 fn assistant_tool_call(
     tool_call_id: &str,
     name: &str,
-    args: serde_json::Value,
+    args: borg_agent::BorgToolCall,
 ) -> LlmAssistantMessage {
     LlmAssistantMessage {
         content: vec![ProviderBlock::ToolCall {
             id: tool_call_id.to_string(),
             name: name.to_string(),
-            arguments_json: args,
+            arguments_json: args.to_value().expect("valid tool call arguments"),
         }],
         stop_reason: StopReason::ToolCall,
         error_message: None,
         usage_tokens: None,
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct CodeModeEnvResult {
+    keys: Vec<String>,
+    token: Option<String>,
 }
 
 fn default_agent_tools() -> Vec<borg_agent::ToolSpec> {
@@ -240,7 +247,7 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
         Ok(assistant_tool_call(
             "call_search_1",
             "CodeMode-searchApis",
-            json!({ "query": "ls fetch" }),
+            json!({ "query": "ls fetch" }).into(),
         )),
         Ok(assistant_tool_call(
             "call_exec_1",
@@ -248,7 +255,8 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
             json!({
                 "hint": "Inspecting working directory entries",
                 "code": "async () => { const listing = Borg.OS.ls('.'); return { has_entries: listing.entries.length > 0, first_entry: listing.entries[0] ?? null }; }"
-            }),
+            })
+            .into(),
         )),
         Ok(assistant_text(
             "Completed runtime plan. BORG_EXEC_TOOLCHAIN_RT_OK",
@@ -348,7 +356,8 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
             json!({
                 "hint": "Running invalid execute payload for error handling test",
                 "code": "Borg.OS.ls('.')"
-            }),
+            })
+            .into(),
         )),
         Ok(assistant_text("Saw tool failure and handled it.")),
     ]);
@@ -462,19 +471,16 @@ async fn app_available_secret_is_exposed_in_borg_env_get() {
 
     match response.content {
         ToolResultData::Execution { result, .. } => {
-            let result = result.to_value().expect("result value");
-            let keys = result
-                .get("keys")
-                .and_then(serde_json::Value::as_array)
-                .expect("keys array");
+            let result: CodeModeEnvResult =
+                serde_json::from_value(result.to_value().expect("result value"))
+                    .expect("typed result");
             assert!(
-                keys.iter()
-                    .any(|value| value.as_str() == Some("GITHUB_ACCESS_TOKEN"))
+                result
+                    .keys
+                    .iter()
+                    .any(|value| value == "GITHUB_ACCESS_TOKEN")
             );
-            assert_eq!(
-                result.get("token").and_then(serde_json::Value::as_str),
-                Some("gho_test_123")
-            );
+            assert_eq!(result.token.as_deref(), Some("gho_test_123"));
         }
         other => panic!("unexpected tool response content: {other:?}"),
     }

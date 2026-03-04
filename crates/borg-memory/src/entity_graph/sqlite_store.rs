@@ -315,7 +315,10 @@ impl SqliteEntityGraph {
             .map(|entity| entity.props.clone())
             .unwrap_or_default();
 
-        props.insert("uri".to_string(), EntityPropValue::Text(fact.entity.to_string()));
+        props.insert(
+            "uri".to_string(),
+            EntityPropValue::Text(fact.entity.to_string()),
+        );
         props.insert(
             "namespace".to_string(),
             EntityPropValue::Text(namespace.clone()),
@@ -569,7 +572,9 @@ fn fact_value_to_prop(value: &FactValue) -> Result<EntityPropValue> {
         FactValue::Boolean(v) => EntityPropValue::Boolean(*v),
         FactValue::Bytes(v) => EntityPropValue::Bytes(v.clone()),
         FactValue::Ref(uri) => EntityPropValue::Ref(Uri::parse(uri.as_str())?),
-        FactValue::Json(v) => EntityPropValue::Text(serde_json::to_string(v)?),
+        FactValue::Date(v) => EntityPropValue::Text(v.clone()),
+        FactValue::DateTime(v) => EntityPropValue::Text(v.clone()),
+        FactValue::List(v) => EntityPropValue::Text(serde_json::to_string(v)?),
     })
 }
 

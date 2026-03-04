@@ -69,7 +69,10 @@ impl TelegramPort {
         })
     }
 
-    async fn send_output(&self, output: SessionOutput<RuntimeToolCall, RuntimeToolResult>) -> Result<()> {
+    async fn send_output(
+        &self,
+        output: SessionOutput<RuntimeToolCall, RuntimeToolResult>,
+    ) -> Result<()> {
         let Some(ctx) = output.port_context.as_telegram() else {
             return Ok(());
         };
@@ -99,7 +102,7 @@ impl TelegramPort {
 #[async_trait]
 impl Port for TelegramPort {
     async fn new(port_config: PortConfig) -> Result<Self> {
-        let telegram_config: TelegramConfig = serde_json::from_value(port_config.settings.clone())?;
+        let telegram_config: TelegramConfig = serde_json::from_str(&port_config.settings_json)?;
         Ok(Self {
             port_id: port_config.port_id.clone(),
             port_name: port_config.port_name,

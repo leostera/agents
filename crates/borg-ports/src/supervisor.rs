@@ -136,8 +136,10 @@ impl BorgPortsSupervisor {
 
         let (inbound_tx, inbound_rx): (Sender<PortMessage>, Receiver<PortMessage>) =
             mpsc::channel(PORT_CHANNEL_CAPACITY);
-        let (outbound_tx, outbound_rx): (Sender<SessionOutput<RuntimeToolCall, RuntimeToolResult>>, Receiver<SessionOutput<RuntimeToolCall, RuntimeToolResult>>) =
-            mpsc::channel(PORT_CHANNEL_CAPACITY);
+        let (outbound_tx, outbound_rx): (
+            Sender<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
+            Receiver<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
+        ) = mpsc::channel(PORT_CHANNEL_CAPACITY);
 
         let sup = self.sup.clone();
         let db = self.rt.db.clone();
@@ -399,15 +401,13 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use borg_core::Uri;
-    use borg_db::BorgDb;
-    use serde_json::json;
-
     use super::{
         ReconcileAction, RunningPortState, compute_reconcile_plan, ensure_session_row,
         select_actor_id,
     };
     use crate::port::{PortConfig, Privacy, Provider, Status};
+    use borg_core::Uri;
+    use borg_db::BorgDb;
 
     fn uri(value: &str) -> Uri {
         Uri::parse(value).expect("valid uri")
@@ -421,7 +421,7 @@ mod tests {
             status: Status::Enabled,
             privacy: Privacy::Public,
             assigned_actor_id: None,
-            settings: json!({"bot_token":"test"}),
+            settings_json: r#"{"bot_token":"test"}"#.to_string(),
         }
     }
 
