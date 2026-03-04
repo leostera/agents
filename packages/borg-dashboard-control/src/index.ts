@@ -1,4 +1,4 @@
 import "./app.css";
 
-export { DashboardControlApp } from "./feature";
 export { DashboardApp } from "./DashboardApp";
+export { DashboardControlApp } from "./feature";
