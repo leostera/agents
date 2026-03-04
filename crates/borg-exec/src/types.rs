@@ -31,10 +31,8 @@ where
         }
 
         match &self.output {
-            ToolResultData::Execution { result, .. } => {
-                serde_json::to_string_pretty(result)
-                    .unwrap_or_else(|_| "\"<invalid_result>\"".to_string())
-            }
+            ToolResultData::Execution { result, .. } => serde_json::to_string_pretty(result)
+                .unwrap_or_else(|_| "\"<invalid_result>\"".to_string()),
             ToolResultData::Text(text) => text.clone(),
             ToolResultData::Capabilities(capabilities) => {
                 serde_json::to_string_pretty(capabilities).unwrap_or_else(|_| "[]".to_string())

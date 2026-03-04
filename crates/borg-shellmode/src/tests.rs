@@ -67,10 +67,7 @@ fn returns_duration_in_result() {
 fn handles_command_not_found() {
     let rt = ShellModeRuntime::new();
     let result = rt.execute("nonexistent_command_12345", ShellModeContext::default());
-    assert!(
-        result.is_err()
-            || result.unwrap().result.exit_code != 0
-    );
+    assert!(result.is_err() || result.unwrap().result.exit_code != 0);
 }
 
 #[test]

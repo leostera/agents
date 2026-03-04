@@ -277,19 +277,19 @@ where
                         continue;
                     };
 
-                    let arguments = match serde_json::from_value::<TToolCall>(arguments_json.clone())
-                    {
-                        Ok(value) => value,
-                        Err(err) => {
-                            return finish_session(
-                                session,
-                                SessionResult::SessionError(format!(
-                                    "invalid tool call arguments for `{name}`: {err}"
-                                )),
-                            )
-                            .await;
-                        }
-                    };
+                    let arguments =
+                        match serde_json::from_value::<TToolCall>(arguments_json.clone()) {
+                            Ok(value) => value,
+                            Err(err) => {
+                                return finish_session(
+                                    session,
+                                    SessionResult::SessionError(format!(
+                                        "invalid tool call arguments for `{name}`: {err}"
+                                    )),
+                                )
+                                .await;
+                            }
+                        };
                     tool_calls.push((id.clone(), name.clone(), arguments));
                 }
 

@@ -1,14 +1,13 @@
 use anyhow::{Result, anyhow};
-use serde_json::{Value, json};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 
 use crate::{
-    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec,
-    Toolchain,
+    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -177,7 +176,8 @@ pub fn build_agent_admin_toolchain(
                     let model = require_non_empty(&request.arguments.model, "model")?;
                     let system_prompt =
                         require_non_empty(&request.arguments.system_prompt, "system_prompt")?;
-                    let default_provider_id = option_non_empty(request.arguments.default_provider_id);
+                    let default_provider_id =
+                        option_non_empty(request.arguments.default_provider_id);
 
                     db.upsert_agent_spec(
                         &agent_id,
@@ -202,7 +202,8 @@ pub fn build_agent_admin_toolchain(
             move |request: crate::ToolRequest<UpdateAgentArgs>| {
                 let db = db_update.clone();
                 async move {
-                    let agent_id = Uri::parse(&require_non_empty(&request.arguments.agent_id, "agent_id")?)?;
+                    let agent_id =
+                        Uri::parse(&require_non_empty(&request.arguments.agent_id, "agent_id")?)?;
                     let existing = db
                         .get_agent_spec(&agent_id)
                         .await?
@@ -214,9 +215,10 @@ pub fn build_agent_admin_toolchain(
                         .unwrap_or_else(|| existing.model.clone());
                     let system_prompt = option_non_empty(request.arguments.system_prompt)
                         .unwrap_or(existing.system_prompt);
-                    let default_provider_id = option_non_empty(request.arguments.default_provider_id)
-                        .or(existing.default_provider_id.clone())
-                        .filter(|value| !value.is_empty());
+                    let default_provider_id =
+                        option_non_empty(request.arguments.default_provider_id)
+                            .or(existing.default_provider_id.clone())
+                            .filter(|value| !value.is_empty());
 
                     db.upsert_agent_spec(
                         &agent_id,
@@ -241,7 +243,8 @@ pub fn build_agent_admin_toolchain(
             move |request: crate::ToolRequest<DisableAgentArgs>| {
                 let db = db_disable.clone();
                 async move {
-                    let agent_id = Uri::parse(&require_non_empty(&request.arguments.agent_id, "agent_id")?)?;
+                    let agent_id =
+                        Uri::parse(&require_non_empty(&request.arguments.agent_id, "agent_id")?)?;
                     let updated = db.set_agent_spec_enabled(&agent_id, false).await?;
                     if updated == 0 {
                         return Err(anyhow!("agent.not_found"));

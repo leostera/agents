@@ -269,16 +269,20 @@ pub fn build_borg_fs_toolchain(fs: BorgFs) -> Result<Toolchain<BorgToolCall, Bor
     for spec in default_borg_fs_tool_specs() {
         let tool_name = spec.name.clone();
         let fs = fs.clone();
-        let tool = Tool::new_transcoded(spec, None, move |request: borg_agent::ToolRequest<FsToolArgs>| {
-            let fs = fs.clone();
-            let tool_name = tool_name.clone();
-            async move {
-                let output = run_borg_fs_tool(&fs, &tool_name, &request.arguments).await?;
-                Ok(ToolResponse::<()> {
-                    content: ToolResultData::Text(serde_json::to_string(&output)?),
-                })
-            }
-        });
+        let tool = Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<FsToolArgs>| {
+                let fs = fs.clone();
+                let tool_name = tool_name.clone();
+                async move {
+                    let output = run_borg_fs_tool(&fs, &tool_name, &request.arguments).await?;
+                    Ok(ToolResponse::<()> {
+                        content: ToolResultData::Text(serde_json::to_string(&output)?),
+                    })
+                }
+            },
+        );
         builder = builder.add_tool(tool)?;
     }
     builder.build()
@@ -317,13 +321,19 @@ pub struct FsToolCounts {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FsToolOutput {
-    Files { files: Vec<FileRecord> },
+    Files {
+        files: Vec<FileRecord>,
+    },
     Get {
         file: FileRecord,
         content_base64: String,
     },
-    Put { file: FileRecord },
-    Delete { deleted: u64 },
+    Put {
+        file: FileRecord,
+    },
+    Delete {
+        deleted: u64,
+    },
     Settings {
         backend: String,
         root_path: Option<String>,
@@ -537,12 +547,7 @@ mod tests {
             b"hello-tools"
         );
 
-        let settings = run_borg_fs_tool(
-            &fs,
-            "BorgFS-settings",
-            &FsToolArgs::default(),
-        )
-        .await?;
+        let settings = run_borg_fs_tool(&fs, "BorgFS-settings", &FsToolArgs::default()).await?;
         match settings {
             FsToolOutput::Settings { counts, .. } => {
                 assert_eq!(counts.total, 1);

@@ -125,7 +125,10 @@ impl Actor {
         debug!("actor {} loop ended", self.actor_id);
     }
 
-    async fn process_message(&mut self, msg: BorgMessage) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
+    async fn process_message(
+        &mut self,
+        msg: BorgMessage,
+    ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         if !self.sessions.contains_key(&msg.session_id) {
             let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
             let session = self.create_session(&msg.session_id, &agent_id).await?;

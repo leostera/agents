@@ -4,10 +4,9 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use borg_exec::{BorgInput, BorgMessage, JsonPortContext};
+use borg_exec::{BorgInput, BorgMessage, PortContext};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::sync::Arc;
 
 use crate::AppState;
 use crate::controllers::common::{api_error, parse_uri_field};
@@ -168,13 +167,11 @@ impl ActorsController {
             input: BorgInput::Chat {
                 text: text.to_string(),
             },
-            port_context: Arc::new(JsonPortContext::new(payload.metadata.unwrap_or_else(
-                || {
-                    json!({
-                        "port": "devmode"
-                    })
-                },
-            ))),
+            port_context: payload
+                .metadata
+                .as_ref()
+                .and_then(|value| serde_json::from_value::<PortContext>(value.clone()).ok())
+                .unwrap_or(PortContext::Unknown),
         };
 
         match state.supervisor.call(message).await {

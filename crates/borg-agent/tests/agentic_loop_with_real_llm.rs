@@ -178,7 +178,7 @@ impl RecordingToolRunner {
         let mut toolchain = Toolchain::new();
         for spec in tool_specs {
             let runner = self.clone();
-            toolchain.register(Tool::new(spec.clone(), None, move |request| {
+            toolchain.register(Tool::new_typed(spec.clone(), None, move |request| {
                 let runner = runner.clone();
                 async move { runner.run_request(request).await }
             }))?;
@@ -366,7 +366,9 @@ async fn start_llm_container_with_retries() -> Option<LlmContainer> {
     None
 }
 
-fn session_output_or_retry(result: SessionResult<SessionOutput<Value, Value>>) -> Option<SessionOutput<Value, Value>> {
+fn session_output_or_retry(
+    result: SessionResult<SessionOutput<Value, Value>>,
+) -> Option<SessionOutput<Value, Value>> {
     match result {
         SessionResult::Completed(Ok(output)) => Some(output),
         SessionResult::Completed(Err(err)) => panic!("unexpected completed error: {}", err),

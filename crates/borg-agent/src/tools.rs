@@ -34,7 +34,8 @@ impl Serialize for BorgToolCall {
     where
         S: Serializer,
     {
-        let value: Value = serde_json::from_str(&self.encoded_json).map_err(serde::ser::Error::custom)?;
+        let value: Value =
+            serde_json::from_str(&self.encoded_json).map_err(serde::ser::Error::custom)?;
         value.serialize(serializer)
     }
 }
@@ -75,7 +76,8 @@ impl Serialize for BorgToolResult {
     where
         S: Serializer,
     {
-        let value: Value = serde_json::from_str(&self.encoded_json).map_err(serde::ser::Error::custom)?;
+        let value: Value =
+            serde_json::from_str(&self.encoded_json).map_err(serde::ser::Error::custom)?;
         value.serialize(serializer)
     }
 }
@@ -317,10 +319,7 @@ impl<TToolCall, TToolResult> Default for Toolchain<TToolCall, TToolResult> {
 }
 
 impl<TToolCall, TToolResult> Toolchain<TToolCall, TToolResult> {
-    pub async fn run(
-        &self,
-        request: ToolRequest<TToolCall>,
-    ) -> Result<ToolResponse<TToolResult>> {
+    pub async fn run(&self, request: ToolRequest<TToolCall>) -> Result<ToolResponse<TToolResult>> {
         let Some(tool) = self.tools.get(&request.tool_name) else {
             return Err(anyhow!("unknown tool {}", request.tool_name));
         };

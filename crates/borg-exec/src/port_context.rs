@@ -1,48 +1,5 @@
-use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::BTreeMap;
-
-pub trait PortContext: std::fmt::Debug + Send + Sync {
-    fn merge_message_metadata(&mut self, metadata: &Value) -> Result<()>;
-    fn to_json(&self) -> Result<Value>;
-    fn as_any(&self) -> &dyn std::any::Any;
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct JsonPortContext {
-    value: Value,
-}
-
-impl JsonPortContext {
-    pub fn new(value: Value) -> Self {
-        Self { value }
-    }
-}
-
-impl PortContext for JsonPortContext {
-    fn merge_message_metadata(&mut self, metadata: &Value) -> Result<()> {
-        match (&mut self.value, metadata) {
-            (Value::Object(target), Value::Object(incoming)) => {
-                for (key, value) in incoming {
-                    target.insert(key.clone(), value.clone());
-                }
-            }
-            _ => {
-                self.value = metadata.clone();
-            }
-        }
-        Ok(())
-    }
-
-    fn to_json(&self) -> Result<Value> {
-        Ok(self.value.clone())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TelegramSessionContext {
@@ -62,11 +19,6 @@ pub struct TelegramParticipant {
 }
 
 impl TelegramSessionContext {
-    pub fn from_json(value: Value) -> Result<Self> {
-        serde_json::from_value(value)
-            .map_err(|err| anyhow!("invalid telegram session context: {err}"))
-    }
-
     pub fn set_chat(&mut self, chat_id: i64, chat_type: impl Into<String>) {
         self.chat_id = chat_id;
         self.chat_type = chat_type.into();
@@ -97,54 +49,45 @@ impl TelegramSessionContext {
     }
 }
 
-impl PortContext for TelegramSessionContext {
-    fn merge_message_metadata(&mut self, metadata: &Value) -> Result<()> {
-        let obj = metadata
-            .as_object()
-            .ok_or_else(|| anyhow!("telegram metadata must be an object"))?;
-        let chat_id = obj
-            .get("chat_id")
-            .and_then(Value::as_i64)
-            .ok_or_else(|| anyhow!("telegram metadata missing chat_id"))?;
-        let chat_type = obj
-            .get("chat_type")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("telegram metadata missing chat_type"))?
-            .to_string();
-        self.chat_id = chat_id;
-        self.chat_type = chat_type;
-        self.last_message_id = obj.get("message_id").and_then(Value::as_i64);
-        self.last_thread_id = obj.get("thread_id").and_then(Value::as_i64);
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DiscordSessionContext {
+    pub channel_id: u64,
+    pub guild_id: Option<u64>,
+    pub message_id: u64,
+    pub author_id: u64,
+    pub author_name: String,
+}
 
-        let sender_id = obj
-            .get("sender_id")
-            .and_then(Value::as_i64)
-            .ok_or_else(|| anyhow!("telegram metadata missing sender_id"))?
-            .to_string();
-        let participant = TelegramParticipant {
-            id: sender_id.clone(),
-            username: obj
-                .get("sender_username")
-                .and_then(Value::as_str)
-                .map(ToString::to_string),
-            first_name: obj
-                .get("sender_first_name")
-                .and_then(Value::as_str)
-                .map(ToString::to_string),
-            last_name: obj
-                .get("sender_last_name")
-                .and_then(Value::as_str)
-                .map(ToString::to_string),
-        };
-        self.participants.insert(sender_id, participant);
-        Ok(())
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HttpSessionContext {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "port", rename_all = "snake_case")]
+pub enum PortContext {
+    Telegram(TelegramSessionContext),
+    Discord(DiscordSessionContext),
+    Http(HttpSessionContext),
+    Unknown,
+}
+
+impl Default for PortContext {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+impl PortContext {
+    pub fn as_telegram(&self) -> Option<&TelegramSessionContext> {
+        match self {
+            Self::Telegram(ctx) => Some(ctx),
+            _ => None,
+        }
     }
 
-    fn to_json(&self) -> Result<Value> {
-        Ok(serde_json::to_value(self)?)
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    pub fn as_discord(&self) -> Option<&DiscordSessionContext> {
+        match self {
+            Self::Discord(ctx) => Some(ctx),
+            _ => None,
+        }
     }
 }
