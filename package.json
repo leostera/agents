@@ -3,18 +3,22 @@
   "private": true,
   "packageManager": "bun@1.2.20",
   "workspaces": [
+    "apps/*",
     "packages/*"
   ],
   "scripts": {
     "build": "bun run build:web",
+    "build:www": "bun run --cwd www build",
     "build:storybook": "storybook build -c packages/borg-ui/.storybook -o packages/borg-ui/storybook-static",
     "build:web": "bun run vite build",
     "check": "biome check --formatter-enabled=true --linter-enabled=false ./packages",
     "dev": "bun run vite",
+    "dev:www": "bun run --cwd www dev",
     "fix": "biome check --formatter-enabled=true --linter-enabled=true --write ./packages",
     "format": "biome format --write ./packages",
     "format:check": "biome check --formatter-enabled=true --linter-enabled=false ./packages",
     "lint": "biome lint --diagnostic-level=error ./packages",
+    "preview:www": "bun run --cwd www preview",
     "prepare": "husky",
     "storybook": "storybook dev -p 6006 -c packages/borg-ui/.storybook",
     "test": "bun test ./packages --pass-with-no-tests",

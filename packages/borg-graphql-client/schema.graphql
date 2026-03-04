@@ -1,0 +1,6 @@
+# Placeholder schema artifact.
+# Replace by generated schema from borg-gql as part of integration.
+
+type Query {
+  _empty: String
+}

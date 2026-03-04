@@ -1,0 +1,77 @@
+.borg-dashboard-shell {
+  min-height: 100svh;
+  background:
+    radial-gradient(1200px 700px at -10% -20%, color-mix(in srgb, var(--primary) 10%, transparent), transparent),
+    radial-gradient(900px 500px at 110% 10%, color-mix(in srgb, var(--accent) 10%, transparent), transparent),
+    linear-gradient(180deg, color-mix(in srgb, var(--background) 92%, black 8%), var(--background));
+}
+
+.borg-dashboard-shell [data-slot='sidebar-wrapper'] {
+  min-height: 100svh;
+  background: transparent;
+}
+
+.borg-dashboard-shell [data-slot='sidebar'] {
+  backdrop-filter: blur(10px);
+}
+
+.borg-dashboard-shell [data-slot='sidebar-inset'] {
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+}
+
+.borg-dashboard-content {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.borg-dashboard-content--full {
+  min-height: 100%;
+}
+
+.borg-dashboard-section--full {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+#settings-providers {
+  height: 100%;
+}
+
+.borg-dashboard-headline {
+  margin-bottom: 1rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 1rem;
+}
+
+.borg-dashboard-headline-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.borg-dashboard-headline-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-height: 2rem;
+}
+
+.borg-dashboard-headline h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.borg-dashboard-headline p {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-muted-foreground);
+}

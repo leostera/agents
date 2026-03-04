@@ -4,10 +4,11 @@ Scope: `packages/*` web workspaces, chat UX, composer behavior, and i18n.
 
 ## Workspace Shape
 
-- Single root Vite app is `packages/borg-app`.
+- Single root Vite app is `apps/borg-admin`.
 - Feature packages:
-  - `@borg/onboard`
-  - `@borg/dashboard`
+  - `@borg/onboarding`
+  - `@borg/dashboard-control`
+  - `@borg/dashboard-observability`
   - `@borg/ui`
   - `@borg/i18n`
 
