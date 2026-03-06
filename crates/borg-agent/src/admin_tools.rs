@@ -44,11 +44,11 @@ struct DisableAgentArgs {
     actor_id: String,
 }
 
-pub fn default_agent_admin_tool_specs() -> Vec<ToolSpec> {
+pub fn default_actor_admin_tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
-            "Agents-listAgents",
-            "List registered agent specs.",
+            "Actors-listActors",
+            "List registered actors.",
             json!({
                 "type": "object",
                 "properties": {
@@ -58,8 +58,8 @@ pub fn default_agent_admin_tool_specs() -> Vec<ToolSpec> {
             }),
         ),
         tool_spec(
-            "Agents-whoAmI",
-            "Return the current runtime identity (agent + session).",
+            "Actors-whoAmI",
+            "Return the current runtime identity (actor + session).",
             json!({
                 "type": "object",
                 "properties": {},
@@ -67,8 +67,8 @@ pub fn default_agent_admin_tool_specs() -> Vec<ToolSpec> {
             }),
         ),
         tool_spec(
-            "Agents-createAgent",
-            "Create a new agent spec.",
+            "Actors-createActor",
+            "Create a new actor.",
             json!({
                 "type": "object",
                 "properties": {
@@ -82,8 +82,8 @@ pub fn default_agent_admin_tool_specs() -> Vec<ToolSpec> {
             }),
         ),
         tool_spec(
-            "Agents-updateAgent",
-            "Update an existing agent spec.",
+            "Actors-updateActor",
+            "Update an existing actor.",
             json!({
                 "type": "object",
                 "properties": {
@@ -97,8 +97,8 @@ pub fn default_agent_admin_tool_specs() -> Vec<ToolSpec> {
             }),
         ),
         tool_spec(
-            "Agents-disableAgent",
-            "Disable an existing agent spec.",
+            "Actors-disableActor",
+            "Disable an existing actor.",
             json!({
                 "type": "object",
                 "properties": {
@@ -111,7 +111,7 @@ pub fn default_agent_admin_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_agent_admin_toolchain(
+pub fn build_actor_admin_toolchain(
     db: BorgDb,
     current_session_id: Uri,
     current_actor_id: Uri,
@@ -126,19 +126,19 @@ pub fn build_agent_admin_toolchain(
 
     Toolchain::builder()
         .add_tool(Tool::new_transcoded(
-            required_spec("Agents-listAgents")?,
+            required_spec("Actors-listActors")?,
             None,
             move |request: crate::ToolRequest<ListAgentsArgs>| {
                 let db = db_list.clone();
                 async move {
                     let limit = request.arguments.limit.unwrap_or(100);
                     let agents = db.list_actors(limit).await?;
-                    json_text(&json!({ "agents": agents }))
+                    json_text(&json!({ "actors": agents }))
                 }
             },
         ))?
         .add_tool(Tool::new_transcoded(
-            required_spec("Agents-whoAmI")?,
+            required_spec("Actors-whoAmI")?,
             None,
             move |_request: crate::ToolRequest<WhoAmIArgs>| {
                 let actor_id = whoami_actor_id.clone();
@@ -152,7 +152,7 @@ pub fn build_agent_admin_toolchain(
             },
         ))?
         .add_tool(Tool::new_transcoded(
-            required_spec("Agents-createAgent")?,
+            required_spec("Actors-createActor")?,
             None,
             move |request: crate::ToolRequest<CreateAgentArgs>| {
                 let db = db_create.clone();
@@ -178,12 +178,12 @@ pub fn build_agent_admin_toolchain(
                         .get_actor(&actor_id)
                         .await?
                         .ok_or_else(|| anyhow!("actor.not_found"))?;
-                    json_text(&json!({ "agent": agent }))
+                    json_text(&json!({ "actor": agent }))
                 }
             },
         ))?
         .add_tool(Tool::new_transcoded(
-            required_spec("Agents-updateAgent")?,
+            required_spec("Actors-updateActor")?,
             None,
             move |request: crate::ToolRequest<UpdateAgentArgs>| {
                 let db = db_update.clone();
@@ -210,12 +210,12 @@ pub fn build_agent_admin_toolchain(
                         .get_actor(&actor_id)
                         .await?
                         .ok_or_else(|| anyhow!("actor.not_found"))?;
-                    json_text(&json!({ "agent": agent }))
+                    json_text(&json!({ "actor": agent }))
                 }
             },
         ))?
         .add_tool(Tool::new_transcoded(
-            required_spec("Agents-disableAgent")?,
+            required_spec("Actors-disableActor")?,
             None,
             move |request: crate::ToolRequest<DisableAgentArgs>| {
                 let db = db_disable.clone();
@@ -240,7 +240,7 @@ pub fn build_agent_admin_toolchain(
                         .get_actor(&actor_id)
                         .await?
                         .ok_or_else(|| anyhow!("actor.not_found"))?;
-                    json_text(&json!({ "agent": agent }))
+                    json_text(&json!({ "actor": agent }))
                 }
             },
         ))?
@@ -256,10 +256,10 @@ fn tool_spec(name: &str, description: &str, parameters: Value) -> ToolSpec {
 }
 
 fn required_spec(name: &str) -> Result<ToolSpec> {
-    default_agent_admin_tool_specs()
+    default_actor_admin_tool_specs()
         .into_iter()
         .find(|spec| spec.name == name)
-        .ok_or_else(|| anyhow!("missing agent admin tool spec {}", name))
+        .ok_or_else(|| anyhow!("missing actor admin tool spec {}", name))
 }
 
 fn json_text<T: Serialize>(value: &T) -> Result<ToolResponse<()>> {

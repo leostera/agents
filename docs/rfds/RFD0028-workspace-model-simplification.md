@@ -344,7 +344,7 @@ Rules:
     - Any remaining CLI/tool/runtime references
 
 11. Schedule naming cut (`clockwork` -> `schedule`) across runtime/tooling/UI.
-    - Status: `pending`
+    - Status: `done`
     - Scope:
     - `crates/*clockwork*` and `Clockwork-*` tool names
     - GraphQL schema object/field naming
@@ -354,6 +354,10 @@ Rules:
     - Status: `in-progress`
     - Scope:
     - Remaining internal `serde_json::Value` contracts that are not explicit boundary-only codecs
+    - Current hotspots:
+    - `crates/borg-db/src/{sessions,schedule,ports,llm_calls,tool_calls}.rs`
+    - `crates/borg-agent/src/tools.rs`
+    - `crates/borg-ports/src/{http,output_format}.rs`
 
 13. Legacy session tables removal (`sessions`, `session_messages`, `port_session_ctx`) with bindings/messages-derived session state.
     - Status: `done`
@@ -427,6 +431,9 @@ Progress update (`2026-03-05`):
 17. `borg-exec` actor runtime now enforces one owned session id per actor instance and rejects cross-session delivery instead of multiplexing session state.
 18. Remaining work in this phase is API client/UI contraction for actor behavior-era fields and full REST route retirement.
 19. Legacy `sessions`, `session_messages`, and `port_session_ctx` tables are dropped in forward migration; session listing/get now derives from `port_bindings` + `messages`.
+20. Legacy `agent_specs` and `users` tables are dropped in forward migration; runtime no longer depends on those tables.
+21. `taskgraph_tasks` identity columns are renamed to actor terminology (`assignee_actor_id`, `reviewer_actor_id`) and GraphQL/CLI payloads use `creatorActorId` / `assigneeActorId`.
+22. Actor admin tools are actor-native (`Actors-*`) and no longer expose `Agents-*` naming.
 
 Exit criteria:
 

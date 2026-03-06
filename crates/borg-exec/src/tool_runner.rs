@@ -1,7 +1,7 @@
 use anyhow::Result;
 use borg_agent::{
     BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
-    ToolchainBuilder, build_agent_admin_toolchain, default_agent_admin_tool_specs,
+    ToolchainBuilder, build_actor_admin_toolchain, default_actor_admin_tool_specs,
 };
 use borg_codemode::{CodeModeContext, CodeModeRuntime, build_code_mode_toolchain_with_context};
 use borg_core::Uri;
@@ -22,7 +22,7 @@ pub fn build_exec_toolchain_with_context(
     db: BorgDb,
     files: BorgFs,
     current_session_id: Uri,
-    current_agent_id: Uri,
+    current_actor_id: Uri,
     allow_task_creation: bool,
 ) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let code = build_code_mode_toolchain_with_context(runtime, context)?;
@@ -35,8 +35,8 @@ pub fn build_exec_toolchain_with_context(
         build_taskgraph_worker_toolchain(db.clone())?
     };
     let schedule = build_schedule_toolchain(db.clone())?;
-    let agent_admin =
-        build_agent_admin_toolchain(db.clone(), current_session_id, current_agent_id)?;
+    let actor_admin =
+        build_actor_admin_toolchain(db.clone(), current_session_id, current_actor_id)?;
     let port_admin = build_port_admin_toolchain(db.clone())?;
     let provider_admin = build_provider_admin_toolchain(db)?;
     code.merge(shell)?
@@ -44,14 +44,14 @@ pub fn build_exec_toolchain_with_context(
         .merge(fs_tools)?
         .merge(taskgraph)?
         .merge(schedule)?
-        .merge(agent_admin)?
+        .merge(actor_admin)?
         .merge(port_admin)?
         .merge(provider_admin)
 }
 
 pub fn default_exec_admin_tool_specs() -> Vec<ToolSpec> {
     let mut out = Vec::new();
-    out.extend(default_agent_admin_tool_specs());
+    out.extend(default_actor_admin_tool_specs());
     out.extend(default_port_admin_tool_specs());
     out.extend(default_borg_fs_tool_specs());
     out.extend(
