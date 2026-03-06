@@ -733,6 +733,52 @@ async fn borg_supervisor_missing_actor_spec_keeps_message_queued() {
 }
 
 #[tokio::test]
+async fn borg_supervisor_allows_model_set_before_actor_model_exists() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let runtime = crate::BorgRuntime::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
+        BorgFs::local(db.clone(), temp_files_root()),
+    );
+    let runtime = std::sync::Arc::new(runtime);
+    let supervisor = BorgSupervisor::new(runtime);
+    supervisor.start().await.unwrap();
+
+    let actor_id = uri!("devmode", "actor", "model-init");
+    db.upsert_actor(&actor_id, "model-init", "prompt", "RUNNING")
+        .await
+        .unwrap();
+
+    let output = supervisor
+        .call(crate::BorgMessage {
+            actor_id: actor_id.clone(),
+            user_id: uri!("borg", "user", "tester"),
+            session_id: uri!("borg", "session", "model-init"),
+            input: crate::BorgInput::Command(crate::BorgCommand::ModelSet {
+                model: "gpt-4o-mini".to_string(),
+            }),
+            port_context: crate::PortContext::Unknown,
+        })
+        .await
+        .unwrap();
+
+    let reply = output.reply.unwrap_or_default();
+    assert!(reply.contains("Updated model to gpt-4o-mini"));
+
+    let actor = db
+        .get_actor(&actor_id)
+        .await
+        .unwrap()
+        .expect("actor must exist");
+    assert_eq!(actor.model.as_deref(), Some("gpt-4o-mini"));
+
+    supervisor.shutdown().await;
+}
+
+#[tokio::test]
 async fn audio_turn_rejects_without_transcription_provider_and_persists_no_user_audio_message() {
     let db = open_test_db().await;
     let memory = open_test_memory().await;
