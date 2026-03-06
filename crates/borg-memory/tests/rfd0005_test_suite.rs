@@ -520,7 +520,7 @@ async fn rfd0005_state_facts_accepts_array_typed_values() {
 async fn rfd0005_bootstrap_without_schema_mode() {
     let store = make_store("rfd0005-bootstrap").await;
     let tools = build_memory_toolchain(store).expect("toolchain");
-    let source = "borg:agent:bootstrap";
+    let source = "borg:actor:bootstrap";
 
     let _ = tools
         .run(request(

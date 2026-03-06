@@ -20,7 +20,7 @@ pub enum TaskGraphCommand {
     Delete(SessionAndUriArgs),
     #[command(about = "Patch title/description/definition_of_done for a task")]
     UpdateTaskFields(UpdateTaskFieldsArgs),
-    #[command(about = "Reviewer-only reassignment to a new assignee agent")]
+    #[command(about = "Reviewer-only reassignment to a new assignee actor")]
     ReassignAssignee(ReassignAssigneeArgs),
     #[command(about = "Add labels to a task")]
     AddTaskLabels(TaskLabelsArgs),
@@ -89,11 +89,11 @@ pub struct CreateTaskArgs {
     #[arg(long)]
     pub session_uri: Option<String>,
     #[arg(long)]
-    pub creator_agent_id: Option<String>,
+    pub creator_actor_id: Option<String>,
     #[arg(long)]
     pub title: Option<String>,
     #[arg(long)]
-    pub assignee_agent_id: Option<String>,
+    pub assignee_actor_id: Option<String>,
     #[arg(long)]
     pub description: Option<String>,
     #[arg(long)]
@@ -151,7 +151,7 @@ pub struct ReassignAssigneeArgs {
     #[arg(long)]
     pub uri: Option<String>,
     #[arg(long)]
-    pub assignee_agent_id: Option<String>,
+    pub assignee_actor_id: Option<String>,
     #[command(flatten)]
     pub raw: RawPayloadArg,
 }
@@ -295,7 +295,7 @@ pub struct SplitTaskIntoSubtasksArgs {
     #[arg(long)]
     pub session_uri: Option<String>,
     #[arg(long)]
-    pub creator_agent_id: Option<String>,
+    pub creator_actor_id: Option<String>,
     #[arg(long)]
     pub uri: Option<String>,
     #[arg(long, value_name = "JSON_ARRAY", help = "Subtasks JSON array")]
@@ -379,9 +379,9 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
         TaskGraphCommand::CreateTask(args) => {
             let mut map = Map::new();
             insert_req(&mut map, "session_uri", args.session_uri);
-            insert_req(&mut map, "creator_agent_id", args.creator_agent_id);
+            insert_req(&mut map, "creator_actor_id", args.creator_actor_id);
             insert_req(&mut map, "title", args.title);
-            insert_req(&mut map, "assignee_agent_id", args.assignee_agent_id);
+            insert_req(&mut map, "assignee_actor_id", args.assignee_actor_id);
             insert_opt(&mut map, "description", args.description);
             insert_opt(&mut map, "definition_of_done", args.definition_of_done);
             insert_vec(&mut map, "labels", args.labels);
@@ -448,7 +448,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 [
                     req("session_uri", args.session_uri),
                     req("uri", args.uri),
-                    req("assignee_agent_id", args.assignee_agent_id),
+                    req("assignee_actor_id", args.assignee_actor_id),
                 ],
             )
             .await
@@ -647,7 +647,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
         TaskGraphCommand::SplitTaskIntoSubtasks(args) => {
             let mut map = Map::new();
             insert_req(&mut map, "session_uri", args.session_uri);
-            insert_req(&mut map, "creator_agent_id", args.creator_agent_id);
+            insert_req(&mut map, "creator_actor_id", args.creator_actor_id);
             insert_req(&mut map, "uri", args.uri);
             if let Some(subtasks) = args.subtasks_json {
                 map.insert("subtasks".to_string(), serde_json::from_str(&subtasks)?);

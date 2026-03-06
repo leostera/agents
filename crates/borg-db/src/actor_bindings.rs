@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use borg_core::Uri;
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 
 use crate::BorgDb;
 
@@ -25,7 +26,7 @@ impl BorgDb {
         actor_id: &Uri,
     ) -> Result<()> {
         if self.get_actor(actor_id).await?.is_none() {
-            return Err(anyhow!("actor spec not found for actor_id {}", actor_id));
+            return Err(anyhow!("actor not found for actor_id {}", actor_id));
         }
         let session_id = self
             .get_port_binding_full_record(port, conversation_key)
@@ -100,12 +101,50 @@ impl BorgDb {
             return Ok(default_actor_id.clone());
         }
 
-        Err(anyhow!(
-            "no actor binding for port={} conversation_key={}",
+        let session_id = self
+            .get_port_binding_full_record(port, conversation_key)
+            .await?
+            .map(|(_conversation_key, session_id, _bound_actor_id)| session_id)
+            .unwrap_or_else(|| conversation_key.clone());
+        let actor_id = deterministic_actor_id(port, conversation_key)?;
+        if self.get_actor(&actor_id).await?.is_none() {
+            self.upsert_actor(
+                &actor_id,
+                &fallback_actor_name(port, conversation_key),
+                "",
+                "RUNNING",
+            )
+            .await?;
+        }
+        self.upsert_port_binding_full_record(
             port,
-            conversation_key
-        ))
+            conversation_key,
+            &session_id,
+            Some(Some(&actor_id)),
+        )
+        .await?;
+        Ok(actor_id)
     }
+}
+
+fn fallback_actor_name(port: &str, conversation_key: &Uri) -> String {
+    let tail = conversation_key
+        .as_str()
+        .rsplit(':')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("conversation");
+    format!("{port}-{tail}")
+}
+
+fn deterministic_actor_id(port: &str, conversation_key: &Uri) -> Result<Uri> {
+    let mut hasher = Sha256::new();
+    hasher.update(port.as_bytes());
+    hasher.update(b":");
+    hasher.update(conversation_key.as_str().as_bytes());
+    let digest = hex::encode(hasher.finalize());
+    Uri::from_parts("borg", "actor", Some(digest.as_str()))
+        .context("failed to build deterministic actor uri")
 }
 
 #[cfg(test)]
@@ -157,7 +196,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_port_actor_uses_default_and_errors_without_actor() -> Result<()> {
+    async fn resolve_port_actor_uses_default_and_autocreates_without_actor() -> Result<()> {
         let path = tmp_db_path("default");
         let db = BorgDb::open_local(
             path.to_str()
@@ -176,11 +215,16 @@ mod tests {
         assert_eq!(resolved, actor);
 
         let key_missing = Uri::from_parts("borg", "conversation", Some("c3"))?;
-        let err = db
+        let created = db
             .resolve_port_actor("http", &key_missing, None, None)
-            .await
-            .expect_err("expected missing actor binding error");
-        assert!(err.to_string().contains("no actor binding"));
+            .await?;
+        assert_eq!(created, deterministic_actor_id("http", &key_missing)?);
+        assert!(db.get_actor(&created).await?.is_some());
+
+        let created_again = db
+            .resolve_port_actor("http", &key_missing, None, None)
+            .await?;
+        assert_eq!(created_again, created);
         Ok(())
     }
 

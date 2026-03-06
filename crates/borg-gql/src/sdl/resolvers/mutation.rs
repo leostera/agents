@@ -706,8 +706,8 @@ impl MutationRoot {
     /// mutation($session: Uri!, $creator: Uri!, $assignee: Uri!) {
     ///   createTask(input: {
     ///     sessionUri: $session
-    ///     creatorAgentId: $creator
-    ///     assigneeAgentId: $assignee
+    ///     creatorActorId: $creator
+    ///     assigneeActorId: $assignee
     ///     title: "Ship borg-gql docs"
     ///     description: "Document all schema entrypoints"
     ///   }) { id title status }
@@ -724,12 +724,12 @@ impl MutationRoot {
         let created = store
             .create_task(
                 input.session_uri.0.as_str(),
-                input.creator_agent_id.0.as_str(),
+                input.creator_actor_id.0.as_str(),
                 CreateTaskInput {
                     title: input.title,
                     description: input.description,
                     definition_of_done: input.definition_of_done,
-                    assignee_agent_id: input.assignee_agent_id.0.to_string(),
+                    assignee_actor_id: input.assignee_actor_id.0.to_string(),
                     parent_uri: input.parent_uri.map(|uri| uri.0.to_string()),
                     blocked_by: input
                         .blocked_by

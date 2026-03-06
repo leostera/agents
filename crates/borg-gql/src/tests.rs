@@ -154,8 +154,8 @@ async fn task_creation_and_status_transition() -> anyhow::Result<()> {
           mutation CreateTask($session: Uri!, $creator: Uri!, $assignee: Uri!) {
             createTask(input: {
               sessionUri: $session
-              creatorAgentId: $creator
-              assigneeAgentId: $assignee
+              creatorActorId: $creator
+              assigneeActorId: $assignee
               title: "Ship borg-gql"
               description: "Implement gql"
               definitionOfDone: "tests pass"

@@ -15,37 +15,11 @@ use crate::{
     Toolchain, to_provider_messages, to_provider_tool_specs,
 };
 
-pub const DEFAULT_MODEL: &str = "gpt-4o-mini";
 pub const DEFAULT_MAX_TURNS: usize = 50;
-pub const DEFAULT_AGENT_ID: &str = "borg:agent:default";
-pub const DEFAULT_SYSTEM_PROMPT: &str = r#"You are Borg's default agent, and this is your system prompt. 
-
-## Rules for Responding
-
-1. Always address the user by their name
-2. Always answer the latest user message directly.
-3. Do not repeat previous answers unless the user asks you to
-5. Keep responses concise and conversational
-
-## Rules for Tool Calls
-
-1. Only call tools that exist in the provided tool list.
-2. For `ShellMode-executeCommand`, arguments MUST use this exact shape:
-   `{"command":"<shell string>","hint":"<short intent>","timeout_seconds":30,"working_directory":"."}`
-3. `command` must be a single shell string, not an array.
-4. Do NOT use keys like `cmd`, `timeout`, or `cwd`.
-5. Invalid examples:
-   - `{"cmd":["bash","-lc","which rg"]}`
-   - `{"command":["bash","-lc","which rg"]}`
-   - `{"command":"bash -lc \"which rg\"","timeout":10000}`
-6. Valid example:
-   - `{"command":"which rg","hint":"Checking if ripgrep is installed","timeout_seconds":30,"working_directory":"."}`
-
-"#;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent<TToolCall, TToolResult> {
-    pub agent_id: Uri,
+    pub actor_id: Uri,
     pub model: String,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub system_prompt: String,
@@ -57,10 +31,10 @@ pub struct Agent<TToolCall, TToolResult> {
 }
 
 impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult> {
-    pub fn new(agent_id: Uri) -> Self {
+    pub fn new(actor_id: Uri) -> Self {
         Self {
-            agent_id,
-            model: DEFAULT_MODEL.to_string(),
+            actor_id,
+            model: String::new(),
             reasoning_effort: None,
             system_prompt: String::new(),
             behavior_prompt: String::new(),
@@ -70,23 +44,29 @@ impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult> {
         }
     }
 
-    pub async fn load(agent_id: &Uri, db: &BorgDb) -> Result<Self> {
-        if let Some(spec) = db.get_agent_spec(agent_id).await? {
-            return Ok(Self::new(spec.agent_id)
-                .with_model(spec.model)
-                .with_system_prompt(spec.system_prompt));
+    pub async fn load(actor_id: &Uri, db: &BorgDb) -> Result<Self> {
+        if let Some(actor) = db.get_actor(actor_id).await? {
+            let model = actor
+                .model
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "model not configured for actor {} (set one via /model <name>)",
+                        actor.actor_id
+                    )
+                })?;
+            return Ok(Self::new(actor.actor_id)
+                .with_model(model)
+                .with_system_prompt(actor.system_prompt));
         }
 
-        if agent_id.as_str() == DEFAULT_AGENT_ID {
-            return Ok(Self::new(agent_id.clone()).with_system_prompt(DEFAULT_SYSTEM_PROMPT));
-        }
-
-        Err(anyhow!("agent not found: {}", agent_id))
+        Err(anyhow!("actor not found: {}", actor_id))
     }
 
     pub async fn default(db: &BorgDb) -> Result<Self> {
-        let agent_id = uri!("borg", "agent", "default");
-        Self::load(&agent_id, db).await
+        let actor_id = uri!("borg", "actor", "default");
+        Self::load(&actor_id, db).await
     }
 
     pub fn with_system_prompt(mut self, system_prompt: impl Into<String>) -> Self {

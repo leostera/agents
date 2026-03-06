@@ -167,14 +167,15 @@ fn default_exec_admin_specs_include_borgfs_tools() {
 #[tokio::test]
 async fn session_manager_resolve_agent_for_turn_refreshes_prompts_and_tools_each_call() {
     let db = open_test_db().await;
-    let manager = SessionManager::new(db.clone(), "gpt-4o-mini".to_string());
-    let agent_id = uri!("borg", "agent", "refresh-test");
+    let manager = SessionManager::new(db.clone());
+    let actor_id = uri!("borg", "actor", "refresh-test");
 
-    db.upsert_agent_spec(&agent_id, "refresh-test", None, "gpt-4o-mini", "prompt-v1")
+    db.upsert_actor(&actor_id, "refresh-test", "prompt-v1", "RUNNING")
         .await
         .unwrap();
+    db.set_actor_model(&actor_id, "gpt-4o-mini").await.unwrap();
 
-    let first = manager.resolve_agent_for_turn(&agent_id).await.unwrap();
+    let first = manager.resolve_agent_for_turn(&actor_id).await.unwrap();
     assert_eq!(first.system_prompt, "prompt-v1");
     assert!(
         first
@@ -230,11 +231,12 @@ async fn session_manager_resolve_agent_for_turn_refreshes_prompts_and_tools_each
     )
     .await
     .unwrap();
-    db.upsert_agent_spec(&agent_id, "refresh-test", None, "gpt-4o-mini", "prompt-v2")
+    db.upsert_actor(&actor_id, "refresh-test", "prompt-v2", "RUNNING")
         .await
         .unwrap();
+    db.set_actor_model(&actor_id, "gpt-4o-mini").await.unwrap();
 
-    let second = manager.resolve_agent_for_turn(&agent_id).await.unwrap();
+    let second = manager.resolve_agent_for_turn(&actor_id).await.unwrap();
     assert_eq!(second.system_prompt, "prompt-v2");
     assert!(
         second
@@ -561,6 +563,7 @@ async fn borg_supervisor_actor_rejects_cross_session_delivery() {
     db.upsert_actor(&actor_id, "multi-session", "prompt", "RUNNING")
         .await
         .unwrap();
+    db.set_actor_model(&actor_id, "gpt-4o-mini").await.unwrap();
     let user_id = uri!("borg", "user", "tester");
     let pctx = crate::PortContext::Unknown;
     let session_a = uri!("borg", "session", "a");
@@ -618,6 +621,7 @@ async fn borg_supervisor_persists_call_and_cast_to_actor_mailbox() {
     db.upsert_actor(&actor_id, "mailbox-persist", "prompt", "RUNNING")
         .await
         .unwrap();
+    db.set_actor_model(&actor_id, "gpt-4o-mini").await.unwrap();
     let user_id = uri!("borg", "user", "tester");
     let pctx = crate::PortContext::Unknown;
     let session_id = uri!("borg", "session", "persist");
@@ -760,6 +764,7 @@ async fn audio_turn_rejects_without_transcription_provider_and_persists_no_user_
     db.upsert_actor(&actor_id, "audio-reject", "prompt", "RUNNING")
         .await
         .unwrap();
+    db.set_actor_model(&actor_id, "gpt-4o-mini").await.unwrap();
 
     let result = supervisor
         .call(crate::BorgMessage {
@@ -818,6 +823,7 @@ async fn borg_supervisor_replays_queued_after_actor_spec_is_created() {
     db.upsert_actor(&actor_id, "late-created", "prompt", "RUNNING")
         .await
         .unwrap();
+    db.set_actor_model(&actor_id, "gpt-4o-mini").await.unwrap();
 
     supervisor
         .cast(crate::BorgMessage {
@@ -872,6 +878,7 @@ async fn borg_supervisor_start_fails_stale_in_progress_mailbox_rows() {
     db.upsert_actor(&actor_id, "stale-fail", "prompt", "RUNNING")
         .await
         .unwrap();
+    db.set_actor_model(&actor_id, "gpt-4o-mini").await.unwrap();
 
     let msg_id = db
         .enqueue_actor_message(&actor_id, None, &json!({"x":1}), None, None)
@@ -928,6 +935,7 @@ async fn borg_supervisor_start_replays_queued_mailbox_rows() {
     db.upsert_actor(&actor_id, "replay-queued", "prompt", "RUNNING")
         .await
         .unwrap();
+    db.set_actor_model(&actor_id, "gpt-4o-mini").await.unwrap();
     let msg = crate::BorgMessage {
         actor_id: actor_id.clone(),
         user_id: uri!("borg", "user", "tester"),

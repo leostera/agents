@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{
-    BorgToolCall, BorgToolResult, Message, Session, SessionResult, ToolCallRecord, Toolchain,
+    Agent, BorgToolCall, BorgToolResult, Message, Session, SessionResult, ToolCallRecord, Toolchain,
 };
 use borg_core::Uri;
 use borg_llm::{ReasoningEffort, TranscriptionRequest};
@@ -21,7 +21,7 @@ const TOOLCHAIN_CACHE_TTL: Duration = Duration::from_secs(60);
 
 struct CachedToolchain {
     user_id: Uri,
-    agent_id: Uri,
+    actor_id: Uri,
     built_at: Instant,
     toolchain: Arc<Toolchain<BorgToolCall, BorgToolResult>>,
 }
@@ -61,7 +61,7 @@ impl ActorHandle {
 
 struct SessionState {
     session: Session<BorgToolCall, BorgToolResult>,
-    agent_id: Uri,
+    actor_id: Uri,
     current_reasoning_effort: Option<ReasoningEffort>,
     cached_toolchain: Option<CachedToolchain>,
 }
@@ -160,13 +160,23 @@ impl Actor {
         }
 
         if self.session_state.is_none() {
-            let agent_id = self.resolve_execution_agent_id().await?;
-            let session = self.create_session(&msg.session_id, &agent_id).await?;
+            let actor_id = self.resolve_execution_actor_id().await?;
+            let session = match self.create_session(&msg.session_id, &actor_id).await {
+                Ok(session) => session,
+                Err(err)
+                    if matches!(msg.input, BorgInput::Command(_))
+                        && err.to_string().contains("model not configured") =>
+                {
+                    self.create_command_session(&msg.session_id, &actor_id)
+                        .await?
+                }
+                Err(err) => return Err(err),
+            };
             let current_reasoning_effort =
                 self.load_session_reasoning_effort(&msg.session_id).await?;
             self.session_state = Some(SessionState {
                 session,
-                agent_id,
+                actor_id,
                 current_reasoning_effort,
                 cached_toolchain: None,
             });
@@ -216,12 +226,27 @@ impl Actor {
     async fn create_session(
         &self,
         session_id: &Uri,
-        agent_id: &Uri,
+        actor_id: &Uri,
     ) -> Result<Session<BorgToolCall, BorgToolResult>> {
         self.runtime
             .session_manager
-            .session_for_task(Some(session_id.clone()), Some(agent_id))
+            .session_for_task(Some(session_id.clone()), Some(actor_id))
             .await
+    }
+
+    async fn create_command_session(
+        &self,
+        session_id: &Uri,
+        actor_id: &Uri,
+    ) -> Result<Session<BorgToolCall, BorgToolResult>> {
+        let actor = self
+            .runtime
+            .db
+            .get_actor(actor_id)
+            .await?
+            .ok_or_else(|| anyhow!("actor not found: {}", actor_id))?;
+        let agent = Agent::new(actor_id.clone()).with_system_prompt(actor.system_prompt);
+        Session::new(session_id.clone(), agent, self.runtime.db.clone()).await
     }
 
     async fn process_chat_message(
@@ -292,11 +317,11 @@ impl Actor {
         msg: &BorgMessage,
         progress_tx: Option<&mpsc::Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
     ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
-        state.agent_id = self.resolve_execution_agent_id().await?;
+        state.actor_id = self.resolve_execution_actor_id().await?;
         state.session.agent = self
             .runtime
             .session_manager
-            .resolve_agent_for_turn(&state.agent_id)
+            .resolve_agent_for_turn(&state.actor_id)
             .await?;
         state.session.agent.reasoning_effort = state.current_reasoning_effort;
 
@@ -395,7 +420,7 @@ impl Actor {
     ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
         match command {
             BorgCommand::ModelShowCurrent => {
-                let model = self.current_model(&state.agent_id).await?;
+                let model = self.current_model(&state.actor_id).await?;
                 Ok(SessionOutput {
                     session_id: msg.session_id.clone(),
                     reply: Some(format!(
@@ -411,7 +436,7 @@ impl Actor {
                 if model.is_empty() {
                     return Err(anyhow!("model cannot be empty"));
                 }
-                self.set_model(&state.agent_id, model).await?;
+                self.set_model(&state.actor_id, model).await?;
                 Ok(SessionOutput {
                     session_id: msg.session_id.clone(),
                     reply: Some(format!(
@@ -514,76 +539,37 @@ impl Actor {
         }
     }
 
-    async fn current_model(&self, agent_id: &Uri) -> Result<String> {
-        let maybe = self.runtime.db.get_agent_spec(agent_id).await?;
-        Ok(maybe
-            .map(|spec| spec.model)
-            .unwrap_or_else(|| "unknown".to_string()))
-    }
-
-    async fn set_model(&self, agent_id: &Uri, model: &str) -> Result<()> {
-        let existing = self.runtime.db.get_agent_spec(agent_id).await?;
-        let (name, default_provider_id, system_prompt) = if let Some(spec) = existing {
-            (spec.name, spec.default_provider_id, spec.system_prompt)
-        } else {
-            (fallback_agent_name(agent_id), None, String::new())
-        };
-        self.runtime
-            .db
-            .upsert_agent_spec(
-                agent_id,
-                &name,
-                default_provider_id.as_deref(),
-                model,
-                &system_prompt,
-            )
-            .await
-    }
-
-    async fn resolve_execution_agent_id(&self) -> Result<Uri> {
+    async fn current_model(&self, actor_id: &Uri) -> Result<String> {
         let actor = self
+            .runtime
+            .db
+            .get_actor(actor_id)
+            .await?
+            .ok_or_else(|| anyhow!("actor not found: {}", actor_id))?;
+        actor
+            .model
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("model not configured for actor {}", actor_id))
+    }
+
+    async fn set_model(&self, actor_id: &Uri, model: &str) -> Result<()> {
+        let updated = self.runtime.db.set_actor_model(actor_id, model).await?;
+        if updated == 0 {
+            return Err(anyhow!("actor not found: {}", actor_id));
+        }
+        Ok(())
+    }
+
+    async fn resolve_execution_actor_id(&self) -> Result<Uri> {
+        let _actor = self
             .runtime
             .db
             .get_actor(&self.actor_id)
             .await?
             .ok_or_else(|| anyhow!("actor not found: {}", self.actor_id))?;
 
-        let agent_id = self.actor_id.clone();
-        let existing = self.runtime.db.get_agent_spec(&agent_id).await?;
-        let model = if let Some(spec) = existing.as_ref() {
-            spec.model.clone()
-        } else {
-            self.resolve_behavior_default_model(None).await
-        };
-
-        let system_prompt = actor.system_prompt.as_str();
-        let default_provider_id = None;
-        let agent_name = actor.name.clone();
-
-        let needs_upsert = existing
-            .as_ref()
-            .map(|spec| {
-                spec.name != agent_name
-                    || spec.model != model
-                    || spec.system_prompt != system_prompt
-                    || spec.default_provider_id.as_deref() != default_provider_id
-            })
-            .unwrap_or(true);
-
-        if needs_upsert {
-            self.runtime
-                .db
-                .upsert_agent_spec(
-                    &agent_id,
-                    &agent_name,
-                    default_provider_id,
-                    &model,
-                    system_prompt,
-                )
-                .await?;
-        }
-
-        Ok(agent_id)
+        Ok(self.actor_id.clone())
     }
 
     async fn toolchain_for_turn(
@@ -593,7 +579,7 @@ impl Actor {
     ) -> Result<Arc<Toolchain<BorgToolCall, BorgToolResult>>> {
         if let Some(cache) = &state.cached_toolchain
             && cache.user_id == msg.user_id
-            && cache.agent_id == state.agent_id
+            && cache.actor_id == state.actor_id
             && cache.built_at.elapsed() < TOOLCHAIN_CACHE_TTL
         {
             return Ok(cache.toolchain.clone());
@@ -601,44 +587,18 @@ impl Actor {
 
         let toolchain = Arc::new(
             self.runtime
-                .build_toolchain(&msg.user_id, &msg.session_id, &state.agent_id)
+                .build_toolchain(&msg.user_id, &msg.session_id, &state.actor_id)
                 .await?,
         );
 
         state.cached_toolchain = Some(CachedToolchain {
             user_id: msg.user_id.clone(),
-            agent_id: state.agent_id.clone(),
+            actor_id: state.actor_id.clone(),
             built_at: Instant::now(),
             toolchain: toolchain.clone(),
         });
 
         Ok(toolchain)
-    }
-
-    async fn resolve_behavior_default_model(&self, preferred_provider_id: Option<&str>) -> String {
-        if let Some(provider_id) = preferred_provider_id
-            && let Ok(Some(provider)) = self.runtime.db.get_provider(provider_id).await
-            && provider.enabled
-            && let Some(model) = provider.default_text_model
-            && !model.trim().is_empty()
-        {
-            return model;
-        }
-
-        if let Ok(providers) = self.runtime.db.list_providers(128).await {
-            for provider in providers {
-                if !provider.enabled {
-                    continue;
-                }
-                if let Some(model) = provider.default_text_model
-                    && !model.trim().is_empty()
-                {
-                    return model;
-                }
-            }
-        }
-
-        "gpt-4o-mini".to_string()
     }
 
     async fn telegram_participants(&self, session_id: &Uri) -> Result<String> {
@@ -718,16 +678,4 @@ impl Actor {
             .as_deref()
             .and_then(|value| ReasoningEffort::from_str(value).ok()))
     }
-}
-
-fn fallback_agent_name(agent_id: &Uri) -> String {
-    let raw = agent_id.as_str();
-    if raw == "borg:agent:default" {
-        return "Default Agent".to_string();
-    }
-    raw.rsplit(':')
-        .next()
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Agent")
-        .to_string()
 }

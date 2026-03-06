@@ -1,6 +1,5 @@
 mod actor_bindings;
 mod actors;
-mod agents;
 mod apps;
 mod core;
 mod devmode;
@@ -12,7 +11,6 @@ mod providers;
 mod schedule;
 mod sessions;
 mod tool_calls;
-mod users;
 mod utils;
 
 use chrono::{DateTime, Utc};
@@ -50,17 +48,6 @@ impl BorgDb {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct AgentSpecRecord {
-    pub agent_id: Uri,
-    pub name: String,
-    pub enabled: bool,
-    pub default_provider_id: Option<String>,
-    pub model: String,
-    pub system_prompt: String,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SessionRecord {
     pub session_id: Uri,
     pub port: Uri,
@@ -73,14 +60,6 @@ pub struct SessionMessageRecord {
     pub session_id: Uri,
     pub payload: Value,
     pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct UserRecord {
-    pub user_key: Uri,
-    pub profile: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -107,7 +86,7 @@ pub struct PortRecord {
     pub allows_guests: bool,
     pub assigned_actor_id: Option<Uri>,
     // Legacy compatibility field; prefer assigned_actor_id for all new flows.
-    pub default_agent_id: Option<Uri>,
+    pub default_actor_id: Option<Uri>,
     pub settings: Value,
     pub active_sessions: u64,
     pub updated_at: Option<DateTime<Utc>>,
@@ -203,6 +182,8 @@ pub struct AppSecretRecord {
 pub struct ActorRecord {
     pub actor_id: Uri,
     pub name: String,
+    pub model: Option<String>,
+    pub default_provider_id: Option<String>,
     pub system_prompt: String,
     pub status: String,
     pub created_at: DateTime<Utc>,

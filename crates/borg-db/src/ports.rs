@@ -18,7 +18,7 @@ fn is_actor_uri(uri: &Uri) -> bool {
     uri.as_str().contains(":actor:")
 }
 
-fn parse_assigned_actor_id(settings: &Value, default_agent_id: Option<Uri>) -> Result<Option<Uri>> {
+fn parse_assigned_actor_id(settings: &Value, default_actor_id: Option<Uri>) -> Result<Option<Uri>> {
     if let Some(raw) = settings
         .as_object()
         .and_then(|map| map.get("actor_id"))
@@ -31,7 +31,7 @@ fn parse_assigned_actor_id(settings: &Value, default_agent_id: Option<Uri>) -> R
             .context("invalid actor_id uri in ports.settings_json");
     }
 
-    Ok(default_agent_id.filter(is_actor_uri))
+    Ok(default_actor_id.filter(is_actor_uri))
 }
 
 enum ActorBindingUpdate<'a> {
@@ -50,7 +50,7 @@ impl BorgDb {
                 p.port_name as "port_name!: String",
                 p.enabled as "enabled!: i64",
                 p.allows_guests as "allows_guests!: i64",
-                p.default_agent_id as "default_agent_id: String",
+                p.default_actor_id as "default_actor_id: String",
                 p.settings_json as "settings_json!: String",
                 COALESCE(bind.active_sessions, 0) as "active_sessions!: i64",
                 MAX(
@@ -87,12 +87,12 @@ impl BorgDb {
                             .with_timezone(&Utc),
                     )
                 };
-                let default_agent_id = row
-                    .default_agent_id
+                let default_actor_id = row
+                    .default_actor_id
                     .as_deref()
                     .map(Uri::parse)
                     .transpose()
-                    .context("invalid default_agent_id uri in ports table")?;
+                    .context("invalid default_actor_id uri in ports table")?;
                 let settings = serde_json::from_str(&row.settings_json)
                     .context("invalid settings_json in ports table")?;
 
@@ -105,9 +105,9 @@ impl BorgDb {
                     allows_guests: row.allows_guests != 0,
                     assigned_actor_id: parse_assigned_actor_id(
                         &settings,
-                        default_agent_id.clone(),
+                        default_actor_id.clone(),
                     )?,
-                    default_agent_id,
+                    default_actor_id,
                     settings,
                     active_sessions: row.active_sessions.max(0) as u64,
                     updated_at,
@@ -126,7 +126,7 @@ impl BorgDb {
                 port_name as "port_name!: String",
                 enabled as "enabled!: i64",
                 allows_guests as "allows_guests!: i64",
-                default_agent_id as "default_agent_id: String",
+                default_actor_id as "default_actor_id: String",
                 settings_json as "settings_json!: String",
                 updated_at as "updated_at!: String"
             FROM ports
@@ -155,11 +155,11 @@ impl BorgDb {
 
         let settings = serde_json::from_str(&row.settings_json)
             .context("invalid settings_json in ports table")?;
-        let default_agent_id = row
-            .default_agent_id
+        let default_actor_id = row
+            .default_actor_id
             .map(|raw| Uri::parse(&raw))
             .transpose()
-            .context("invalid default_agent_id uri in ports table")?;
+            .context("invalid default_actor_id uri in ports table")?;
 
         Ok(Some(PortRecord {
             port_id: Uri::parse(&row.port_id).context("invalid port_id uri in ports table")?,
@@ -167,8 +167,8 @@ impl BorgDb {
             port_name: row.port_name,
             enabled: row.enabled != 0,
             allows_guests: row.allows_guests != 0,
-            assigned_actor_id: parse_assigned_actor_id(&settings, default_agent_id.clone())?,
-            default_agent_id,
+            assigned_actor_id: parse_assigned_actor_id(&settings, default_actor_id.clone())?,
+            default_actor_id,
             settings,
             active_sessions: 0,
             updated_at,
@@ -185,7 +185,7 @@ impl BorgDb {
                 port_name as "port_name!: String",
                 enabled as "enabled!: i64",
                 allows_guests as "allows_guests!: i64",
-                default_agent_id as "default_agent_id: String",
+                default_actor_id as "default_actor_id: String",
                 settings_json as "settings_json!: String",
                 updated_at as "updated_at!: String"
             FROM ports
@@ -214,11 +214,11 @@ impl BorgDb {
 
         let settings = serde_json::from_str(&row.settings_json)
             .context("invalid settings_json in ports table")?;
-        let default_agent_id = row
-            .default_agent_id
+        let default_actor_id = row
+            .default_actor_id
             .map(|raw| Uri::parse(&raw))
             .transpose()
-            .context("invalid default_agent_id uri in ports table")?;
+            .context("invalid default_actor_id uri in ports table")?;
 
         Ok(Some(PortRecord {
             port_id: Uri::parse(&row.port_id).context("invalid port_id uri in ports table")?,
@@ -226,8 +226,8 @@ impl BorgDb {
             port_name: row.port_name,
             enabled: row.enabled != 0,
             allows_guests: row.allows_guests != 0,
-            assigned_actor_id: parse_assigned_actor_id(&settings, default_agent_id.clone())?,
-            default_agent_id,
+            assigned_actor_id: parse_assigned_actor_id(&settings, default_actor_id.clone())?,
+            default_actor_id,
             settings,
             active_sessions: 0,
             updated_at,
@@ -240,7 +240,7 @@ impl BorgDb {
         provider: &str,
         enabled: bool,
         allows_guests: bool,
-        default_agent_id: Option<&Uri>,
+        default_actor_id: Option<&Uri>,
         settings: &Value,
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
@@ -253,19 +253,19 @@ impl BorgDb {
         let port_id = port_id.to_string();
         let port_name = port_name.to_string();
         let provider = provider.to_string();
-        let default_agent_id = default_agent_id.map(|uri| uri.to_string());
+        let default_actor_id = default_actor_id.map(|uri| uri.to_string());
         let enabled_raw = if enabled { 1_i64 } else { 0_i64 };
         let allows_guests_raw = if allows_guests { 1_i64 } else { 0_i64 };
 
         sqlx::query!(
             r#"
-            INSERT INTO ports(port_id, port_name, provider, enabled, allows_guests, default_agent_id, settings_json, updated_at)
+            INSERT INTO ports(port_id, port_name, provider, enabled, allows_guests, default_actor_id, settings_json, updated_at)
             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             ON CONFLICT(port_name) DO UPDATE SET
                 provider = excluded.provider,
                 enabled = excluded.enabled,
                 allows_guests = excluded.allows_guests,
-                default_agent_id = excluded.default_agent_id,
+                default_actor_id = excluded.default_actor_id,
                 settings_json = excluded.settings_json,
                 updated_at = excluded.updated_at
             "#,
@@ -274,7 +274,7 @@ impl BorgDb {
             provider,
             enabled_raw,
             allows_guests_raw,
-            default_agent_id,
+            default_actor_id,
             settings_json,
             now,
         )
@@ -307,7 +307,7 @@ impl BorgDb {
             enabled: true,
             allows_guests: true,
             assigned_actor_id: None,
-            default_agent_id: None,
+            default_actor_id: None,
             settings: serde_json::json!({}),
             active_sessions: 0,
             updated_at: None,
@@ -323,12 +323,12 @@ impl BorgDb {
             "allows_guests" => {
                 port.allows_guests = parse_port_enabled(value);
             }
-            "default_agent_id" => {
+            "default_actor_id" => {
                 let trimmed = value.trim();
-                port.default_agent_id = if trimmed.is_empty() {
+                port.default_actor_id = if trimmed.is_empty() {
                     None
                 } else {
-                    Some(Uri::parse(trimmed).context("invalid default_agent_id uri")?)
+                    Some(Uri::parse(trimmed).context("invalid default_actor_id uri")?)
                 };
             }
             _ => {
@@ -345,7 +345,7 @@ impl BorgDb {
             &port.provider,
             port.enabled,
             port.allows_guests,
-            port.default_agent_id.as_ref(),
+            port.default_actor_id.as_ref(),
             &port.settings,
         )
         .await
@@ -360,7 +360,7 @@ impl BorgDb {
             "kind" | "provider" => Some(port.provider),
             "enabled" => Some(if port.enabled { "true" } else { "false" }.to_string()),
             "allows_guests" => Some(if port.allows_guests { "true" } else { "false" }.to_string()),
-            "default_agent_id" => port.default_agent_id.map(|uri| uri.to_string()),
+            "default_actor_id" => port.default_actor_id.map(|uri| uri.to_string()),
             _ => port
                 .settings
                 .as_object()
@@ -390,8 +390,8 @@ impl BorgDb {
             "allows_guests".to_string(),
             if port.allows_guests { "true" } else { "false" }.to_string(),
         ));
-        if let Some(default_agent_id) = port.default_agent_id {
-            out.push(("default_agent_id".to_string(), default_agent_id.to_string()));
+        if let Some(default_actor_id) = port.default_actor_id {
+            out.push(("default_actor_id".to_string(), default_actor_id.to_string()));
         }
         if let Some(map) = port.settings.as_object() {
             for (key, value) in map {
@@ -425,8 +425,8 @@ impl BorgDb {
                 port.allows_guests = true;
                 true
             }
-            "default_agent_id" => {
-                port.default_agent_id = None;
+            "default_actor_id" => {
+                port.default_actor_id = None;
                 true
             }
             _ => port
@@ -444,7 +444,7 @@ impl BorgDb {
             &port.provider,
             port.enabled,
             port.allows_guests,
-            port.default_agent_id.as_ref(),
+            port.default_actor_id.as_ref(),
             &port.settings,
         )
         .await?;

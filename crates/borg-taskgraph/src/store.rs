@@ -17,7 +17,7 @@ pub struct CreateTaskInput {
     pub title: String,
     pub description: String,
     pub definition_of_done: String,
-    pub assignee_agent_id: String,
+    pub assignee_actor_id: String,
     pub parent_uri: Option<String>,
     pub blocked_by: Vec<String>,
     pub references: Vec<String>,
@@ -36,7 +36,7 @@ pub struct SplitSubtaskInput {
     pub title: String,
     pub description: String,
     pub definition_of_done: String,
-    pub assignee_agent_id: String,
+    pub assignee_actor_id: String,
     pub labels: Vec<String>,
 }
 
@@ -81,15 +81,15 @@ impl TaskGraphStore {
     pub async fn create_task(
         &self,
         session_uri: &str,
-        creator_agent_id: &str,
+        creator_actor_id: &str,
         input: CreateTaskInput,
     ) -> Result<TaskRecord> {
         ensure_uri(session_uri, "auth.session_required")?;
-        ensure_non_empty(creator_agent_id, "task.validation_failed: creator_agent_id")?;
+        ensure_non_empty(creator_actor_id, "task.validation_failed: creator_actor_id")?;
         ensure_non_empty(&input.title, "task.validation_failed: title")?;
         ensure_non_empty(
-            &input.assignee_agent_id,
-            "task.validation_failed: assignee_agent_id",
+            &input.assignee_actor_id,
+            "task.validation_failed: assignee_actor_id",
         )?;
 
         if let Some(parent_uri) = &input.parent_uri {
@@ -105,17 +105,17 @@ impl TaskGraphStore {
             ensure_label(label)?;
         }
 
-        ensure_agent_exists(
+        ensure_actor_exists(
             &self.db,
-            creator_agent_id,
-            "task.validation_failed: creator_agent_id",
+            creator_actor_id,
+            "task.validation_failed: creator_actor_id",
         )
         .await
         .ok();
-        ensure_agent_exists(
+        ensure_actor_exists(
             &self.db,
-            &input.assignee_agent_id,
-            "task.validation_failed: assignee_agent_id",
+            &input.assignee_actor_id,
+            "task.validation_failed: assignee_actor_id",
         )
         .await
         .ok();
@@ -141,9 +141,9 @@ impl TaskGraphStore {
                 description,
                 definition_of_done,
                 status,
-                assignee_agent_id,
+                assignee_actor_id,
                 assignee_session_uri,
-                reviewer_agent_id,
+                reviewer_actor_id,
                 reviewer_session_uri,
                 parent_uri,
                 duplicate_of,
@@ -158,9 +158,9 @@ impl TaskGraphStore {
         .bind(input.title.trim())
         .bind(input.description.trim())
         .bind(input.definition_of_done.trim())
-        .bind(input.assignee_agent_id.trim())
+        .bind(input.assignee_actor_id.trim())
         .bind(&assignee_session_uri)
-        .bind(creator_agent_id.trim())
+        .bind(creator_actor_id.trim())
         .bind(&reviewer_session_uri)
         .bind(input.parent_uri.as_deref())
         .bind(&now)
@@ -209,9 +209,9 @@ impl TaskGraphStore {
             session_uri,
             "task.created",
             TaskEventData::TaskCreated {
-                assignee_agent_id: input.assignee_agent_id,
+                assignee_actor_id: input.assignee_actor_id,
                 assignee_session_uri,
-                reviewer_agent_id: creator_agent_id.to_string(),
+                reviewer_actor_id: creator_actor_id.to_string(),
                 reviewer_session_uri,
                 parent_uri: None,
             },
@@ -359,13 +359,13 @@ impl TaskGraphStore {
         &self,
         session_uri: &str,
         uri: &str,
-        new_assignee_agent_id: &str,
+        new_assignee_actor_id: &str,
     ) -> Result<TaskRecord> {
         ensure_uri(session_uri, "auth.session_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
         ensure_non_empty(
-            new_assignee_agent_id,
-            "task.validation_failed: assignee_agent_id",
+            new_assignee_actor_id,
+            "task.validation_failed: assignee_actor_id",
         )?;
 
         let mut tx = self.db.pool().begin().await?;
@@ -374,14 +374,14 @@ impl TaskGraphStore {
             return Err(anyhow!("task.reassign_forbidden"));
         }
 
-        let old_assignee_agent_id = task.assignee_agent_id.clone();
+        let old_assignee_actor_id = task.assignee_actor_id.clone();
         let old_assignee_session_uri = task.assignee_session_uri.clone();
         let new_assignee_session_uri = new_uri("session")?;
         let now = now_rfc3339();
 
         sqlx::query(
             r#"UPDATE taskgraph_tasks
-               SET assignee_agent_id = ?1,
+               SET assignee_actor_id = ?1,
                    assignee_session_uri = ?2,
                    status = 'pending',
                    review_submitted_at = NULL,
@@ -390,7 +390,7 @@ impl TaskGraphStore {
                    updated_at = ?3
                WHERE uri = ?4"#,
         )
-        .bind(new_assignee_agent_id.trim())
+        .bind(new_assignee_actor_id.trim())
         .bind(&new_assignee_session_uri)
         .bind(&now)
         .bind(uri)
@@ -403,9 +403,9 @@ impl TaskGraphStore {
             session_uri,
             "task.reassigned",
             TaskEventData::TaskReassigned {
-                old_assignee_agent_id,
+                old_assignee_actor_id,
                 old_assignee_session_uri,
-                new_assignee_agent_id: new_assignee_agent_id.trim().to_string(),
+                new_assignee_actor_id: new_assignee_actor_id.trim().to_string(),
                 new_assignee_session_uri,
             },
         )
@@ -1214,13 +1214,13 @@ impl TaskGraphStore {
     pub async fn split_task_into_subtasks(
         &self,
         session_uri: &str,
-        creator_agent_id: &str,
+        creator_actor_id: &str,
         uri: &str,
         subtasks: Vec<SplitSubtaskInput>,
     ) -> Result<(TaskRecord, Vec<TaskRecord>)> {
         ensure_uri(session_uri, "auth.session_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
-        ensure_non_empty(creator_agent_id, "task.validation_failed: creator_agent_id")?;
+        ensure_non_empty(creator_actor_id, "task.validation_failed: creator_actor_id")?;
         if subtasks.is_empty() {
             return Err(anyhow!(
                 "task.validation_failed: subtasks must not be empty"
@@ -1241,8 +1241,8 @@ impl TaskGraphStore {
         for subtask in subtasks {
             ensure_non_empty(&subtask.title, "task.validation_failed: subtask title")?;
             ensure_non_empty(
-                &subtask.assignee_agent_id,
-                "task.validation_failed: subtask assignee_agent_id",
+                &subtask.assignee_actor_id,
+                "task.validation_failed: subtask assignee_actor_id",
             )?;
             for label in &subtask.labels {
                 ensure_label(label)?;
@@ -1259,9 +1259,9 @@ impl TaskGraphStore {
                     description,
                     definition_of_done,
                     status,
-                    assignee_agent_id,
+                    assignee_actor_id,
                     assignee_session_uri,
-                    reviewer_agent_id,
+                    reviewer_actor_id,
                     reviewer_session_uri,
                     parent_uri,
                     duplicate_of,
@@ -1276,9 +1276,9 @@ impl TaskGraphStore {
             .bind(subtask.title.trim())
             .bind(subtask.description.trim())
             .bind(subtask.definition_of_done.trim())
-            .bind(subtask.assignee_agent_id.trim())
+            .bind(subtask.assignee_actor_id.trim())
             .bind(&assignee_session_uri)
-            .bind(creator_agent_id.trim())
+            .bind(creator_actor_id.trim())
             .bind(&reviewer_session_uri)
             .bind(uri)
             .bind(&now)
@@ -1303,9 +1303,9 @@ impl TaskGraphStore {
                 session_uri,
                 "task.created",
                 TaskEventData::TaskCreated {
-                    assignee_agent_id: subtask.assignee_agent_id,
+                    assignee_actor_id: subtask.assignee_actor_id,
                     assignee_session_uri,
-                    reviewer_agent_id: creator_agent_id.to_string(),
+                    reviewer_actor_id: creator_actor_id.to_string(),
                     reviewer_session_uri,
                     parent_uri: Some(uri.to_string()),
                 },
@@ -1615,13 +1615,13 @@ fn ensure_non_empty(input: &str, code: &str) -> Result<()> {
     Ok(())
 }
 
-async fn ensure_agent_exists(db: &BorgDb, agent_id: &str, code: &str) -> Result<()> {
-    let uri = Uri::parse(agent_id).map_err(|_| anyhow!(code.to_string()))?;
-    let spec = db
-        .get_agent_spec(&uri)
+async fn ensure_actor_exists(db: &BorgDb, actor_id: &str, code: &str) -> Result<()> {
+    let uri = Uri::parse(actor_id).map_err(|_| anyhow!(code.to_string()))?;
+    let actor = db
+        .get_actor(&uri)
         .await
         .map_err(|_| anyhow!(code.to_string()))?;
-    if spec.is_none() {
+    if actor.is_none() {
         return Err(anyhow!(code.to_string()));
     }
     Ok(())
@@ -1712,9 +1712,9 @@ async fn load_task_tx(tx: &mut Transaction<'_, Sqlite>, uri: &str) -> Result<Opt
             description,
             definition_of_done,
             status,
-            assignee_agent_id,
+            assignee_actor_id,
             assignee_session_uri,
-            reviewer_agent_id,
+            reviewer_actor_id,
             reviewer_session_uri,
             parent_uri,
             duplicate_of,
@@ -1780,9 +1780,9 @@ async fn load_task_tx(tx: &mut Transaction<'_, Sqlite>, uri: &str) -> Result<Opt
         description: row.get("description"),
         definition_of_done: row.get("definition_of_done"),
         status: row.get("status"),
-        assignee_agent_id: row.get("assignee_agent_id"),
+        assignee_actor_id: row.get("assignee_actor_id"),
         assignee_session_uri: row.get("assignee_session_uri"),
-        reviewer_agent_id: row.get("reviewer_agent_id"),
+        reviewer_actor_id: row.get("reviewer_actor_id"),
         reviewer_session_uri: row.get("reviewer_session_uri"),
         labels,
         parent_uri: row.get("parent_uri"),

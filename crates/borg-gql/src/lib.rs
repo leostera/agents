@@ -192,8 +192,6 @@ pub struct HttpPortRequest {
     #[serde(default)]
     pub actor_id: Option<String>,
     #[serde(default)]
-    pub agent_id: Option<String>,
-    #[serde(default)]
     pub metadata: Option<Value>,
 }
 
@@ -416,8 +414,7 @@ fn validate_port_request(
         None => None,
     };
 
-    let raw_actor = payload.actor_id.or(payload.agent_id);
-    let actor_id = match raw_actor {
+    let actor_id = match payload.actor_id {
         Some(raw) => match Uri::parse(&raw) {
             Ok(value) => Some(value),
             Err(_) => return Err(bad_request("actor_id must be a valid URI")),
