@@ -25,7 +25,10 @@ function resolveHealthBaseUrl(): string {
     return "";
   }
   const { protocol, hostname, port, origin } = window.location;
-  if ((hostname === "localhost" || hostname === "127.0.0.1") && port === "5173") {
+  if (
+    (hostname === "localhost" || hostname === "127.0.0.1") &&
+    port === "5173"
+  ) {
     return `${protocol}//${hostname}:8080`;
   }
   return origin;

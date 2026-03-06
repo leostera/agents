@@ -1,7 +1,4 @@
-import {
-  type ActorRecord,
-  createBorgApiClient,
-} from "@borg/graphql-client";
+import { type ActorRecord, createBorgApiClient } from "@borg/graphql-client";
 import {
   Button,
   ChatComposerShell,

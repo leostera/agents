@@ -1,9 +1,4 @@
-import {
-  Bell,
-  LayoutDashboard,
-  Route,
-  Settings2,
-} from "lucide-react";
+import { Bell, LayoutDashboard, Route, Settings2 } from "lucide-react";
 import React from "react";
 
 export type DashboardRouteItem = {

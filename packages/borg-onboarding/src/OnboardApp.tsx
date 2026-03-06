@@ -203,7 +203,9 @@ type ChatActorResponse = {
   reply?: string | null;
 };
 
-async function chatActor(payload: ChatActorPayload): Promise<ChatActorResponse> {
+async function chatActor(
+  payload: ChatActorPayload
+): Promise<ChatActorResponse> {
   const response = await fetch(`${resolveRuntimeBaseUrl()}/ports/http`, {
     method: "POST",
     headers: {
@@ -321,14 +323,25 @@ function toMirroredChatMessages(
   rawMessages: OnboardingSessionMessage[]
 ): MirroredChatMessage[] {
   return [...rawMessages]
-    .sort((left, right) => left.messageIndex - right.messageIndex)
+    .sort((left, right) => {
+      const leftAt = Date.parse(left.createdAt);
+      const rightAt = Date.parse(right.createdAt);
+      if (
+        !Number.isNaN(leftAt) &&
+        !Number.isNaN(rightAt) &&
+        leftAt !== rightAt
+      ) {
+        return leftAt - rightAt;
+      }
+      return left.id.localeCompare(right.id);
+    })
     .map((message) => {
       const role = detectMessageRole(message);
       const text = message.text?.trim() ?? "";
       return {
         messageIdentity: message.id.trim()
           ? message.id
-          : `${message.sessionId}:${message.messageIndex}`,
+          : `${message.sessionId}:${message.createdAt}`,
         role,
         text,
         timestamp: formatTimestamp(message.createdAt),
@@ -434,7 +447,6 @@ export function OnboardApp() {
         actorId,
         name: "Onboarding Assistant",
         systemPrompt: ONBOARDING_ACTOR_PROMPT,
-        status: "RUNNING",
       });
 
       dispatch({ type: "flow/set_step", step: "chooseChannel" });
@@ -677,7 +689,6 @@ export function OnboardApp() {
             actorId,
             name: actorDisplayName,
             systemPrompt: DEFAULT_ASSISTANT_PROMPT,
-            status: "RUNNING",
           });
         }
 

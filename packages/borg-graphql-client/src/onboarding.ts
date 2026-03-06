@@ -1,4 +1,5 @@
 import {
+  ActorStatusValue,
   OnboardingPortBindingsByPortIdDocument,
   OnboardingSessionMessagesDocument,
   OnboardingUpsertActorDocument,
@@ -10,7 +11,7 @@ export type UpsertOnboardingActorPayload = {
   actorId: string;
   name?: string | null;
   systemPrompt: string;
-  status?: string | null;
+  status?: ActorStatusValue | null;
 };
 
 export type UpsertOnboardingPortPayload = {
@@ -51,7 +52,7 @@ export async function upsertOnboardingActor(
       id: payload.actorId,
       name: payload.name?.trim() || payload.actorId,
       systemPrompt: payload.systemPrompt,
-      status: payload.status ?? "RUNNING",
+      status: payload.status ?? ActorStatusValue.Running,
     },
   });
 }
