@@ -50,11 +50,11 @@ impl BorgRuntime {
     pub async fn build_toolchain(
         &self,
         user_id: &Uri,
-        session_id: &Uri,
+        _session_id: &Uri,
         actor_id: &Uri,
     ) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
         let context = self
-            .code_mode_context_for_turn(user_id, session_id, actor_id)
+            .code_mode_context_for_turn(user_id, actor_id, actor_id)
             .await?;
         let runtime_toolchain = build_exec_toolchain_with_context(
             self.runtime.clone(),
@@ -63,8 +63,9 @@ impl BorgRuntime {
             self.memory.clone(),
             self.db.clone(),
             self.files.clone(),
-            session_id.clone(),
             actor_id.clone(),
+            actor_id.clone(),
+            user_id.clone(),
             true,
         )?;
         let apps = BorgApps::new(self.db.clone()).await?;

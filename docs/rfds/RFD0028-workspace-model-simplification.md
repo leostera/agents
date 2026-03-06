@@ -42,12 +42,12 @@ Completed in mainline rewrite work:
 4. Behavior UI removed from navigation/routes/pages.
 5. Non-working legacy admin surfaces deleted instead of being kept behind compatibility placeholders.
 6. Legacy `sessions`, `session_messages`, and `port_session_ctx` tables dropped; session state now derives from `port_bindings` + `messages`.
+7. Schedule DB access now uses `sqlx::query!`/`query_as!` in active schedule paths (no dynamic `sqlx::query` needed there).
+8. Port tool-action output formatting no longer depends on internal `serde_json::Value` plumbing.
 
 Remaining high-priority cuts:
 
-1. Finish one-actor/one-session ownership at storage and runtime constraint level.
-2. Complete Schedule naming cut (`clockwork_*` -> `schedule_*`) across tools/CLI/GraphQL.
-3. Continue typed-data sweep until internal `serde_json::Value` usage is boundary-only per `RFD0017`.
+1. Keep enforcing typed-data boundaries so `serde_json::Value` stays restricted to explicit JSON boundary layers only (DB JSON columns, GraphQL `JsonValue`, provider/tool wire contracts).
 
 ## Motivation
 [motivation]: #motivation
@@ -351,13 +351,13 @@ Rules:
     - UI labels/routes/tool docs
 
 12. Internal typed-data completion (RFD0017 alignment).
-    - Status: `in-progress`
+    - Status: `done`
     - Scope:
-    - Remaining internal `serde_json::Value` contracts that are not explicit boundary-only codecs
-    - Current hotspots:
-    - `crates/borg-db/src/{sessions,schedule,ports,llm_calls,tool_calls}.rs`
-    - `crates/borg-agent/src/tools.rs`
-    - `crates/borg-ports/src/{http,output_format}.rs`
+    - `serde_json::Value` remains allowed only at explicit JSON boundaries:
+    - DB JSON codecs/columns (for example: `messages.payload_json`, `schedule_jobs.*_json`, `tool_calls.*_json`, `llm_calls.*_json`, port/app settings JSON)
+    - GraphQL `JsonValue` scalar boundaries
+    - Tool/provider wire-level JSON contracts
+    - Internal domain/runtime flow should continue using typed structs/enums, with immediate parse at read boundaries.
 
 13. Legacy session tables removal (`sessions`, `session_messages`, `port_session_ctx`) with bindings/messages-derived session state.
     - Status: `done`
@@ -429,7 +429,7 @@ Progress update (`2026-03-05`):
 15. Dashboard control navigation/route placeholders for policies were removed.
 16. Active actor DB/GQL contracts no longer require or expose `default_behavior_id` / `defaultBehaviorId`.
 17. `borg-exec` actor runtime now enforces one owned session id per actor instance and rejects cross-session delivery instead of multiplexing session state.
-18. Remaining work in this phase is API client/UI contraction for actor behavior-era fields and full REST route retirement.
+18. API client/UI contraction for actor behavior-era fields and REST route retirement was completed in the rewrite window tracked above.
 19. Legacy `sessions`, `session_messages`, and `port_session_ctx` tables are dropped in forward migration; session listing/get now derives from `port_bindings` + `messages`.
 20. Legacy `agent_specs` and `users` tables are dropped in forward migration; runtime no longer depends on those tables.
 21. `taskgraph_tasks` identity columns are renamed to actor terminology (`assignee_actor_id`, `reviewer_actor_id`) and GraphQL/CLI payloads use `creatorActorId` / `assigneeActorId`.

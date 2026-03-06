@@ -29,13 +29,13 @@ impl SessionManager {
 
     pub async fn session_for_task(
         &self,
-        session_id: Option<Uri>,
+        _session_id: Option<Uri>,
         requested_actor_id: Option<&Uri>,
     ) -> Result<Session<BorgToolCall, BorgToolResult>> {
-        let session_id = session_id.unwrap_or_else(|| uri!("borg", "session"));
         let actor_id = self
-            .resolve_actor_id(requested_actor_id, &session_id)
+            .resolve_actor_id(requested_actor_id, &uri!("borg", "session"))
             .await?;
+        let session_id = actor_id.clone();
         let agent = self.resolve_agent_for_turn(&actor_id).await?;
 
         let mut session = Session::new(session_id.clone(), agent, self.db.clone()).await?;

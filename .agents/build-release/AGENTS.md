@@ -6,6 +6,7 @@ Scope: builds, workspace wiring, and command expectations.
 
 - Web build:
   - `bun run build:web`
+  - `bun run build:stage`
 - Docs site build:
   - `bun run build:www`
 - Standalone docs site build:
@@ -20,10 +21,12 @@ Scope: builds, workspace wiring, and command expectations.
 
 - Web dev:
   - `bun run dev:web`
+  - `bun run dev:stage`
 - All local web+docs dev servers (single entrypoint):
   - `bun run dev`
   - Runs:
     - Vite app server
+    - Stage playground on port `5174`
     - `www/dev.openborg` on port `4321`
     - `www/dev.openborg.docs` on port `4322`
     - Storybook on port `6006`

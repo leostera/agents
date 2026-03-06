@@ -208,6 +208,7 @@ pub struct FileRecord {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ActorMailboxRecord {
     pub actor_message_id: Uri,
+    pub sender_actor_id: Option<Uri>,
     pub actor_id: Uri,
     pub session_id: Option<Uri>,
     pub payload: Value,

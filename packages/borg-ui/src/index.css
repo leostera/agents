@@ -4,10 +4,8 @@
 @import "@fontsource-variable/noto-sans";
 @source "../**/*.{ts,tsx}";
 @source "../../borg-devmode/src/**/*.{ts,tsx}";
-@source "../../borg-explorer/src/**/*.{ts,tsx}";
-@source "../../borg-dashboard-control/src/**/*.{ts,tsx}";
-@source "../../borg-onboarding/src/**/*.{ts,tsx}";
-@source "../../../apps/borg-admin/src/**/*.{ts,tsx}";
+@source "../../../apps/devmode/src/**/*.{ts,tsx}";
+@source "../../../apps/stage/src/**/*.{ts,tsx}";
 
 @custom-variant dark (&:is(.dark *));
 

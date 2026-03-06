@@ -10,14 +10,21 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc::Sender;
+use tokio::task::JoinHandle;
+use tokio::time::{Duration, interval};
 use tracing::{info, warn};
 
 const STALE_IN_PROGRESS_SECONDS: u64 = 300;
+const QUEUED_REPLAY_INTERVAL_MS: u64 = 250;
+const ACTOR_SYNC_INTERVAL_MS: u64 = 500;
+const ACTOR_SYNC_LIMIT: usize = 1000;
 
 #[derive(Clone)]
 pub struct BorgSupervisor {
     runtime: Arc<BorgRuntime>,
     actors: Arc<RwLock<HashMap<Uri, ActorHandle>>>,
+    replay_task: Arc<RwLock<Option<JoinHandle<()>>>>,
+    actor_sync_task: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
 
 impl BorgSupervisor {
@@ -25,6 +32,8 @@ impl BorgSupervisor {
         Self {
             runtime,
             actors: Arc::new(RwLock::new(HashMap::new())),
+            replay_task: Arc::new(RwLock::new(None)),
+            actor_sync_task: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -43,6 +52,8 @@ impl BorgSupervisor {
             );
         }
         self.replay_queued_actor_messages().await?;
+        self.start_replay_loop().await;
+        self.start_actor_sync_loop().await;
         Ok(())
     }
 
@@ -58,6 +69,8 @@ impl BorgSupervisor {
         msg: BorgMessage,
         progress_tx: Option<Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
     ) -> anyhow::Result<SessionOutput<BorgToolCall, BorgToolResult>> {
+        let mut msg = msg;
+        msg.session_id = msg.actor_id.clone();
         let actor_message_id = self
             .runtime
             .db
@@ -93,6 +106,8 @@ impl BorgSupervisor {
     }
 
     pub async fn cast(&self, msg: BorgMessage) -> anyhow::Result<()> {
+        let mut msg = msg;
+        msg.session_id = msg.actor_id.clone();
         let actor_message_id = self
             .runtime
             .db
@@ -148,11 +163,74 @@ impl BorgSupervisor {
 
     pub async fn shutdown(&self) {
         info!("BorgSupervisor shutting down");
+        if let Some(task) = self.replay_task.write().await.take() {
+            task.abort();
+        }
+        if let Some(task) = self.actor_sync_task.write().await.take() {
+            task.abort();
+        }
         let mut actors = self.actors.write().await;
         for (_, actor) in actors.drain() {
             let _ = actor.mailbox.send(ActorCommand::Terminate).await;
             actor.task.abort();
         }
+    }
+
+    async fn start_replay_loop(&self) {
+        if self.replay_task.read().await.is_some() {
+            return;
+        }
+        let supervisor = self.clone();
+        let task = tokio::spawn(async move {
+            let mut ticker = interval(Duration::from_millis(QUEUED_REPLAY_INTERVAL_MS));
+            loop {
+                ticker.tick().await;
+                if let Err(err) = supervisor.replay_queued_actor_messages().await {
+                    warn!(
+                        target: "borg_exec",
+                        error = %err,
+                        "queued actor mailbox replay loop failed"
+                    );
+                }
+            }
+        });
+        *self.replay_task.write().await = Some(task);
+    }
+
+    async fn start_actor_sync_loop(&self) {
+        if self.actor_sync_task.read().await.is_some() {
+            return;
+        }
+        let supervisor = self.clone();
+        let task = tokio::spawn(async move {
+            let mut ticker = interval(Duration::from_millis(ACTOR_SYNC_INTERVAL_MS));
+            loop {
+                ticker.tick().await;
+                let rows = match supervisor.runtime.db.list_actors(ACTOR_SYNC_LIMIT).await {
+                    Ok(rows) => rows,
+                    Err(err) => {
+                        warn!(
+                            target: "borg_exec",
+                            error = %err,
+                            "actor sync loop failed to list actors"
+                        );
+                        continue;
+                    }
+                };
+
+                for actor in rows.into_iter().filter(|actor| actor.status == "RUNNING") {
+                    if let Err(err) = supervisor.ensure_actor(&actor.actor_id).await {
+                        warn!(
+                            target: "borg_exec",
+                            actor_id = %actor.actor_id,
+                            error = %err,
+                            "actor sync loop failed to ensure actor"
+                        );
+                    }
+                }
+            }
+        });
+        *self.actor_sync_task.write().await = Some(task);
     }
 
     async fn replay_queued_actor_messages(&self) -> anyhow::Result<()> {

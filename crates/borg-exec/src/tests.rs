@@ -9,7 +9,7 @@ use borg_apps::default_tool_specs as default_apps_tool_specs;
 use borg_codemode::{
     CodeModeContext, CodeModeRuntime, default_tool_specs as default_codemode_tool_specs,
 };
-use borg_core::uri;
+use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 use borg_fs::{BorgFs, FileKind, PutFileMetadata};
 use borg_llm::{
@@ -148,6 +148,23 @@ fn assistant_tool_call(
 struct CodeModeEnvResult {
     keys: Vec<String>,
     token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ActorsSendMessageResult {
+    status: String,
+    actor_message_id: String,
+    submission_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ActorsReceiveResult {
+    status: String,
+    actor_message_id: String,
+    submission_id: String,
+    in_reply_to_submission_id: Option<String>,
+    source_actor_id: Option<String>,
+    text: String,
 }
 
 fn default_agent_tools() -> Vec<borg_agent::ToolSpec> {
@@ -301,6 +318,7 @@ async fn e2e_agent_toolchain_runtime_search_then_execute_then_reply() {
         toolchain_fs,
         uri!("borg", "session", "test-runtime"),
         uri!("borg", "agent", "test-runtime"),
+        uri!("borg", "user", "test-runtime"),
         true,
     )
     .unwrap();
@@ -413,6 +431,7 @@ async fn e2e_agent_toolchain_runtime_invalid_execute_returns_tool_error_and_reco
         toolchain_fs,
         uri!("borg", "session", "test-invalid"),
         uri!("borg", "agent", "test-invalid"),
+        uri!("borg", "user", "test-invalid"),
         true,
     )
     .unwrap();
@@ -524,6 +543,223 @@ async fn app_available_secret_is_exposed_in_borg_env_get() {
         }
         other => panic!("unexpected tool response content: {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn actors_send_message_enqueues_actor_to_actor_mail() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let runtime = crate::BorgRuntime::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
+        BorgFs::local(db.clone(), temp_files_root()),
+    );
+
+    let source_actor_id = uri!("borg", "actor", "source-send");
+    let source_session_id = uri!("borg", "session", "source-send");
+    let source_user_id = uri!("borg", "user", "source-send");
+    let target_actor_id = uri!("borg", "actor", "target-send");
+    let target_session_id = uri!("borg", "session", "target-send");
+
+    db.upsert_actor(&source_actor_id, "source-send", "prompt", "RUNNING")
+        .await
+        .unwrap();
+    db.set_actor_model(&source_actor_id, "gpt-4o-mini")
+        .await
+        .unwrap();
+    db.upsert_actor(&target_actor_id, "target-send", "prompt", "RUNNING")
+        .await
+        .unwrap();
+    db.set_actor_model(&target_actor_id, "gpt-4o-mini")
+        .await
+        .unwrap();
+
+    let toolchain = runtime
+        .build_toolchain(&source_user_id, &source_session_id, &source_actor_id)
+        .await
+        .unwrap();
+
+    let response = toolchain
+        .run(ToolRequest {
+            tool_call_id: "tool-call-send-1".to_string(),
+            tool_name: "Actors-sendMessage".to_string(),
+            arguments: json!({
+                "target_actor_id": target_actor_id,
+                "target_session_id": target_session_id,
+                "text": "ping"
+            })
+            .into(),
+        })
+        .await
+        .unwrap();
+
+    let result = match response.content {
+        ToolResultData::Text(text) => {
+            serde_json::from_str::<ActorsSendMessageResult>(&text).expect("valid send response")
+        }
+        other => panic!("unexpected tool response content: {other:?}"),
+    };
+    assert_eq!(result.status, "delivered");
+    assert_eq!(result.actor_message_id, result.submission_id);
+
+    let row = sqlx::query!(
+        r#"
+        SELECT
+            sender_id as "sender_id: String",
+            receiver_id as "receiver_id!: String",
+            session_id as "session_id: String",
+            reply_to_message_id as "reply_to_message_id: String",
+            status as "status!: String"
+        FROM messages
+        WHERE message_id = ?1
+        LIMIT 1
+        "#,
+        result.actor_message_id,
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+
+    assert_eq!(row.sender_id.as_deref(), Some(source_actor_id.as_str()));
+    assert_eq!(row.receiver_id, target_actor_id.to_string());
+    assert_eq!(row.session_id.as_deref(), Some(target_session_id.as_str()));
+    assert!(row.reply_to_message_id.is_none());
+    assert_eq!(row.status, "QUEUED");
+}
+
+#[tokio::test]
+async fn actors_receive_claims_and_acks_correlated_reply() {
+    let db = open_test_db().await;
+    let memory = open_test_memory().await;
+    let runtime = crate::BorgRuntime::new(
+        db.clone(),
+        memory,
+        CodeModeRuntime::default(),
+        ShellModeRuntime::new(),
+        BorgFs::local(db.clone(), temp_files_root()),
+    );
+
+    let source_actor_id = uri!("borg", "actor", "source-receive");
+    let source_session_id = uri!("borg", "session", "source-receive");
+    let source_user_id = uri!("borg", "user", "source-receive");
+    let target_actor_id = uri!("borg", "actor", "target-receive");
+    let target_session_id = uri!("borg", "session", "target-receive");
+
+    db.upsert_actor(&source_actor_id, "source-receive", "prompt", "RUNNING")
+        .await
+        .unwrap();
+    db.set_actor_model(&source_actor_id, "gpt-4o-mini")
+        .await
+        .unwrap();
+    db.upsert_actor(&target_actor_id, "target-receive", "prompt", "RUNNING")
+        .await
+        .unwrap();
+    db.set_actor_model(&target_actor_id, "gpt-4o-mini")
+        .await
+        .unwrap();
+
+    let toolchain = runtime
+        .build_toolchain(&source_user_id, &source_session_id, &source_actor_id)
+        .await
+        .unwrap();
+
+    let send_response = toolchain
+        .run(ToolRequest {
+            tool_call_id: "tool-call-send-2".to_string(),
+            tool_name: "Actors-sendMessage".to_string(),
+            arguments: json!({
+                "target_actor_id": target_actor_id,
+                "target_session_id": target_session_id,
+                "text": "ping"
+            })
+            .into(),
+        })
+        .await
+        .unwrap();
+
+    let send_result = match send_response.content {
+        ToolResultData::Text(text) => {
+            serde_json::from_str::<ActorsSendMessageResult>(&text).expect("valid send response")
+        }
+        other => panic!("unexpected tool response content: {other:?}"),
+    };
+    let expected_submission =
+        Uri::parse(send_result.submission_id.as_str()).expect("valid submission id");
+
+    let reply_envelope = ActorMailboxEnvelope {
+        actor_id: source_actor_id.to_string(),
+        user_id: source_user_id.to_string(),
+        session_id: source_session_id.to_string(),
+        port_context: crate::PortContext::Unknown,
+        input: crate::mailbox_envelope::ActorMailboxInput::Chat {
+            text: "pong".to_string(),
+        },
+    };
+    let reply_payload = serde_json::to_value(reply_envelope).unwrap();
+    let reply_message_id = db
+        .enqueue_actor_message_from_sender(
+            Some(&target_actor_id),
+            &source_actor_id,
+            Some(&source_session_id),
+            &reply_payload,
+            None,
+            Some(&expected_submission),
+        )
+        .await
+        .unwrap();
+
+    let receive_response = toolchain
+        .run(ToolRequest {
+            tool_call_id: "tool-call-receive-1".to_string(),
+            tool_name: "Actors-receive".to_string(),
+            arguments: json!({
+                "expected_submission_id": send_result.submission_id,
+                "timeout_ms": 2000
+            })
+            .into(),
+        })
+        .await
+        .unwrap();
+
+    let receive_result = match receive_response.content {
+        ToolResultData::Text(text) => {
+            serde_json::from_str::<ActorsReceiveResult>(&text).expect("valid receive response")
+        }
+        other => panic!("unexpected tool response content: {other:?}"),
+    };
+
+    assert_eq!(receive_result.status, "completed");
+    assert_eq!(
+        receive_result.actor_message_id,
+        reply_message_id.to_string()
+    );
+    assert_eq!(receive_result.submission_id, reply_message_id.to_string());
+    assert_eq!(
+        receive_result.in_reply_to_submission_id.as_deref(),
+        Some(expected_submission.as_str())
+    );
+    assert_eq!(
+        receive_result.source_actor_id.as_deref(),
+        Some(target_actor_id.as_str())
+    );
+    assert_eq!(receive_result.text, "pong");
+
+    let reply_message_id_raw = reply_message_id.to_string();
+    let row = sqlx::query!(
+        r#"
+        SELECT status as "status!: String"
+        FROM messages
+        WHERE message_id = ?1
+        LIMIT 1
+        "#,
+        reply_message_id_raw,
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(row.status, "ACKED");
 }
 
 #[tokio::test]

@@ -191,8 +191,29 @@ impl BorgDb {
         reply_to_actor_id: Option<&Uri>,
         reply_to_message_id: Option<&Uri>,
     ) -> Result<Uri> {
+        self.enqueue_actor_message_from_sender(
+            None,
+            actor_id,
+            session_id,
+            payload,
+            reply_to_actor_id,
+            reply_to_message_id,
+        )
+        .await
+    }
+
+    pub async fn enqueue_actor_message_from_sender(
+        &self,
+        sender_actor_id: Option<&Uri>,
+        actor_id: &Uri,
+        session_id: Option<&Uri>,
+        payload: &Value,
+        reply_to_actor_id: Option<&Uri>,
+        reply_to_message_id: Option<&Uri>,
+    ) -> Result<Uri> {
         let actor_message_id = uri!("borg", "actor_message");
         let actor_message_id_raw = actor_message_id.to_string();
+        let sender_actor_id = sender_actor_id.map(ToString::to_string);
         let actor_id = actor_id.to_string();
         let session_id = session_id.map(ToString::to_string);
         let payload_json = payload.to_string();
@@ -215,9 +236,10 @@ impl BorgDb {
                 started_at,
                 finished_at
             )
-            VALUES(?1, NULL, ?2, ?3, ?4, 'QUEUED', ?5, ?6, NULL, ?7, NULL, NULL)
+            VALUES(?1, ?2, ?3, ?4, ?5, 'QUEUED', ?6, ?7, NULL, ?8, NULL, NULL)
             "#,
             actor_message_id_raw,
+            sender_actor_id,
             actor_id,
             session_id,
             payload_json,
@@ -245,6 +267,7 @@ impl BorgDb {
                 FROM messages
                 WHERE receiver_id = ?1
                   AND status = 'QUEUED'
+                  AND reply_to_message_id IS NULL
                 ORDER BY created_at ASC
                 LIMIT 1
             )
@@ -254,6 +277,7 @@ impl BorgDb {
             WHERE message_id = (SELECT message_id FROM next)
             RETURNING
                 message_id as "actor_message_id!: String",
+                sender_id as "sender_actor_id: String",
                 receiver_id as "actor_id!: String",
                 session_id as "session_id: String",
                 payload_json as "payload_json!: String",
@@ -275,6 +299,7 @@ impl BorgDb {
         row.map(|row| {
             actor_mailbox_from_raw(
                 row.actor_message_id,
+                row.sender_actor_id,
                 row.actor_id,
                 row.session_id,
                 row.payload_json,
@@ -299,6 +324,7 @@ impl BorgDb {
             r#"
             SELECT
                 message_id as "actor_message_id!: String",
+                sender_id as "sender_actor_id: String",
                 receiver_id as "actor_id!: String",
                 session_id as "session_id: String",
                 payload_json as "payload_json!: String",
@@ -311,6 +337,7 @@ impl BorgDb {
                 finished_at as "finished_at: String"
             FROM messages
             WHERE status = 'QUEUED'
+              AND reply_to_message_id IS NULL
             ORDER BY created_at ASC
             LIMIT ?1
             "#,
@@ -324,6 +351,7 @@ impl BorgDb {
             .map(|row| {
                 actor_mailbox_from_raw(
                     row.actor_message_id,
+                    row.sender_actor_id,
                     row.actor_id,
                     row.session_id,
                     row.payload_json,
@@ -337,6 +365,76 @@ impl BorgDb {
                 )
             })
             .collect()
+    }
+
+    pub async fn claim_next_actor_reply_message(
+        &self,
+        actor_id: &Uri,
+        session_id: &Uri,
+        expected_reply_to_message_id: Option<&Uri>,
+    ) -> Result<Option<ActorMailboxRecord>> {
+        let now = Utc::now().to_rfc3339();
+        let actor_id = actor_id.to_string();
+        let session_id = session_id.to_string();
+        let expected_reply_to_message_id = expected_reply_to_message_id.map(ToString::to_string);
+        let row = sqlx::query!(
+            r#"
+            WITH next AS (
+                SELECT message_id
+                FROM messages
+                WHERE receiver_id = ?1
+                  AND session_id = ?2
+                  AND status = 'QUEUED'
+                  AND sender_id IS NOT NULL
+                  AND reply_to_message_id IS NOT NULL
+                  AND (?3 IS NULL OR reply_to_message_id = ?3)
+                ORDER BY created_at ASC
+                LIMIT 1
+            )
+            UPDATE messages
+            SET status = 'IN_PROGRESS',
+                started_at = ?4
+            WHERE message_id = (SELECT message_id FROM next)
+            RETURNING
+                message_id as "actor_message_id!: String",
+                sender_id as "sender_actor_id: String",
+                receiver_id as "actor_id!: String",
+                session_id as "session_id: String",
+                payload_json as "payload_json!: String",
+                status as "status!: String",
+                reply_to_sender_id as "reply_to_actor_id: String",
+                reply_to_message_id as "reply_to_message_id: String",
+                error as "error: String",
+                created_at as "created_at!: String",
+                started_at as "started_at: String",
+                finished_at as "finished_at: String"
+            "#,
+            actor_id,
+            session_id,
+            expected_reply_to_message_id,
+            now,
+        )
+        .fetch_optional(self.conn.pool())
+        .await
+        .context("failed to claim next actor reply message")?;
+
+        row.map(|row| {
+            actor_mailbox_from_raw(
+                row.actor_message_id,
+                row.sender_actor_id,
+                row.actor_id,
+                row.session_id,
+                row.payload_json,
+                row.status,
+                row.reply_to_actor_id,
+                row.reply_to_message_id,
+                row.error,
+                row.created_at,
+                row.started_at,
+                row.finished_at,
+            )
+        })
+        .transpose()
     }
 
     pub async fn ack_actor_message(&self, actor_message_id: &Uri) -> Result<u64> {
@@ -412,6 +510,7 @@ impl BorgDb {
 
 fn actor_mailbox_from_raw(
     actor_message_id_raw: String,
+    sender_actor_id_raw: Option<String>,
     actor_id_raw: String,
     session_id_raw: Option<String>,
     payload_raw: String,
@@ -425,6 +524,7 @@ fn actor_mailbox_from_raw(
 ) -> Result<ActorMailboxRecord> {
     let payload: Value =
         serde_json::from_str(&payload_raw).context("invalid messages payload_json")?;
+    let sender_actor_id = sender_actor_id_raw.as_deref().map(Uri::parse).transpose()?;
     let session_id = session_id_raw.as_deref().map(Uri::parse).transpose()?;
     let reply_to_actor_id = reply_to_actor_id_raw
         .as_deref()
@@ -438,6 +538,7 @@ fn actor_mailbox_from_raw(
     let finished_at = finished_at_raw.as_deref().map(parse_ts).transpose()?;
     Ok(ActorMailboxRecord {
         actor_message_id: Uri::parse(&actor_message_id_raw)?,
+        sender_actor_id,
         actor_id: Uri::parse(&actor_id_raw)?,
         session_id,
         payload,

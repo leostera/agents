@@ -50,7 +50,13 @@ export function resolveDefaultBaseUrl(): string {
 
   const { origin, hostname, protocol, port } = window.location;
   const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
-  if (isLocal && (port === "5173" || port === "4173")) {
+  if (
+    isLocal &&
+    (port === "5173" ||
+      port === "5174" ||
+      port === "4173" ||
+      port === "4174")
+  ) {
     return `${protocol}//${hostname}:8080`;
   }
   return origin;

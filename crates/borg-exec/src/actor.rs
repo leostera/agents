@@ -71,7 +71,6 @@ struct Actor {
     mailbox: mpsc::Sender<ActorCommand>,
     rx: mpsc::Receiver<ActorCommand>,
     runtime: Arc<BorgRuntime>,
-    owned_session_id: Option<Uri>,
     session_state: Option<SessionState>,
 }
 
@@ -83,7 +82,6 @@ impl Actor {
             mailbox: tx,
             rx,
             runtime,
-            owned_session_id: None,
             session_state: None,
         })
     }
@@ -146,34 +144,25 @@ impl Actor {
         msg: BorgMessage,
         progress_tx: Option<mpsc::Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
     ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
-        if let Some(owned) = self.owned_session_id.as_ref() {
-            if owned != &msg.session_id {
-                return Err(anyhow!(
-                    "actor {} is bound to session {}; received message for {}",
-                    self.actor_id,
-                    owned,
-                    msg.session_id
-                ));
-            }
-        } else {
-            self.owned_session_id = Some(msg.session_id.clone());
-        }
+        // Session identity is actor-native: one actor owns one implicit session.
+        let actor_session_id = self.actor_id.clone();
 
         if self.session_state.is_none() {
             let actor_id = self.resolve_execution_actor_id().await?;
-            let session = match self.create_session(&msg.session_id, &actor_id).await {
+            let session = match self.create_session(&actor_session_id, &actor_id).await {
                 Ok(session) => session,
                 Err(err)
                     if matches!(msg.input, BorgInput::Command(_))
                         && err.to_string().contains("model not configured") =>
                 {
-                    self.create_command_session(&msg.session_id, &actor_id)
+                    self.create_command_session(&actor_session_id, &actor_id)
                         .await?
                 }
                 Err(err) => return Err(err),
             };
-            let current_reasoning_effort =
-                self.load_session_reasoning_effort(&msg.session_id).await?;
+            let current_reasoning_effort = self
+                .load_session_reasoning_effort(&actor_session_id)
+                .await?;
             self.session_state = Some(SessionState {
                 session,
                 actor_id,
@@ -186,7 +175,7 @@ impl Actor {
         let mut state = self
             .session_state
             .take()
-            .ok_or_else(|| anyhow!("session state missing for {}", msg.session_id))?;
+            .ok_or_else(|| anyhow!("session state missing for {}", actor_session_id))?;
 
         let result = match &msg.input {
             BorgInput::Chat { text } => {
@@ -422,10 +411,10 @@ impl Actor {
             BorgCommand::ModelShowCurrent => {
                 let model = self.current_model(&state.actor_id).await?;
                 Ok(SessionOutput {
-                    session_id: msg.session_id.clone(),
+                    session_id: state.session.session_id.clone(),
                     reply: Some(format!(
-                        "Actor: {}\nModel: {}\nSession: {}",
-                        self.actor_id, model, msg.session_id
+                        "Actor: {}\nModel: {}\nConversation: {}",
+                        self.actor_id, model, state.session.session_id
                     )),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
@@ -438,10 +427,10 @@ impl Actor {
                 }
                 self.set_model(&state.actor_id, model).await?;
                 Ok(SessionOutput {
-                    session_id: msg.session_id.clone(),
+                    session_id: state.session.session_id.clone(),
                     reply: Some(format!(
-                        "Updated model to {} for actor {}.\nSession: {}",
-                        model, self.actor_id, msg.session_id
+                        "Updated model to {} for actor {}.\nConversation: {}",
+                        model, self.actor_id, state.session.session_id
                     )),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
@@ -453,10 +442,10 @@ impl Actor {
                     .map(|effort| effort.to_string())
                     .unwrap_or_else(|| "default".to_string());
                 Ok(SessionOutput {
-                    session_id: msg.session_id.clone(),
+                    session_id: state.session.session_id.clone(),
                     reply: Some(format!(
-                        "Current reasoning effort for session {}: {}",
-                        msg.session_id, current
+                        "Current reasoning effort for conversation {}: {}",
+                        state.session.session_id, current
                     )),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
@@ -467,42 +456,47 @@ impl Actor {
                 state.session.agent.reasoning_effort = state.current_reasoning_effort;
                 self.runtime
                     .db
-                    .set_session_reasoning_effort(&msg.session_id, Some(reasoning_effort.as_str()))
+                    .set_session_reasoning_effort(
+                        &state.session.session_id,
+                        Some(reasoning_effort.as_str()),
+                    )
                     .await?;
                 Ok(SessionOutput {
-                    session_id: msg.session_id.clone(),
+                    session_id: state.session.session_id.clone(),
                     reply: Some(format!(
-                        "Updated reasoning effort to {} for session {}.",
-                        reasoning_effort, msg.session_id
+                        "Updated reasoning effort to {} for conversation {}.",
+                        reasoning_effort, state.session.session_id
                     )),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
             }
             BorgCommand::ParticipantsList => {
-                let participants = self.telegram_participants(&msg.session_id).await?;
+                let participants = self
+                    .telegram_participants(&state.session.session_id)
+                    .await?;
                 Ok(SessionOutput {
-                    session_id: msg.session_id.clone(),
+                    session_id: state.session.session_id.clone(),
                     reply: Some(participants),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
             }
             BorgCommand::ContextDump => {
-                let dump = self.context_dump(&msg.session_id).await?;
+                let dump = self.context_dump(&state.session.session_id).await?;
                 Ok(SessionOutput {
-                    session_id: msg.session_id.clone(),
+                    session_id: state.session.session_id.clone(),
                     reply: Some(dump),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
             }
             BorgCommand::CompactSession => {
-                let kept = self.compact_session(&msg.session_id).await?;
+                let kept = self.compact_session(&state.session.session_id).await?;
                 Ok(SessionOutput {
-                    session_id: msg.session_id.clone(),
+                    session_id: state.session.session_id.clone(),
                     reply: Some(format!(
-                        "Compacted session. Kept {kept} context message(s)."
+                        "Compacted conversation. Kept {kept} context message(s)."
                     )),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
@@ -512,22 +506,22 @@ impl Actor {
                 let deleted = self
                     .runtime
                     .db
-                    .clear_session_history(&msg.session_id)
+                    .clear_session_history(&state.session.session_id)
                     .await?;
                 if let Some((port_name, _)) = self
                     .runtime
                     .db
-                    .get_any_port_session_context(&msg.session_id)
+                    .get_any_port_session_context(&state.session.session_id)
                     .await?
                 {
                     let _ = self
                         .runtime
                         .db
-                        .clear_port_session_context(&port_name, &msg.session_id)
+                        .clear_port_session_context(&port_name, &state.session.session_id)
                         .await?;
                 }
                 Ok(SessionOutput {
-                    session_id: msg.session_id.clone(),
+                    session_id: state.session.session_id.clone(),
                     reply: Some(format!(
                         "Reset complete. Cleared {} message(s) and port session context.",
                         deleted
@@ -587,7 +581,7 @@ impl Actor {
 
         let toolchain = Arc::new(
             self.runtime
-                .build_toolchain(&msg.user_id, &msg.session_id, &state.actor_id)
+                .build_toolchain(&msg.user_id, &state.actor_id, &state.actor_id)
                 .await?,
         );
 

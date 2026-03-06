@@ -21,6 +21,8 @@ v0 is intentionally small:
 3. Define `cast = sendMessage` and `call = sendMessage + receive`.
 4. Reuse existing mailbox durability and ordering.
 5. No new queue/table/subsystem.
+6. No new message columns for v0 correlation.
+7. Actor call payload is text-only in v0 (`text` in, `text` out).
 
 ## Motivation
 [motivation]: #motivation
@@ -41,41 +43,42 @@ mailbox path already used by port ingress.
 
 1. A running actor calls `Actors-sendMessage` with target actor/session and
    `BorgInput` payload.
-2. Runtime builds a normal `BorgMessage`, generates a `submission_id`, and
-   enqueues it in `actor_mailbox` as `QUEUED`.
+2. Runtime builds a normal `BorgMessage` and enqueues it in `messages` as
+   `QUEUED`.
 3. Target actor processes it in normal mailbox order.
-4. If the target sends a reply, that reply carries
-   `in_reply_to_submission_id = <original submission_id>`.
+4. `submission_id` is the original message id (`messages.message_id`) returned
+   by `Actors-sendMessage`.
+5. If the target sends a reply, that reply uses existing
+   `reply_to_message_id = <original submission_id>`.
 5. Caller can use `Actors-receive(expected_submission_id=...)` to wait for that
    correlated reply.
 
 ### Message shape
 
-Actor-to-actor messages are represented with existing inputs:
+Actor-to-actor call/cast in v0 is text-only:
 
-1. `BorgInput::Chat { text }`
-2. `BorgInput::Command(BorgCommand::...)`
-3. `BorgInput::Audio { ... }` (supported by shape; optional for v0 usage)
+1. `Actors-sendMessage` accepts `text`.
+2. `Actors-receive` returns `text`.
+3. Internally this is transported as normal `BorgInput::Chat { text }`.
 
 No dedicated `ClockworkMessage`/`ActorMessage` payload type is introduced.
 
-### Submission correlation metadata
+### Submission correlation
 
-`submission_id` is transport metadata and lives in the mailbox envelope, not in
-`BorgInput`.
+`submission_id` is an API-level alias for the persisted message id.
 
-This keeps content and transport concerns separated:
-
-1. `BorgInput` remains typed user/task content.
-2. Correlation (`submission_id`, `in_reply_to_submission_id`) is mailbox-level.
-3. Any `BorgInput` variant can be used with `cast` or `call` without changing
-   payload types.
+1. `submission_id = messages.message_id` of the sent message.
+2. Correlation uses existing `reply_to_message_id`.
+3. `BorgInput` stays content-only.
+4. Any `BorgInput` variant can be used with `cast` or `call` without payload
+   changes.
 
 ### Ordering and fairness
 
 1. No priority boost for actor-to-actor messages.
 2. No bypass around mailbox persistence.
-3. Processing order remains mailbox order (`created_at` in `actor_mailbox`).
+3. Processing order remains mailbox order (`created_at`, `message_id` in
+   `messages`).
 
 This keeps actor-to-actor traffic behavior aligned with existing port-to-actor
 delivery semantics.
@@ -101,10 +104,7 @@ Request shape (conceptual):
 {
   "target_actor_id": "devmode:actor:worker",
   "target_session_id": "borg:session:...",
-  "input": {
-    "kind": "chat",
-    "text": "Please audit docs/rfds/RFD0011-devmode.md."
-  }
+  "text": "Please audit docs/rfds/RFD0011-devmode.md."
 }
 ```
 
@@ -114,7 +114,7 @@ Response shape:
 {
   "status": "delivered",
   "actor_message_id": "borg:actor_message:...",
-  "submission_id": "borg:submission:..."
+  "submission_id": "borg:actor_message:..."
 }
 ```
 
@@ -133,11 +133,11 @@ Response shape:
 {
   "status": "completed",
   "actor_message_id": "borg:actor_message:...",
-  "submission_id": "borg:submission:...",
-  "in_reply_to_submission_id": "borg:submission:...",
+  "submission_id": "borg:actor_message:...",
+  "in_reply_to_submission_id": "borg:actor_message:...",
   "source_actor_id": "devmode:actor:worker",
-  "source_session_id": "borg:session:...",
-  "input": { "kind": "chat", "text": "...." }
+  "source_session_id": null,
+  "text": "...."
 }
 ```
 
@@ -150,17 +150,18 @@ When `Actors-sendMessage` runs:
 3. Build `BorgMessage` with:
    - `actor_id = target_actor_id`
    - `session_id = target_session_id`
-   - `input = mapped BorgInput::*`
+   - `input = BorgInput::Chat { text }`
    - `user_id = current turn user_id` (inherit caller identity)
    - `port_context = Unknown` (v0)
-4. Assign a new envelope `submission_id` (`borg:submission:<uuid>`).
-5. Enqueue through existing mailbox path and return `status=delivered` plus ids.
+4. Enqueue through existing mailbox path (`messages`) and return
+   `status=delivered` plus ids.
+5. Return `submission_id = message_id`.
 
 When `Actors-receive` runs:
 
 1. Wait for next available reply message for caller actor/session.
 2. If `expected_submission_id` is provided, only match messages where
-   `in_reply_to_submission_id == expected_submission_id`.
+   `reply_to_message_id == expected_submission_id`.
 3. Respect `timeout_ms` and return timeout error on deadline.
 
 ## Why no `BorgInput::Cast` / `BorgInput::Call`
@@ -170,8 +171,8 @@ When `Actors-receive` runs:
 Call vs cast is transport semantics represented by:
 
 1. `sendMessage` vs `receive` usage.
-2. Mailbox correlation metadata (`submission_id`,
-   `in_reply_to_submission_id`).
+2. Mailbox correlation via existing message ids (`message_id`,
+   `reply_to_message_id`).
 
 Adding `BorgInput::Cast` / `BorgInput::Call` would mix envelope semantics into
 message content and duplicate existing runtime behavior.
@@ -180,25 +181,27 @@ message content and duplicate existing runtime behavior.
 
 No new tables in v0.
 
-Existing `actor_mailbox` durability, state transitions, and replay behavior are
+Existing `messages` durability, state transitions, and replay behavior are
 reused as-is.
 
-`actor_mailbox` gets two nullable columns:
+No new columns are required.
 
-1. `submission_id`
-2. `in_reply_to_submission_id`
+Correlation reuses existing fields:
 
-Indexing:
+1. `submission_id` maps to `messages.message_id`.
+2. `in_reply_to_submission_id` maps to `messages.reply_to_message_id`.
 
-1. Index `in_reply_to_submission_id` for `receive(expected_submission_id)` lookups.
-2. Keep existing mailbox indexes for normal dequeue order.
+Optional performance follow-up:
+
+1. Add an index on `(receiver_id, reply_to_message_id, created_at)` if receive
+   lookups become hot.
 
 ## Invariants
 
 1. Delivery boundary is mailbox enqueue.
 2. Actor-to-actor messages are never delivered out-of-band.
 3. Actor-to-actor messages must not preempt regular ingress.
-4. `submission_id` is envelope metadata, never part of `BorgInput`.
+4. `submission_id` is message-id correlation, never part of message content.
 5. `call` is always `sendMessage` followed by `receive`.
 
 ## Safety constraints for `call` (v0)
@@ -215,13 +218,11 @@ Implementation scope for v0:
 
 1. Add `Actors-sendMessage` and `Actors-receive` tool specs + handlers in
    runtime/admin toolchain.
-2. Map typed tool input into existing `BorgInput::*`.
-3. Add mailbox correlation fields:
-   - `submission_id`
-   - `in_reply_to_submission_id`
-4. Route sends through existing enqueue/supervisor path.
-5. Implement `receive` matching by `expected_submission_id` when provided.
-6. Add tests:
+2. Map tool `text` input into `BorgInput::Chat`.
+3. Route sends through existing enqueue/supervisor path.
+4. Implement `receive` matching by `reply_to_message_id` when
+   `expected_submission_id` is provided.
+5. Add tests:
    - tool enqueues message for another actor
    - queued message is processed by target actor in normal order
    - `sendMessage` returns `status=delivered` with `submission_id`

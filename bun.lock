@@ -70,16 +70,30 @@
         "vitest": "^4.0.18",
       },
     },
-    "apps/borg-admin": {
-      "name": "@borg/admin",
+    "apps/devmode": {
+      "name": "@borg/devmode-app",
       "version": "0.1.0",
       "dependencies": {
-        "@borg/dashboard-control": "workspace:*",
-        "@borg/i18n": "workspace:*",
-        "@borg/onboarding": "workspace:*",
+        "@borg/graphql-client": "workspace:*",
         "@borg/ui": "workspace:*",
         "react": "^18.3.1",
         "react-dom": "^18.3.1",
+      },
+    },
+    "apps/stage": {
+      "name": "@borg/stage-app",
+      "version": "0.1.0",
+      "dependencies": {
+        "@borg/graphql-client": "workspace:*",
+        "@borg/ui": "workspace:*",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "reactflow": "^11.11.4",
+      },
+      "devDependencies": {
+        "@vitejs/plugin-react-swc": "^3.11.0",
+        "typescript": "^5.9.3",
+        "vite": "^7.3.1",
       },
     },
     "packages/borg-agent-sdk": {
@@ -87,25 +101,6 @@
       "version": "0.1.0",
       "devDependencies": {
         "vite": "^7.3.1",
-      },
-    },
-    "packages/borg-dashboard-control": {
-      "name": "@borg/dashboard-control",
-      "version": "0.1.0",
-      "dependencies": {
-        "@borg/graphql-client": "workspace:*",
-        "@borg/ui": "workspace:*",
-        "lucide-react": "^0.474.0",
-        "react": "^18.3.1",
-        "react-dom": "^18.3.1",
-        "react-router-dom": "^6.30.3",
-      },
-    },
-    "packages/borg-dashboard-observability": {
-      "name": "@borg/dashboard-observability",
-      "version": "0.1.0",
-      "dependencies": {
-        "react": "^18.3.1",
       },
     },
     "packages/borg-devmode": {
@@ -116,19 +111,6 @@
         "@borg/ui": "workspace:*",
         "react": "^18.3.1",
         "react-dom": "^18.3.1",
-      },
-    },
-    "packages/borg-explorer": {
-      "name": "@borg/explorer",
-      "version": "0.1.0",
-      "dependencies": {
-        "@borg/graphql-client": "workspace:*",
-        "react": "^18.3.1",
-        "reactflow": "^11.11.4",
-      },
-      "peerDependencies": {
-        "react": "^18.0.0",
-        "react-dom": "^18.0.0",
       },
     },
     "packages/borg-graphql-client": {
@@ -142,18 +124,6 @@
     "packages/borg-i18n": {
       "name": "@borg/i18n",
       "version": "0.1.0",
-    },
-    "packages/borg-onboarding": {
-      "name": "@borg/onboarding",
-      "version": "0.1.0",
-      "dependencies": {
-        "@borg/graphql-client": "workspace:*",
-        "@borg/i18n": "workspace:*",
-        "@borg/react-statereducer": "workspace:*",
-        "@borg/ui": "workspace:*",
-        "react": "^18.3.1",
-        "react-dom": "^18.3.1",
-      },
     },
     "packages/borg-ui": {
       "name": "@borg/ui",
@@ -281,25 +251,19 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.4.4", "", { "os": "win32", "cpu": "x64" }, "sha512-gnOHKVPFAAPrpoPt2t+Q6FZ7RPry/FDV3GcpU53P3PtLNnQjBmKyN2Vh/JtqXet+H4pme8CC76rScwdjDcT1/A=="],
 
-    "@borg/admin": ["@borg/admin@workspace:apps/borg-admin"],
-
     "@borg/agent-sdk": ["@borg/agent-sdk@workspace:packages/borg-agent-sdk"],
-
-    "@borg/dashboard-control": ["@borg/dashboard-control@workspace:packages/borg-dashboard-control"],
-
-    "@borg/dashboard-observability": ["@borg/dashboard-observability@workspace:packages/borg-dashboard-observability"],
 
     "@borg/devmode": ["@borg/devmode@workspace:packages/borg-devmode"],
 
-    "@borg/explorer": ["@borg/explorer@workspace:packages/borg-explorer"],
+    "@borg/devmode-app": ["@borg/devmode-app@workspace:apps/devmode"],
 
     "@borg/graphql-client": ["@borg/graphql-client@workspace:packages/borg-graphql-client"],
 
     "@borg/i18n": ["@borg/i18n@workspace:packages/borg-i18n"],
 
-    "@borg/onboarding": ["@borg/onboarding@workspace:packages/borg-onboarding"],
-
     "@borg/react-statereducer": ["@borg/react-statereducer@workspace:packages/react-statereducer"],
+
+    "@borg/stage-app": ["@borg/stage-app@workspace:apps/stage"],
 
     "@borg/ui": ["@borg/ui@workspace:packages/borg-ui"],
 

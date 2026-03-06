@@ -1,9 +1,7 @@
 use anyhow::{Context, Result, anyhow};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
-use sqlx::Row;
 
-use crate::utils::parse_ts;
 use crate::{BorgDb, ScheduleJobRecord, ScheduleJobRunRecord};
 
 #[derive(Debug, Clone)]
@@ -39,62 +37,63 @@ impl BorgDb {
     ) -> Result<Vec<ScheduleJobRecord>> {
         let limit = i64::try_from(limit).unwrap_or(500);
         let rows = if let Some(status) = status {
-            sqlx::query(
+            sqlx::query_as!(
+                ScheduleJobRecord,
                 r#"
                 SELECT
-                    job_id,
-                    kind,
-                    status,
-                    target_actor_id,
-                    target_session_id,
-                    message_type,
-                    payload_json,
-                    headers_json,
-                    schedule_spec_json,
-                    next_run_at,
-                    last_run_at,
-                    created_at,
-                    updated_at
+                    job_id as "job_id!: String",
+                    kind as "kind!: String",
+                    status as "status!: String",
+                    target_actor_id as "target_actor_id!: String",
+                    target_session_id as "target_session_id!: String",
+                    message_type as "message_type!: String",
+                    payload_json as "payload!: serde_json::Value",
+                    headers_json as "headers!: serde_json::Value",
+                    schedule_spec_json as "schedule_spec!: serde_json::Value",
+                    next_run_at as "next_run_at: DateTime<Utc>",
+                    last_run_at as "last_run_at: DateTime<Utc>",
+                    created_at as "created_at!: DateTime<Utc>",
+                    updated_at as "updated_at!: DateTime<Utc>"
                 FROM schedule_jobs
                 WHERE status = ?1
                 ORDER BY updated_at DESC, job_id ASC
                 LIMIT ?2
                 "#,
+                status,
+                limit,
             )
-            .bind(status)
-            .bind(limit)
             .fetch_all(self.conn.pool())
             .await
             .context("failed to list schedule jobs")?
         } else {
-            sqlx::query(
+            sqlx::query_as!(
+                ScheduleJobRecord,
                 r#"
                 SELECT
-                    job_id,
-                    kind,
-                    status,
-                    target_actor_id,
-                    target_session_id,
-                    message_type,
-                    payload_json,
-                    headers_json,
-                    schedule_spec_json,
-                    next_run_at,
-                    last_run_at,
-                    created_at,
-                    updated_at
+                    job_id as "job_id!: String",
+                    kind as "kind!: String",
+                    status as "status!: String",
+                    target_actor_id as "target_actor_id!: String",
+                    target_session_id as "target_session_id!: String",
+                    message_type as "message_type!: String",
+                    payload_json as "payload!: serde_json::Value",
+                    headers_json as "headers!: serde_json::Value",
+                    schedule_spec_json as "schedule_spec!: serde_json::Value",
+                    next_run_at as "next_run_at: DateTime<Utc>",
+                    last_run_at as "last_run_at: DateTime<Utc>",
+                    created_at as "created_at!: DateTime<Utc>",
+                    updated_at as "updated_at!: DateTime<Utc>"
                 FROM schedule_jobs
                 ORDER BY updated_at DESC, job_id ASC
                 LIMIT ?1
                 "#,
+                limit,
             )
-            .bind(limit)
             .fetch_all(self.conn.pool())
             .await
             .context("failed to list schedule jobs")?
         };
-
-        rows.into_iter().map(schedule_job_from_row).collect()
+        Ok(rows)
     }
 
     pub async fn list_due_schedule_jobs(
@@ -103,22 +102,23 @@ impl BorgDb {
         limit: usize,
     ) -> Result<Vec<ScheduleJobRecord>> {
         let limit = i64::try_from(limit).unwrap_or(500);
-        let rows = sqlx::query(
+        let rows = sqlx::query_as!(
+            ScheduleJobRecord,
             r#"
             SELECT
-                job_id,
-                kind,
-                status,
-                target_actor_id,
-                target_session_id,
-                message_type,
-                payload_json,
-                headers_json,
-                schedule_spec_json,
-                next_run_at,
-                last_run_at,
-                created_at,
-                updated_at
+                job_id as "job_id!: String",
+                kind as "kind!: String",
+                status as "status!: String",
+                target_actor_id as "target_actor_id!: String",
+                target_session_id as "target_session_id!: String",
+                message_type as "message_type!: String",
+                payload_json as "payload!: serde_json::Value",
+                headers_json as "headers!: serde_json::Value",
+                schedule_spec_json as "schedule_spec!: serde_json::Value",
+                next_run_at as "next_run_at: DateTime<Utc>",
+                last_run_at as "last_run_at: DateTime<Utc>",
+                created_at as "created_at!: DateTime<Utc>",
+                updated_at as "updated_at!: DateTime<Utc>"
             FROM schedule_jobs
             WHERE status = 'active'
               AND next_run_at IS NOT NULL
@@ -126,44 +126,43 @@ impl BorgDb {
             ORDER BY next_run_at ASC, created_at ASC
             LIMIT ?2
             "#,
+            now_rfc3339,
+            limit,
         )
-        .bind(now_rfc3339)
-        .bind(limit)
         .fetch_all(self.conn.pool())
         .await
         .context("failed to list due schedule jobs")?;
-
-        rows.into_iter().map(schedule_job_from_row).collect()
+        Ok(rows)
     }
 
     pub async fn get_schedule_job(&self, job_id: &str) -> Result<Option<ScheduleJobRecord>> {
-        let row = sqlx::query(
+        let row = sqlx::query_as!(
+            ScheduleJobRecord,
             r#"
             SELECT
-                job_id,
-                kind,
-                status,
-                target_actor_id,
-                target_session_id,
-                message_type,
-                payload_json,
-                headers_json,
-                schedule_spec_json,
-                next_run_at,
-                last_run_at,
-                created_at,
-                updated_at
+                job_id as "job_id!: String",
+                kind as "kind!: String",
+                status as "status!: String",
+                target_actor_id as "target_actor_id!: String",
+                target_session_id as "target_session_id!: String",
+                message_type as "message_type!: String",
+                payload_json as "payload!: serde_json::Value",
+                headers_json as "headers!: serde_json::Value",
+                schedule_spec_json as "schedule_spec!: serde_json::Value",
+                next_run_at as "next_run_at: DateTime<Utc>",
+                last_run_at as "last_run_at: DateTime<Utc>",
+                created_at as "created_at!: DateTime<Utc>",
+                updated_at as "updated_at!: DateTime<Utc>"
             FROM schedule_jobs
             WHERE job_id = ?1
             LIMIT 1
             "#,
+            job_id,
         )
-        .bind(job_id)
         .fetch_optional(self.conn.pool())
         .await
         .context("failed to get schedule job")?;
-
-        row.map(schedule_job_from_row).transpose()
+        Ok(row)
     }
 
     pub async fn create_schedule_job(&self, input: &CreateScheduleJobInput) -> Result<()> {
@@ -173,7 +172,10 @@ impl BorgDb {
         } else {
             "active"
         };
-        sqlx::query(
+        let payload_json = input.payload.to_string();
+        let headers_json = input.headers.to_string();
+        let schedule_spec_json = input.schedule_spec.to_string();
+        sqlx::query!(
             r#"
             INSERT INTO schedule_jobs(
                 job_id,
@@ -192,19 +194,19 @@ impl BorgDb {
             )
             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, ?12)
             "#,
+            input.job_id,
+            input.kind,
+            status,
+            input.target_actor_id,
+            input.target_session_id,
+            input.message_type,
+            payload_json,
+            headers_json,
+            schedule_spec_json,
+            input.next_run_at,
+            now,
+            now,
         )
-        .bind(&input.job_id)
-        .bind(&input.kind)
-        .bind(status)
-        .bind(&input.target_actor_id)
-        .bind(&input.target_session_id)
-        .bind(&input.message_type)
-        .bind(input.payload.to_string())
-        .bind(input.headers.to_string())
-        .bind(input.schedule_spec.to_string())
-        .bind(input.next_run_at.clone())
-        .bind(now.clone())
-        .bind(now)
         .execute(self.conn.pool())
         .await
         .context("failed to create schedule job")?;
@@ -239,12 +241,15 @@ impl BorgDb {
         let payload = patch.payload.clone().unwrap_or(current.payload);
         let headers = patch.headers.clone().unwrap_or(current.headers);
         let schedule_spec = patch.schedule_spec.clone().unwrap_or(current.schedule_spec);
+        let payload_json = payload.to_string();
+        let headers_json = headers.to_string();
+        let schedule_spec_json = schedule_spec.to_string();
         let next_run_at = patch
             .next_run_at
             .clone()
             .unwrap_or(current.next_run_at.map(|ts| ts.to_rfc3339()));
 
-        let updated = sqlx::query(
+        let updated = sqlx::query!(
             r#"
             UPDATE schedule_jobs
             SET
@@ -259,17 +264,17 @@ impl BorgDb {
                 updated_at = ?10
             WHERE job_id = ?1
             "#,
+            job_id,
+            kind,
+            target_actor_id,
+            target_session_id,
+            message_type,
+            payload_json,
+            headers_json,
+            schedule_spec_json,
+            next_run_at,
+            now,
         )
-        .bind(job_id)
-        .bind(kind)
-        .bind(target_actor_id)
-        .bind(target_session_id)
-        .bind(message_type)
-        .bind(payload.to_string())
-        .bind(headers.to_string())
-        .bind(schedule_spec.to_string())
-        .bind(next_run_at)
-        .bind(now)
         .execute(self.conn.pool())
         .await
         .context("failed to update schedule job")?
@@ -280,16 +285,16 @@ impl BorgDb {
 
     pub async fn set_schedule_job_status(&self, job_id: &str, status: &str) -> Result<u64> {
         let now = Utc::now().to_rfc3339();
-        let updated = sqlx::query(
+        let updated = sqlx::query!(
             r#"
             UPDATE schedule_jobs
             SET status = ?2, updated_at = ?3
             WHERE job_id = ?1
             "#,
+            job_id,
+            status,
+            now,
         )
-        .bind(job_id)
-        .bind(status)
-        .bind(now)
         .execute(self.conn.pool())
         .await
         .context("failed to set schedule job status")?
@@ -303,67 +308,29 @@ impl BorgDb {
         limit: usize,
     ) -> Result<Vec<ScheduleJobRunRecord>> {
         let limit = i64::try_from(limit).unwrap_or(500);
-        let rows = sqlx::query(
+        let rows = sqlx::query_as!(
+            ScheduleJobRunRecord,
             r#"
             SELECT
-                run_id,
-                job_id,
-                scheduled_for,
-                fired_at,
-                target_actor_id,
-                target_session_id,
-                message_id,
-                created_at
+                run_id as "run_id!: String",
+                job_id as "job_id!: String",
+                scheduled_for as "scheduled_for!: DateTime<Utc>",
+                fired_at as "fired_at!: DateTime<Utc>",
+                target_actor_id as "target_actor_id!: String",
+                target_session_id as "target_session_id!: String",
+                message_id as "message_id!: String",
+                created_at as "created_at!: DateTime<Utc>"
             FROM schedule_job_runs
             WHERE job_id = ?1
             ORDER BY created_at DESC, run_id DESC
             LIMIT ?2
             "#,
+            job_id,
+            limit,
         )
-        .bind(job_id)
-        .bind(limit)
         .fetch_all(self.conn.pool())
         .await
         .context("failed to list schedule job runs")?;
-
-        rows.into_iter().map(schedule_job_run_from_row).collect()
+        Ok(rows)
     }
-}
-
-fn schedule_job_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ScheduleJobRecord> {
-    let payload_json = row.try_get::<String, _>("payload_json")?;
-    let headers_json = row.try_get::<String, _>("headers_json")?;
-    let schedule_spec_json = row.try_get::<String, _>("schedule_spec_json")?;
-    let next_run_at = row.try_get::<Option<String>, _>("next_run_at")?;
-    let last_run_at = row.try_get::<Option<String>, _>("last_run_at")?;
-
-    Ok(ScheduleJobRecord {
-        job_id: row.try_get("job_id")?,
-        kind: row.try_get("kind")?,
-        status: row.try_get("status")?,
-        target_actor_id: row.try_get("target_actor_id")?,
-        target_session_id: row.try_get("target_session_id")?,
-        message_type: row.try_get("message_type")?,
-        payload: serde_json::from_str(&payload_json).unwrap_or(Value::Null),
-        headers: serde_json::from_str(&headers_json).unwrap_or(Value::Object(Default::default())),
-        schedule_spec: serde_json::from_str(&schedule_spec_json)
-            .unwrap_or(Value::Object(Default::default())),
-        next_run_at: next_run_at.as_deref().map(parse_ts).transpose()?,
-        last_run_at: last_run_at.as_deref().map(parse_ts).transpose()?,
-        created_at: parse_ts(&row.try_get::<String, _>("created_at")?)?,
-        updated_at: parse_ts(&row.try_get::<String, _>("updated_at")?)?,
-    })
-}
-
-fn schedule_job_run_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ScheduleJobRunRecord> {
-    Ok(ScheduleJobRunRecord {
-        run_id: row.try_get("run_id")?,
-        job_id: row.try_get("job_id")?,
-        scheduled_for: parse_ts(&row.try_get::<String, _>("scheduled_for")?)?,
-        fired_at: parse_ts(&row.try_get::<String, _>("fired_at")?)?,
-        target_actor_id: row.try_get("target_actor_id")?,
-        target_session_id: row.try_get("target_session_id")?,
-        message_id: row.try_get("message_id")?,
-        created_at: parse_ts(&row.try_get::<String, _>("created_at")?)?,
-    })
 }

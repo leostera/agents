@@ -3,11 +3,9 @@
   "references": [
     { "path": "packages/borg-ui" },
     { "path": "packages/borg-i18n" },
-    { "path": "packages/borg-onboarding" },
-    { "path": "packages/borg-dashboard-control" },
-    { "path": "packages/borg-dashboard-observability" },
     { "path": "packages/borg-graphql-client" },
     { "path": "packages/react-statereducer" },
-    { "path": "apps/borg-admin" }
+    { "path": "apps/devmode" },
+    { "path": "apps/stage" }
   ]
 }

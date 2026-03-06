@@ -12,7 +12,7 @@ const dirname =
     : path.dirname(fileURLToPath(import.meta.url));
 
 // More info at: https://storybook.js.org/docs/next/writing-tests/integrations/vitest-addon
-const APP_ROOT = "apps/borg-admin";
+const APP_ROOT = "apps/devmode";
 export default defineConfig({
   root: APP_ROOT,
   appType: "spa",
@@ -48,20 +48,6 @@ export default defineConfig({
       {
         find: "@borg/i18n",
         replacement: path.resolve(dirname, "packages/borg-i18n/src/index.ts"),
-      },
-      {
-        find: "@borg/onboarding",
-        replacement: path.resolve(
-          dirname,
-          "packages/borg-onboarding/src/index.ts"
-        ),
-      },
-      {
-        find: "@borg/dashboard-control",
-        replacement: path.resolve(
-          dirname,
-          "packages/borg-dashboard-control/src/index.ts"
-        ),
       },
       {
         find: "@borg/graphql-client",

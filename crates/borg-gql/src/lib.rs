@@ -13,7 +13,7 @@ use async_graphql::http::{ALL_WEBSOCKET_PROTOCOLS, GraphiQLSource, WebSocketProt
 use async_graphql::{Request, Response, Schema};
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use axum::extract::{Extension, State, WebSocketUpgrade};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri as AxumUri, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri as AxumUri, header};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -28,6 +28,7 @@ use borg_ports::BorgPortsSupervisor;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 pub use context::BorgGqlData;
@@ -83,6 +84,7 @@ impl BorgGqlServer {
             .route("/gql/ws", get(Self::graphql_ws))
             .route("/gql/graphiql", get(Self::graphiql))
             .layer(Extension(self.schema.clone()))
+            .layer(cors_layer())
     }
 
     /// Runs the GraphQL service as a standalone Axum server.
@@ -243,6 +245,7 @@ impl BorgHttpServer {
             .route("/ports/http", post(Self::ports_http))
             .merge(gql_router)
             .with_state(self.state.clone())
+            .layer(cors_layer())
     }
 
     pub async fn run(self) -> Result<()> {
@@ -503,6 +506,14 @@ fn internal_error(err: impl std::fmt::Display) -> axum::response::Response {
         Json(json!({ "error": err.to_string() })),
     )
         .into_response()
+}
+
+fn cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers(Any)
+        .expose_headers([header::HeaderName::from_static(BORG_SESSION_ID_HEADER)])
 }
 
 impl Deref for BorgGqlServer {

@@ -1,17 +1,14 @@
 use serde::Serialize;
-use serde_json::Value;
 use std::time::Duration;
 
 pub fn format_tool_action_message<T: Serialize>(tool_name: &str, arguments: &T) -> String {
-    let arguments_json = serde_json::to_value(arguments).ok();
-    let label = arguments_json
-        .as_ref()
+    let raw_args = serde_json::to_string(arguments).ok();
+    let label = raw_args
+        .as_deref()
         .and_then(extract_hint)
-        .unwrap_or(tool_name);
-    let pretty_args = arguments_json
-        .as_ref()
-        .and_then(|value| serde_json::to_string_pretty(value).ok())
-        .unwrap_or_else(|| "<invalid_args>".to_string());
+        .unwrap_or_else(|| tool_name.to_string());
+    let pretty_args =
+        serde_json::to_string_pretty(arguments).unwrap_or_else(|_| "<invalid_args>".to_string());
     format!("Action: {label}\n{}", pretty_args.trim())
 }
 
@@ -22,30 +19,32 @@ pub fn format_tool_action_message_for_telegram_html<T: Serialize>(
     arguments: &T,
     duration: Option<Duration>,
 ) -> String {
-    let arguments_json = serde_json::to_value(arguments).ok();
-    let label = arguments_json
-        .as_ref()
+    let raw_args = serde_json::to_string(arguments).ok();
+    let label = raw_args
+        .as_deref()
         .and_then(extract_hint)
-        .unwrap_or(tool_name);
-    let pretty_args = arguments_json
-        .as_ref()
-        .and_then(|value| serde_json::to_string_pretty(value).ok())
-        .unwrap_or_else(|| "<invalid_args>".to_string());
+        .unwrap_or_else(|| tool_name.to_string());
+    let pretty_args =
+        serde_json::to_string_pretty(arguments).unwrap_or_else(|_| "<invalid_args>".to_string());
     let elapsed = format_elapsed_time(duration);
     let details = truncate_chars(pretty_args.trim(), TELEGRAM_TOOL_ACTION_DETAILS_MAX_CHARS);
-    let escaped_label = escape_html_text(label);
+    let escaped_label = escape_html_text(&label);
     let escaped_details = escape_html_text(&details);
     format!(
         "<i>{escaped_label}</i> ({elapsed})\nSee details: <tg-spoiler>{escaped_details}</tg-spoiler>"
     )
 }
 
-fn extract_hint(arguments: &Value) -> Option<&str> {
-    arguments
-        .as_object()
-        .and_then(|value| value.get("hint"))
-        .and_then(Value::as_str)
-        .map(str::trim)
+#[derive(serde::Deserialize)]
+struct ToolActionHintOnly {
+    hint: Option<String>,
+}
+
+fn extract_hint(arguments_json: &str) -> Option<String> {
+    let parsed: ToolActionHintOnly = serde_json::from_str(arguments_json).ok()?;
+    parsed
+        .hint
+        .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 

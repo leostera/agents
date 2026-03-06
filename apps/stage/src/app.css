@@ -1,0 +1,19 @@
+.stage-shell {
+  background:
+    radial-gradient(1000px circle at 0% 0%, rgb(14 116 214 / 0.2), transparent 55%),
+    radial-gradient(800px circle at 100% 100%, rgb(245 158 11 / 0.18), transparent 58%),
+    linear-gradient(180deg, rgb(245 247 250) 0%, rgb(234 239 247) 100%);
+}
+
+.stage-card {
+  backdrop-filter: blur(10px);
+}
+
+.stage-flow {
+  --xy-background-color-default: rgba(148, 163, 184, 0.18);
+  --xy-background-pattern-dots-color-default: rgba(71, 85, 105, 0.22);
+}
+
+.stage-chat-scroll {
+  height: calc(100vh - 16.75rem);
+}

@@ -1,39 +1,34 @@
 # Onboarding UI Agent Guide
 
-Scope: `packages/*` web workspaces, chat UX, composer behavior, and i18n.
+Scope: `apps/devmode` + `apps/stage` web UIs, local-first workspace UX, and shared frontend packages.
 
 ## Workspace Shape
 
-- Single root Vite app is `apps/borg-admin`.
+- App entrypoints:
+  - `apps/devmode` (workspace/task/agent control plane)
+  - `apps/stage` (actor graph + mailbox playground)
 - Feature packages:
-  - `@borg/onboarding`
-  - `@borg/dashboard-control`
-  - `@borg/dashboard-observability`
+  - `@borg/graphql-client`
   - `@borg/ui`
   - `@borg/i18n`
 
 ## UX Model (Important)
 
-- Onboarding is a chat, not a wizard form page.
-- Agent prompts appear on left (`Borg`).
-- User responses are represented as user-side messages.
-- Active controls are rendered in a bottom composer dock.
+- DevMode is workspace-first and local-first.
+- Workspace creation captures namespace + project root and queues scanner actor bootstrap.
+- Tasks, agent profiles, comments, and activity logs persist locally first, then sync side effects to GraphQL runtime.
 
-## Composer/Message Rules
+## Runtime Rules
 
-- Provider selection should look like a user reply.
-- API key input + connect action should be user-side reply step.
-- Supported cloud providers in onboarding are `openai` and `openrouter`.
-- Onboarding also supports a local-mode path (no provider credentials) for first-run setup.
-- API key save endpoint is `POST /api/providers/:provider` (provider comes from the user choice).
-- Preserve sequential reveal:
-  - next prompt appears after previous animation/step completion.
+- Runtime endpoint is discovered via `resolveDefaultBaseUrl()` from `@borg/graphql-client`.
+- Agent/scanner registration uses GraphQL actor upserts.
+- UI must remain usable when runtime is unavailable; preserve local state and surface health clearly.
 
 ## Components
 
-- `@borg/ui` owns shared chat components (`Session`, `Message`, etc.).
-- Keep controls message-driven (`choices`, `input`, `actions`).
-- Use icon library components (no hand-drawn inline SVG for brand icons).
+- `@borg/ui` owns reusable primitives and should remain the default source for controls/layout pieces.
+- Keep task/agent activity timelines explicit and inspectable.
+- Avoid hand-rolled duplicate primitive components in `apps/devmode`.
 
 ## i18n
 
@@ -42,6 +37,6 @@ Scope: `packages/*` web workspaces, chat UX, composer behavior, and i18n.
 
 ## Validate
 
-1. `bun run build:web`
-2. `bun run dev` then open `/onboard`
-3. Verify user-side reply behavior for provider + API key
+1. `bun run typecheck:fast`
+2. `bun run build:web`
+3. `cargo build`
