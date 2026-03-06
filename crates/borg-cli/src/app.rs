@@ -266,15 +266,15 @@ impl BorgCliApp {
                     .as_ref()
                     .map(|port| port.allows_guests)
                     .unwrap_or(true);
-                let default_agent_id = existing
+                let default_actor_id = existing
                     .as_ref()
-                    .and_then(|port| port.default_agent_id.as_ref());
+                    .and_then(|port| port.default_actor_id.as_ref());
                 db.upsert_port(
                     "telegram",
                     "telegram",
                     enabled,
                     allows_guests,
-                    default_agent_id,
+                    default_actor_id,
                     &settings,
                 )
                 .await?;

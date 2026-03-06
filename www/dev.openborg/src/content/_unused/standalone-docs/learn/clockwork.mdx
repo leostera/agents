@@ -1,0 +1,63 @@
+---
+title: Clockwork Scheduler
+description: Durable scheduled message jobs and current runtime maturity.
+---
+
+## What Clockwork does
+
+Clockwork stores scheduled jobs that deliver Borg messages to actor sessions.
+
+Supported job kinds:
+
+- `once`
+- `cron`
+
+Tool family: `Clockwork-*`.
+REST family: `/api/clockwork/jobs*`.
+
+## Job shape
+
+Each job includes:
+
+- target actor id
+- target session id
+- message payload
+- schedule spec
+- optional next run timestamp
+- status (`active`, `paused`, `cancelled`, `completed`)
+
+## Status semantics
+
+- `active`: eligible for due-job polling when `next_run_at <= now`.
+- `paused`: excluded from due execution.
+- `cancelled`: terminal operational stop.
+- `completed`: terminal state used by one-shot jobs with no next run.
+
+## Current runtime maturity
+
+CRUD, listing, and status controls are in place.
+
+Current scheduler loop in `borg-cli start` polls for due jobs and logs scaffold events; full message dispatch/run execution paths are still maturing. Build automations with this constraint in mind.
+
+## Practical usage today
+
+Use Clockwork for:
+
+- durable scheduling metadata
+- control-plane management
+- future-ready scheduling contracts
+
+Do not rely on fully autonomous execution semantics without validating your runtime version’s dispatch behavior.
+
+## Failure and update behavior
+
+- Updating `cancelled` or `completed` jobs is blocked (`0` rows affected path).
+- Invalid kind or payload shape fails validation at tool/controller layer.
+- Due-job polling only considers `active` jobs with non-null `next_run_at`.
+
+## Operational checklist
+
+1. Create jobs with explicit actor/session targets.
+2. Set and verify `next_run_at` expectations.
+3. Confirm status transitions through API reads.
+4. Treat execution as scaffolded unless verified in your deployment.

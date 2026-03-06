@@ -204,12 +204,12 @@ fn init_test_tracing() {
 }
 
 fn make_agent(
-    agent_id: Uri,
+    actor_id: Uri,
     model: String,
     system_prompt: String,
     tools: Vec<ToolSpec>,
 ) -> Agent<Value, Value> {
-    Agent::<Value, Value>::new(agent_id)
+    Agent::<Value, Value>::new(actor_id)
         .with_model(model)
         .with_system_prompt(system_prompt)
         .with_tools(tools)

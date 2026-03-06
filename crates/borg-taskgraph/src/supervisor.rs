@@ -38,7 +38,7 @@ pub struct TaskDispatch {
     pub description: String,
     pub definition_of_done: String,
     pub assignee_session_uri: String,
-    pub assignee_agent_id: String,
+    pub assignee_actor_id: String,
 }
 
 impl From<crate::model::TaskRecord> for TaskDispatch {
@@ -49,7 +49,7 @@ impl From<crate::model::TaskRecord> for TaskDispatch {
             description: value.description,
             definition_of_done: value.definition_of_done,
             assignee_session_uri: value.assignee_session_uri,
-            assignee_agent_id: value.assignee_agent_id,
+            assignee_actor_id: value.assignee_actor_id,
         }
     }
 }

@@ -21,12 +21,14 @@ impl BorgDb {
             INSERT INTO actors(
                 actor_id,
                 name,
+                model,
+                default_provider_id,
                 system_prompt,
                 status,
                 created_at,
                 updated_at
             )
-            VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+            VALUES(?1, ?2, ?3, NULL, ?4, ?5, ?6, ?7)
             ON CONFLICT(actor_id) DO UPDATE SET
               name = excluded.name,
               system_prompt = excluded.system_prompt,
@@ -35,6 +37,7 @@ impl BorgDb {
             "#,
             actor_id,
             name,
+            Option::<String>::None,
             system_prompt,
             status,
             now,
@@ -53,6 +56,8 @@ impl BorgDb {
             SELECT
                 actor_id as "actor_id!: String",
                 name as "name!: String",
+                model as "model: String",
+                default_provider_id as "default_provider_id: String",
                 system_prompt as "system_prompt!: String",
                 status as "status!: String",
                 created_at as "created_at!: String",
@@ -71,6 +76,8 @@ impl BorgDb {
             Ok(ActorRecord {
                 actor_id: Uri::parse(&row.actor_id)?,
                 name: row.name,
+                model: row.model,
+                default_provider_id: row.default_provider_id,
                 system_prompt: row.system_prompt,
                 status: row.status,
                 created_at: parse_ts(&row.created_at)?,
@@ -87,6 +94,8 @@ impl BorgDb {
             SELECT
                 actor_id as "actor_id!: String",
                 name as "name!: String",
+                model as "model: String",
+                default_provider_id as "default_provider_id: String",
                 system_prompt as "system_prompt!: String",
                 status as "status!: String",
                 created_at as "created_at!: String",
@@ -106,6 +115,8 @@ impl BorgDb {
                 Ok(ActorRecord {
                     actor_id: Uri::parse(&row.actor_id)?,
                     name: row.name,
+                    model: row.model,
+                    default_provider_id: row.default_provider_id,
                     system_prompt: row.system_prompt,
                     status: row.status,
                     created_at: parse_ts(&row.created_at)?,
@@ -113,6 +124,27 @@ impl BorgDb {
                 })
             })
             .collect()
+    }
+
+    pub async fn set_actor_model(&self, actor_id: &Uri, model: &str) -> Result<u64> {
+        let actor_id = actor_id.to_string();
+        let now = Utc::now().to_rfc3339();
+        let updated = sqlx::query!(
+            r#"
+            UPDATE actors
+            SET model = ?2,
+                updated_at = ?3
+            WHERE actor_id = ?1
+            "#,
+            actor_id,
+            model,
+            now,
+        )
+        .execute(self.conn.pool())
+        .await
+        .context("failed to update actor model")?
+        .rows_affected();
+        Ok(updated)
     }
 
     pub async fn delete_actor(&self, actor_id: &Uri) -> Result<u64> {

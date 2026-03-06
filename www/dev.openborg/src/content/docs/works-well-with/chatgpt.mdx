@@ -1,0 +1,58 @@
+---
+title: openborg works well with ChatGPT
+description: Use ChatGPT for exploration and drafting, then move repeatable execution into openborg.
+---
+
+## Core value split
+
+- **ChatGPT**: ideation, drafting, alternative generation, fast exploratory output.
+- **openborg**: durable execution with explicit session/task lifecycle and operational control.
+
+## Best-fit signal
+
+This pairing is strong when your team says:
+
+- "We get good ideas quickly, but execution is inconsistent."
+- "We need repeatable outcomes, not just good drafts."
+
+## Handoff protocol
+
+Use this fixed boundary:
+
+1. Explore in ChatGPT until a workflow is stable.
+2. Convert stable steps into openborg TaskGraph tasks.
+3. Execute through openborg with explicit states and outputs.
+4. Feed outcomes back into ChatGPT only for further ideation.
+
+## First workflow to implement
+
+Choose one recurring flow, for example:
+
+- intake -> analysis -> action plan -> execution report
+
+Implementation recipe:
+
+1. Draft the analysis structure in ChatGPT.
+2. Model the execution stages in openborg tasks.
+3. Add one quality gate in review state.
+4. Track turnaround time and rework rate for two weeks.
+
+## Success metrics
+
+- fewer "manual glue" steps between draft and execution
+- lower rework rate on repeated workflows
+- shorter cycle time from approved plan to completed outcome
+
+## Anti-patterns
+
+- Using ChatGPT and openborg for the exact same execution responsibility.
+- Migrating all usage at once instead of one repeatable flow.
+- Skipping task/review checkpoints in openborg.
+
+## When not to pair
+
+If all your usage is one-off ideation and no workflow needs repeatability yet, ChatGPT alone may be enough for now.
+
+## Source
+
+- https://chatgpt.com/

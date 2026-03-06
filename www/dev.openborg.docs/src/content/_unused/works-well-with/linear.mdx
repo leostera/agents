@@ -1,0 +1,59 @@
+---
+title: openborg works well with Linear
+description: Keep Linear as planning system-of-record and use openborg as execution runtime.
+---
+
+## Core value split
+
+- **Linear**: priorities, ownership, roadmap, and accountability.
+- **openborg**: execution orchestration for repeatable AI-assisted workflows.
+
+## Best-fit signal
+
+This pairing is strong when your team says:
+
+- "We plan well in Linear but execution has too much manual coordination."
+- "Issue states exist, but runbooks are inconsistent."
+
+## Architecture pattern
+
+Use a plan/execute boundary:
+
+- Linear owns "what should happen".
+- openborg owns "how it runs and what state it is in operationally".
+
+## Handoff protocol
+
+1. Linear issue enters a trigger state (for example `In Progress`).
+2. openborg task graph is created/updated for that issue.
+3. Execution artifacts are produced in openborg.
+4. Outcome summary is linked back to the Linear issue.
+
+## First workflow to implement
+
+Start with one high-friction issue class (for example release readiness checks).
+
+1. Define trigger state in Linear.
+2. Define 3-5 explicit openborg task states.
+3. Map review/done criteria.
+4. Publish a one-page team runbook.
+
+## Success metrics
+
+- reduced time from issue state change to first execution step
+- fewer dropped handoffs between planning and operations
+- clearer audit trail for why work is done or blocked
+
+## Anti-patterns
+
+- Duplicating backlog ownership inside openborg.
+- Keeping execution decisions implicit in comments only.
+- Running automation without linking outcomes back to issues.
+
+## When not to pair
+
+If your team is still pre-process and has no stable issue lifecycle, this integration will be overhead.
+
+## Source
+
+- https://linear.app/

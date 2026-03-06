@@ -499,7 +499,7 @@ input CreateTaskInputGql {
 	"""
 	Creator actor URI.
 	"""
-	creatorAgentId: Uri!
+	creatorActorId: Uri!
 	"""
 	Short task title.
 	"""
@@ -515,7 +515,7 @@ input CreateTaskInputGql {
 	"""
 	Assignee actor URI.
 	"""
-	assigneeAgentId: Uri!
+	assigneeActorId: Uri!
 	"""
 	Parent task URI when creating a subtask.
 	"""
@@ -1084,8 +1084,8 @@ type MutationRoot {
 	mutation($session: Uri!, $creator: Uri!, $assignee: Uri!) {
 	createTask(input: {
 	sessionUri: $session
-	creatorAgentId: $creator
-	assigneeAgentId: $assignee
+	creatorActorId: $creator
+	assigneeActorId: $assignee
 	title: "Ship borg-gql docs"
 	description: "Document all schema entrypoints"
 	}) { id title status }
@@ -2336,9 +2336,9 @@ type Task implements Node {
 	description: String!
 	definitionOfDone: String!
 	status: TaskStatusValue!
-	assigneeAgentId: String!
+	assigneeActorId: String!
 	assigneeSessionId: Uri
-	reviewerAgentId: String!
+	reviewerActorId: String!
 	reviewerSessionId: Uri
 	labels: [String!]!
 	parentUri: Uri
@@ -2556,7 +2556,7 @@ type TaskEventDataObject {
 	"""
 	New assignee actor ID when relevant.
 	"""
-	assigneeAgentId: String
+	assigneeActorId: String
 	"""
 	New assignee session URI when relevant.
 	"""
@@ -2564,7 +2564,7 @@ type TaskEventDataObject {
 	"""
 	Reviewer actor ID when relevant.
 	"""
-	reviewerAgentId: String
+	reviewerActorId: String
 	"""
 	Reviewer session URI when relevant.
 	"""
@@ -2588,7 +2588,7 @@ type TaskEventDataObject {
 	"""
 	Previous assignee actor ID when relevant.
 	"""
-	oldAssigneeAgentId: String
+	oldAssigneeActorId: String
 	"""
 	Previous assignee session URI when relevant.
 	"""
@@ -2596,7 +2596,7 @@ type TaskEventDataObject {
 	"""
 	Replacement assignee actor ID when relevant.
 	"""
-	newAssigneeAgentId: String
+	newAssigneeActorId: String
 	"""
 	Replacement assignee session URI when relevant.
 	"""

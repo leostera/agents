@@ -1,0 +1,65 @@
+---
+title: Send Your First HTTP Turn
+description: Open a session through HTTP ingress and keep it stable across follow-up turns.
+---
+
+## First turn
+
+```bash
+curl -i -sS -X POST http://127.0.0.1:8080/ports/http \
+  -H 'content-type: application/json' \
+  -d '{
+    "user_key":"borg:user:demo",
+    "text":"Hello Borg",
+    "agent_id":"borg:actor:assistant"
+  }'
+```
+
+## What you should capture
+
+From response:
+
+- body fields: `session_id`, `reply`, `tool_calls`
+- header: `x-borg-session-id`
+
+Store `session_id` in your client.
+
+## Follow-up turn in same session
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/ports/http \
+  -H 'content-type: application/json' \
+  -d '{
+    "user_key":"borg:user:demo",
+    "session_id":"borg:session:REPLACE_ME",
+    "text":"Continue from previous context"
+  }'
+```
+
+Using stable `session_id` preserves context.
+
+## Command examples
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/ports/http \
+  -H 'content-type: application/json' \
+  -d '{"user_key":"borg:user:demo","session_id":"borg:session:REPLACE_ME","text":"/model"}'
+```
+
+Supported commands include `/help`, `/start`, `/model`, `/participants`, `/context`, `/reset`, `/compact`.
+
+## Error handling basics
+
+Expect `400` for:
+
+- invalid URI values
+- empty `text`
+- unknown slash command
+
+Expect `500` for runtime execution failures.
+
+## Quick sanity checks
+
+1. First call returns valid `session_id`.
+2. Second call with same `session_id` shows context continuity.
+3. `/model` command returns actor/model/session snapshot.

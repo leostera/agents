@@ -1,7 +1,7 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use borg_agent::{
     Agent, BorgToolCall, BorgToolResult, ContextChunk, ContextManager, Message, Session,
-    SessionEventPayload, StaticContextProvider, ToolSpec,
+    StaticContextProvider, ToolSpec,
 };
 use borg_apps::{BorgApps, default_tool_specs as default_apps_tool_specs};
 use borg_codemode::default_tool_specs as default_codemode_tool_specs;
@@ -20,24 +20,23 @@ const TELEGRAM_SESSION_CONTEXT_PREFIX: &str = "TELEGRAM_SESSION_CONTEXT_JSON: ";
 #[derive(Clone)]
 pub struct SessionManager {
     db: BorgDb,
-    model: String,
 }
 
 impl SessionManager {
-    pub fn new(db: BorgDb, model: String) -> Self {
-        Self { db, model }
+    pub fn new(db: BorgDb) -> Self {
+        Self { db }
     }
 
     pub async fn session_for_task(
         &self,
         session_id: Option<Uri>,
-        requested_agent_id: Option<&Uri>,
+        requested_actor_id: Option<&Uri>,
     ) -> Result<Session<BorgToolCall, BorgToolResult>> {
         let session_id = session_id.unwrap_or_else(|| uri!("borg", "session"));
-        let agent_id = self
-            .resolve_agent_id(requested_agent_id, &session_id)
+        let actor_id = self
+            .resolve_actor_id(requested_actor_id, &session_id)
             .await?;
-        let agent = self.resolve_agent_for_turn(&agent_id).await?;
+        let agent = self.resolve_agent_for_turn(&actor_id).await?;
 
         let mut session = Session::new(session_id.clone(), agent, self.db.clone()).await?;
         if let Some((port, ctx)) = self.db.get_any_port_session_context(&session_id).await?
@@ -58,52 +57,25 @@ impl SessionManager {
 
     pub async fn resolve_agent_for_turn(
         &self,
-        agent_id: &Uri,
+        actor_id: &Uri,
     ) -> Result<Agent<BorgToolCall, BorgToolResult>> {
         let default_tools = self.default_tools_for_session().await?;
-        let mut agent = Agent::load(agent_id, &self.db).await?;
-        if let Some(spec) = self.db.get_agent_spec(agent_id).await? {
-            agent = agent
-                .with_model(spec.model)
-                .with_system_prompt(spec.system_prompt);
-        } else {
-            agent = agent.with_model(self.model.clone());
-        }
-
+        let agent = Agent::load(actor_id, &self.db).await?;
         Ok(agent.with_behavior_prompt("").with_tools(default_tools))
     }
 
-    async fn resolve_agent_id(
+    async fn resolve_actor_id(
         &self,
-        requested_agent_id: Option<&Uri>,
-        session_id: &Uri,
+        requested_actor_id: Option<&Uri>,
+        _session_id: &Uri,
     ) -> Result<Uri> {
-        if let Some(agent_id) = requested_agent_id {
-            return Ok(agent_id.clone());
+        if let Some(actor_id) = requested_actor_id {
+            return Ok(actor_id.clone());
         }
 
-        let messages = self.db.list_session_messages(session_id, 0, 64).await?;
-        for message in messages {
-            let Ok(message) =
-                serde_json::from_value::<Message<BorgToolCall, BorgToolResult>>(message)
-            else {
-                continue;
-            };
-            if let Message::SessionEvent {
-                payload: SessionEventPayload::Started { agent_id },
-                ..
-            } = message
-            {
-                return Ok(agent_id);
-            }
-        }
-
-        let specs = self.db.list_agent_specs(1).await?;
-        if let Some(first) = specs.into_iter().next() {
-            return Ok(first.agent_id);
-        }
-
-        Ok(uri!("borg", "agent", "default"))
+        Err(anyhow!(
+            "missing actor id when creating session; actor must be resolved by caller"
+        ))
     }
 
     async fn default_tools_for_session(&self) -> Result<Vec<ToolSpec>> {

@@ -31,8 +31,7 @@ impl BorgRuntime {
         shell_runtime: ShellModeRuntime,
         files: BorgFs,
     ) -> Self {
-        let agent_model = String::new();
-        let session_manager = SessionManager::new(db.clone(), agent_model);
+        let session_manager = SessionManager::new(db.clone());
         Self {
             db: db.clone(),
             memory,
@@ -52,10 +51,10 @@ impl BorgRuntime {
         &self,
         user_id: &Uri,
         session_id: &Uri,
-        agent_id: &Uri,
+        actor_id: &Uri,
     ) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
         let context = self
-            .code_mode_context_for_turn(user_id, session_id, agent_id)
+            .code_mode_context_for_turn(user_id, session_id, actor_id)
             .await?;
         let runtime_toolchain = build_exec_toolchain_with_context(
             self.runtime.clone(),
@@ -65,7 +64,7 @@ impl BorgRuntime {
             self.db.clone(),
             self.files.clone(),
             session_id.clone(),
-            agent_id.clone(),
+            actor_id.clone(),
             true,
         )?;
         let apps = BorgApps::new(self.db.clone()).await?;
@@ -77,13 +76,13 @@ impl BorgRuntime {
         &self,
         user_id: &Uri,
         session_id: &Uri,
-        agent_id: &Uri,
+        actor_id: &Uri,
     ) -> Result<CodeModeContext> {
         Ok(CodeModeContext {
             current_port_id: None,
             current_message_id: None,
             current_session_id: Some(session_id.clone()),
-            current_agent_id: Some(agent_id.clone()),
+            current_actor_id: Some(actor_id.clone()),
             current_user_id: Some(user_id.clone()),
             env: self.app_env_for_session(user_id).await?,
         })

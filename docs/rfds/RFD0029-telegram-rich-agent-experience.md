@@ -47,6 +47,8 @@ A rich Telegram experience improves:
 2. Any incoming message type should either be handled explicitly or produce a clear user-facing fallback.
 3. Routine actions should be one tap away using Telegram UI controls.
 4. Session-first runtime remains the backbone: every inbound Telegram event resolves to a session turn.
+5. In group chats, assistant replies are opt-in by explicit invocation (tag/command/reply), not ambient listening.
+6. Group messages may still be ingested as ambient context even when they do not trigger a direct reply.
 
 ### User experience design
 
@@ -57,6 +59,12 @@ A user should be able to:
 3. forward a message and ask the assistant to summarize, extract tasks, or draft a response
 4. use slash commands and menu actions to run common operations without prompt memorization
 
+Group reply behavior should feel predictable:
+
+1. respond when explicitly tagged anywhere in the message, for example `@Lore what's up?`
+2. respond when explicitly tagged mid-sentence, for example `i'm confused about this @Lore`
+3. do not respond when only the plain name appears without a Telegram mention, for example `we didn't set up Lore yet`
+
 ### Interaction model
 
 Use four complementary surfaces together:
@@ -65,6 +73,11 @@ Use four complementary surfaces together:
 2. Slash commands: discoverable, deterministic actions.
 3. Inline keyboard callbacks: quick branching and “next best action” UI after replies.
 4. Menu button and optional inline mode: persistent entrypoints for common workflows.
+
+Group chats use two ingestion lanes:
+
+1. Active lane: explicit invocation (mention/command/reply-to-bot) creates a direct session turn and may produce a reply.
+2. Ambient lane: non-invoked group messages are ingested as context events only (no reply, no tool execution).
 
 ### Example journeys
 
@@ -155,6 +168,28 @@ Ingress and routing for Telegram must follow `RFD0028`:
 3. if no binding exists, runtime may create a new actor/session pair and persist binding
 4. no behavior/agent-spec indirection is introduced by Telegram features
 
+#### 2.4 Group ambient-context ingestion (new)
+
+In group/supergroup chats, non-invoked messages should be ingested into an ambient context stream tied to the same `(port, conversation_key)` actor/session pair.
+
+Rules:
+
+1. ambient events do not trigger immediate assistant reply
+2. ambient events do not trigger tool execution
+3. ambient events are available as context for later explicit invocations
+4. ambient events are stored with bounded retention and size limits
+
+Minimum ambient event shape (typed):
+
+1. `session_id`
+2. `chat_id`
+3. `thread_id` (optional)
+4. `message_id`
+5. `sender_id` and sender display metadata
+6. `ingested_at`
+7. `kind` + normalized text/caption/quote/forward metadata
+8. `trigger_mode = ambient`
+
 ### 3. Command interface architecture
 
 #### 3.1 Command surfaces
@@ -194,7 +229,30 @@ Rules:
 2. keep group command set low-noise and collaboration oriented
 3. localize commands by language where needed
 
-#### 3.3 Callback action design
+#### 3.3 Group invocation policy (non-command messages)
+
+For regular text messages in group/supergroup chats, the agent replies only if at least one explicit invocation signal is present:
+
+1. message includes a Telegram mention entity matching the bot username (for example `@Lore`)
+2. message is a reply to a bot-authored message
+3. message uses an explicit bot command addressed to this bot
+
+For group messages without explicit invocation, the port should ingest ambient context and send no reply.
+
+Implementation notes:
+
+1. matching uses Telegram message entities (`mention`, `text_mention`) and the runtime bot username, not fuzzy plain-text name matching
+2. mention may appear at any position in message text
+3. this gating applies only to group/supergroup chats; private chats remain direct
+4. slash commands remain valid invocation even without `@botname` suffix when Telegram routes them to the bot
+
+Context assembly on explicit invocation:
+
+1. when an explicit invocation arrives, runtime includes recent ambient context snippets from the same chat/thread
+2. prioritize recent events, quote/reply-linked events, and messages from actively participating users
+3. keep a strict context budget and summarize overflow context before model execution
+
+#### 3.4 Callback action design
 
 Each substantial assistant reply may include 2-4 contextual quick actions.
 
@@ -238,6 +296,8 @@ BotFather setup guidance in docs/onboarding should include:
 4. For hidden forward origins, assistant must avoid overclaiming source identity.
 5. Telegram features must not violate `1 actor = 1 session` ownership.
 6. Scheduling-related user actions should target `Schedule` terminology/surfaces, not legacy `Clockwork` naming.
+7. Ambient context ingestion must be side-effect free (no autonomous replies/tasks/tools).
+8. Ambient context storage must be bounded (TTL and max events per chat/thread window).
 
 ### 6. Observability and quality
 
@@ -261,10 +321,15 @@ Log contract (structured):
 
 1. Sticker-only, GIF-only, quote reply, and forwarded message each produce meaningful assistant handling in Telegram.
 2. Slash command sets are visible and correct in private and group chats with scoped behavior.
-3. At least one assistant response path uses inline keyboard callbacks end-to-end.
-4. Callback interactions return an acknowledgment and completed action result.
-5. Hidden/ambiguous forward origins are handled without identity hallucination.
-6. Runtime keeps session-first semantics and explicit task boundaries.
+3. Group non-command text is answered only when explicitly invoked (mention/reply-to-bot/command), and ignored otherwise.
+4. Mention detection works for both prefix and mid-sentence forms (for example `@Lore ...` and `... @Lore`).
+5. Plain-name references without Telegram mention entities do not trigger replies.
+6. Non-invoked group messages are ingested as ambient context and later influence explicitly-invoked replies.
+7. Ambient ingestion never triggers autonomous replies, tool calls, or task creation.
+8. At least one assistant response path uses inline keyboard callbacks end-to-end.
+9. Callback interactions return an acknowledgment and completed action result.
+10. Hidden/ambiguous forward origins are handled without identity hallucination.
+11. Runtime keeps session-first semantics and explicit task boundaries.
 
 ### 8. Implementation plan (no gradual rollout required)
 
@@ -272,7 +337,8 @@ Phase 1: ingress enrichment
 
 1. expand Telegram parsing and normalized input envelope
 2. add fallback text synthesis for non-text events
-3. add tests for quotes, forwards, stickers, animations
+3. add explicit group invocation gating (mention/reply/command) plus ambient-context ingestion for non-invoked group messages
+4. add tests for quotes, forwards, stickers, animations, mention-gated group behavior, and ambient-context carryover on later invocation
 
 Phase 2: commands and setup
 

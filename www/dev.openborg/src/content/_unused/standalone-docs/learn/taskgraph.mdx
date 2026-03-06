@@ -1,0 +1,86 @@
+---
+title: TaskGraph
+description: Durable DAG task orchestration with review-aware lifecycle control.
+---
+
+## What TaskGraph is for
+
+Use TaskGraph when you need explicit, durable work management:
+
+- structured task lifecycle
+- dependency ordering
+- review gates
+- audit events/comments
+- queue selection for next executable tasks
+
+It is separate from normal chat ingress by design.
+
+## Task lifecycle model
+
+Canonical statuses:
+
+- `pending`
+- `doing`
+- `review`
+- `done`
+- `discarded`
+
+Review transitions are intentionally constrained. Direct status changes to `review`/`done` are guarded; review tools are the intended path.
+
+## Role and session semantics
+
+Task creation allocates:
+
+- assignee session URI
+- reviewer session URI
+
+Review-sensitive actions enforce session checks (`review.session_mismatch` on violation).
+
+## DAG and relationship controls
+
+TaskGraph tracks:
+
+- parent/child edges
+- `blocked_by` dependency edges
+- `duplicate_of` linkage
+- reference edges
+- labels
+
+DAG validation runs on graph-changing operations to prevent invalid dependency structures.
+
+## Tool surface vs REST surface
+
+Tool surface (`TaskGraph-*`) is the most complete API.
+
+REST surface under `/api/taskgraph/tasks*` currently covers a useful subset (list/create/get/update/status/comments/events/children) but not every specialized operation.
+
+## Queue operations
+
+Queue helpers:
+
+- `TaskGraph-nextTask`
+- `TaskGraph-reconcileInProgress`
+
+Use these to pull runnable work and reconcile in-progress visibility rather than reimplementing queue logic client-side.
+
+## Eventing and auditability
+
+Task operations append structured events (`task.created`, `review.submitted`, `review.approved`, etc.) and comments are append-only.
+
+This is the source of truth for timeline reconstruction.
+
+## Common failure modes
+
+- Invalid URI/label formats => validation errors.
+- Missing actor/session authorization => auth/review errors.
+- Illegal status transition => `task.validation_failed`.
+- Cycle/graph invalidation => DAG validation errors.
+
+## Practical usage pattern
+
+1. Create task with clear definition of done.
+2. Add blockers/references/labels.
+3. Move assignee path through `pending -> doing`.
+4. Submit review (`TaskGraph-submitReview`).
+5. Approve (`TaskGraph-approveReview`) or request changes.
+6. Use events/comments for traceability.

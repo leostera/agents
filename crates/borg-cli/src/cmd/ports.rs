@@ -28,7 +28,7 @@ pub enum PortsCommand {
         #[arg(long, help = "Allow or deny guest users")]
         allows_guests: Option<bool>,
         #[arg(long, help = "Default agent URI")]
-        default_agent_id: Option<String>,
+        default_actor_id: Option<String>,
         #[arg(long, value_name = "JSON", help = "Port settings JSON object")]
         settings_json: Option<String>,
     },
@@ -57,7 +57,7 @@ pub async fn run(app: &BorgCliApp, cmd: PortsCommand) -> Result<()> {
             provider,
             enabled,
             allows_guests,
-            default_agent_id,
+            default_actor_id,
             settings_json,
         } => {
             let existing = db.get_port(&port_name).await?;
@@ -71,14 +71,14 @@ pub async fn run(app: &BorgCliApp, cmd: PortsCommand) -> Result<()> {
                 .or_else(|| existing.as_ref().map(|record| record.allows_guests))
                 .unwrap_or(true);
 
-            let default_agent_id = match default_agent_id {
+            let default_actor_id = match default_actor_id {
                 Some(raw) if raw.trim().is_empty() => None,
                 Some(raw) => Some(Uri::parse(raw.trim()).map_err(|_| {
-                    anyhow::anyhow!("invalid default_agent_id uri `{}`", raw.trim())
+                    anyhow::anyhow!("invalid default_actor_id uri `{}`", raw.trim())
                 })?),
                 None => existing
                     .as_ref()
-                    .and_then(|record| record.default_agent_id.clone()),
+                    .and_then(|record| record.default_actor_id.clone()),
             };
 
             let settings: Value = match settings_json {
@@ -96,7 +96,7 @@ pub async fn run(app: &BorgCliApp, cmd: PortsCommand) -> Result<()> {
                 &provider,
                 enabled,
                 allows_guests,
-                default_agent_id.as_ref(),
+                default_actor_id.as_ref(),
                 &settings,
             )
             .await?;

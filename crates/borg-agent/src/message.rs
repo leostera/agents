@@ -40,7 +40,7 @@ pub enum Message<TToolCall, TToolResult> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionEventPayload {
     Started {
-        agent_id: Uri,
+        actor_id: Uri,
     },
     Finished {
         status: SessionEndStatus,

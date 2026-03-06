@@ -1,0 +1,63 @@
+---
+title: Install and Run
+description: Boot a local Borg runtime and verify baseline health.
+---
+
+## Prerequisites
+
+- Rust toolchain (`cargo`)
+- `bun`
+
+## Build artifacts
+
+From repo root:
+
+```bash
+bun run build:web
+cargo build
+```
+
+`build:web` is important because onboarding/dashboard assets are expected by runtime.
+
+## Initialize storage
+
+```bash
+cargo run -p borg-cli -- init
+```
+
+This prepares `~/.borg/` storage and reconciles built-in apps.
+
+## Start runtime
+
+```bash
+cargo run -p borg-cli -- start
+```
+
+Default bind: `127.0.0.1:8080`.
+
+## Verify health
+
+```bash
+curl -sS http://127.0.0.1:8080/health
+```
+
+Expected response:
+
+```json
+{"status":"ok"}
+```
+
+## Verify control plane is alive
+
+```bash
+curl -sS http://127.0.0.1:8080/api/providers
+curl -sS http://127.0.0.1:8080/api/apps
+```
+
+You should get JSON payloads, even before custom config.
+
+## Troubleshooting
+
+- If dashboard/onboard assets fail: re-run `bun run build:web`.
+- If startup fails with DB issues: confirm `~/.borg/` write access.
+- If port `8080` is occupied: start with a different bind via CLI options.

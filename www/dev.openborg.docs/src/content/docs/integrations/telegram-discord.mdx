@@ -1,0 +1,59 @@
+---
+title: Telegram and Discord Ports
+description: Managed connector runtime behavior, identity mapping, and access controls.
+---
+
+## Runtime startup model
+
+Managed connectors are supervised from DB port records:
+
+- enabled Telegram/Discord ports are started
+- changed configs trigger restart
+- disabled ports are stopped
+
+Unknown providers are retained as config but skipped for startup.
+
+## Identity mapping
+
+- Telegram user ids map to `telegram:user:<id>` and conversation key to chat id.
+- Discord user ids map to `discord:user:<id>` and conversation key to channel id.
+
+This gives stable per-channel session continuity.
+
+## Command behavior
+
+Telegram supports command routing (`/start`, `/model`, `/participants`, `/context`, `/reset`, `/compact`) before default text forwarding.
+
+Discord path is message-first in current implementation (no Telegram-style command registry).
+
+## Access control on private ports
+
+When guest access is off, connector allow-lists are enforced:
+
+- Telegram allow-list supports numeric IDs or usernames.
+- Discord allow-list requires numeric snowflake IDs.
+
+Empty allow-list on a private connector effectively rejects all external users.
+
+## Output behavior
+
+Connector outputs include:
+
+- assistant reply text
+- tool call action summaries
+
+Message chunking is applied to fit platform limits.
+
+## Current integration limits
+
+- Connector ingress is text-first.
+- Audio ingress currently routes through HTTP audio endpoint.
+- Connector-specific command parity is not identical between Telegram and Discord.
+
+## Rollout checklist
+
+1. Configure token and enable port.
+2. Verify allow-list and privacy settings.
+3. Send test message from allowed identity.
+4. Verify session binding and actor binding records.
+5. Confirm outbound replies and tool summaries in channel.

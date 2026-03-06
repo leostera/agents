@@ -1,0 +1,8 @@
+{
+  "id": "borg:task:user-cleanup-api",
+  "title": "Remove user-related API endpoints",
+  "description": "Identify and delete all /users routes, handlers, and DTOs in crates/borg-api. Ensure no leftover boundary JSON for user management remains.",
+  "definition_of_done": "No /users routes exist in the API, and all related handler code is removed.",
+  "status": "todo",
+  "dependencies": ["borg:task:user-cleanup-db-logic"]
+}

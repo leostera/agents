@@ -12,13 +12,13 @@ use crate::store::{CreateTaskInput, ListParams, SplitSubtaskInput, TaskGraphStor
 #[derive(Debug, Clone, Deserialize)]
 struct CreateTaskArgs {
     session_uri: String,
-    creator_agent_id: String,
+    creator_actor_id: String,
     title: String,
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
     definition_of_done: Option<String>,
-    assignee_agent_id: String,
+    assignee_actor_id: String,
     #[serde(default)]
     labels: Option<Vec<String>>,
     #[serde(default)]
@@ -69,7 +69,7 @@ struct SessionUriUriArgs {
 struct ReassignAssigneeArgs {
     session_uri: String,
     uri: String,
-    assignee_agent_id: String,
+    assignee_actor_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -136,7 +136,7 @@ struct RequestReviewChangesArgs {
 #[derive(Debug, Clone, Deserialize)]
 struct SplitTaskIntoSubtasksArgs {
     session_uri: String,
-    creator_agent_id: String,
+    creator_actor_id: String,
     uri: String,
     subtasks: Vec<SplitSubtaskArgs>,
 }
@@ -148,7 +148,7 @@ struct SplitSubtaskArgs {
     description: Option<String>,
     #[serde(default)]
     definition_of_done: Option<String>,
-    assignee_agent_id: String,
+    assignee_actor_id: String,
     #[serde(default)]
     labels: Option<Vec<String>>,
 }
@@ -185,17 +185,17 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "session_uri": { "type": "string", "format": "uri" },
-                    "creator_agent_id": { "type": "string" },
+                    "creator_actor_id": { "type": "string" },
                     "title": { "type": "string" },
                     "description": { "type": "string" },
                     "definition_of_done": { "type": "string" },
-                    "assignee_agent_id": { "type": "string" },
+                    "assignee_actor_id": { "type": "string" },
                     "labels": { "type": "array", "items": { "type": "string" } },
                     "parent_uri": { "type": "string", "format": "uri" },
                     "blocked_by": { "type": "array", "items": { "type": "string", "format": "uri" } },
                     "references": { "type": "array", "items": { "type": "string", "format": "uri" } }
                 },
-                "required": ["session_uri", "creator_agent_id", "title", "assignee_agent_id"],
+                "required": ["session_uri", "creator_actor_id", "title", "assignee_actor_id"],
                 "additionalProperties": false
             }),
         ),
@@ -254,9 +254,9 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
                 "properties": {
                     "session_uri": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
-                    "assignee_agent_id": { "type": "string" }
+                    "assignee_actor_id": { "type": "string" }
                 },
-                "required": ["session_uri", "uri", "assignee_agent_id"],
+                "required": ["session_uri", "uri", "assignee_actor_id"],
                 "additionalProperties": false
             }),
         ),
@@ -488,7 +488,7 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "session_uri": { "type": "string", "format": "uri" },
-                    "creator_agent_id": { "type": "string" },
+                    "creator_actor_id": { "type": "string" },
                     "uri": { "type": "string", "format": "uri" },
                     "subtasks": {
                         "type": "array",
@@ -499,15 +499,15 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
                                 "title": { "type": "string" },
                                 "description": { "type": "string" },
                                 "definition_of_done": { "type": "string" },
-                                "assignee_agent_id": { "type": "string" },
+                                "assignee_actor_id": { "type": "string" },
                                 "labels": { "type": "array", "items": { "type": "string" } }
                             },
-                            "required": ["title", "assignee_agent_id"],
+                            "required": ["title", "assignee_actor_id"],
                             "additionalProperties": false
                         }
                     }
                 },
-                "required": ["session_uri", "creator_agent_id", "uri", "subtasks"],
+                "required": ["session_uri", "creator_actor_id", "uri", "subtasks"],
                 "additionalProperties": false
             }),
         ),
@@ -662,13 +662,13 @@ impl TaskGraphTools {
                 let store = store.clone();
                 async move {
                     let session_uri = request.arguments.session_uri.trim().to_string();
-                    let creator_agent_id = request.arguments.creator_agent_id.trim().to_string();
+                    let creator_actor_id = request.arguments.creator_actor_id.trim().to_string();
                     let title = request.arguments.title.trim().to_string();
-                    let assignee_agent_id = request.arguments.assignee_agent_id.trim().to_string();
+                    let assignee_actor_id = request.arguments.assignee_actor_id.trim().to_string();
                     if session_uri.is_empty()
-                        || creator_agent_id.is_empty()
+                        || creator_actor_id.is_empty()
                         || title.is_empty()
-                        || assignee_agent_id.is_empty()
+                        || assignee_actor_id.is_empty()
                     {
                         return Err(anyhow!("task.validation_failed: missing required fields"));
                     }
@@ -686,7 +686,7 @@ impl TaskGraphTools {
                             .unwrap_or_default()
                             .trim()
                             .to_string(),
-                        assignee_agent_id,
+                        assignee_actor_id,
                         parent_uri: option_non_empty(request.arguments.parent_uri),
                         blocked_by: normalize_strs(request.arguments.blocked_by),
                         references: normalize_strs(request.arguments.references),
@@ -694,7 +694,7 @@ impl TaskGraphTools {
                     };
 
                     let task = store
-                        .create_task(&session_uri, &creator_agent_id, input)
+                        .create_task(&session_uri, &creator_actor_id, input)
                         .await?;
                     json_text(json!({ "task": task }))
                 }
@@ -774,10 +774,10 @@ impl TaskGraphTools {
                 async move {
                     let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
-                    let assignee_agent_id =
-                        required_str(request.arguments.assignee_agent_id, "assignee_agent_id")?;
+                    let assignee_actor_id =
+                        required_str(request.arguments.assignee_actor_id, "assignee_actor_id")?;
                     let task = store
-                        .reassign_assignee(&session_uri, &uri, &assignee_agent_id)
+                        .reassign_assignee(&session_uri, &uri, &assignee_actor_id)
                         .await?;
                     json_text(json!({ "task": task }))
                 }
@@ -1099,8 +1099,8 @@ impl TaskGraphTools {
                 let store = store.clone();
                 async move {
                     let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
-                    let creator_agent_id =
-                        required_str(request.arguments.creator_agent_id, "creator_agent_id")?;
+                    let creator_actor_id =
+                        required_str(request.arguments.creator_actor_id, "creator_actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let subtasks = request
                         .arguments
@@ -1119,16 +1119,16 @@ impl TaskGraphTools {
                                     .unwrap_or_default()
                                     .trim()
                                     .to_string(),
-                                assignee_agent_id: required_str(
-                                    subtask.assignee_agent_id,
-                                    "subtask assignee_agent_id",
+                                assignee_actor_id: required_str(
+                                    subtask.assignee_actor_id,
+                                    "subtask assignee_actor_id",
                                 )?,
                                 labels: normalize_strs(subtask.labels),
                             })
                         })
                         .collect::<Result<Vec<_>>>()?;
                     let (parent, created) = store
-                        .split_task_into_subtasks(&session_uri, &creator_agent_id, &uri, subtasks)
+                        .split_task_into_subtasks(&session_uri, &creator_actor_id, &uri, subtasks)
                         .await?;
                     json_text(json!({ "parent": parent, "created": created }))
                 }

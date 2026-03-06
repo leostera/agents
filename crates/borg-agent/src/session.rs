@@ -125,7 +125,7 @@ where
         self.add_message(Message::SessionEvent {
             name: AGENT_STARTED_EVENT.to_string(),
             payload: SessionEventPayload::Started {
-                agent_id: self.agent.agent_id.clone(),
+                actor_id: self.agent.actor_id.clone(),
             },
         })
         .await
@@ -251,7 +251,7 @@ where
 
     fn hash_agent_signature(&self) -> Result<u64> {
         let mut hash = 0_u64;
-        hash = Self::mix_hash(hash, Self::hash_str(&self.agent.agent_id.to_string()));
+        hash = Self::mix_hash(hash, Self::hash_str(&self.agent.actor_id.to_string()));
         hash = Self::mix_hash(hash, Self::hash_str(&self.agent.model));
         hash = Self::mix_hash(
             hash,

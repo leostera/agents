@@ -16,6 +16,7 @@ const APP_ROOT = "apps/borg-admin";
 export default defineConfig({
   root: APP_ROOT,
   appType: "spa",
+  envPrefix: ["VITE_", "BORG_"],
   plugins: [
     frontmanPlugin({
       host: "api.frontman.sh",
@@ -45,26 +46,8 @@ export default defineConfig({
         replacement: path.resolve(dirname, "packages/borg-ui/src/index.ts"),
       },
       {
-        find: "@borg/api",
-        replacement: path.resolve(dirname, "packages/borg-api/src/index.ts"),
-      },
-      {
-        find: "@borg/explorer",
-        replacement: path.resolve(
-          dirname,
-          "packages/borg-explorer/src/index.tsx"
-        ),
-      },
-      {
         find: "@borg/i18n",
         replacement: path.resolve(dirname, "packages/borg-i18n/src/index.ts"),
-      },
-      {
-        find: "@borg/devmode",
-        replacement: path.resolve(
-          dirname,
-          "packages/borg-devmode/src/index.ts"
-        ),
       },
       {
         find: "@borg/onboarding",
@@ -85,6 +68,13 @@ export default defineConfig({
         replacement: path.resolve(
           dirname,
           "packages/borg-graphql-client/src/index.ts"
+        ),
+      },
+      {
+        find: "@borg/react-statereducer",
+        replacement: path.resolve(
+          dirname,
+          "packages/react-statereducer/src/index.ts"
         ),
       },
     ],

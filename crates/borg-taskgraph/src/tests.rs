@@ -13,12 +13,12 @@ async fn test_db() -> Result<BorgDb> {
     Ok(db)
 }
 
-fn create_input(assignee_agent_id: &str) -> CreateTaskInput {
+fn create_input(assignee_actor_id: &str) -> CreateTaskInput {
     CreateTaskInput {
         title: "Task".to_string(),
         description: "desc".to_string(),
         definition_of_done: "dod".to_string(),
-        assignee_agent_id: assignee_agent_id.to_string(),
+        assignee_actor_id: assignee_actor_id.to_string(),
         parent_uri: None,
         blocked_by: vec![],
         references: vec![],
@@ -40,8 +40,8 @@ async fn create_and_get_task_roundtrip() -> Result<()> {
         .await?;
 
     assert_eq!(created.status, "pending");
-    assert_eq!(created.assignee_agent_id, "agent:worker");
-    assert_eq!(created.reviewer_agent_id, "agent:creator");
+    assert_eq!(created.assignee_actor_id, "agent:worker");
+    assert_eq!(created.reviewer_actor_id, "agent:creator");
 
     let fetched = store.get_task(&created.uri).await?;
     assert_eq!(fetched.uri, created.uri);
@@ -166,9 +166,9 @@ async fn toolchain_smoke_create_get() -> Result<()> {
             tool_name: "TaskGraph-createTask".to_string(),
             arguments: json!({
                 "session_uri": "borg:session:creator",
-                "creator_agent_id": "agent:creator",
+                "creator_actor_id": "agent:creator",
                 "title": "hello",
-                "assignee_agent_id": "agent:worker",
+                "assignee_actor_id": "agent:worker",
                 "labels": ["initiative:test"]
             })
             .into(),
@@ -229,9 +229,9 @@ async fn toolchain_smoke_list_tasks() -> Result<()> {
                 tool_name: "TaskGraph-createTask".to_string(),
                 arguments: json!({
                     "session_uri": "borg:session:creator",
-                    "creator_agent_id": "agent:creator",
+                    "creator_actor_id": "agent:creator",
                     "title": title,
-                    "assignee_agent_id": "agent:worker",
+                    "assignee_actor_id": "agent:worker",
                 })
                 .into(),
             })
@@ -359,7 +359,7 @@ async fn taskgraph_supervisor_get_task_parent() -> Result<()> {
         title: "Child".to_string(),
         description: "child desc".to_string(),
         definition_of_done: "child dod".to_string(),
-        assignee_agent_id: "agent:worker".to_string(),
+        assignee_actor_id: "agent:worker".to_string(),
         parent_uri: Some(parent.uri.clone()),
         blocked_by: vec![],
         references: vec![],

@@ -5,7 +5,6 @@
   "type": "module",
   "dependencies": {
     "@borg/dashboard-control": "workspace:*",
-    "@borg/devmode": "workspace:*",
     "@borg/i18n": "workspace:*",
     "@borg/onboarding": "workspace:*",
     "@borg/ui": "workspace:*",

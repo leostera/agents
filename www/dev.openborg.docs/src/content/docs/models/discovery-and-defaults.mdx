@@ -1,0 +1,55 @@
+---
+title: Discovery and Defaults
+description: Model discovery behavior and how defaults are inferred.
+---
+
+## Discovery endpoint
+
+Use:
+
+- `GET /api/providers/:provider/models`
+
+Response includes:
+
+- `provider`
+- `models` (discovered IDs)
+- `default_text_model` (inferred)
+- `default_audio_model` (inferred)
+
+## Provider-specific discovery paths
+
+- `openai`: provider-native models API.
+- `openrouter`: provider-native models API.
+- `lmstudio` / `ollama`: OpenAI-compatible `{base_url}/v1/models`.
+
+## Inference heuristics
+
+Inference is simple and deterministic:
+
+- text default: first model id not containing `transcribe`
+- audio default: first model id containing `transcribe`
+
+These inferred values are returned in response but are not automatically persisted as provider defaults.
+
+## Persisting deterministic defaults
+
+If you want stable runtime behavior across provider API changes, persist defaults explicitly in provider record:
+
+- `default_text_model`
+- `default_audio_model`
+
+Treat discovery inference as a suggestion, not a durable config source.
+
+## Failure semantics
+
+- missing/disabled provider => `404`
+- invalid provider config => `400`
+- upstream API failure or malformed payload => `502`
+
+## Practical workflow
+
+1. Configure provider.
+2. Call models discovery.
+3. Choose explicit text/audio defaults.
+4. Upsert provider with explicit defaults.
+5. Validate via live turn (text/audio paths).

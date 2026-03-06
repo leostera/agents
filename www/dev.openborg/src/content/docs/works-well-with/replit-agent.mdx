@@ -1,0 +1,52 @@
+---
+title: openborg works well with Replit Agent
+description: Use Replit Agent for rapid hosted prototyping and openborg for production-grade workflow control.
+---
+
+## Core value split
+
+- **Replit Agent**: fast hosted build/deploy experimentation.
+- **openborg**: explicit, durable workflow execution once operations matter.
+
+## Best-fit signal
+
+This pairing is strong when your team says:
+
+- "We can launch fast, but repeated operations are unstable."
+- "Prototype velocity is high; production reliability is lagging."
+
+## Handoff protocol
+
+1. Ship early iteration in Replit Agent.
+2. Identify recurring workflows that now impact reliability.
+3. Move those workflows into openborg task/session contracts.
+4. Keep Replit Agent for product iteration speed.
+
+## First workflow to implement
+
+Start with one recurring operational path (for example customer onboarding automation).
+
+1. leave prototype surface in Replit
+2. define openborg workflow states
+3. add review gate for final transition
+4. monitor failure/retry rate
+
+## Success metrics
+
+- fewer repeated failures in recurring operational tasks
+- clearer transition from prototype behavior to production process
+- shorter mean time to recover from workflow failures
+
+## Anti-patterns
+
+- Prematurely moving all prototype logic into orchestration.
+- Treating prototype runtime and production workflow runtime as identical.
+- Lacking explicit ownership at each openborg stage.
+
+## When not to pair
+
+If the product is still pure exploration and no repeated operational path exists yet.
+
+## Source
+
+- https://docs.replit.com/replitai/agent

@@ -1,0 +1,46 @@
+---
+title: Selecting Models
+description: How Borg decides which model to use for chat and audio execution.
+---
+
+## Chat model precedence
+
+At runtime, model selection effectively follows:
+
+1. actor agent spec model (explicit)
+2. behavior/provider default text model fallback chain
+3. hard fallback `gpt-4o-mini`
+
+`/model` command updates actor agent spec model for that actor identity.
+
+## Behavior-driven fallback
+
+When no agent spec exists yet, runtime materializes it using:
+
+1. behavior preferred provider default text model (if enabled)
+2. first enabled provider default text model
+3. `gpt-4o-mini`
+
+This is why setting provider defaults matters even when actors do not specify models explicitly.
+
+## Audio model behavior
+
+Audio/transcription path depends on provider support and configured default audio model.
+
+For reliable audio behavior, explicitly set `default_audio_model` on target provider.
+
+## Runtime command controls
+
+Model inspection and update commands are available through port command paths:
+
+- `/model` (show current)
+- `/model <provider/model>` (set)
+
+Supported across HTTP and Telegram command routes.
+
+## Production recommendations
+
+1. Set explicit model on production-critical actors.
+2. Keep provider default text/audio models configured as fallback.
+3. Validate model IDs against provider discovery output.
+4. Avoid relying on implicit fallback when determinism matters.

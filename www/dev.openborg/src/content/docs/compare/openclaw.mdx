@@ -1,0 +1,60 @@
+---
+title: openborg vs OpenClaw
+description: OpenClaw is attractive for self-hosted control posture. openborg is stronger on explicit execution semantics and lifecycle governance.
+---
+
+## Short answer
+
+- Choose **OpenClaw** first if immediate self-hosted gateway control is your main constraint.
+- Choose **openborg** first if explicit execution lifecycle and durable orchestration behavior are your main constraint.
+
+## Core difference
+
+OpenClaw centers self-hosted control posture.
+openborg centers runtime execution contracts (sessions, tasks, review/state flow).
+
+## Best-fit by decision axis
+
+| Decision axis | Better primary fit | Why |
+| --- | --- | --- |
+| Immediate self-hosting posture | OpenClaw | This is core positioning. |
+| Explicit workflow lifecycle semantics | openborg | Runtime contracts are first-class. |
+| Durable task-state governance | openborg | TaskGraph lifecycle model is explicit. |
+| Minimal gateway setup for local control | OpenClaw | Product is oriented to this need. |
+
+## Honest tradeoffs
+
+Where OpenClaw is stronger:
+
+- clearer self-hosting-first message
+- attractive path for teams optimizing infrastructure ownership first
+
+Where openborg is stronger:
+
+- explicit separation of ingress/session/task concerns
+- operational repeatability and reviewable execution state
+
+## Migration path (OpenClaw -> openborg)
+
+1. Keep OpenClaw where local gateway control is already working.
+2. Identify one lifecycle-critical workflow with reliability pain.
+3. Move that workflow into openborg with explicit stage gates.
+4. Expand only after failure/rework metrics improve.
+
+## Coexistence pattern
+
+- OpenClaw: local/control-plane gateway concerns.
+- openborg: lifecycle-critical workflow runtime concerns.
+
+Avoid running both as primary execution state owners for the same workflow.
+
+## 14-day evaluation plan
+
+1. Choose one self-hosting-sensitive use case and one lifecycle-sensitive use case.
+2. Run first in OpenClaw baseline.
+3. Run second in openborg baseline.
+4. Compare operational overhead, state clarity, and recovery behavior.
+
+## Source
+
+- https://openclaw.ai/

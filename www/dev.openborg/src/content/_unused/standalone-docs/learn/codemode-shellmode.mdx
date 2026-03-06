@@ -1,0 +1,73 @@
+---
+title: CodeMode and ShellMode
+description: How Borg executes programmable logic and host shell commands.
+---
+
+## When to use each mode
+
+- **CodeMode**: structured JavaScript execution against Borg SDK context.
+- **ShellMode**: direct host command execution (`sh -c`) for CLI tasks.
+
+Most advanced workflows use both: CodeMode for orchestration logic, ShellMode for system/tooling calls.
+
+## CodeMode contract
+
+Primary tools:
+
+- `CodeMode-searchApis`
+- `CodeMode-executeCode`
+
+`CodeMode-executeCode` expects an async zero-argument function expression and returns an execution payload with duration and structured result.
+
+Runtime details:
+
+- runs inside `deno_core` runtime
+- injects Borg SDK bundle + optional prelude
+- injects execution context (session/agent/user IDs + selected env)
+- catches panics and normalizes common runtime errors
+
+## CodeMode concurrency behavior
+
+CodeMode execution is globally serialized through a runtime mutex.
+
+Practical implication: long-running code execution can increase latency for concurrent CodeMode calls on the same runtime.
+
+## ShellMode contract
+
+Primary tool:
+
+- `ShellMode-executeCommand`
+
+Arguments include command string, optional timeout seconds, and optional working directory.
+
+Execution returns:
+
+- `stdout`
+- `stderr`
+- exit code (`result.exit_code`)
+- duration
+
+## ShellMode security and safety
+
+ShellMode runs host commands directly. Treat as privileged execution.
+
+- Use least-privilege host environment.
+- Restrict who can trigger shell-capable actors.
+- Audit command usage in operational logs.
+
+## Important caveat: timeout enforcement
+
+ShellMode context carries timeout settings, but current engine path does not hard-enforce process termination by timeout. Document this as an operational risk until enforced cancellation is implemented.
+
+## App secrets and runtime env
+
+At turn start, runtime projects connected app secrets into CodeMode env by matching `available_secrets` names against stored keys (including common alias forms like OAuth suffixes).
+
+Use this for integration credentials, but scope app connections per user carefully.
+
+## Recommended production guardrails
+
+1. Keep default actors conservative on shell usage.
+2. Require explicit actor selection for high-risk workflows.
+3. Monitor long-running CodeMode/ShellMode calls.
+4. Prefer deterministic scripts over ad-hoc shell pipelines.

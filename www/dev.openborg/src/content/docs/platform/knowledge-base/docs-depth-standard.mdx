@@ -1,0 +1,55 @@
+---
+title: Docs Depth Standard
+description: Mandatory structure for writing deep, decision-grade `openborg` documentation.
+---
+
+## Why this exists
+
+We are intentionally targeting a docs depth bar similar to high-quality systems docs: enough detail for operators and builders to reason about behavior, not just feature lists.
+
+## Required page shape
+
+Every substantial concept/reference page should include all of these sections:
+
+1. **Purpose**: what problem this subsystem solves.
+2. **Mental model**: how to think about it in one clear abstraction.
+3. **Execution/data flow**: ordered lifecycle or algorithm.
+4. **Contracts**: key inputs, outputs, and schema/endpoint/tool names.
+5. **Defaults and precedence**: exact fallback order and defaults.
+6. **Failure modes**: explicit error conditions and common misconfigurations.
+7. **Operational checklist**: concrete verify/debug steps.
+8. **Caveats/maturity notes**: current limits and non-goals.
+
+## Required quality rules
+
+- Prefer source-backed claims over assumptions.
+- Use concrete nouns from implementation (`resolve_port_actor`, `pending_oauth`, `TaskGraph-submitReview`, etc.).
+- Separate what is implemented now vs planned.
+- Include absolute date when describing maturity state.
+- Avoid marketing copy inside technical reference pages.
+
+## Source-of-truth discipline
+
+For each deep page, validate against one or more of:
+
+- runtime/controller code
+- subsystem crate implementations
+- tests that enforce invariants
+- RFDs for explicitly planned-but-not-shipped features
+
+If behavior changed, update docs in same change set.
+
+## Anti-patterns (do not ship)
+
+- Thin pages that only list route names without behavior.
+- Implicit claims about unsupported/placeholder paths.
+- Mixing planned and shipped behavior without labels.
+- Leaving out precedence/fallback ordering when it exists.
+
+## Definition of done for a page
+
+A page is "deep enough" when a new engineer can:
+
+1. predict runtime behavior before running it
+2. configure it correctly on first attempt
+3. diagnose the top failure modes without reading source first

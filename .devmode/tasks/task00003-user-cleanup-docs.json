@@ -1,0 +1,8 @@
+{
+  "id": "borg:task:user-cleanup-docs",
+  "title": "Align Architecture and RFDs",
+  "description": "Update ARCHITECTURE.md and formalize the deletion with RFD 0026. Explicitly cite the alignment with the RFD 0017 'No JSON' mandate.",
+  "definition_of_done": "ARCHITECTURE.md is updated and RFD 0026 is published in docs/rfds/.",
+  "status": "todo",
+  "dependencies": ["borg:task:user-cleanup-api"]
+}

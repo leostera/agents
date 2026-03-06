@@ -1,0 +1,52 @@
+---
+title: openborg works well with Cursor
+description: Keep Cursor for coding velocity and use openborg for lifecycle-critical workflow execution.
+---
+
+## Core value split
+
+- **Cursor**: fast implementation inside IDE context.
+- **openborg**: durable orchestration across systems, channels, and task lifecycles.
+
+## Best-fit signal
+
+This pairing is strong when your team says:
+
+- "Coding speed is good, but operational follow-through is inconsistent."
+- "We need more than IDE output; we need governed execution."
+
+## Handoff protocol
+
+1. Build/refine implementation in Cursor.
+2. Promote stable execution steps into openborg tasks.
+3. Run downstream automation through openborg with explicit checkpoints.
+4. Feed results back to the engineering loop.
+
+## First workflow to implement
+
+Pick one engineering-to-ops handoff (for example migration rollout checks).
+
+1. Keep coding loop in Cursor.
+2. Define openborg execution phases and review gate.
+3. Capture artifacts/output in task events.
+4. Compare rollback/rework rates before and after.
+
+## Success metrics
+
+- fewer "works in code but fails in rollout" incidents
+- faster transition from merged code to verified execution
+- better visibility into execution state for non-authors
+
+## Anti-patterns
+
+- Treating openborg as an IDE replacement.
+- Running critical execution from ad-hoc editor prompts only.
+- Skipping explicit done/review criteria in tasks.
+
+## When not to pair
+
+If your team only needs faster coding with no recurring operational workflows, Cursor alone may be enough.
+
+## Source
+
+- https://cursor.com/

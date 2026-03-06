@@ -1,0 +1,47 @@
+---
+title: Standalone Borg Docs
+description: Docs for teams that run and configure borg directly.
+template: splash
+hero:
+  tagline: Install borg, connect providers, and operate sessions, ports, apps, and runtime behavior.
+  image:
+    file: ../../assets/houston.webp
+  actions:
+    - text: Install and Run
+      link: /get-started/install-run/
+      icon: right-arrow
+    - text: Learn Core Concepts
+      link: /learn/core-concepts/
+      icon: right-arrow
+    - text: Configure Providers
+      link: /providers/supported-providers/
+      icon: right-arrow
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What this track covers
+
+<CardGrid stagger>
+	<Card title="Get Started" icon="compass-rose" href="/get-started/">
+		Install borg and complete your first working runtime path using provider, actor, and HTTP turns.
+	</Card>
+	<Card title="Learn" icon="open-book" href="/learn/">
+		Understand sessions, actors, ports, taskgraph, memory, and execution modes in production terms.
+	</Card>
+	<Card title="Providers" icon="star" href="/providers/">
+		Configure provider backends, defaults, and precedence behavior across local and cloud setups.
+	</Card>
+	<Card title="Models" icon="list" href="/models/">
+		See discovery, defaults, and practical model selection behavior for real turns.
+	</Card>
+	<Card title="Apps" icon="add" href="/apps/">
+		Use built-in apps, capability modes, OAuth flows, and connection/secrets lifecycle correctly.
+	</Card>
+	<Card title="Integrations" icon="seti:graphql" href="/integrations/">
+		Operate inbound and outbound integrations across HTTP, Telegram, and Discord ports.
+	</Card>
+	<Card title="Changelog" icon="list" href="/changelog/">
+		Review release notes and runtime-impacting changes before rolling forward.
+	</Card>
+</CardGrid>

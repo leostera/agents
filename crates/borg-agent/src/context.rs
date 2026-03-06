@@ -220,7 +220,7 @@ where
             ordered_messages,
             metadata_policy,
             max_chars,
-            &agent.agent_id.to_string(),
+            &agent.actor_id.to_string(),
         );
 
         Ok(build_context_window(agent, ordered_messages))
@@ -403,7 +403,7 @@ fn with_context_metadata<TToolCall, TToolResult>(
     messages: Vec<Message<TToolCall, TToolResult>>,
     autocompaction_policy: ContextMetadataPolicy,
     max_chars: Option<usize>,
-    current_agent_id: &str,
+    current_actor_id: &str,
 ) -> Vec<Message<TToolCall, TToolResult>>
 where
     TToolCall: Clone + Serialize,
@@ -425,7 +425,7 @@ where
     let metadata = json!({
         "current_datetime_utc": now.to_rfc3339(),
         "current_unix_timestamp_secs": now.timestamp(),
-        "current_agent_id": current_agent_id,
+        "current_actor_id": current_actor_id,
         "current_tokens_used": current_tokens_used,
         "tokens_left": tokens_left,
         "autocompaction_policy": autocompaction_policy,

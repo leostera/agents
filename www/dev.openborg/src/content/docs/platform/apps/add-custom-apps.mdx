@@ -1,0 +1,70 @@
+---
+title: Add Custom Apps and Capabilities
+description: How to define app metadata, capability records, and integration shape.
+---
+
+## What custom apps are
+
+Custom apps are control-plane records describing:
+
+- app identity and auth strategy
+- available secret names
+- capability metadata (name/hint/mode/instructions/status)
+
+They are discoverable by runtime tooling and UI.
+
+## Minimal creation flow
+
+1. Create app:
+   - `PUT /api/apps/:app_id`
+2. Add capabilities:
+   - `PUT /api/apps/:app_id/capabilities/:capability_id`
+3. Optional connections:
+   - `PUT /api/apps/:app_id/connections/:connection_id`
+4. Optional secrets:
+   - `PUT /api/apps/:app_id/secrets/:secret_id`
+
+## App payload essentials
+
+`PUT /api/apps/:app_id` requires:
+
+- `name`
+- `slug`
+
+Common optional but important fields:
+
+- `description`
+- `status`
+- `source`
+- `auth_strategy`
+- `auth_config_json`
+- `available_secrets`
+
+## Capability design guidance
+
+For each capability row, keep:
+
+- `name` stable and explicit
+- `hint` short, user-facing
+- `instructions` detailed and execution-oriented
+- `mode` consistent with intended runtime context (`codemode`, `shell`, `mcp` metadata)
+- `status` accurate (`active`/etc.)
+
+## Critical execution caveat
+
+Capabilities are metadata unless the runtime has a matching executable tool path.
+
+In other words: defining capability rows alone does not implement behavior.
+
+## Recommended extension pattern
+
+1. Define app + capability metadata.
+2. Implement/enable runtime tool path that matches intended capability behavior.
+3. Validate discovery surfaces (`Apps-listApps`, `Apps-getApp`).
+4. Run an integration turn and verify output.
+
+## Deletion and lifecycle
+
+Custom apps can be deleted. Built-ins cannot.
+
+Prefer soft deactivation (`status`) before hard deletion in production environments.

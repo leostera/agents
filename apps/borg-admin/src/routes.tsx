@@ -2,7 +2,6 @@ import {
   DashboardLayout,
   dashboardControlRoutes,
 } from "@borg/dashboard-control";
-import { DevModeApp } from "@borg/devmode";
 import { OnboardingApp } from "@borg/onboarding";
 import { TooltipProvider } from "@borg/ui";
 import React from "react";
@@ -19,14 +18,6 @@ export const router: ReturnType<typeof createBrowserRouter> =
       element: (
         <WithTooltip>
           <OnboardingApp />
-        </WithTooltip>
-      ),
-    },
-    {
-      path: "/devmode/*",
-      element: (
-        <WithTooltip>
-          <DevModeApp />
         </WithTooltip>
       ),
     },

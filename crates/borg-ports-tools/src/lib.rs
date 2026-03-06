@@ -22,7 +22,7 @@ struct CreatePortArgs {
     #[serde(default)]
     allows_guests: Option<bool>,
     #[serde(default)]
-    default_agent_id: Option<String>,
+    default_actor_id: Option<String>,
     #[serde(default)]
     settings: Option<Value>,
 }
@@ -37,7 +37,7 @@ struct UpdatePortArgs {
     #[serde(default)]
     allows_guests: Option<bool>,
     #[serde(default)]
-    default_agent_id: Option<String>,
+    default_actor_id: Option<String>,
     #[serde(default)]
     settings: Option<Value>,
 }
@@ -65,7 +65,7 @@ pub fn default_port_admin_tool_specs() -> Vec<ToolSpec> {
                     "provider": { "type": "string" },
                     "enabled": { "type": "boolean" },
                     "allows_guests": { "type": "boolean" },
-                    "default_agent_id": { "type": "string", "format": "uri" },
+                    "default_actor_id": { "type": "string", "format": "uri" },
                     "settings": { "type": "object" }
                 },
                 "required": ["port_uri", "provider"],
@@ -82,7 +82,7 @@ pub fn default_port_admin_tool_specs() -> Vec<ToolSpec> {
                     "provider": { "type": "string" },
                     "enabled": { "type": "boolean" },
                     "allows_guests": { "type": "boolean" },
-                    "default_agent_id": { "type": "string", "format": "uri" },
+                    "default_actor_id": { "type": "string", "format": "uri" },
                     "settings": { "type": "object" }
                 },
                 "required": ["port_uri"],
@@ -125,9 +125,9 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                     let provider = require_non_empty(&request.arguments.provider, "provider")?;
                     let enabled = request.arguments.enabled.unwrap_or(true);
                     let allows_guests = request.arguments.allows_guests.unwrap_or(true);
-                    let default_agent_id = request
+                    let default_actor_id = request
                         .arguments
-                        .default_agent_id
+                        .default_actor_id
                         .as_deref()
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
@@ -140,7 +140,7 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                         &provider,
                         enabled,
                         allows_guests,
-                        default_agent_id.as_ref(),
+                        default_actor_id.as_ref(),
                         &settings,
                     )
                     .await?;
@@ -174,15 +174,15 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                         .arguments
                         .allows_guests
                         .unwrap_or(existing.allows_guests);
-                    let default_agent_id = request
+                    let default_actor_id = request
                         .arguments
-                        .default_agent_id
+                        .default_actor_id
                         .as_deref()
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
                         .map(Uri::parse)
                         .transpose()?
-                        .or(existing.default_agent_id);
+                        .or(existing.default_actor_id);
                     let settings = request.arguments.settings.unwrap_or(existing.settings);
 
                     db.upsert_port(
@@ -190,7 +190,7 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                         provider.as_str(),
                         enabled,
                         allows_guests,
-                        default_agent_id.as_ref(),
+                        default_actor_id.as_ref(),
                         &settings,
                     )
                     .await?;

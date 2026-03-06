@@ -1,0 +1,41 @@
+---
+title: openborg
+description: Local-first agent runtime for teams that need explicit control and durable execution.
+template: splash
+hero:
+  tagline: Run agents with explicit runtime contracts, durable state, and production-safe handoffs.
+  image:
+    file: ../../assets/houston.webp
+  actions:
+    - text: Get Started
+      link: https://docs.openborg.dev/
+      icon: right-arrow
+    - text: For Developers
+      link: /platform/
+      icon: right-arrow
+    - text: Explore Product Positioning
+      link: /compare/
+      icon: right-arrow
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Choose your path
+
+<CardGrid stagger>
+	<Card title="Get Started" icon="compass-rose" href="https://docs.openborg.dev/">
+		Run and configure borg locally, connect providers, and operate ports, apps, and sessions.
+	</Card>
+	<Card title="For Developers" icon="seti:graphql" href="/platform/">
+		Build on top of Borg APIs and runtime primitives, including GraphQL and extension patterns.
+	</Card>
+	<Card title="Marketing" icon="star" href="/compare/">
+		Understand positioning, alternatives, and why teams choose openborg for runtime-first automation.
+	</Card>
+	<Card title="Works Well With" icon="add" href="/works-well-with/">
+		See coexistence patterns for ChatGPT, Cursor, Linear, Cline, and other tools your team already uses.
+	</Card>
+	<Card title="Product Hunt Signals" icon="list" href="/playbooks/producthunt-signals/">
+		See market positioning lessons and messaging signals from successful AI tooling launches.
+	</Card>
+</CardGrid>

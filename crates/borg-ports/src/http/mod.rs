@@ -14,7 +14,7 @@ pub struct HttpIngressMessage {
     pub user_key: Uri,
     pub text: String,
     pub session_id: Option<Uri>,
-    pub agent_id: Option<Uri>,
+    pub actor_id: Option<Uri>,
     pub metadata: Value,
 }
 
@@ -32,7 +32,7 @@ impl PortMessage {
             text: payload.text,
             metadata: payload.metadata,
             session_id: requested_session_id,
-            agent_id: payload.agent_id,
+            actor_id: payload.actor_id,
             reply: None,
             tool_calls: None,
             error: None,
@@ -61,7 +61,7 @@ impl Port for HttpPort {
                 user_key: message.user_key.clone(),
                 text: message.text.clone(),
                 session_id: message.session_id.clone(),
-                agent_id: message.agent_id.clone(),
+                actor_id: message.actor_id.clone(),
                 metadata: message.metadata.clone(),
             };
 

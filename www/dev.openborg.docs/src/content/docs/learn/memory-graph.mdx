@@ -1,0 +1,83 @@
+---
+title: Memory Graph
+description: Borg's entity/fact memory model, projection flow, and operational caveats.
+---
+
+## What memory stores
+
+Memory is graph-structured, not a flat key-value cache.
+
+Core primitives:
+
+- **Entity**: durable node identified by URI.
+- **Fact**: typed statement about an entity (`entity`, `field`, `value`, `source`).
+- **Schema objects**: namespace/kind/field definitions stored as first-class graph data.
+
+This allows cross-session recall and relationship traversal.
+
+## Runtime architecture
+
+`MemoryStore` coordinates three components:
+
+- fact store (write/read facts)
+- entity graph projection
+- search index
+
+Fact writes are accepted first, then projected asynchronously into graph/search layers through a consolidator queue.
+
+## Why projection lag exists
+
+Projection is asynchronous by design:
+
+- write boundary is `state_facts`
+- graph/search materialization may lag briefly
+
+For docs and user expectations: immediate write acknowledgement does not always mean immediate search visibility.
+
+## Read APIs
+
+High-value read routes:
+
+- `GET /memory/search`
+- `GET /memory/entities/:id`
+- `GET /api/memory/explorer`
+
+Explorer route expands neighborhood graph from seed entities and returns `entities + edges`.
+
+## Tool families
+
+The memory toolchain includes:
+
+- write/retract/list fact tools
+- create/get/search entity tools
+- schema definition tools
+- schema retrieval (`Memory-getSchema`)
+
+The memory writer guidance in code strongly recommends schema retrieval and entity lookup before new writes.
+
+## Recommended write discipline
+
+For stable, low-noise memory:
+
+1. Decide if information is durable.
+2. Search for existing entity/kind/field first.
+3. Reuse canonical schema when available.
+4. Batch writes in a single fact-state transaction when possible.
+5. Avoid writing uncertain or ephemeral information.
+
+## Operational caveats
+
+- Search is entity-biased and may need follow-up entity fetches.
+- Projection is eventual, not strictly synchronous.
+- Some cursor semantics are still evolving across tool/read paths.
+- Large batch writes can increase projection latency.
+
+## Troubleshooting
+
+If expected memory is missing from search:
+
+1. Verify fact write succeeded.
+2. Fetch entity directly by URI.
+3. Retry search with broader query text.
+4. Inspect explorer output for connected entities.
+5. Re-check shortly after write to account for projection lag.

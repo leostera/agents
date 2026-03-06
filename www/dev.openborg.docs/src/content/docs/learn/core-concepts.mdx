@@ -1,0 +1,73 @@
+---
+title: Core Concepts
+description: The execution model that drives Borg runtime behavior.
+---
+
+## The three-system mental model
+
+Borg is easiest to reason about as three cooperating systems:
+
+1. **Ingress system**: ports normalize inbound input into session turns.
+2. **Agent system**: actors + behaviors + toolchains execute turns.
+3. **Orchestration system**: TaskGraph and Clockwork manage explicit, durable work.
+
+If you keep these concerns separate, most runtime behavior is predictable.
+
+## Session-first ingress
+
+Inbound messages are resolved to long-lived sessions first, then executed. The core shape is:
+
+- `port + conversation_key -> session_id`
+- `port + conversation_key -> actor_id` (resolved binding)
+- `session_id + actor_id + input -> turn output`
+
+This is why Borg can keep context durable across channels without inventing a new thread object per request.
+
+## Actors and behaviors are different layers
+
+- **Actor** is the executable persona identity (`/api/actors/*`).
+- **Behavior** is policy/prompt/provider preference (`/api/behaviors/*`).
+
+At turn time, runtime resolves actor behavior and materializes an agent spec. This is where default model/provider choices are finalized.
+
+## Toolchain-first execution
+
+Agent turns execute against a merged toolchain:
+
+- Runtime tools: CodeMode, ShellMode, Memory, TaskGraph, Clockwork.
+- App tools: capability metadata bridged through app/toolchain assembly.
+
+Important: app capability rows are discoverable metadata unless a matching tool implementation is actually present.
+
+## Tasks are explicit (not every message)
+
+TaskGraph is a separate subsystem. Borg does **not** create task records for every chat turn.
+
+Use TaskGraph when you want:
+
+- explicit state transitions
+- review workflow
+- dependency ordering
+- auditable task lifecycle
+
+Use normal session turns for regular conversational execution.
+
+## Durable local state
+
+Default local storage lives under `~/.borg/`:
+
+- `config.db` for control-plane/runtime records
+- `memory.db` for fact/entity graph storage
+- `search.db` for memory indexing
+
+This local-first shape is why Borg can run as a single binary and keep state continuity.
+
+## Operational invariants
+
+Treat these as stable contracts:
+
+- Ingress resolves session before execution.
+- Actor binding is resolved per `port + conversation_key`.
+- Session rows are upserted before turn execution.
+- Port session context snapshots are persisted when available.
+- TaskGraph and Clockwork remain separate from normal chat ingress.

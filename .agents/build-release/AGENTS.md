@@ -6,6 +6,10 @@ Scope: builds, workspace wiring, and command expectations.
 
 - Web build:
   - `bun run build:web`
+- Docs site build:
+  - `bun run build:www`
+- Standalone docs site build:
+  - `bun run build:www-standalone`
 - Rust build:
   - `cargo build`
   - Fast local path (auto-uses `sccache` when installed): `./cargo build -p borg-cli`
@@ -15,15 +19,33 @@ Scope: builds, workspace wiring, and command expectations.
 ## Dev Commands
 
 - Web dev:
+  - `bun run dev:web`
+- All local web+docs dev servers (single entrypoint):
   - `bun run dev`
+  - Runs:
+    - Vite app server
+    - `www/dev.openborg` on port `4321`
+    - `www/dev.openborg.docs` on port `4322`
+    - Storybook on port `6006`
+- Docs site dev:
+  - `bun run dev:www`
+- Standalone docs site dev:
+  - `bun run dev:www-standalone`
 - Workspace tests:
   - `bun test ./packages --pass-with-no-tests`
+- GraphQL artifacts:
+  - `bun run graphql:codegen`
+- Fast typecheck lane:
+  - `bun run typecheck:fast` (tries `tsgo`, falls back to `tsc -b`)
 - CLI runtime:
   - `cargo run -p borg-cli -- init`
   - `cargo run -p borg-cli -- start`
 
 ## Build Guarantees
 
+- Docs projects live under:
+  - `www/dev.openborg`
+  - `www/dev.openborg.docs`
 - Root web build must produce `packages/borg-app/dist`.
 - Backend onboarding server expects dist assets and fails loudly if missing.
 - `borg-codemode` build depends on SDK artifacts at `packages/borg-agent-sdk/dist/borg-agent-sdk.min.js`.

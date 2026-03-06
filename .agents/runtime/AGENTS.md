@@ -15,6 +15,7 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 - Ports resolve a long-lived session from `port + conversation_key`.
 - Inbound port messages are processed directly as session turns.
 - Do not auto-create a task for each inbound message.
+- Runtime actor contract is now single-session per actor instance: cross-session delivery to the same actor is rejected.
 
 ## Task Model (Separate)
 - Tasks are explicit work graph items.
@@ -33,29 +34,37 @@ Scope: Rust runtime behavior, session turns, explicit tasks, storage wiring, and
 ## DB Notes
 - `providers` table stores provider credentials (`openai`, `openrouter`).
 - `port_settings` stores runtime defaults under `port=runtime` (for example `preferred_provider`).
-- `port_bindings` stores `port + conversation_key -> session_id (+ optional agent_id)`.
+- `port_bindings` stores `port + conversation_key -> session_id` and optional `actor_id` (legacy `agent_id` removed).
 - `sessions.context_snapshot_json` stores the latest per-session context snapshot (canonical context storage).
 - `agent_specs.default_provider_id` stores the preferred provider key for provider-first model selection in control UI.
 - `agent_specs` no longer persists per-agent `tools_json`; runtime toolchain is composed from default code+memory tools.
 - `taskgraph_*` tables in `config.db` store durable task DAG state, comments, and audit events.
 - `clockwork_jobs` and `clockwork_job_runs` in `config.db` store durable scheduler jobs/runs.
 - Telegram port refreshes known session context snapshots on startup (best-effort chat/admin hydration).
-- Onboarding persists provider key via `POST /api/providers/:provider` and updates runtime preferred provider.
+- Onboarding persists provider settings via GraphQL mutations and updates runtime preferred provider.
 - Provider precedence is env-first: `BORG_LLM_PROVIDER` overrides persisted `runtime/preferred_provider`.
 - When preferred provider is `openrouter`, transcription falls back to OpenAI credentials (or returns a clear missing-key error).
 
 ## API/Port Expectations
 - `POST /ports/http` should return resolved `session_id` and `reply` (task ID optional).
 - `X-Borg-Session-Id` header should be set on successful response.
-- Invalid URI inputs at API boundary must fail with structured 400.
-- Clockwork CRUD endpoints are rooted at `/api/clockwork/jobs`.
+- `GET /health` should remain available for readiness/liveness checks.
+- Control-plane CRUD/read APIs are GraphQL-first under `/gql` (plus `/gql/ws`, `/gql/graphiql`).
+- Keep runtime ingress REST surface minimal outside GraphQL (`/ports/http`, `/health`).
 - Code-mode filesystem API is `Borg.OS.ls(...)` (not `BorgOs.ls(...)`).
 - Code-mode module resolution is embedded (no host `node` dependency): dynamic imports may use `npm:` and `jsr:` specifiers, with cache/state under `~/.borg/codemode` and `node_modules` in `~/.borg/codemode/node_modules`.
 - Telegram command `/model` supports:
-  - `/model` to show current `agent_id` + model for the chat session.
+  - `/model` to show current `actor_id` + model for the chat session.
   - `/model <model_name>` to persist model on the resolved agent spec.
+- GraphQL policy surfaces were removed (`policy`, `policies`, `Policy`, `PolicyUse`, `Node::Policy`).
+- GraphQL actor upsert no longer requires `defaultBehaviorId`; actor config is actor-owned.
+- Telegram outbound now uses `ParseMode::Html` with safe formatting for markdown-like bold/italics/links and bullet-style lists.
+- Telegram tool-action progress messages render as HTML: `<i>{hint or tool}</i> ({elapsed})` plus spoiler-wrapped JSON args details.
 - Runtime toolchain now merges CodeMode + ShellMode + Memory + BorgFS + TaskGraph + Apps-listCapabilities in session turns.
 - Runtime toolchain now includes executable Clockwork tools (`Clockwork-*`) for scheduler job CRUD/list-runs.
+- TaskGraph tool surface includes `TaskGraph-listTasks` for top-level task pagination.
+- `borg tools` command outputs decoded JSON payloads (no `ToolResultData` envelope in CLI output).
+- CLI command routing: taskgraph commands live under `borg task <cmd>` (including `delete`), and memory tool commands live under `borg memory <cmd>`.
 - Agent-visible tool specs now include active DB app capabilities (in addition to default runtime tools), so the LLM can call those capability tools directly by name.
 - Default app seeding includes `borg:app:clockwork-system` with Clockwork capabilities mirrored from runtime tool specs.
 - App `available_secrets` are exported into CodeMode env verbatim by the same key name (no `APP_` prefix translation).

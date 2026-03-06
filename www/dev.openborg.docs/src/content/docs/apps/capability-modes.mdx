@@ -1,0 +1,46 @@
+---
+title: Capability Modes
+description: What capability modes mean now and how to use them without over-assuming dispatch behavior.
+---
+
+## Common mode values
+
+Common values in app capability rows:
+
+- `codemode`
+- `shell`
+- `mcp`
+
+## What mode does today
+
+In current runtime behavior, mode is primarily metadata:
+
+- used for discovery/description/context
+- useful for organization and intent signaling
+
+Direct execution is still governed by actual toolchain availability and tool names.
+
+## Why this matters
+
+Do not assume `mode = shell` automatically routes to shell execution logic for arbitrary capabilities.
+
+Capability records advertise intent; runtime dispatch still depends on implemented tool paths.
+
+## Recommended usage
+
+Use mode to:
+
+- segment capabilities by execution context
+- improve docs and discoverability
+- future-proof catalogs for stricter routing semantics later
+
+But always validate behavior with real execution tests.
+
+## Documentation pattern
+
+For each capability page/entry, document both:
+
+- declared mode
+- real execution backend/tool path
+
+This avoids ambiguity when mode metadata and runtime dispatch differ.

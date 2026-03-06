@@ -752,7 +752,7 @@ struct CreateTaskInputGql {
     /// Session URI authoring the task create event.
     session_uri: UriScalar,
     /// Creator actor URI.
-    creator_agent_id: UriScalar,
+    creator_actor_id: UriScalar,
     /// Short task title.
     title: String,
     /// Task description/body.
@@ -762,7 +762,7 @@ struct CreateTaskInputGql {
     #[graphql(default)]
     definition_of_done: String,
     /// Assignee actor URI.
-    assignee_agent_id: UriScalar,
+    assignee_actor_id: UriScalar,
     /// Parent task URI when creating a subtask.
     parent_uri: Option<UriScalar>,
     /// Task URIs that block this task.
@@ -2155,8 +2155,8 @@ impl TaskObject {
         TaskStatusValue::from_raw(&self.record.status)
     }
 
-    async fn assignee_agent_id(&self) -> &str {
-        &self.record.assignee_agent_id
+    async fn assignee_actor_id(&self) -> &str {
+        &self.record.assignee_actor_id
     }
 
     async fn assignee_session_id(&self) -> Option<UriScalar> {
@@ -2165,8 +2165,8 @@ impl TaskObject {
             .map(UriScalar)
     }
 
-    async fn reviewer_agent_id(&self) -> &str {
-        &self.record.reviewer_agent_id
+    async fn reviewer_actor_id(&self) -> &str {
+        &self.record.reviewer_actor_id
     }
 
     async fn reviewer_session_id(&self) -> Option<UriScalar> {
@@ -2536,11 +2536,11 @@ struct TaskEventDataObject {
     /// Event type/kind copied from the event row.
     kind: String,
     /// New assignee actor ID when relevant.
-    assignee_agent_id: Option<String>,
+    assignee_actor_id: Option<String>,
     /// New assignee session URI when relevant.
     assignee_session_uri: Option<String>,
     /// Reviewer actor ID when relevant.
-    reviewer_agent_id: Option<String>,
+    reviewer_actor_id: Option<String>,
     /// Reviewer session URI when relevant.
     reviewer_session_uri: Option<String>,
     /// Parent task URI when relevant.
@@ -2552,11 +2552,11 @@ struct TaskEventDataObject {
     /// Updated definition-of-done when relevant.
     definition_of_done: Option<String>,
     /// Previous assignee actor ID when relevant.
-    old_assignee_agent_id: Option<String>,
+    old_assignee_actor_id: Option<String>,
     /// Previous assignee session URI when relevant.
     old_assignee_session_uri: Option<String>,
     /// Replacement assignee actor ID when relevant.
-    new_assignee_agent_id: Option<String>,
+    new_assignee_actor_id: Option<String>,
     /// Replacement assignee session URI when relevant.
     new_assignee_session_uri: Option<String>,
     /// Label list payload when relevant.
@@ -2588,11 +2588,11 @@ struct TaskEventDataObject {
 #[derive(Default, Deserialize)]
 struct TaskEventDataSerde {
     #[serde(default)]
-    assignee_agent_id: Option<String>,
+    assignee_actor_id: Option<String>,
     #[serde(default)]
     assignee_session_uri: Option<String>,
     #[serde(default)]
-    reviewer_agent_id: Option<String>,
+    reviewer_actor_id: Option<String>,
     #[serde(default)]
     reviewer_session_uri: Option<String>,
     #[serde(default)]
@@ -2604,11 +2604,11 @@ struct TaskEventDataSerde {
     #[serde(default)]
     definition_of_done: Option<String>,
     #[serde(default)]
-    old_assignee_agent_id: Option<String>,
+    old_assignee_actor_id: Option<String>,
     #[serde(default)]
     old_assignee_session_uri: Option<String>,
     #[serde(default)]
-    new_assignee_agent_id: Option<String>,
+    new_assignee_actor_id: Option<String>,
     #[serde(default)]
     new_assignee_session_uri: Option<String>,
     #[serde(default)]
@@ -2642,17 +2642,17 @@ impl TaskEventDataObject {
         let parsed = serde_json::from_value::<TaskEventDataSerde>(value).unwrap_or_default();
         Self {
             kind,
-            assignee_agent_id: parsed.assignee_agent_id,
+            assignee_actor_id: parsed.assignee_actor_id,
             assignee_session_uri: parsed.assignee_session_uri,
-            reviewer_agent_id: parsed.reviewer_agent_id,
+            reviewer_actor_id: parsed.reviewer_actor_id,
             reviewer_session_uri: parsed.reviewer_session_uri,
             parent_uri: parsed.parent_uri,
             title: parsed.title,
             description: parsed.description,
             definition_of_done: parsed.definition_of_done,
-            old_assignee_agent_id: parsed.old_assignee_agent_id,
+            old_assignee_actor_id: parsed.old_assignee_actor_id,
             old_assignee_session_uri: parsed.old_assignee_session_uri,
-            new_assignee_agent_id: parsed.new_assignee_agent_id,
+            new_assignee_actor_id: parsed.new_assignee_actor_id,
             new_assignee_session_uri: parsed.new_assignee_session_uri,
             labels: parsed.labels,
             blocked_by: parsed.blocked_by,

@@ -20,7 +20,7 @@ pub struct SessionContextSnapshot<TMessage, TParameters> {
 pub enum Event<TMessage, TParameters, TArguments, TOutput> {
     SessionStarted {
         session_id: Uri,
-        agent_id: Uri,
+        actor_id: Uri,
     },
     SessionMessage {
         session_id: Uri,

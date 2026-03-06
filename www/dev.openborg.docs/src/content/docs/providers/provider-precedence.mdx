@@ -1,0 +1,50 @@
+---
+title: Provider Precedence and Failover
+description: How Borg orders providers and chooses defaults at runtime.
+---
+
+## Runtime preference keys
+
+Resolver reads preference from runtime port settings in this order:
+
+1. `preferred_provider_id`
+2. legacy fallback `preferred_provider`
+
+Both can be set via CLI/provider APIs.
+
+## Ordering algorithm
+
+Resolver builds an ordered provider list as follows:
+
+1. Load enabled providers from DB.
+2. If preferred provider matches **provider id** or **provider kind**, place it first.
+3. Append all remaining enabled providers in DB listing order.
+
+Unknown kinds are ignored by resolver even if configured.
+
+## Model selection interaction
+
+Provider precedence and model precedence are separate:
+
+- Provider order controls which backend is attempted first.
+- Model may come from actor spec or provider defaults.
+
+For behavior fallback model selection, runtime checks:
+
+1. behavior preferred provider default text model
+2. first enabled provider default text model
+3. hard fallback `gpt-4o-mini`
+
+## Failure behavior
+
+If preferred provider cannot serve a request (misconfig, upstream error, unsupported model), runtime can attempt later providers in order depending on request path.
+
+For predictable production behavior, avoid relying purely on implicit fallback and keep explicit defaults configured.
+
+## Practical hardening checklist
+
+1. Keep only known-good providers enabled.
+2. Set `preferred_provider_id` explicitly.
+3. Set default text/audio models on each enabled provider.
+4. Validate each provider with model discovery before relying on failover.
+5. Monitor for implicit fallback usage so misconfiguration is visible.
