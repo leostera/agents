@@ -6,12 +6,11 @@ impl MutationRoot {
     ///
     /// Example:
     /// ```graphql
-    /// mutation($id: Uri!, $behavior: Uri!) {
+    /// mutation($id: Uri!) {
     ///   upsertActor(input: {
     ///     id: $id
     ///     name: "Planner"
     ///     systemPrompt: "You plan work."
-    ///     defaultBehaviorId: $behavior
     ///     status: RUNNING
     ///   }) { id name status }
     /// }
@@ -27,7 +26,6 @@ impl MutationRoot {
                 &input.id.0,
                 &input.name,
                 &input.system_prompt,
-                &input.default_behavior_id.0,
                 input.status.as_db_str(),
             )
             .await
@@ -52,70 +50,6 @@ impl MutationRoot {
     async fn delete_actor(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<bool> {
         let data = ctx_data(ctx)?;
         let deleted = data.db.delete_actor(&id.0).await.map_err(map_anyhow)?;
-        Ok(deleted > 0)
-    }
-
-    /// Creates or updates a behavior.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($id: Uri!) {
-    ///   upsertBehavior(input: {
-    ///     id: $id
-    ///     name: "default"
-    ///     systemPrompt: "..."
-    ///     sessionTurnConcurrency: "serial"
-    ///     status: ACTIVE
-    ///     requiredCapabilities: ["TaskGraph-listTasks"]
-    ///   }) { id name status requiredCapabilities }
-    /// }
-    /// ```
-    async fn upsert_behavior(
-        &self,
-        ctx: &Context<'_>,
-        input: UpsertBehaviorInput,
-    ) -> GqlResult<BehaviorObject> {
-        let data = ctx_data(ctx)?;
-        let required = serde_json::Value::Array(
-            input
-                .required_capabilities
-                .into_iter()
-                .map(serde_json::Value::String)
-                .collect(),
-        );
-
-        data.db
-            .upsert_behavior(
-                &input.id.0,
-                &input.name,
-                &input.system_prompt,
-                input.preferred_provider_id.as_deref(),
-                &required,
-                &input.session_turn_concurrency,
-                input.status.as_db_str(),
-            )
-            .await
-            .map_err(map_anyhow)?;
-
-        let behavior = data
-            .db
-            .get_behavior(&input.id.0)
-            .await
-            .map_err(map_anyhow)?
-            .ok_or_else(|| gql_error_with_code("behavior not found after upsert", "INTERNAL"))?;
-
-        Ok(BehaviorObject::new(behavior))
-    }
-
-    /// Deletes a behavior by URI.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($id: Uri!) { deleteBehavior(id: $id) }
-    /// ```
-    async fn delete_behavior(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<bool> {
-        let data = ctx_data(ctx)?;
-        let deleted = data.db.delete_behavior(&id.0).await.map_err(map_anyhow)?;
         Ok(deleted > 0)
     }
 
@@ -516,8 +450,8 @@ impl MutationRoot {
     ///
     /// Example:
     /// ```graphql
-    /// mutation($id: Uri!, $user: Uri!, $port: Uri!) {
-    ///   upsertSession(input: { sessionId: $id, users: [$user], port: $port }) { id users portId }
+    /// mutation($id: Uri!, $port: Uri!) {
+    ///   upsertSession(input: { sessionId: $id, port: $port }) { id portId }
     /// }
     /// ```
     async fn upsert_session(
@@ -526,9 +460,8 @@ impl MutationRoot {
         input: UpsertSessionInput,
     ) -> GqlResult<SessionObject> {
         let data = ctx_data(ctx)?;
-        let users = input.users.into_iter().map(|uri| uri.0).collect::<Vec<_>>();
         data.db
-            .upsert_session(&input.session_id.0, &users, &input.port.0)
+            .upsert_session(&input.session_id.0, &input.port.0)
             .await
             .map_err(map_anyhow)?;
 
@@ -555,7 +488,7 @@ impl MutationRoot {
     ///     messageType: "user"
     ///     role: "user"
     ///     text: "Hello"
-    ///   }) { id messageIndex messageType role text }
+    ///   }) { id messageType role text }
     /// }
     /// ```
     async fn append_session_message(
@@ -571,15 +504,15 @@ impl MutationRoot {
             payload: input.payload.clone(),
         })?;
 
-        let index = data
+        let message_id = data
             .db
-            .append_session_message(&input.session_id.0, &payload)
+            .append_session_message(&input.session_id.0, &payload, None)
             .await
             .map_err(map_anyhow)?;
 
         let message = data
             .db
-            .get_session_message(&input.session_id.0, index)
+            .get_session_message_by_id(&input.session_id.0, &message_id)
             .await
             .map_err(map_anyhow)?
             .ok_or_else(|| gql_error_with_code("message not found after append", "INTERNAL"))?;
@@ -594,9 +527,9 @@ impl MutationRoot {
     /// mutation($session: Uri!) {
     ///   patchSessionMessage(input: {
     ///     sessionId: $session
-    ///     messageIndex: 0
+    ///     messageId: "borg:session_message:..."
     ///     message: { messageType: "user", role: "user", text: "Updated text" }
-    ///   }) { id messageIndex text }
+    ///   }) { id text }
     /// }
     /// ```
     async fn patch_session_message(
@@ -608,13 +541,13 @@ impl MutationRoot {
         let payload = build_session_message_payload(&input.message)?;
 
         data.db
-            .update_session_message(&input.session_id.0, input.message_index, &payload)
+            .update_session_message_by_id(&input.session_id.0, &input.message_id.0, &payload)
             .await
             .map_err(map_anyhow)?;
 
         let message = data
             .db
-            .get_session_message(&input.session_id.0, input.message_index)
+            .get_session_message_by_id(&input.session_id.0, &input.message_id.0)
             .await
             .map_err(map_anyhow)?
             .ok_or_else(|| gql_error_with_code("session message not found", "NOT_FOUND"))?;
@@ -622,12 +555,12 @@ impl MutationRoot {
         Ok(SessionMessageObject::new(message))
     }
 
-    /// Creates a clockwork job.
+    /// Creates a schedule job.
     ///
     /// Example:
     /// ```graphql
     /// mutation($actor: Uri!, $session: Uri!) {
-    ///   createClockworkJob(input: {
+    ///   createScheduleJob(input: {
     ///     jobId: "daily-standup"
     ///     kind: "cron"
     ///     actorId: $actor
@@ -638,13 +571,13 @@ impl MutationRoot {
     ///   }) { id status nextRunAt }
     /// }
     /// ```
-    async fn create_clockwork_job(
+    async fn create_schedule_job(
         &self,
         ctx: &Context<'_>,
-        input: CreateClockworkJobInputGql,
-    ) -> GqlResult<ClockworkJobObject> {
+        input: CreateScheduleJobInputGql,
+    ) -> GqlResult<ScheduleJobObject> {
         let data = ctx_data(ctx)?;
-        let create = CreateClockworkJobInput {
+        let create = CreateScheduleJobInput {
             job_id: input.job_id.clone(),
             kind: input.kind,
             target_actor_id: input.actor_id.0.to_string(),
@@ -660,39 +593,39 @@ impl MutationRoot {
         };
 
         data.db
-            .create_clockwork_job(&create)
+            .create_schedule_job(&create)
             .await
             .map_err(map_anyhow)?;
 
         let job = data
             .db
-            .get_clockwork_job(&input.job_id)
+            .get_schedule_job(&input.job_id)
             .await
             .map_err(map_anyhow)?
-            .ok_or_else(|| gql_error_with_code("clockwork job not found", "INTERNAL"))?;
+            .ok_or_else(|| gql_error_with_code("schedule job not found", "INTERNAL"))?;
 
-        Ok(ClockworkJobObject::new(job))
+        Ok(ScheduleJobObject::new(job))
     }
 
-    /// Updates mutable clockwork job fields.
+    /// Updates mutable schedule job fields.
     ///
     /// Example:
     /// ```graphql
     /// mutation {
-    ///   updateClockworkJob(
+    ///   updateScheduleJob(
     ///     jobId: "daily-standup",
     ///     patch: { scheduleSpec: { cron: "0 10 * * 1-5" } }
     ///   ) { id status scheduleSpec }
     /// }
     /// ```
-    async fn update_clockwork_job(
+    async fn update_schedule_job(
         &self,
         ctx: &Context<'_>,
         job_id: String,
-        patch: UpdateClockworkJobInputGql,
-    ) -> GqlResult<ClockworkJobObject> {
+        patch: UpdateScheduleJobInputGql,
+    ) -> GqlResult<ScheduleJobObject> {
         let data = ctx_data(ctx)?;
-        let update = UpdateClockworkJobInput {
+        let update = UpdateScheduleJobInput {
             kind: patch.kind,
             target_actor_id: patch.actor_id.map(|uri| uri.0.to_string()),
             target_session_id: patch.session_id.map(|uri| uri.0.to_string()),
@@ -704,63 +637,63 @@ impl MutationRoot {
         };
 
         data.db
-            .update_clockwork_job(&job_id, &update)
+            .update_schedule_job(&job_id, &update)
             .await
             .map_err(map_anyhow)?;
 
         let job = data
             .db
-            .get_clockwork_job(&job_id)
+            .get_schedule_job(&job_id)
             .await
             .map_err(map_anyhow)?
-            .ok_or_else(|| gql_error_with_code("clockwork job not found", "NOT_FOUND"))?;
+            .ok_or_else(|| gql_error_with_code("schedule job not found", "NOT_FOUND"))?;
 
-        Ok(ClockworkJobObject::new(job))
+        Ok(ScheduleJobObject::new(job))
     }
 
-    /// Pauses an active clockwork job.
+    /// Pauses an active schedule job.
     ///
     /// Example:
     /// ```graphql
-    /// mutation { pauseClockworkJob(jobId: "daily-standup") }
+    /// mutation { pauseScheduleJob(jobId: "daily-standup") }
     /// ```
-    async fn pause_clockwork_job(&self, ctx: &Context<'_>, job_id: String) -> GqlResult<bool> {
+    async fn pause_schedule_job(&self, ctx: &Context<'_>, job_id: String) -> GqlResult<bool> {
         let data = ctx_data(ctx)?;
         let updated = data
             .db
-            .set_clockwork_job_status(&job_id, "paused")
+            .set_schedule_job_status(&job_id, "paused")
             .await
             .map_err(map_anyhow)?;
         Ok(updated > 0)
     }
 
-    /// Resumes a paused clockwork job.
+    /// Resumes a paused schedule job.
     ///
     /// Example:
     /// ```graphql
-    /// mutation { resumeClockworkJob(jobId: "daily-standup") }
+    /// mutation { resumeScheduleJob(jobId: "daily-standup") }
     /// ```
-    async fn resume_clockwork_job(&self, ctx: &Context<'_>, job_id: String) -> GqlResult<bool> {
+    async fn resume_schedule_job(&self, ctx: &Context<'_>, job_id: String) -> GqlResult<bool> {
         let data = ctx_data(ctx)?;
         let updated = data
             .db
-            .set_clockwork_job_status(&job_id, "active")
+            .set_schedule_job_status(&job_id, "active")
             .await
             .map_err(map_anyhow)?;
         Ok(updated > 0)
     }
 
-    /// Cancels a clockwork job.
+    /// Cancels a schedule job.
     ///
     /// Example:
     /// ```graphql
-    /// mutation { cancelClockworkJob(jobId: "daily-standup") }
+    /// mutation { cancelScheduleJob(jobId: "daily-standup") }
     /// ```
-    async fn cancel_clockwork_job(&self, ctx: &Context<'_>, job_id: String) -> GqlResult<bool> {
+    async fn cancel_schedule_job(&self, ctx: &Context<'_>, job_id: String) -> GqlResult<bool> {
         let data = ctx_data(ctx)?;
         let updated = data
             .db
-            .set_clockwork_job_status(&job_id, "cancelled")
+            .set_schedule_job_status(&job_id, "cancelled")
             .await
             .map_err(map_anyhow)?;
         Ok(updated > 0)

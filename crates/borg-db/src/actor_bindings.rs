@@ -1,7 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use borg_core::Uri;
 use chrono::Utc;
-use sqlx::Row;
 
 use crate::BorgDb;
 
@@ -11,32 +10,12 @@ impl BorgDb {
         port: &str,
         limit: usize,
     ) -> Result<Vec<(Uri, Option<Uri>)>> {
-        let limit = i64::try_from(limit).unwrap_or(200);
-        let rows = sqlx::query(
-            r#"
-            SELECT conversation_key, actor_id
-            FROM port_bindings
-            WHERE port = ?1
-            ORDER BY updated_at DESC
-            LIMIT ?2
-            "#,
-        )
-        .bind(port)
-        .bind(limit)
-        .fetch_all(self.pool())
-        .await
-        .context("failed to list port actor bindings")?;
-
-        rows.into_iter()
-            .map(|row| {
-                let conversation_key = Uri::parse(&row.try_get::<String, _>("conversation_key")?)?;
-                let actor_id = row
-                    .try_get::<Option<String>, _>("actor_id")?
-                    .map(|value| Uri::parse(&value))
-                    .transpose()?;
-                Ok((conversation_key, actor_id))
-            })
-            .collect()
+        Ok(self
+            .list_port_binding_records(port, limit)
+            .await?
+            .into_iter()
+            .map(|(conversation_key, _session_id, actor_id)| (conversation_key, actor_id))
+            .collect())
     }
 
     pub async fn upsert_port_actor_binding(
@@ -48,34 +27,20 @@ impl BorgDb {
         if self.get_actor(actor_id).await?.is_none() {
             return Err(anyhow!("actor spec not found for actor_id {}", actor_id));
         }
-        let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            r#"
-            INSERT INTO port_bindings(
-                port,
-                conversation_key,
-                session_id,
-                agent_id,
-                actor_id,
-                created_at,
-                updated_at
-            )
-            VALUES(?1, ?2, ?3, NULL, ?4, ?5, ?6)
-            ON CONFLICT(port, conversation_key) DO UPDATE SET
-              actor_id = excluded.actor_id,
-              updated_at = excluded.updated_at
-            "#,
+        let session_id = self
+            .get_port_binding_full_record(port, conversation_key)
+            .await?
+            .map(|(_conversation_key, session_id, _bound_actor_id)| session_id)
+            .unwrap_or_else(|| conversation_key.clone());
+
+        self.upsert_port_binding_full_record(
+            port,
+            conversation_key,
+            &session_id,
+            Some(Some(actor_id)),
         )
-        .bind(port)
-        .bind(conversation_key.to_string())
-        .bind(conversation_key.to_string())
-        .bind(actor_id.to_string())
-        .bind(now.clone())
-        .bind(now)
-        .execute(self.pool())
         .await
-        .context("failed to upsert port actor binding")?;
-        Ok(())
+        .context("failed to upsert port actor binding")
     }
 
     pub async fn get_port_actor_binding(
@@ -83,26 +48,10 @@ impl BorgDb {
         port: &str,
         conversation_key: &Uri,
     ) -> Result<Option<Uri>> {
-        let row = sqlx::query(
-            r#"
-            SELECT actor_id
-            FROM port_bindings
-            WHERE port = ?1 AND conversation_key = ?2
-            LIMIT 1
-            "#,
-        )
-        .bind(port)
-        .bind(conversation_key.to_string())
-        .fetch_optional(self.pool())
-        .await
-        .context("failed to fetch port actor binding")?;
-
-        let Some(row) = row else {
-            return Ok(None);
-        };
-
-        let actor_id = row.try_get::<Option<String>, _>("actor_id")?;
-        actor_id.map(|value| Uri::parse(&value)).transpose()
+        Ok(self
+            .get_port_binding_full_record(port, conversation_key)
+            .await?
+            .and_then(|(_conversation_key, _session_id, actor_id)| actor_id))
     }
 
     pub async fn clear_port_actor_binding(
@@ -183,14 +132,11 @@ mod tests {
         .await?;
         db.migrate().await?;
 
-        let behavior = Uri::from_parts("borg", "behavior", Some("default"))?;
         let actor_a = Uri::from_parts("devmode", "actor", Some("bind-a"))?;
         let actor_b = Uri::from_parts("devmode", "actor", Some("bind-b"))?;
         let key = Uri::from_parts("borg", "conversation", Some("c1"))?;
-        db.upsert_actor(&actor_a, "A", "prompt", &behavior, "RUNNING")
-            .await?;
-        db.upsert_actor(&actor_b, "B", "prompt", &behavior, "RUNNING")
-            .await?;
+        db.upsert_actor(&actor_a, "A", "prompt", "RUNNING").await?;
+        db.upsert_actor(&actor_b, "B", "prompt", "RUNNING").await?;
 
         let resolved = db
             .resolve_port_actor("telegram", &key, Some(&actor_a), None)
@@ -220,11 +166,9 @@ mod tests {
         .await?;
         db.migrate().await?;
 
-        let behavior = Uri::from_parts("borg", "behavior", Some("default"))?;
         let actor = Uri::from_parts("devmode", "actor", Some("default-a"))?;
         let key = Uri::from_parts("borg", "conversation", Some("c2"))?;
-        db.upsert_actor(&actor, "A", "prompt", &behavior, "RUNNING")
-            .await?;
+        db.upsert_actor(&actor, "A", "prompt", "RUNNING").await?;
 
         let resolved = db
             .resolve_port_actor("http", &key, None, Some(&actor))
@@ -250,11 +194,9 @@ mod tests {
         .await?;
         db.migrate().await?;
 
-        let behavior = Uri::from_parts("borg", "behavior", Some("default"))?;
         let actor = Uri::from_parts("devmode", "actor", Some("clear-a"))?;
         let key = Uri::from_parts("borg", "conversation", Some("clear-c"))?;
-        db.upsert_actor(&actor, "A", "prompt", &behavior, "RUNNING")
-            .await?;
+        db.upsert_actor(&actor, "A", "prompt", "RUNNING").await?;
         db.upsert_port_actor_binding("telegram", &key, &actor)
             .await?;
         assert_eq!(
@@ -278,11 +220,9 @@ mod tests {
         .await?;
         db.migrate().await?;
 
-        let behavior = Uri::from_parts("borg", "behavior", Some("default"))?;
         let actor = Uri::from_parts("devmode", "actor", Some("list-a"))?;
         let key = Uri::from_parts("borg", "conversation", Some("list-c"))?;
-        db.upsert_actor(&actor, "A", "prompt", &behavior, "RUNNING")
-            .await?;
+        db.upsert_actor(&actor, "A", "prompt", "RUNNING").await?;
         db.upsert_port_actor_binding("telegram", &key, &actor)
             .await?;
 

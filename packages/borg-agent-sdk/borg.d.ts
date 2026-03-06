@@ -118,12 +118,12 @@ interface BorgEnv {
    *
    * Example:
    * ```ts
-   * const token = Borg.env.get("APP_GITHUB_ACCESS_TOKEN")
+   * const token = Borg.env.get("GITHUB_ACCESS_TOKEN")
    * ```
    *
    * Example:
    * ```ts
-   * const region = Borg.env.get("APP_AWS_REGION", "us-east-1")
+   * const region = Borg.env.get("AWS_REGION", "us-east-1")
    * ```
    */
   get(name: string, defaultValue?: string | null): string | null;

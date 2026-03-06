@@ -2,12 +2,19 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 use serde_json::{Map, Value, json};
 
+use super::decode_tool_response;
+
 use crate::app::BorgCliApp;
 
 #[derive(Subcommand, Debug)]
 pub enum MemoryToolsCommand {
     #[command(about = "List Memory commands")]
     List,
+    #[command(about = "Clear all memory facts and search data")]
+    Clear {
+        #[arg(long, help = "Skip confirmation prompt")]
+        yes: bool,
+    },
     #[command(about = "Write a batch of memory facts")]
     StateFacts(StateFactsArgs),
     #[command(about = "Fuzzy-search memory entities and schema")]
@@ -217,6 +224,7 @@ pub struct DefineFieldArgs {
 
 pub fn command_names() -> Vec<&'static str> {
     vec![
+        "clear",
         "state-facts",
         "search",
         "create-entity",
@@ -237,6 +245,10 @@ pub async fn run(app: &BorgCliApp, cmd: MemoryToolsCommand) -> Result<Value> {
     match cmd {
         MemoryToolsCommand::List => {
             Ok(json!({"ok": true, "namespace": "memory", "commands": command_names()}))
+        }
+        MemoryToolsCommand::Clear { yes } => {
+            app.memory_clear(yes).await?;
+            Ok(json!({ "ok": true }))
         }
         MemoryToolsCommand::StateFacts(args) => {
             let mut map = Map::new();
@@ -473,11 +485,5 @@ async fn execute(
         })
         .await?;
 
-    Ok(json!({
-        "ok": true,
-        "namespace": "memory",
-        "command": command,
-        "tool": tool_name,
-        "content": response.content
-    }))
+    decode_tool_response(response)
 }

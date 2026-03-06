@@ -1,8 +1,7 @@
 import {
   type ActorRecord,
-  type BehaviorRecord,
   createBorgApiClient,
-} from "@borg/api";
+} from "@borg/graphql-client";
 import {
   Button,
   ChatComposerShell,
@@ -190,24 +189,6 @@ export function DevModeApp() {
     }
   }, [plannerActor]);
 
-  const resolvePlannerBehavior = React.useCallback(
-    (behaviors: BehaviorRecord[]): string | null => {
-      if (behaviors.length === 0) return null;
-      if (
-        behaviors.some(
-          (behavior) => behavior.behavior_id === "borg:behavior:default"
-        )
-      ) {
-        return "borg:behavior:default";
-      }
-      const active = behaviors.find(
-        (behavior) => behavior.status.trim().toUpperCase() === "ACTIVE"
-      );
-      return active?.behavior_id ?? behaviors[0].behavior_id;
-    },
-    []
-  );
-
   const ensurePlannerActor = React.useCallback(
     async (actorRows: ActorRecord[]): Promise<ActorRecord[]> => {
       if (
@@ -215,23 +196,15 @@ export function DevModeApp() {
       ) {
         return actorRows;
       }
-      const behaviors = await borgApi.listBehaviors(500);
-      const defaultBehaviorId = resolvePlannerBehavior(behaviors);
-      if (!defaultBehaviorId) {
-        throw new Error(
-          "No behaviors available to create devmode:actor:planner. Create a behavior first."
-        );
-      }
       await borgApi.upsertActor({
         actorId: DEV_MODE_PLANNER_ACTOR_ID,
         name: DEV_MODE_PLANNER_NAME,
         systemPrompt: DEV_MODE_PLANNER_PROMPT,
-        defaultBehaviorId,
         status: "RUNNING",
       });
       return await borgApi.listActors(500);
     },
-    [resolvePlannerBehavior]
+    []
   );
 
   const loadAll = React.useCallback(async () => {
@@ -345,7 +318,6 @@ export function DevModeApp() {
         actorId: plannerActor.actor_id,
         name: plannerActor.name,
         systemPrompt: prompt,
-        defaultBehaviorId: plannerActor.default_behavior_id,
         status: plannerActor.status,
       });
       setActors((previous) =>

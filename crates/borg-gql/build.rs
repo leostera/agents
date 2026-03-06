@@ -39,6 +39,12 @@ async fn generate_schema_artifacts() -> anyhow::Result<()> {
     let memory_path = out_dir.join("schema-build-memory.db");
     let search_path = out_dir.join("schema-build-search.db");
 
+    for path in [&db_path, &memory_path, &search_path] {
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+    }
+
     let db_path_text = db_path
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("invalid db path"))?;

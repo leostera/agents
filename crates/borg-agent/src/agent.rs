@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use borg_core::{Uri, uri};
 use borg_db::BorgDb;
-use borg_llm::{LlmRequest, Provider, ProviderBlock, StopReason};
+use borg_llm::{LlmRequest, Provider, ProviderBlock, ReasoningEffort, StopReason};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -25,49 +25,21 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = r#"You are Borg's default agent, and thi
 1. Always address the user by their name
 2. Always answer the latest user message directly.
 3. Do not repeat previous answers unless the user asks you to
-5. Always recall things first from long-term memory explicitly (using the `Memory-searchMemory` tool)
-6. Keep responses concise and conversational
+5. Keep responses concise and conversational
 
-## Rules for the Code Mode System
+## Rules for Tool Calls
 
-0. ALWAYS use the `CodeMode-searchApis` tool to find the api sdk types before generating code
-1. When using the `CodeMode-executeCode` tool, try to generate a single piece of code that does all the work you need
-2. Returned values in the code you pass to `CodeMode-executeCode` will be returned to you as JSON
-
-## Rules for Apps and Capabilities
-
-0. Use `Apps-listApps` to discover apps, then `Apps-getApp` to inspect capabilities and instructions for a specific app.
-1. Call discovered capabilities directly by tool name, using the capability's mode-specific input shape.
-2. Prefer app capabilities over generating raw runtime code when a matching capability exists.
-
-## Rules about the Memory System
-
-0. Use the memory tools directly (`Memory-getSchema`, `Memory-searchMemory`, `Memory-newEntity`, `Memory-saveFacts`) instead of code execution for routine memory operations.
-1. Call `Memory-getSchema` before any other memory write/read operation.
-2. For facts about concrete things (people, movies, places), resolve identity first:
-   - try `Memory-searchMemory` for an existing entity URI
-   - if no reliable match exists, call `Memory-newEntity`
-   - then use `Memory-saveFacts` on that entity URI and link with `Ref`
-
-The Borg Memory system allows you to store information in a graph database that is fuzzy searchable
-later. It is integrated in the tools via `Memory-getSchema`, `Memory-searchMemory`, `Memory-newEntity`, and `Memory-saveFacts`.
-
-This allows you to create complex code to save and retrieve memories that are durable and globally
-accessible.
-
-It works by creating small facts about the world, that are triplets: (Entity URI, Field URI,
-Value), and creates a unified view of that Entity URI. If you don't know a URI, search for it first, and create one with `Memory-newEntity` if needed.
-
-If the user explicitly shares any information/preference/fact that you think is worth remembering,
-be it about themselves (e.g. favorite movie), or about something they do (e.g. where they store
-movies), store it in long-term memory without asking for extra confirmation. Save facts eagerly!
-
-If the user asks about something, first search long-term memory first, then answer from results.
-
-If memory has no matching fact, say you do not have information about that yet and offer to search
-the web or ask the user if they have the answer and wish you to remember it for later.
-
-
+1. Only call tools that exist in the provided tool list.
+2. For `ShellMode-executeCommand`, arguments MUST use this exact shape:
+   `{"command":"<shell string>","hint":"<short intent>","timeout_seconds":30,"working_directory":"."}`
+3. `command` must be a single shell string, not an array.
+4. Do NOT use keys like `cmd`, `timeout`, or `cwd`.
+5. Invalid examples:
+   - `{"cmd":["bash","-lc","which rg"]}`
+   - `{"command":["bash","-lc","which rg"]}`
+   - `{"command":"bash -lc \"which rg\"","timeout":10000}`
+6. Valid example:
+   - `{"command":"which rg","hint":"Checking if ripgrep is installed","timeout_seconds":30,"working_directory":"."}`
 
 "#;
 
@@ -75,6 +47,7 @@ the web or ask the user if they have the answer and wish you to remember it for 
 pub struct Agent<TToolCall, TToolResult> {
     pub agent_id: Uri,
     pub model: String,
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub system_prompt: String,
     pub behavior_prompt: String,
     pub max_turns: usize,
@@ -88,6 +61,7 @@ impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult> {
         Self {
             agent_id,
             model: DEFAULT_MODEL.to_string(),
+            reasoning_effort: None,
             system_prompt: String::new(),
             behavior_prompt: String::new(),
             max_turns: DEFAULT_MAX_TURNS,
@@ -127,6 +101,11 @@ impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult> {
 
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = model.into();
+        self
+    }
+
+    pub fn with_reasoning_effort(mut self, reasoning_effort: Option<ReasoningEffort>) -> Self {
+        self.reasoning_effort = reasoning_effort;
         self
     }
 
@@ -242,6 +221,7 @@ where
                     tools: to_provider_tool_specs(&context.available_tools),
                     temperature: None,
                     max_tokens: None,
+                    reasoning_effort: self.reasoning_effort,
                     api_key: None,
                 };
                 let call_id = uri!("borg", "call").to_string();

@@ -360,6 +360,9 @@ impl OpenAiProvider {
             "tool_choice": "auto",
             "temperature": req.temperature,
             "max_tokens": req.max_tokens,
+            "reasoning_effort": req
+                .reasoning_effort
+                .map(openai_reasoning_effort_label),
         });
         let call =
             ProviderCallTrace::sent(provider, "chat_completion", model.clone(), body.clone());
@@ -513,6 +516,16 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     value
         .map(|entry| entry.trim().to_string())
         .filter(|entry| !entry.is_empty())
+}
+
+fn openai_reasoning_effort_label(effort: crate::ReasoningEffort) -> &'static str {
+    match effort {
+        crate::ReasoningEffort::Minimal => "minimal",
+        crate::ReasoningEffort::Low => "low",
+        crate::ReasoningEffort::Medium => "medium",
+        crate::ReasoningEffort::High => "high",
+        crate::ReasoningEffort::XHigh => "high",
+    }
 }
 
 fn transcription_filename_for_mime(mime: &str) -> String {
@@ -881,6 +894,7 @@ mod tests {
             tools: vec![],
             temperature: None,
             max_tokens: None,
+            reasoning_effort: None,
             api_key: None,
         };
         let resolved = provider.resolve_chat_model(&request).expect("chat model");

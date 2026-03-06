@@ -15,7 +15,7 @@ borg-shellmode = { path = "../borg-shellmode" }
 borg-fs = { path = "../borg-fs" }
 borg-apps = { path = "../borg-apps" }
 borg-taskgraph = { path = "../borg-taskgraph" }
-borg-clockwork = { path = "../borg-clockwork" }
+borg-schedule = { path = "../borg-schedule" }
 borg-ports-tools = { path = "../borg-ports-tools" }
 serde.workspace = true
 serde_json.workspace = true

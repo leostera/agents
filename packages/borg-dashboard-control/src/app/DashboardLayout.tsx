@@ -1,4 +1,3 @@
-import { BorgApiError, createBorgApiClient } from "@borg/api";
 import { SidebarInset, SidebarProvider } from "@borg/ui";
 import React, { useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -13,7 +12,33 @@ import {
 import { resolveActiveSectionId } from "./routing";
 
 const HEALTH_CHECK_INTERVAL_MS = 15_000;
-const borgApi = createBorgApiClient();
+
+function resolveHealthBaseUrl(): string {
+  const fromEnv =
+    (import.meta as unknown as { env?: Record<string, string | undefined> }).env
+      ?.VITE_BORG_API_BASE_URL ?? "";
+  if (fromEnv.trim().length > 0) {
+    return fromEnv.replace(/\/+$/, "");
+  }
+
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const { protocol, hostname, port, origin } = window.location;
+  if ((hostname === "localhost" || hostname === "127.0.0.1") && port === "5173") {
+    return `${protocol}//${hostname}:8080`;
+  }
+  return origin;
+}
+
+async function checkBorgHealth(): Promise<boolean> {
+  const response = await fetch(`${resolveHealthBaseUrl()}/health`, {
+    method: "GET",
+  });
+  if (!response.ok) return false;
+  const data = (await response.json()) as { status?: string };
+  return data.status === "ok";
+}
 
 function resolveUsername(search: string): string {
   const fromQuery = new URLSearchParams(search).get("user")?.trim();
@@ -71,15 +96,13 @@ export function DashboardLayout() {
 
     const checkConnectivity = async () => {
       try {
-        const isHealthy = await borgApi.health();
+        const isHealthy = await checkBorgHealth();
         if (isActive) {
           setIsOffline(!isHealthy);
         }
-      } catch (error) {
+      } catch {
         if (!isActive) return;
-        setIsOffline(
-          !(error instanceof BorgApiError && typeof error.status === "number")
-        );
+        setIsOffline(true);
       } finally {
         if (isActive) {
           timeoutId = window.setTimeout(() => {

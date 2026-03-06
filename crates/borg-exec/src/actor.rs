@@ -3,9 +3,9 @@ use borg_agent::{
     BorgToolCall, BorgToolResult, Message, Session, SessionResult, ToolCallRecord, Toolchain,
 };
 use borg_core::Uri;
-use borg_llm::TranscriptionRequest;
+use borg_llm::{ReasoningEffort, TranscriptionRequest};
 use chrono::Utc;
-use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -62,7 +62,7 @@ impl ActorHandle {
 struct SessionState {
     session: Session<BorgToolCall, BorgToolResult>,
     agent_id: Uri,
-    behavior_id: Option<Uri>,
+    current_reasoning_effort: Option<ReasoningEffort>,
     cached_toolchain: Option<CachedToolchain>,
 }
 
@@ -71,7 +71,8 @@ struct Actor {
     mailbox: mpsc::Sender<ActorCommand>,
     rx: mpsc::Receiver<ActorCommand>,
     runtime: Arc<BorgRuntime>,
-    sessions: HashMap<Uri, SessionState>,
+    owned_session_id: Option<Uri>,
+    session_state: Option<SessionState>,
 }
 
 impl Actor {
@@ -82,7 +83,8 @@ impl Actor {
             mailbox: tx,
             rx,
             runtime,
-            sessions: HashMap::new(),
+            owned_session_id: None,
+            session_state: None,
         })
     }
 
@@ -144,24 +146,36 @@ impl Actor {
         msg: BorgMessage,
         progress_tx: Option<mpsc::Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
     ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
-        if !self.sessions.contains_key(&msg.session_id) {
-            let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
+        if let Some(owned) = self.owned_session_id.as_ref() {
+            if owned != &msg.session_id {
+                return Err(anyhow!(
+                    "actor {} is bound to session {}; received message for {}",
+                    self.actor_id,
+                    owned,
+                    msg.session_id
+                ));
+            }
+        } else {
+            self.owned_session_id = Some(msg.session_id.clone());
+        }
+
+        if self.session_state.is_none() {
+            let agent_id = self.resolve_execution_agent_id().await?;
             let session = self.create_session(&msg.session_id, &agent_id).await?;
-            self.sessions.insert(
-                msg.session_id.clone(),
-                SessionState {
-                    session,
-                    agent_id,
-                    behavior_id,
-                    cached_toolchain: None,
-                },
-            );
+            let current_reasoning_effort =
+                self.load_session_reasoning_effort(&msg.session_id).await?;
+            self.session_state = Some(SessionState {
+                session,
+                agent_id,
+                current_reasoning_effort,
+                cached_toolchain: None,
+            });
         }
 
         let drop_after = matches!(&msg.input, BorgInput::Command(BorgCommand::ResetContext));
         let mut state = self
-            .sessions
-            .remove(&msg.session_id)
+            .session_state
+            .take()
             .ok_or_else(|| anyhow!("session state missing for {}", msg.session_id))?;
 
         let result = match &msg.input {
@@ -193,7 +207,7 @@ impl Actor {
         };
 
         if !drop_after {
-            self.sessions.insert(msg.session_id.clone(), state);
+            self.session_state = Some(state);
         }
 
         result
@@ -217,6 +231,7 @@ impl Actor {
         text: &str,
         progress_tx: Option<&mpsc::Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
     ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
+        state.session.agent.reasoning_effort = state.current_reasoning_effort;
         state
             .session
             .add_message(Message::User {
@@ -237,6 +252,7 @@ impl Actor {
         language_hint: Option<&str>,
         progress_tx: Option<&mpsc::Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
     ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
+        state.session.agent.reasoning_effort = state.current_reasoning_effort;
         let (file_record, audio_bytes) = self.runtime.files.read_all(file_id).await?;
         let mime_type = mime_type_hint
             .map(str::trim)
@@ -276,14 +292,13 @@ impl Actor {
         msg: &BorgMessage,
         progress_tx: Option<&mpsc::Sender<SessionOutput<BorgToolCall, BorgToolResult>>>,
     ) -> Result<SessionOutput<BorgToolCall, BorgToolResult>> {
-        let (agent_id, behavior_id) = self.resolve_execution_agent_id().await?;
-        state.agent_id = agent_id;
-        state.behavior_id = behavior_id;
+        state.agent_id = self.resolve_execution_agent_id().await?;
         state.session.agent = self
             .runtime
             .session_manager
-            .resolve_agent_for_turn(&state.agent_id, state.behavior_id.as_ref())
+            .resolve_agent_for_turn(&state.agent_id)
             .await?;
+        state.session.agent.reasoning_effort = state.current_reasoning_effort;
 
         let llm = self.runtime.llm().await?;
         let toolchain = self.toolchain_for_turn(state, msg).await?;
@@ -384,15 +399,8 @@ impl Actor {
                 Ok(SessionOutput {
                     session_id: msg.session_id.clone(),
                     reply: Some(format!(
-                        "Actor: {}\nBehavior: {}\nModel: {}\nSession: {}",
-                        self.actor_id,
-                        state
-                            .behavior_id
-                            .as_ref()
-                            .map(Uri::as_str)
-                            .unwrap_or("unknown"),
-                        model,
-                        msg.session_id
+                        "Actor: {}\nModel: {}\nSession: {}",
+                        self.actor_id, model, msg.session_id
                     )),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
@@ -409,6 +417,38 @@ impl Actor {
                     reply: Some(format!(
                         "Updated model to {} for actor {}.\nSession: {}",
                         model, self.actor_id, msg.session_id
+                    )),
+                    tool_calls: Vec::new(),
+                    port_context: msg.port_context.clone(),
+                })
+            }
+            BorgCommand::ReasoningShowCurrent => {
+                let current = state
+                    .current_reasoning_effort
+                    .map(|effort| effort.to_string())
+                    .unwrap_or_else(|| "default".to_string());
+                Ok(SessionOutput {
+                    session_id: msg.session_id.clone(),
+                    reply: Some(format!(
+                        "Current reasoning effort for session {}: {}",
+                        msg.session_id, current
+                    )),
+                    tool_calls: Vec::new(),
+                    port_context: msg.port_context.clone(),
+                })
+            }
+            BorgCommand::ReasoningSet { reasoning_effort } => {
+                state.current_reasoning_effort = Some(*reasoning_effort);
+                state.session.agent.reasoning_effort = state.current_reasoning_effort;
+                self.runtime
+                    .db
+                    .set_session_reasoning_effort(&msg.session_id, Some(reasoning_effort.as_str()))
+                    .await?;
+                Ok(SessionOutput {
+                    session_id: msg.session_id.clone(),
+                    reply: Some(format!(
+                        "Updated reasoning effort to {} for session {}.",
+                        reasoning_effort, msg.session_id
                     )),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
@@ -500,40 +540,24 @@ impl Actor {
             .await
     }
 
-    async fn resolve_execution_agent_id(&self) -> Result<(Uri, Option<Uri>)> {
+    async fn resolve_execution_agent_id(&self) -> Result<Uri> {
         let actor = self
             .runtime
             .db
             .get_actor(&self.actor_id)
             .await?
             .ok_or_else(|| anyhow!("actor not found: {}", self.actor_id))?;
-        let behavior = self
-            .runtime
-            .db
-            .get_behavior(&actor.default_behavior_id)
-            .await?;
 
         let agent_id = self.actor_id.clone();
         let existing = self.runtime.db.get_agent_spec(&agent_id).await?;
         let model = if let Some(spec) = existing.as_ref() {
             spec.model.clone()
         } else {
-            self.resolve_behavior_default_model(
-                behavior
-                    .as_ref()
-                    .and_then(|record| record.preferred_provider_id.as_deref()),
-            )
-            .await
+            self.resolve_behavior_default_model(None).await
         };
 
-        let system_prompt = behavior
-            .as_ref()
-            .map(|record| record.system_prompt.as_str())
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or(actor.system_prompt.as_str());
-        let default_provider_id = behavior
-            .as_ref()
-            .and_then(|record| record.preferred_provider_id.as_deref());
+        let system_prompt = actor.system_prompt.as_str();
+        let default_provider_id = None;
         let agent_name = actor.name.clone();
 
         let needs_upsert = existing
@@ -559,7 +583,7 @@ impl Actor {
                 .await?;
         }
 
-        Ok((agent_id, Some(actor.default_behavior_id)))
+        Ok(agent_id)
     }
 
     async fn toolchain_for_turn(
@@ -676,10 +700,23 @@ impl Actor {
         for payload in &tail {
             self.runtime
                 .db
-                .append_session_message(session_id, payload)
+                .append_session_message(session_id, payload, None)
                 .await?;
         }
         Ok(tail.len())
+    }
+
+    async fn load_session_reasoning_effort(
+        &self,
+        session_id: &Uri,
+    ) -> Result<Option<ReasoningEffort>> {
+        Ok(self
+            .runtime
+            .db
+            .get_session_reasoning_effort(session_id)
+            .await?
+            .as_deref()
+            .and_then(|value| ReasoningEffort::from_str(value).ok()))
     }
 }
 

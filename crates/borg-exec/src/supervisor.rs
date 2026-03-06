@@ -63,7 +63,6 @@ impl BorgSupervisor {
             .db
             .enqueue_actor_message(
                 &msg.actor_id,
-                "CALL",
                 Some(&msg.session_id),
                 &serde_json::to_value(ActorMailboxEnvelope::from_borg_message(&msg))?,
                 None,
@@ -99,7 +98,6 @@ impl BorgSupervisor {
             .db
             .enqueue_actor_message(
                 &msg.actor_id,
-                "CAST",
                 Some(&msg.session_id),
                 &serde_json::to_value(ActorMailboxEnvelope::from_borg_message(&msg))?,
                 None,

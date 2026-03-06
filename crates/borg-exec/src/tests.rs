@@ -20,7 +20,6 @@ use borg_memory::MemoryStore;
 use borg_shellmode::ShellModeRuntime;
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::Row;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, sleep};
 use tracing_subscriber::EnvFilter;
@@ -175,11 +174,33 @@ async fn session_manager_resolve_agent_for_turn_refreshes_prompts_and_tools_each
         .await
         .unwrap();
 
-    let first = manager
-        .resolve_agent_for_turn(&agent_id, None)
-        .await
-        .unwrap();
+    let first = manager.resolve_agent_for_turn(&agent_id).await.unwrap();
     assert_eq!(first.system_prompt, "prompt-v1");
+    assert!(
+        first
+            .tools
+            .iter()
+            .any(|tool| tool.name == "ShellMode-executeCommand")
+    );
+    assert!(
+        first
+            .tools
+            .iter()
+            .any(|tool| tool.name == "CodeMode-searchApis")
+    );
+    assert!(first.tools.iter().any(|tool| tool.name == "Memory-search"));
+    assert!(
+        first
+            .tools
+            .iter()
+            .any(|tool| tool.name == "TaskGraph-createTask")
+    );
+    assert!(
+        first
+            .tools
+            .iter()
+            .any(|tool| tool.name == "Schedule-createJob")
+    );
     assert!(
         !first
             .tools
@@ -213,11 +234,14 @@ async fn session_manager_resolve_agent_for_turn_refreshes_prompts_and_tools_each
         .await
         .unwrap();
 
-    let second = manager
-        .resolve_agent_for_turn(&agent_id, None)
-        .await
-        .unwrap();
+    let second = manager.resolve_agent_for_turn(&agent_id).await.unwrap();
     assert_eq!(second.system_prompt, "prompt-v2");
+    assert!(
+        second
+            .tools
+            .iter()
+            .any(|tool| tool.name == "ShellMode-executeCommand")
+    );
     assert!(
         second
             .tools
@@ -519,7 +543,7 @@ async fn borg_supervisor_creation_and_lifecycle() {
 }
 
 #[tokio::test]
-async fn borg_supervisor_actor_can_serve_multiple_sessions() {
+async fn borg_supervisor_actor_rejects_cross_session_delivery() {
     let db = open_test_db().await;
     let memory = open_test_memory().await;
     let runtime = crate::BorgRuntime::new(
@@ -534,16 +558,9 @@ async fn borg_supervisor_actor_can_serve_multiple_sessions() {
     supervisor.start().await.unwrap();
 
     let actor_id = uri!("devmode", "actor", "multi-session");
-    let behavior_id = uri!("borg", "behavior", "default");
-    db.upsert_actor(
-        &actor_id,
-        "multi-session",
-        "prompt",
-        &behavior_id,
-        "RUNNING",
-    )
-    .await
-    .unwrap();
+    db.upsert_actor(&actor_id, "multi-session", "prompt", "RUNNING")
+        .await
+        .unwrap();
     let user_id = uri!("borg", "user", "tester");
     let pctx = crate::PortContext::Unknown;
     let session_a = uri!("borg", "session", "a");
@@ -568,11 +585,16 @@ async fn borg_supervisor_actor_can_serve_multiple_sessions() {
             input: crate::BorgInput::Command(crate::BorgCommand::ContextDump),
             port_context: pctx,
         })
-        .await
-        .unwrap();
+        .await;
 
     assert_eq!(out_a.session_id, session_a);
-    assert_eq!(out_b.session_id, session_b);
+    assert!(out_b.is_err());
+    assert!(
+        out_b
+            .expect_err("cross-session delivery should be rejected")
+            .to_string()
+            .contains("is bound to session")
+    );
 
     supervisor.shutdown().await;
 }
@@ -593,16 +615,9 @@ async fn borg_supervisor_persists_call_and_cast_to_actor_mailbox() {
     supervisor.start().await.unwrap();
 
     let actor_id = uri!("devmode", "actor", "mailbox-persist");
-    let behavior_id = uri!("borg", "behavior", "default");
-    db.upsert_actor(
-        &actor_id,
-        "mailbox-persist",
-        "prompt",
-        &behavior_id,
-        "RUNNING",
-    )
-    .await
-    .unwrap();
+    db.upsert_actor(&actor_id, "mailbox-persist", "prompt", "RUNNING")
+        .await
+        .unwrap();
     let user_id = uri!("borg", "user", "tester");
     let pctx = crate::PortContext::Unknown;
     let session_id = uri!("borg", "session", "persist");
@@ -629,39 +644,34 @@ async fn borg_supervisor_persists_call_and_cast_to_actor_mailbox() {
         .await
         .unwrap();
 
-    let cast_count = sqlx::query(
-        "SELECT COUNT(*) as n FROM actor_mailbox WHERE actor_id = ?1 AND kind = 'CAST'",
+    let actor_id_raw = actor_id.to_string();
+    let total_count = sqlx::query!(
+        r#"SELECT COUNT(*) as "n!: i64"
+        FROM messages
+        WHERE receiver_id = ?1
+        "#,
+        actor_id_raw,
     )
-    .bind(actor_id.to_string())
     .fetch_one(db.pool())
     .await
     .unwrap()
-    .try_get::<i64, _>("n")
-    .unwrap();
-    let call_count = sqlx::query(
-        "SELECT COUNT(*) as n FROM actor_mailbox WHERE actor_id = ?1 AND kind = 'CALL'",
-    )
-    .bind(actor_id.to_string())
-    .fetch_one(db.pool())
-    .await
-    .unwrap()
-    .try_get::<i64, _>("n")
-    .unwrap();
-
-    assert!(cast_count >= 1);
-    assert!(call_count >= 1);
+    .n;
+    assert!(total_count >= 2);
 
     let mut acked = 0_i64;
     for _ in 0..20 {
-        acked = sqlx::query(
-            "SELECT COUNT(*) as n FROM actor_mailbox WHERE actor_id = ?1 AND status = 'ACKED'",
+        let actor_id_raw = actor_id.to_string();
+        acked = sqlx::query!(
+            r#"SELECT COUNT(*) as "n!: i64"
+            FROM messages
+            WHERE receiver_id = ?1 AND status = 'ACKED'
+            "#,
+            actor_id_raw,
         )
-        .bind(actor_id.to_string())
         .fetch_one(db.pool())
         .await
         .unwrap()
-        .try_get::<i64, _>("n")
-        .unwrap();
+        .n;
         if acked >= 2 {
             break;
         }
@@ -699,15 +709,20 @@ async fn borg_supervisor_missing_actor_spec_keeps_message_queued() {
         .await;
     assert!(result.is_err());
 
-    let status: String = sqlx::query(
-        "SELECT status FROM actor_mailbox WHERE actor_id = ?1 ORDER BY created_at DESC LIMIT 1",
+    let actor_id_raw = actor_id.to_string();
+    let row = sqlx::query!(
+        r#"SELECT status as "status!: String"
+        FROM messages
+        WHERE receiver_id = ?1
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
+        actor_id_raw,
     )
-    .bind(actor_id.to_string())
     .fetch_one(db.pool())
     .await
-    .unwrap()
-    .try_get("status")
     .unwrap();
+    let status = row.status;
     assert_eq!(status, "QUEUED");
 
     supervisor.shutdown().await;
@@ -742,8 +757,7 @@ async fn audio_turn_rejects_without_transcription_provider_and_persists_no_user_
     supervisor.start().await.unwrap();
 
     let actor_id = uri!("devmode", "actor", "audio-reject");
-    let behavior_id = uri!("borg", "behavior", "default");
-    db.upsert_actor(&actor_id, "audio-reject", "prompt", &behavior_id, "RUNNING")
+    db.upsert_actor(&actor_id, "audio-reject", "prompt", "RUNNING")
         .await
         .unwrap();
 
@@ -801,8 +815,7 @@ async fn borg_supervisor_replays_queued_after_actor_spec_is_created() {
         .expect_err("cast should fail before actor spec exists");
     assert!(queued_err.to_string().contains("actor spec not found"));
 
-    let behavior_id = uri!("borg", "behavior", "default");
-    db.upsert_actor(&actor_id, "late-created", "prompt", &behavior_id, "RUNNING")
+    db.upsert_actor(&actor_id, "late-created", "prompt", "RUNNING")
         .await
         .unwrap();
 
@@ -819,15 +832,18 @@ async fn borg_supervisor_replays_queued_after_actor_spec_is_created() {
 
     let mut queued = 2_i64;
     for _ in 0..50 {
-        queued = sqlx::query(
-            "SELECT COUNT(*) as n FROM actor_mailbox WHERE actor_id = ?1 AND status = 'QUEUED'",
+        let actor_id_raw = actor_id.to_string();
+        queued = sqlx::query!(
+            r#"SELECT COUNT(*) as "n!: i64"
+            FROM messages
+            WHERE receiver_id = ?1 AND status = 'QUEUED'
+            "#,
+            actor_id_raw,
         )
-        .bind(actor_id.to_string())
         .fetch_one(db.pool())
         .await
         .unwrap()
-        .try_get::<i64, _>("n")
-        .unwrap();
+        .n;
         if queued == 0 {
             break;
         }
@@ -853,13 +869,12 @@ async fn borg_supervisor_start_fails_stale_in_progress_mailbox_rows() {
     let supervisor = BorgSupervisor::new(runtime);
 
     let actor_id = uri!("devmode", "actor", "stale-fail");
-    let behavior_id = uri!("borg", "behavior", "default");
-    db.upsert_actor(&actor_id, "stale-fail", "prompt", &behavior_id, "RUNNING")
+    db.upsert_actor(&actor_id, "stale-fail", "prompt", "RUNNING")
         .await
         .unwrap();
 
     let msg_id = db
-        .enqueue_actor_message(&actor_id, "CAST", None, &json!({"x":1}), None, None)
+        .enqueue_actor_message(&actor_id, None, &json!({"x":1}), None, None)
         .await
         .unwrap();
     let _claimed = db
@@ -868,24 +883,30 @@ async fn borg_supervisor_start_fails_stale_in_progress_mailbox_rows() {
         .unwrap()
         .expect("claimed");
 
-    sqlx::query(
-        "UPDATE actor_mailbox SET started_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour') WHERE actor_message_id = ?1",
+    let msg_id_raw = msg_id.to_string();
+    sqlx::query!(
+        "UPDATE messages SET started_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour') WHERE message_id = ?1",
+        msg_id_raw,
     )
-        .bind(msg_id.to_string())
-        .execute(db.pool())
-        .await
-        .unwrap();
+    .execute(db.pool())
+    .await
+    .unwrap();
 
     supervisor.start().await.unwrap();
 
-    let status: String =
-        sqlx::query("SELECT status FROM actor_mailbox WHERE actor_message_id = ?1 LIMIT 1")
-            .bind(msg_id.to_string())
-            .fetch_one(db.pool())
-            .await
-            .unwrap()
-            .try_get("status")
-            .unwrap();
+    let msg_id_raw = msg_id.to_string();
+    let row = sqlx::query!(
+        r#"SELECT status as "status!: String"
+        FROM messages
+        WHERE message_id = ?1
+        LIMIT 1
+        "#,
+        msg_id_raw,
+    )
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    let status = row.status;
     assert_eq!(status, "FAILED");
 }
 
@@ -904,16 +925,9 @@ async fn borg_supervisor_start_replays_queued_mailbox_rows() {
     let supervisor = BorgSupervisor::new(runtime);
 
     let actor_id = uri!("devmode", "actor", "replay-queued");
-    let behavior_id = uri!("borg", "behavior", "default");
-    db.upsert_actor(
-        &actor_id,
-        "replay-queued",
-        "prompt",
-        &behavior_id,
-        "RUNNING",
-    )
-    .await
-    .unwrap();
+    db.upsert_actor(&actor_id, "replay-queued", "prompt", "RUNNING")
+        .await
+        .unwrap();
     let msg = crate::BorgMessage {
         actor_id: actor_id.clone(),
         user_id: uri!("borg", "user", "tester"),
@@ -923,14 +937,7 @@ async fn borg_supervisor_start_replays_queued_mailbox_rows() {
     };
     let payload = serde_json::to_value(ActorMailboxEnvelope::from_borg_message(&msg)).unwrap();
     let msg_id = db
-        .enqueue_actor_message(
-            &actor_id,
-            "CAST",
-            Some(&msg.session_id),
-            &payload,
-            None,
-            None,
-        )
+        .enqueue_actor_message(&actor_id, Some(&msg.session_id), &payload, None, None)
         .await
         .unwrap();
 
@@ -938,14 +945,19 @@ async fn borg_supervisor_start_replays_queued_mailbox_rows() {
 
     let mut status = String::new();
     for _ in 0..25 {
-        status =
-            sqlx::query("SELECT status FROM actor_mailbox WHERE actor_message_id = ?1 LIMIT 1")
-                .bind(msg_id.to_string())
-                .fetch_one(db.pool())
-                .await
-                .unwrap()
-                .try_get::<String, _>("status")
-                .unwrap();
+        let msg_id_raw = msg_id.to_string();
+        status = sqlx::query!(
+            r#"SELECT status as "status!: String"
+            FROM messages
+            WHERE message_id = ?1
+            LIMIT 1
+            "#,
+            msg_id_raw,
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap()
+        .status;
         if status == "ACKED" {
             break;
         }

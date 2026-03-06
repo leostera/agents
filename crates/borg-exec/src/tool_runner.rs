@@ -3,7 +3,6 @@ use borg_agent::{
     BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
     ToolchainBuilder, build_agent_admin_toolchain, default_agent_admin_tool_specs,
 };
-use borg_clockwork::build_clockwork_toolchain;
 use borg_codemode::{CodeModeContext, CodeModeRuntime, build_code_mode_toolchain_with_context};
 use borg_core::Uri;
 use borg_db::BorgDb;
@@ -11,6 +10,7 @@ use borg_fs::{BorgFs, build_borg_fs_toolchain, default_borg_fs_tool_specs};
 use borg_llm::{default_provider_admin_tool_specs, run_provider_admin_tool};
 use borg_memory::{MemoryStore, build_memory_toolchain};
 use borg_ports_tools::{build_port_admin_toolchain, default_port_admin_tool_specs};
+use borg_schedule::build_schedule_toolchain;
 use borg_shellmode::{ShellModeRuntime, build_shell_mode_toolchain};
 use borg_taskgraph::{build_taskgraph_toolchain, build_taskgraph_worker_toolchain};
 
@@ -34,7 +34,7 @@ pub fn build_exec_toolchain_with_context(
     } else {
         build_taskgraph_worker_toolchain(db.clone())?
     };
-    let clockwork = build_clockwork_toolchain(db.clone())?;
+    let schedule = build_schedule_toolchain(db.clone())?;
     let agent_admin =
         build_agent_admin_toolchain(db.clone(), current_session_id, current_agent_id)?;
     let port_admin = build_port_admin_toolchain(db.clone())?;
@@ -43,7 +43,7 @@ pub fn build_exec_toolchain_with_context(
         .merge(ltm)?
         .merge(fs_tools)?
         .merge(taskgraph)?
-        .merge(clockwork)?
+        .merge(schedule)?
         .merge(agent_admin)?
         .merge(port_admin)?
         .merge(provider_admin)

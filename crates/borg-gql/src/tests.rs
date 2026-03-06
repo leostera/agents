@@ -33,36 +33,20 @@ async fn actor_workspace_query_roundtrip() -> anyhow::Result<()> {
     let schema = test_schema().await?;
     let data = schema.data::<BorgGqlData>().expect("gql data").clone();
 
-    let behavior_id = Uri::from_parts("borg", "behavior", Some("default"))?;
     let actor_id = Uri::from_parts("borg", "actor", Some("a1"))?;
     let session_id = Uri::from_parts("borg", "session", Some("s1"))?;
-    let user_id = Uri::from_parts("borg", "user", Some("u1"))?;
     let port_id = Uri::from_parts("borg", "port", Some("http"))?;
 
     data.db
-        .upsert_behavior(
-            &behavior_id,
-            "default",
-            "prompt",
-            None,
-            &json!(["search"]),
-            "serial",
-            "ACTIVE",
-        )
+        .upsert_actor(&actor_id, "actor", "prompt", "RUNNING")
         .await?;
+    data.db.upsert_session(&session_id, &port_id).await?;
     data.db
-        .upsert_actor(&actor_id, "actor", "prompt", &behavior_id, "RUNNING")
-        .await?;
-    data.db
-        .upsert_session(&session_id, &[user_id], &port_id)
-        .await?;
-    data.db
-        .append_session_message(&session_id, &json!({"type":"user","content":"hello"}))
+        .append_session_message(&session_id, &json!({"type":"user","content":"hello"}), None)
         .await?;
     data.db
         .enqueue_actor_message(
             &actor_id,
-            "test",
             Some(&session_id),
             &json!({"source":"tests"}),
             None,
@@ -75,7 +59,6 @@ async fn actor_workspace_query_roundtrip() -> anyhow::Result<()> {
             actor(id: $id) {
               id
               name
-              defaultBehavior { id name }
               sessions(first: 5) {
                 edges {
                   node {
@@ -83,7 +66,7 @@ async fn actor_workspace_query_roundtrip() -> anyhow::Result<()> {
                     messages(first: 5) {
                       edges {
                         node {
-                          messageIndex
+                          id
                           messageType
                           role
                           text
@@ -306,13 +289,11 @@ async fn status_fields_and_inputs_use_enum_types() -> anyhow::Result<()> {
     let query = r#"
           query {
             actor: __type(name: "Actor") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
-            behavior: __type(name: "Behavior") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
             app: __type(name: "App") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
             appCapability: __type(name: "AppCapability") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
             appConnection: __type(name: "AppConnection") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
-            clockworkJob: __type(name: "ClockworkJob") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
+            scheduleJob: __type(name: "ScheduleJob") { fields { name type { kind name ofType { kind name ofType { kind name } } } } }
             upsertActorInput: __type(name: "UpsertActorInput") { inputFields { name type { kind name ofType { kind name ofType { kind name } } } } }
-            upsertBehaviorInput: __type(name: "UpsertBehaviorInput") { inputFields { name type { kind name ofType { kind name ofType { kind name } } } } }
             upsertAppInput: __type(name: "UpsertAppInput") { inputFields { name type { kind name ofType { kind name ofType { kind name } } } } }
             upsertAppCapabilityInput: __type(name: "UpsertAppCapabilityInput") { inputFields { name type { kind name ofType { kind name ofType { kind name } } } } }
             upsertAppConnectionInput: __type(name: "UpsertAppConnectionInput") { inputFields { name type { kind name ofType { kind name ofType { kind name } } } } }
@@ -370,10 +351,6 @@ async fn status_fields_and_inputs_use_enum_types() -> anyhow::Result<()> {
         field_type_name(&data["actor"], "status")?,
         "ActorStatusValue"
     );
-    assert_eq!(
-        field_type_name(&data["behavior"], "status")?,
-        "BehaviorStatusValue"
-    );
     assert_eq!(field_type_name(&data["app"], "status")?, "AppStatusValue");
     assert_eq!(
         field_type_name(&data["appCapability"], "status")?,
@@ -384,17 +361,13 @@ async fn status_fields_and_inputs_use_enum_types() -> anyhow::Result<()> {
         "AppConnectionStatusValue"
     );
     assert_eq!(
-        field_type_name(&data["clockworkJob"], "status")?,
-        "ClockworkJobStatusValue"
+        field_type_name(&data["scheduleJob"], "status")?,
+        "ScheduleJobStatusValue"
     );
 
     assert_eq!(
         input_field_type_name(&data["upsertActorInput"], "status")?,
         "ActorStatusValue"
-    );
-    assert_eq!(
-        input_field_type_name(&data["upsertBehaviorInput"], "status")?,
-        "BehaviorStatusValue"
     );
     assert_eq!(
         input_field_type_name(&data["upsertAppInput"], "status")?,
@@ -412,19 +385,19 @@ async fn status_fields_and_inputs_use_enum_types() -> anyhow::Result<()> {
     let query_fields = data["queryRoot"]["fields"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("missing QueryRoot fields"))?;
-    let clockwork_jobs_field = query_fields
+    let schedule_jobs_field = query_fields
         .iter()
-        .find(|field| field["name"].as_str() == Some("clockworkJobs"))
-        .ok_or_else(|| anyhow::anyhow!("missing QueryRoot.clockworkJobs"))?;
-    let status_arg = clockwork_jobs_field["args"]
+        .find(|field| field["name"].as_str() == Some("scheduleJobs"))
+        .ok_or_else(|| anyhow::anyhow!("missing QueryRoot.scheduleJobs"))?;
+    let status_arg = schedule_jobs_field["args"]
         .as_array()
-        .ok_or_else(|| anyhow::anyhow!("missing clockworkJobs args"))?
+        .ok_or_else(|| anyhow::anyhow!("missing scheduleJobs args"))?
         .iter()
         .find(|arg| arg["name"].as_str() == Some("status"))
-        .ok_or_else(|| anyhow::anyhow!("missing clockworkJobs.status arg"))?;
+        .ok_or_else(|| anyhow::anyhow!("missing scheduleJobs.status arg"))?;
     let status_arg_type = leaf_type_name(&status_arg["type"])
-        .ok_or_else(|| anyhow::anyhow!("missing clockworkJobs.status type"))?;
-    assert_eq!(status_arg_type, "ClockworkJobStatusValue");
+        .ok_or_else(|| anyhow::anyhow!("missing scheduleJobs.status type"))?;
+    assert_eq!(status_arg_type, "ScheduleJobStatusValue");
 
     Ok(())
 }
@@ -514,7 +487,6 @@ async fn core_object_types_have_usage_docs() -> anyhow::Result<()> {
 
     let required = [
         "Actor",
-        "Behavior",
         "Session",
         "SessionMessage",
         "Port",
@@ -525,16 +497,13 @@ async fn core_object_types_have_usage_docs() -> anyhow::Result<()> {
         "AppCapability",
         "AppConnection",
         "AppSecret",
-        "ClockworkJob",
-        "ClockworkJobRun",
+        "ScheduleJob",
+        "ScheduleJobRun",
         "Task",
         "TaskComment",
         "TaskEvent",
         "MemoryEntity",
         "MemoryFact",
-        "Policy",
-        "PolicyUse",
-        "User",
     ];
 
     for name in required {
@@ -557,17 +526,14 @@ async fn subscription_session_chat_streams_new_messages() -> anyhow::Result<()> 
     let data = schema.data::<BorgGqlData>().expect("gql data").clone();
 
     let session_id = Uri::from_parts("borg", "session", Some("sub-chat"))?;
-    let user_id = Uri::from_parts("borg", "user", Some("sub-user"))?;
     let port_id = Uri::from_parts("borg", "port", Some("http"))?;
-    data.db
-        .upsert_session(&session_id, &[user_id], &port_id)
-        .await?;
+    data.db.upsert_session(&session_id, &port_id).await?;
 
     let request = async_graphql::Request::new(
         r#"
               subscription($session: Uri!) {
-                sessionChat(sessionId: $session, afterMessageIndex: -1, pollIntervalMs: 100) {
-                  messageIndex
+                sessionChat(sessionId: $session, pollIntervalMs: 100) {
+                  id
                   messageType
                   role
                   text
@@ -585,6 +551,7 @@ async fn subscription_session_chat_streams_new_messages() -> anyhow::Result<()> 
         .append_session_message(
             &session_id,
             &json!({"type":"assistant","role":"assistant","content":"hello from subscription"}),
+            None,
         )
         .await?;
 
@@ -607,16 +574,13 @@ async fn subscription_notifications_filter_user_messages_by_default() -> anyhow:
     let data = schema.data::<BorgGqlData>().expect("gql data").clone();
 
     let session_id = Uri::from_parts("borg", "session", Some("sub-notifications"))?;
-    let user_id = Uri::from_parts("borg", "user", Some("sub-user-2"))?;
     let port_id = Uri::from_parts("borg", "port", Some("http"))?;
-    data.db
-        .upsert_session(&session_id, &[user_id], &port_id)
-        .await?;
+    data.db.upsert_session(&session_id, &port_id).await?;
 
     let request = async_graphql::Request::new(
-            r#"
+        r#"
               subscription($session: Uri!) {
-                sessionNotifications(sessionId: $session, afterMessageIndex: -1, pollIntervalMs: 100) {
+                sessionNotifications(sessionId: $session, pollIntervalMs: 100) {
                   kind
                   messageType
                   role
@@ -624,10 +588,10 @@ async fn subscription_notifications_filter_user_messages_by_default() -> anyhow:
                 }
               }
             "#,
-        )
-        .variables(async_graphql::Variables::from_json(
-            json!({ "session": session_id }),
-        ));
+    )
+    .variables(async_graphql::Variables::from_json(
+        json!({ "session": session_id }),
+    ));
 
     let mut stream = schema.execute_stream(request);
 
@@ -635,12 +599,14 @@ async fn subscription_notifications_filter_user_messages_by_default() -> anyhow:
         .append_session_message(
             &session_id,
             &json!({"type":"user","role":"user","content":"user message"}),
+            None,
         )
         .await?;
     data.db
         .append_session_message(
             &session_id,
             &json!({"type":"assistant","role":"assistant","content":"assistant notification"}),
+            None,
         )
         .await?;
 

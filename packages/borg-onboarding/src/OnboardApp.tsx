@@ -1,5 +1,15 @@
-import { createBorgApiClient } from "@borg/api";
+import {
+  deleteProvider,
+  listOnboardingPortBindingsByPortId,
+  listOnboardingSessionMessages,
+  listProviderModels,
+  type OnboardingSessionMessage,
+  upsertOnboardingActor,
+  upsertOnboardingPort,
+  upsertProvider,
+} from "@borg/graphql-client";
 import { createI18n } from "@borg/i18n";
+import { createEventReducer, useStateReducer } from "@borg/react-statereducer";
 import {
   Button,
   ChatComposerShell,
@@ -24,7 +34,6 @@ type SetupState = {
   mode: AiMode | null;
   providerId: string | null;
   assistantName: string;
-  behaviorId: string | null;
   actorId: string | null;
   actorDisplayName: string | null;
   channel: Channel | null;
@@ -33,19 +42,122 @@ type SetupState = {
   telegramHandle: string | null;
 };
 
-type OnboardingChatRuntime = {
-  actorId: string;
-  behaviorId: string;
-  sessionId: string;
-  userId: string;
-};
-
 type TelegramBotInfo = {
   handle: string | null;
   displayName: string | null;
 };
 
-const borgApi = createBorgApiClient();
+type OnboardState = {
+  messages: ChatMessageItem[];
+  step: Step;
+  draft: string;
+  isSubmitting: boolean;
+  inlineError: string | null;
+  mirroredSessionId: string | null;
+  setup: SetupState;
+};
+
+type OnboardEvent =
+  | { type: "chat/append"; message: ChatMessageItem }
+  | { type: "chat/append_many"; messages: ChatMessageItem[] }
+  | { type: "chat/patch"; id: string; patch: Partial<ChatMessageItem> }
+  | { type: "chat/remove"; id: string }
+  | { type: "flow/set_step"; step: Step }
+  | { type: "flow/set_draft"; draft: string }
+  | { type: "flow/set_submitting"; isSubmitting: boolean }
+  | { type: "flow/set_error"; error: string | null }
+  | { type: "flow/set_mirrored_session"; sessionId: string | null }
+  | { type: "flow/patch_setup"; patch: Partial<SetupState> }
+  | { type: "flow/back_requested" };
+
+const INITIAL_SETUP: SetupState = {
+  mode: null,
+  providerId: null,
+  assistantName: "",
+  actorId: null,
+  actorDisplayName: null,
+  channel: null,
+  portId: null,
+  portName: null,
+  telegramHandle: null,
+};
+
+const INITIAL_STATE: OnboardState = {
+  messages: [],
+  step: "chooseMode",
+  draft: "",
+  isSubmitting: false,
+  inlineError: null,
+  mirroredSessionId: null,
+  setup: INITIAL_SETUP,
+};
+
+const onboardReducer = createEventReducer<OnboardState, OnboardEvent>({
+  "chat/append": (state, event) => ({
+    state: { ...state, messages: [...state.messages, event.message] },
+  }),
+  "chat/append_many": (state, event) => ({
+    state: { ...state, messages: [...state.messages, ...event.messages] },
+  }),
+  "chat/patch": (state, event) => ({
+    state: {
+      ...state,
+      messages: state.messages.map((message) =>
+        message.id === event.id
+          ? {
+              ...message,
+              ...event.patch,
+              timestamp:
+                event.patch.timestamp ?? message.timestamp ?? nowTimestamp(),
+            }
+          : message
+      ),
+    },
+  }),
+  "chat/remove": (state, event) => ({
+    state: {
+      ...state,
+      messages: state.messages.filter((message) => message.id !== event.id),
+    },
+  }),
+  "flow/set_step": (state, event) => ({
+    state: { ...state, step: event.step },
+  }),
+  "flow/set_draft": (state, event) => ({
+    state: { ...state, draft: event.draft },
+  }),
+  "flow/set_submitting": (state, event) => ({
+    state: { ...state, isSubmitting: event.isSubmitting },
+  }),
+  "flow/set_error": (state, event) => ({
+    state: { ...state, inlineError: event.error },
+  }),
+  "flow/set_mirrored_session": (state, event) => ({
+    state: { ...state, mirroredSessionId: event.sessionId },
+  }),
+  "flow/patch_setup": (state, event) => ({
+    state: { ...state, setup: { ...state.setup, ...event.patch } },
+  }),
+  "flow/back_requested": (state) => {
+    const previousStep: Step =
+      state.step === "enterApiKey"
+        ? "chooseMode"
+        : state.step === "channelToken"
+          ? "chooseChannel"
+          : state.step === "testMessage"
+            ? "channelToken"
+            : state.step;
+    return {
+      state: {
+        ...state,
+        step: previousStep,
+        inlineError: null,
+        draft: "",
+      },
+    };
+  },
+});
+
 const i18n = createI18n("en");
 
 const DEFAULT_ASSISTANT_PROMPT =
@@ -62,6 +174,54 @@ Rules:
 - Prefer one clear next action per reply.
 - When asked to react to a system update, acknowledge and guide the next step.
 - Keep responses under 4 short lines when possible.`;
+
+function resolveRuntimeBaseUrl(): string {
+  if (typeof window === "undefined") return "";
+  const fromEnv =
+    (import.meta as unknown as { env?: Record<string, string | undefined> }).env
+      ?.VITE_BORG_API_BASE_URL ?? "";
+  if (fromEnv.trim()) return fromEnv.replace(/\/+$/, "");
+
+  const { protocol, hostname, port, origin } = window.location;
+  const isLocal = hostname === "localhost" || hostname === "127.0.0.1";
+  if (isLocal && (port === "5173" || port === "4173")) {
+    return `${protocol}//${hostname}:8080`;
+  }
+  return origin;
+}
+
+type ChatActorPayload = {
+  actorId: string;
+  sessionId: string;
+  userId: string;
+  text: string;
+  metadata?: Record<string, unknown>;
+};
+
+type ChatActorResponse = {
+  session_id: string;
+  reply?: string | null;
+};
+
+async function chatActor(payload: ChatActorPayload): Promise<ChatActorResponse> {
+  const response = await fetch(`${resolveRuntimeBaseUrl()}/ports/http`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      user_key: payload.userId,
+      session_id: payload.sessionId,
+      actor_id: payload.actorId,
+      text: payload.text,
+      metadata: payload.metadata,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`chat actor request failed (${response.status})`);
+  }
+  return (await response.json()) as ChatActorResponse;
+}
 
 function nowTimestamp(): string {
   return new Date().toLocaleTimeString();
@@ -140,66 +300,14 @@ type MirroredChatMessage = {
 };
 
 function detectMessageRole(
-  payload: Record<string, unknown>
+  message: OnboardingSessionMessage
 ): "assistant" | "user" | "system" {
-  const typeCandidate = payload.type;
-  if (typeof typeCandidate === "string") {
-    const type = typeCandidate.trim().toLowerCase();
-    if (type === "assistant") return "assistant";
-    if (type === "user") return "user";
-    if (type === "system") return "system";
-    if (
-      type === "tool_call" ||
-      type === "tool_result" ||
-      type === "session_event"
-    ) {
-      return "system";
-    }
-  }
-
   const roleCandidate =
-    typeof payload.role === "string"
-      ? payload.role.trim().toLowerCase()
-      : typeof payload.author === "string"
-        ? payload.author.trim().toLowerCase()
-        : null;
+    (message.role?.trim().toLowerCase() ?? "") ||
+    message.messageType.trim().toLowerCase();
   if (roleCandidate === "assistant") return "assistant";
   if (roleCandidate === "user") return "user";
   return "system";
-}
-
-function extractMessageText(payload: Record<string, unknown>): string {
-  if (typeof payload.content === "string" && payload.content.trim()) {
-    return payload.content;
-  }
-  if (typeof payload.text === "string" && payload.text.trim()) {
-    return payload.text;
-  }
-  return "";
-}
-
-function isChatPayload(payload: Record<string, unknown>): boolean {
-  const typeCandidate = payload.type;
-  if (typeof typeCandidate === "string") {
-    const type = typeCandidate.trim().toLowerCase();
-    if (type === "assistant" || type === "user") return true;
-    if (
-      type === "system" ||
-      type === "tool_call" ||
-      type === "tool_result" ||
-      type === "session_event"
-    ) {
-      return false;
-    }
-  }
-  const roleCandidate =
-    typeof payload.role === "string"
-      ? payload.role.trim().toLowerCase()
-      : typeof payload.author === "string"
-        ? payload.author.trim().toLowerCase()
-        : null;
-  if (roleCandidate === "assistant" || roleCandidate === "user") return true;
-  return false;
 }
 
 function formatTimestamp(value: unknown): string {
@@ -210,27 +318,27 @@ function formatTimestamp(value: unknown): string {
 }
 
 function toMirroredChatMessages(
-  rawMessages: Record<string, unknown>[]
+  rawMessages: OnboardingSessionMessage[]
 ): MirroredChatMessage[] {
-  return rawMessages
-    .filter((raw) => isChatPayload(raw as Record<string, unknown>))
-    .map((raw, index) => {
-      const payload = raw as Record<string, unknown>;
-      const role = detectMessageRole(payload);
-      const text = extractMessageText(payload);
-      const timestamp = formatTimestamp(
-        typeof payload.created_at === "string"
-          ? payload.created_at
-          : typeof payload.timestamp === "string"
-            ? payload.timestamp
-            : payload.updated_at
-      );
-      const messageIdentity =
-        (typeof payload.message_id === "string" && payload.message_id.trim()) ||
-        `${role}|${text}|${timestamp}|${index}`;
-      return { messageIdentity, role, text, timestamp };
+  return [...rawMessages]
+    .sort((left, right) => left.messageIndex - right.messageIndex)
+    .map((message) => {
+      const role = detectMessageRole(message);
+      const text = message.text?.trim() ?? "";
+      return {
+        messageIdentity: message.id.trim()
+          ? message.id
+          : `${message.sessionId}:${message.messageIndex}`,
+        role,
+        text,
+        timestamp: formatTimestamp(message.createdAt),
+      };
     })
-    .filter((item) => item.text.trim().length > 0);
+    .filter(
+      (item) =>
+        (item.role === "assistant" || item.role === "user") &&
+        item.text.length > 0
+    );
 }
 
 async function fetchTelegramBotInfo(token: string): Promise<TelegramBotInfo> {
@@ -259,33 +367,23 @@ async function fetchTelegramBotInfo(token: string): Promise<TelegramBotInfo> {
 }
 
 export function OnboardApp() {
-  const [messages, setMessages] = React.useState<ChatMessageItem[]>([]);
-  const [step, setStep] = React.useState<Step>("chooseMode");
-  const [draft, setDraft] = React.useState("");
-  const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [inlineError, setInlineError] = React.useState<string | null>(null);
-  const [runtime, setRuntime] = React.useState<OnboardingChatRuntime | null>(
-    null
-  );
+  const { state, dispatch, getState } = useStateReducer({
+    initialState: INITIAL_STATE,
+    reducer: onboardReducer,
+  });
+  const {
+    messages,
+    step,
+    draft,
+    isSubmitting,
+    inlineError,
+    mirroredSessionId,
+    setup,
+  } = state;
   const submitInFlightRef = React.useRef(false);
   const pollInFlightRef = React.useRef(false);
-  const mirroredCursorRef = React.useRef(0);
   const mirroredSessionRef = React.useRef<string | null>(null);
-  const [mirroredSessionId, setMirroredSessionId] = React.useState<
-    string | null
-  >(null);
-  const [setup, setSetup] = React.useState<SetupState>({
-    mode: null,
-    providerId: null,
-    assistantName: "",
-    behaviorId: null,
-    actorId: null,
-    actorDisplayName: null,
-    channel: null,
-    portId: null,
-    portName: null,
-    telegramHandle: null,
-  });
+  const mirroredSeenRef = React.useRef<Set<string>>(new Set());
 
   const appendMessage = React.useCallback(
     (message: Omit<ChatMessageItem, "id" | "timestamp">) => {
@@ -294,140 +392,54 @@ export function OnboardApp() {
         timestamp: nowTimestamp(),
         ...message,
       };
-      setMessages((current) => [...current, next]);
+      dispatch({ type: "chat/append", message: next });
       return next.id;
     },
-    []
+    [dispatch]
   );
 
   React.useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      setMessages((current) => {
-        if (current.some((message) => message.id === "onboard-intro")) {
-          return current;
-        }
-        return [
-          ...current,
-          {
-            id: "onboard-intro",
-            role: "assistant",
-            text: i18n.t("onboard.assistant.intro_single"),
-            timestamp: nowTimestamp(),
-          },
-        ];
+      const current = getState();
+      if (current.messages.some((message) => message.id === "onboard-intro")) {
+        return;
+      }
+      dispatch({
+        type: "chat/append",
+        message: {
+          id: "onboard-intro",
+          role: "assistant",
+          text: i18n.t("onboard.assistant.intro_single"),
+          timestamp: nowTimestamp(),
+        },
       });
     }, 520);
     return () => window.clearTimeout(timeoutId);
-  }, []);
+  }, [dispatch, getState]);
 
   const patchMessage = React.useCallback(
     (id: string, patch: Partial<ChatMessageItem>) => {
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === id
-            ? {
-                ...message,
-                ...patch,
-                timestamp:
-                  patch.timestamp ?? message.timestamp ?? nowTimestamp(),
-              }
-            : message
-        )
-      );
+      dispatch({ type: "chat/patch", id, patch });
     },
-    []
-  );
-
-  const sendActorTurn = React.useCallback(
-    async ({
-      text,
-      asUser = true,
-      metadata,
-      showFailureMessage = true,
-    }: {
-      text: string;
-      asUser?: boolean;
-      metadata?: Record<string, unknown>;
-      showFailureMessage?: boolean;
-    }): Promise<string> => {
-      if (!runtime) return "";
-
-      if (asUser) {
-        appendMessage({ role: "user", text });
-      }
-
-      const pendingId = appendMessage({
-        role: "assistant",
-        text: "...",
-        pending: true,
-      });
-
-      try {
-        const response = await borgApi.chatActor({
-          actorId: runtime.actorId,
-          sessionId: runtime.sessionId,
-          userId: runtime.userId,
-          text,
-          metadata: metadata ?? {
-            source: "onboard",
-            step,
-          },
-        });
-        const reply = response.reply?.trim() || "";
-        patchMessage(pendingId, {
-          text: reply || i18n.t("onboard.assistant.retry_test_message"),
-          pending: false,
-        });
-        return reply;
-      } catch {
-        if (showFailureMessage) {
-          patchMessage(pendingId, {
-            role: "system",
-            text: "I had trouble responding. Please try again.",
-            pending: false,
-          });
-        } else {
-          setMessages((current) =>
-            current.filter((message) => message.id !== pendingId)
-          );
-        }
-        return "";
-      }
-    },
-    [appendMessage, patchMessage, runtime, step]
+    [dispatch]
   );
 
   const bootstrapOnboardingActor = React.useCallback(
     async (mode: AiMode, providerId: string | null) => {
-      const behaviorId = createLocalId("borg:behavior:onboard");
       const actorId = createLocalId("borg:actor:onboard");
       const sessionId = createLocalId("borg:session:onboard");
       const userId = createLocalId("borg:user:onboard");
 
-      await borgApi.upsertBehavior({
-        behaviorId,
-        name: "Onboarding Assistant",
-        systemPrompt: ONBOARDING_ACTOR_PROMPT,
-        preferredProviderId: providerId,
-        requiredCapabilitiesJson: [],
-        sessionTurnConcurrency: "serial",
-        status: "ACTIVE",
-      });
-
-      await borgApi.upsertActor({
+      await upsertOnboardingActor({
         actorId,
         name: "Onboarding Assistant",
         systemPrompt: ONBOARDING_ACTOR_PROMPT,
-        defaultBehaviorId: behaviorId,
         status: "RUNNING",
       });
 
-      const nextRuntime = { actorId, behaviorId, sessionId, userId };
-      setRuntime(nextRuntime);
-
-      setStep("chooseChannel");
-      setInlineError(null);
-      setDraft("");
+      dispatch({ type: "flow/set_step", step: "chooseChannel" });
+      dispatch({ type: "flow/set_error", error: null });
+      dispatch({ type: "flow/set_draft", draft: "" });
 
       // initial onboarding turn
       const pendingId = appendMessage({
@@ -436,7 +448,7 @@ export function OnboardApp() {
         pending: true,
       });
       try {
-        const response = await borgApi.chatActor({
+        const response = await chatActor({
           actorId,
           sessionId,
           userId,
@@ -463,18 +475,18 @@ export function OnboardApp() {
         });
       }
     },
-    [appendMessage, patchMessage]
+    [appendMessage, dispatch, patchMessage]
   );
 
   const handleModeSelection = React.useCallback(
     async (mode: AiMode) => {
       if (isSubmitting || step !== "chooseMode") return;
-      setInlineError(null);
-      setSetup((current) => ({ ...current, mode }));
+      dispatch({ type: "flow/set_error", error: null });
+      dispatch({ type: "flow/patch_setup", patch: { mode } });
       appendMessage({ role: "user", text: modeLabel(mode) });
 
       if (mode === "local") {
-        setIsSubmitting(true);
+        dispatch({ type: "flow/set_submitting", isSubmitting: true });
         appendMessage({
           role: "assistant",
           text: i18n.t("onboard.assistant.local_mode_selected"),
@@ -486,9 +498,9 @@ export function OnboardApp() {
             role: "system",
             text: i18n.t("onboard.error.bootstrap_failed"),
           });
-          setStep("chooseMode");
+          dispatch({ type: "flow/set_step", step: "chooseMode" });
         } finally {
-          setIsSubmitting(false);
+          dispatch({ type: "flow/set_submitting", isSubmitting: false });
         }
         return;
       }
@@ -499,26 +511,32 @@ export function OnboardApp() {
           provider: modeLabel(mode),
         }),
       });
-      setStep("enterApiKey");
-      setDraft("");
+      dispatch({ type: "flow/set_step", step: "enterApiKey" });
+      dispatch({ type: "flow/set_draft", draft: "" });
     },
-    [appendMessage, bootstrapOnboardingActor, isSubmitting, step]
+    [appendMessage, bootstrapOnboardingActor, dispatch, isSubmitting, step]
   );
 
   const handleApiKeySubmit = React.useCallback(
     async (submitted?: string) => {
       const apiKey = (submitted ?? draft).trim();
       if (!apiKey) {
-        setInlineError(i18n.t("onboard.error.api_key_required"));
+        dispatch({
+          type: "flow/set_error",
+          error: i18n.t("onboard.error.api_key_required"),
+        });
         return;
       }
       if (setup.mode !== "openai" && setup.mode !== "openrouter") {
-        setInlineError(i18n.t("onboard.error.mode_missing"));
+        dispatch({
+          type: "flow/set_error",
+          error: i18n.t("onboard.error.mode_missing"),
+        });
         return;
       }
 
-      setInlineError(null);
-      setIsSubmitting(true);
+      dispatch({ type: "flow/set_error", error: null });
+      dispatch({ type: "flow/set_submitting", isSubmitting: true });
       appendMessage({ role: "user", text: maskSecret(apiKey) });
       const pendingId = appendMessage({
         role: "assistant",
@@ -528,14 +546,14 @@ export function OnboardApp() {
 
       const providerId = createLocalId("borg:provider");
       try {
-        await borgApi.upsertProvider({
+        await upsertProvider({
           provider: providerId,
           providerKind: setup.mode,
           apiKey,
           enabled: true,
         });
-        await borgApi.listProviderModels(providerId);
-        setSetup((current) => ({ ...current, providerId }));
+        await listProviderModels(providerId);
+        dispatch({ type: "flow/patch_setup", patch: { providerId } });
         patchMessage(pendingId, {
           text: i18n.t("onboard.assistant.provider_connected", {
             provider: modeLabel(setup.mode as "openai" | "openrouter"),
@@ -544,31 +562,41 @@ export function OnboardApp() {
         });
         await bootstrapOnboardingActor(setup.mode, providerId);
       } catch {
-        await borgApi.deleteProvider(providerId, { ignoreNotFound: true });
+        await deleteProvider(providerId, { ignoreNotFound: true });
         patchMessage(pendingId, {
           text: i18n.t("onboard.error.invalid_api_key"),
           pending: false,
           role: "system",
         });
-        setInlineError(i18n.t("onboard.error.invalid_api_key_retry"));
+        dispatch({
+          type: "flow/set_error",
+          error: i18n.t("onboard.error.invalid_api_key_retry"),
+        });
       } finally {
-        setIsSubmitting(false);
-        setDraft("");
+        dispatch({ type: "flow/set_submitting", isSubmitting: false });
+        dispatch({ type: "flow/set_draft", draft: "" });
       }
     },
-    [appendMessage, bootstrapOnboardingActor, draft, patchMessage, setup.mode]
+    [
+      appendMessage,
+      bootstrapOnboardingActor,
+      dispatch,
+      draft,
+      patchMessage,
+      setup.mode,
+    ]
   );
 
   const handleChannelSelection = React.useCallback(
     async (channel: Channel) => {
       if (isSubmitting || step !== "chooseChannel") return;
-      setInlineError(null);
-      setIsSubmitting(true);
-      setSetup((current) => ({ ...current, channel }));
+      dispatch({ type: "flow/set_error", error: null });
+      dispatch({ type: "flow/set_submitting", isSubmitting: true });
+      dispatch({ type: "flow/patch_setup", patch: { channel } });
       appendMessage({ role: "user", text: channelLabel(channel) });
 
-      setStep("channelToken");
-      setDraft("");
+      dispatch({ type: "flow/set_step", step: "channelToken" });
+      dispatch({ type: "flow/set_draft", draft: "" });
       appendMessage({
         role: "assistant",
         text:
@@ -577,9 +605,9 @@ export function OnboardApp() {
             : i18n.t("onboard.assistant.ask_discord_token"),
       });
 
-      setIsSubmitting(false);
+      dispatch({ type: "flow/set_submitting", isSubmitting: false });
     },
-    [appendMessage, isSubmitting, step]
+    [appendMessage, dispatch, isSubmitting, step]
   );
 
   const handleChannelTokenSubmit = React.useCallback(
@@ -587,15 +615,20 @@ export function OnboardApp() {
       const token = (submitted ?? draft).trim();
       const { channel } = setup;
       if (!channel) {
-        setInlineError(i18n.t("onboard.error.channel_missing"));
+        dispatch({
+          type: "flow/set_error",
+          error: i18n.t("onboard.error.channel_missing"),
+        });
         return;
       }
       if (!token) {
-        setInlineError(
-          channel === "telegram"
-            ? i18n.t("onboard.error.telegram_token_required")
-            : i18n.t("onboard.error.discord_token_required")
-        );
+        dispatch({
+          type: "flow/set_error",
+          error:
+            channel === "telegram"
+              ? i18n.t("onboard.error.telegram_token_required")
+              : i18n.t("onboard.error.discord_token_required"),
+        });
         return;
       }
 
@@ -603,7 +636,10 @@ export function OnboardApp() {
         channel === "telegram" &&
         !/^\d{6,}:[A-Za-z0-9_-]{20,}$/.test(token)
       ) {
-        setInlineError(i18n.t("onboard.error.telegram_token_invalid"));
+        dispatch({
+          type: "flow/set_error",
+          error: i18n.t("onboard.error.telegram_token_invalid"),
+        });
         appendMessage({
           role: "assistant",
           text: i18n.t("onboard.assistant.telegram_help"),
@@ -611,12 +647,15 @@ export function OnboardApp() {
         return;
       }
       if (channel === "discord" && token.length < 20) {
-        setInlineError(i18n.t("onboard.error.discord_token_invalid"));
+        dispatch({
+          type: "flow/set_error",
+          error: i18n.t("onboard.error.discord_token_invalid"),
+        });
         return;
       }
 
-      setInlineError(null);
-      setIsSubmitting(true);
+      dispatch({ type: "flow/set_error", error: null });
+      dispatch({ type: "flow/set_submitting", isSubmitting: true });
       appendMessage({ role: "user", text: maskSecret(token) });
 
       const botInfo =
@@ -626,7 +665,6 @@ export function OnboardApp() {
       const assistantName =
         botInfo.displayName || setup.assistantName || "Assistant";
       const slug = toSlug(assistantName) || "assistant";
-      const behaviorId = setup.behaviorId ?? createLocalId("borg:behavior");
       const actorId = setup.actorId ?? `borg:actor:${slug}-01`;
       const actorDisplayName = setup.actorDisplayName ?? `${assistantName}-01`;
       const unique = `${Date.now()}`.slice(-6);
@@ -634,22 +672,11 @@ export function OnboardApp() {
       const portId = `borg:port:${portName}`;
 
       try {
-        if (!setup.actorId || !setup.behaviorId) {
-          await borgApi.upsertBehavior({
-            behaviorId,
-            name: assistantName,
-            systemPrompt: DEFAULT_ASSISTANT_PROMPT,
-            preferredProviderId: setup.providerId,
-            requiredCapabilitiesJson: [],
-            sessionTurnConcurrency: "serial",
-            status: "ACTIVE",
-          });
-
-          await borgApi.upsertActor({
+        if (!setup.actorId) {
+          await upsertOnboardingActor({
             actorId,
             name: actorDisplayName,
             systemPrompt: DEFAULT_ASSISTANT_PROMPT,
-            defaultBehaviorId: behaviorId,
             status: "RUNNING",
           });
         }
@@ -659,7 +686,7 @@ export function OnboardApp() {
           settings.allowed_external_user_ids = [];
         }
 
-        await borgApi.upsertPort(portId, {
+        await upsertOnboardingPort(portId, {
           provider: channel,
           enabled: true,
           allows_guests: true,
@@ -669,22 +696,23 @@ export function OnboardApp() {
 
         const telegramHandle = channel === "telegram" ? botInfo.handle : null;
 
-        setSetup((current) => ({
-          ...current,
-          assistantName,
-          behaviorId,
-          actorId,
-          actorDisplayName,
-          portId,
-          portName,
-          telegramHandle,
-        }));
+        dispatch({
+          type: "flow/patch_setup",
+          patch: {
+            assistantName,
+            actorId,
+            actorDisplayName,
+            portId,
+            portName,
+            telegramHandle,
+          },
+        });
 
-        setStep("testMessage");
-        setDraft("");
-        setMirroredSessionId(null);
-        mirroredCursorRef.current = 0;
+        dispatch({ type: "flow/set_step", step: "testMessage" });
+        dispatch({ type: "flow/set_draft", draft: "" });
+        dispatch({ type: "flow/set_mirrored_session", sessionId: null });
         mirroredSessionRef.current = null;
+        mirroredSeenRef.current = new Set();
         const botName = botInfo.displayName ?? botInfo.handle ?? "your bot";
         if (channel === "telegram") {
           const startLink = telegramStartLink(telegramHandle);
@@ -713,16 +741,18 @@ export function OnboardApp() {
               ? i18n.t("onboard.error.telegram_connect_failed")
               : i18n.t("onboard.error.discord_connect_failed"),
         });
-        setInlineError(
-          channel === "telegram"
-            ? i18n.t("onboard.error.telegram_connect_retry")
-            : i18n.t("onboard.error.discord_connect_retry")
-        );
+        dispatch({
+          type: "flow/set_error",
+          error:
+            channel === "telegram"
+              ? i18n.t("onboard.error.telegram_connect_retry")
+              : i18n.t("onboard.error.discord_connect_retry"),
+        });
       } finally {
-        setIsSubmitting(false);
+        dispatch({ type: "flow/set_submitting", isSubmitting: false });
       }
     },
-    [appendMessage, draft, setup]
+    [appendMessage, dispatch, draft, setup]
   );
 
   React.useEffect(() => {
@@ -745,53 +775,52 @@ export function OnboardApp() {
       try {
         let sessionId = mirroredSessionId;
         if (!sessionId) {
-          const bindings = await borgApi.listPortBindings(portId, 50);
+          const bindings = await listOnboardingPortBindingsByPortId(portId, 50);
           const match =
-            bindings.find((binding) => binding.agent_id === actorId) ??
-            bindings[0];
-          sessionId = match?.session_id ?? null;
+            bindings.find((binding) => binding.actorId === actorId) ??
+            bindings[0] ??
+            null;
+          sessionId = match?.sessionId ?? null;
           if (sessionId) {
-            setMirroredSessionId(sessionId);
+            dispatch({ type: "flow/set_mirrored_session", sessionId });
           }
         }
         if (!sessionId) return;
         if (mirroredSessionRef.current !== sessionId) {
           mirroredSessionRef.current = sessionId;
-          mirroredCursorRef.current = 0;
+          mirroredSeenRef.current = new Set();
         }
 
-        const rawMessages = await borgApi.listSessionMessages(sessionId, {
-          from: 0,
-          limit: 250,
-        });
+        const rawMessages = await listOnboardingSessionMessages(sessionId, 250);
         if (!active || rawMessages.length === 0) return;
 
-        const fromIndex = Math.min(
-          mirroredCursorRef.current,
-          rawMessages.length
-        );
-        const nextBatch = rawMessages.slice(fromIndex);
-        mirroredCursorRef.current = rawMessages.length;
-        const mapped = toMirroredChatMessages(nextBatch);
+        const mapped = toMirroredChatMessages(rawMessages);
         let sawAssistant = false;
+        const seenMessages = mirroredSeenRef.current;
+        const nextMessages: ChatMessageItem[] = [];
 
         for (const item of mapped) {
+          if (seenMessages.has(item.messageIdentity)) {
+            continue;
+          }
+          seenMessages.add(item.messageIdentity);
           if (item.role === "assistant") {
             sawAssistant = true;
           }
-          setMessages((current) => [
-            ...current,
-            {
-              id: `onboard-mirror-${item.messageIdentity}`,
-              role: item.role,
-              text: item.text,
-              timestamp: item.timestamp,
-            },
-          ]);
+          nextMessages.push({
+            id: `onboard-mirror-${item.messageIdentity}`,
+            role: item.role,
+            text: item.text,
+            timestamp: item.timestamp,
+          });
+        }
+
+        if (nextMessages.length > 0) {
+          dispatch({ type: "chat/append_many", messages: nextMessages });
         }
 
         if (sawAssistant && step === "testMessage") {
-          setStep("complete");
+          dispatch({ type: "flow/set_step", step: "complete" });
         }
       } catch {
         // Keep polling silently during onboarding handoff.
@@ -809,14 +838,21 @@ export function OnboardApp() {
       active = false;
       window.clearInterval(interval);
     };
-  }, [mirroredSessionId, setup.actorId, setup.channel, setup.portId, step]);
+  }, [
+    dispatch,
+    mirroredSessionId,
+    setup.actorId,
+    setup.channel,
+    setup.portId,
+    step,
+  ]);
 
   const submitDraft = React.useCallback(async () => {
     if (isSubmitting || submitInFlightRef.current) return;
     submitInFlightRef.current = true;
     try {
       const submitted = draft;
-      setDraft("");
+      dispatch({ type: "flow/set_draft", draft: "" });
       if (step === "enterApiKey") {
         await handleApiKeySubmit(submitted);
         return;
@@ -827,24 +863,25 @@ export function OnboardApp() {
     } finally {
       submitInFlightRef.current = false;
     }
-  }, [draft, handleApiKeySubmit, handleChannelTokenSubmit, isSubmitting, step]);
+  }, [
+    dispatch,
+    draft,
+    handleApiKeySubmit,
+    handleChannelTokenSubmit,
+    isSubmitting,
+    step,
+  ]);
 
   const canGoBack = step !== "chooseMode" && step !== "complete";
   const handleBack = React.useCallback(() => {
-    setInlineError(null);
-    setDraft("");
-    if (step === "enterApiKey") {
-      setStep("chooseMode");
-      return;
-    }
-    if (step === "channelToken") {
-      setStep("chooseChannel");
-      return;
-    }
-    if (step === "testMessage") {
-      setStep("channelToken");
-    }
-  }, [step]);
+    dispatch({ type: "flow/back_requested" });
+  }, [dispatch]);
+  const setDraftValue = React.useCallback(
+    (value: string) => {
+      dispatch({ type: "flow/set_draft", draft: value });
+    },
+    [dispatch]
+  );
 
   const composer = React.useMemo(() => {
     if (step === "chooseMode") {
@@ -979,15 +1016,15 @@ export function OnboardApp() {
     return (
       <ChatComposerShell
         value={draft}
-        onChange={setDraft}
+        onChange={setDraftValue}
         onSubmit={() => void submitDraft()}
         isRunning={isSubmitting}
         placeholder={placeholder}
       />
     );
   }, [
-    appendMessage,
     draft,
+    setDraftValue,
     handleChannelSelection,
     handleModeSelection,
     isSubmitting,

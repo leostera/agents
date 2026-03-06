@@ -1,8 +1,8 @@
-mod clockwork;
 mod infer;
 mod models;
 mod ports;
 mod providers;
+mod schedule;
 pub mod tools;
 
 use anyhow::Result;
@@ -39,10 +39,15 @@ enum Command {
         #[command(subcommand)]
         cmd: SessionCommand,
     },
-    #[command(about = "Memory maintenance commands")]
+    #[command(about = "Memory commands")]
     Memory {
         #[command(subcommand)]
-        cmd: MemoryCommand,
+        cmd: tools::memory::MemoryToolsCommand,
+    },
+    #[command(about = "Task commands")]
+    Task {
+        #[command(subcommand)]
+        cmd: tools::taskgraph::TaskGraphCommand,
     },
     #[command(about = "Set persisted runtime configuration values")]
     Config {
@@ -74,10 +79,10 @@ enum Command {
         #[command(subcommand)]
         cmd: models::ModelsCommand,
     },
-    #[command(about = "Clockwork jobs CRUD commands")]
-    Clockwork {
+    #[command(about = "Schedule jobs CRUD commands")]
+    Schedule {
         #[command(subcommand)]
-        cmd: clockwork::ClockworkCommand,
+        cmd: schedule::ScheduleCommand,
     },
     #[command(about = "Local embedded inference commands")]
     Infer {
@@ -110,15 +115,6 @@ enum SessionCommand {
     ClearHistory {
         #[arg(help = "Session URI to clear")]
         session_id: String,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum MemoryCommand {
-    #[command(about = "Clear all memory facts and search data")]
-    Clear {
-        #[arg(long, help = "Skip confirmation prompt")]
-        yes: bool,
     },
 }
 
@@ -169,9 +165,30 @@ pub async fn run(app: BorgCliApp, cli: Cli) -> Result<()> {
                 app.session_clear_history(session_id).await
             }
         },
-        Command::Memory { cmd } => match cmd {
-            MemoryCommand::Clear { yes } => app.memory_clear(yes).await,
-        },
+        Command::Memory { cmd } => {
+            match tools::memory::run(&app, cmd).await {
+                Ok(output) => println!("{}", serde_json::to_string(&output)?),
+                Err(err) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&json!({ "ok": false, "error": err.to_string() }))?
+                    );
+                }
+            }
+            Ok(())
+        }
+        Command::Task { cmd } => {
+            match tools::taskgraph::run(&app, cmd).await {
+                Ok(output) => println!("{}", serde_json::to_string(&output)?),
+                Err(err) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&json!({ "ok": false, "error": err.to_string() }))?
+                    );
+                }
+            }
+            Ok(())
+        }
         Command::Config { cmd } => match cmd {
             ConfigCommand::Set { key, value } => app.config_set(key, value).await,
         },
@@ -221,8 +238,8 @@ pub async fn run(app: BorgCliApp, cli: Cli) -> Result<()> {
             }
             Ok(())
         }
-        Command::Clockwork { cmd } => {
-            if let Err(err) = clockwork::run(&app, cmd).await {
+        Command::Schedule { cmd } => {
+            if let Err(err) = schedule::run(&app, cmd).await {
                 println!(
                     "{}",
                     serde_json::to_string(&json!({ "ok": false, "error": err.to_string() }))?

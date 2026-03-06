@@ -1,18 +1,22 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use borg_agent::ToolResultData;
 use borg_cmd::CommandRegistry;
 use borg_core::{TelegramUserId, Uri};
 use borg_exec::{
-    BorgCommand, PortContext, RuntimeToolCall, RuntimeToolResult, SessionOutput,
+    BorgCommand, PortContext, ReasoningEffort, RuntimeToolCall, RuntimeToolResult, SessionOutput,
     TelegramSessionContext,
 };
 use serde::{Deserialize, Serialize};
 use teloxide::prelude::*;
+use teloxide::types::ParseMode;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::{error, warn};
 
 use crate::message::PortInput;
-use crate::output_format::{format_tool_action_message, split_message_by_limit};
+use crate::output_format::{
+    format_for_telegram_html, format_tool_action_message_for_telegram_html, split_message_by_limit,
+};
 use crate::{Port, PortConfig, PortMessage};
 
 const TELEGRAM_USER_ID_PREFIX: &str = "telegram";
@@ -20,6 +24,7 @@ const TELEGRAM_CONVERSATION_PREFIX: &str = "telegram";
 const TELEGRAM_MESSAGE_LIMIT: usize = 4000;
 const TELEGRAM_START_GREETING: &str = "Borg is online. Send a message to start.";
 const MODEL_COMMAND_USAGE: &str = "Usage: /model [model_name]";
+const SETTINGS_COMMAND_USAGE: &str = "Usage: /settings reasoning [minimum|low|medium|high|xhigh]";
 
 #[derive(Debug, Clone)]
 enum TelegramCommandRoute {
@@ -80,8 +85,13 @@ impl TelegramPort {
         let chat_id = ChatId(ctx.chat_id);
 
         for call in output.tool_calls {
-            let body = format_tool_action_message(&call.tool_name, &call.arguments);
-            self.send_text(chat_id, body).await?;
+            let elapsed = tool_call_elapsed(&call.output);
+            let body = format_tool_action_message_for_telegram_html(
+                &call.tool_name,
+                &call.arguments,
+                elapsed,
+            );
+            self.send_html(chat_id, body).await?;
         }
 
         if let Some(reply) = output.reply {
@@ -93,7 +103,21 @@ impl TelegramPort {
 
     async fn send_text(&self, chat_id: ChatId, message: String) -> Result<()> {
         for chunk in split_message_by_limit(&message, TELEGRAM_MESSAGE_LIMIT) {
-            self.bot.send_message(chat_id, chunk).await?;
+            let formatted = format_for_telegram_html(&chunk);
+            self.bot
+                .send_message(chat_id, formatted)
+                .parse_mode(ParseMode::Html)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn send_html(&self, chat_id: ChatId, html: String) -> Result<()> {
+        for chunk in split_message_by_limit(&html, TELEGRAM_MESSAGE_LIMIT) {
+            self.bot
+                .send_message(chat_id, chunk)
+                .parse_mode(ParseMode::Html)
+                .await?;
         }
         Ok(())
     }
@@ -246,6 +270,21 @@ fn build_telegram_command_registry() -> Result<CommandRegistry<(), TelegramComma
                 }
             }
         })
+        .add_command("settings", |req| async move {
+            match parse_settings_command_action(&req.args) {
+                SettingsCommandAction::ReasoningShow => Ok(TelegramCommandRoute::Forward(
+                    BorgCommand::ReasoningShowCurrent,
+                )),
+                SettingsCommandAction::ReasoningSet(reasoning_effort) => {
+                    Ok(TelegramCommandRoute::Forward(BorgCommand::ReasoningSet {
+                        reasoning_effort,
+                    }))
+                }
+                SettingsCommandAction::Usage => Ok(TelegramCommandRoute::Local(
+                    SETTINGS_COMMAND_USAGE.to_string(),
+                )),
+            }
+        })
         .add_command("participants", |_req| async move {
             Ok(TelegramCommandRoute::LocalParticipants)
         })
@@ -268,11 +307,42 @@ enum ModelCommandAction {
     Usage,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SettingsCommandAction {
+    ReasoningShow,
+    ReasoningSet(ReasoningEffort),
+    Usage,
+}
+
 fn parse_model_command_action(args: &[String]) -> ModelCommandAction {
     match args {
         [] => ModelCommandAction::Show,
         [model] if !model.trim().is_empty() => ModelCommandAction::Set(model.trim().to_string()),
         [..] => ModelCommandAction::Usage,
+    }
+}
+
+fn parse_settings_command_action(args: &[String]) -> SettingsCommandAction {
+    match args {
+        [setting] if setting.eq_ignore_ascii_case("reasoning") => {
+            SettingsCommandAction::ReasoningShow
+        }
+        [setting, level] if setting.eq_ignore_ascii_case("reasoning") => {
+            let normalized = level.trim().to_ascii_lowercase();
+            let effort = match normalized.as_str() {
+                "minimum" | "minimal" => Some(ReasoningEffort::Minimal),
+                "low" => Some(ReasoningEffort::Low),
+                "medium" => Some(ReasoningEffort::Medium),
+                "high" => Some(ReasoningEffort::High),
+                "xhigh" => Some(ReasoningEffort::XHigh),
+                _ => None,
+            };
+            match effort {
+                Some(reasoning_effort) => SettingsCommandAction::ReasoningSet(reasoning_effort),
+                None => SettingsCommandAction::Usage,
+            }
+        }
+        _ => SettingsCommandAction::Usage,
     }
 }
 
@@ -402,12 +472,20 @@ fn telegram_candidates(ctx: &TelegramSessionContext) -> Vec<TelegramUserId> {
     out
 }
 
+fn tool_call_elapsed(output: &ToolResultData<RuntimeToolResult>) -> Option<std::time::Duration> {
+    match output {
+        ToolResultData::Execution { duration, .. } => Some(*duration),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        ModelCommandAction, is_allowed_external_user, parse_model_command_action,
-        routing_key_for_chat_id,
+        ModelCommandAction, SettingsCommandAction, is_allowed_external_user,
+        parse_model_command_action, parse_settings_command_action, routing_key_for_chat_id,
     };
+    use borg_exec::ReasoningEffort;
     use borg_exec::TelegramSessionContext;
 
     #[test]
@@ -461,6 +539,38 @@ mod tests {
         assert_eq!(
             parse_model_command_action(&["first".to_string(), "second".to_string()]),
             ModelCommandAction::Usage
+        );
+    }
+
+    #[test]
+    fn parse_settings_command_action_handles_reasoning_show() {
+        assert_eq!(
+            parse_settings_command_action(&["reasoning".to_string()]),
+            SettingsCommandAction::ReasoningShow
+        );
+    }
+
+    #[test]
+    fn parse_settings_command_action_handles_reasoning_set() {
+        assert_eq!(
+            parse_settings_command_action(&["reasoning".to_string(), "minimum".to_string()]),
+            SettingsCommandAction::ReasoningSet(ReasoningEffort::Minimal)
+        );
+        assert_eq!(
+            parse_settings_command_action(&["reasoning".to_string(), "xhigh".to_string()]),
+            SettingsCommandAction::ReasoningSet(ReasoningEffort::XHigh)
+        );
+    }
+
+    #[test]
+    fn parse_settings_command_action_handles_invalid_shape() {
+        assert_eq!(
+            parse_settings_command_action(&[]),
+            SettingsCommandAction::Usage
+        );
+        assert_eq!(
+            parse_settings_command_action(&["reasoning".to_string(), "unknown".to_string()]),
+            SettingsCommandAction::Usage
         );
     }
 }

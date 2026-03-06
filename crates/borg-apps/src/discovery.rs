@@ -256,6 +256,7 @@ pub fn apps_get_app_tool_spec() -> ToolSpec {
 Returns full details for one app by id.
 Includes the app description and detailed descriptions of each capability available in that app.
 Includes the `available_secrets` list that may be exposed in `Borg.env` when the app is connected.
+Capabilities listed here are informational metadata unless they are also present in the current executable tool list.
 "#
         .trim()
         .to_string(),

@@ -22,17 +22,17 @@ struct ExecuteCommandArgs {
 pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![ToolSpec {
         name: "ShellMode-executeCommand".to_string(),
-        description: "Execute a shell command on the host system. Use this for CLI operations like file inspection (ls, cat, find), version control (git), build tools (cargo, npm), or any other shell-based operations. Returns stdout, stderr, and exit code.".to_string(),
+        description: "Execute a shell command on the host system.\n\nRequired argument shape (JSON object):\n{\"command\":\"<shell command>\",\"hint\":\"<short intent>\",\"timeout_seconds\":30,\"working_directory\":\".\"}\n\nRules:\n- `command` MUST be a single string command (not an array).\n- Do not use keys like `cmd`, `timeout`, or `cwd`.\n- `timeout_seconds` and `working_directory` are optional.\n\nUse this for CLI operations like file inspection (ls, cat, find), version control (git), and build tooling.".to_string(),
         parameters: json!({
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The shell command to execute"
+                    "description": "Single shell command string to execute (for example: `which rg`)"
                 },
                 "hint": {
                     "type": "string",
-                    "description": "Human-readable description of what the command does"
+                    "description": "Short human-readable intent for the command"
                 },
                 "timeout_seconds": {
                     "type": "number",

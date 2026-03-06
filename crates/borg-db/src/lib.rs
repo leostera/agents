@@ -2,16 +2,14 @@ mod actor_bindings;
 mod actors;
 mod agents;
 mod apps;
-mod behaviors;
-mod clockwork;
 mod core;
 mod devmode;
 mod files;
 mod llm_calls;
 mod migrations;
-mod policies;
 mod ports;
 mod providers;
+mod schedule;
 mod sessions;
 mod tool_calls;
 mod users;
@@ -23,7 +21,7 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 
 use borg_core::Uri;
-pub use clockwork::{CreateClockworkJobInput, UpdateClockworkJobInput};
+pub use schedule::{CreateScheduleJobInput, UpdateScheduleJobInput};
 
 #[derive(Clone)]
 pub struct BorgDb {
@@ -65,7 +63,6 @@ pub struct AgentSpecRecord {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SessionRecord {
     pub session_id: Uri,
-    pub users: Vec<Uri>,
     pub port: Uri,
     pub updated_at: DateTime<Utc>,
 }
@@ -74,7 +71,6 @@ pub struct SessionRecord {
 pub struct SessionMessageRecord {
     pub message_id: Uri,
     pub session_id: Uri,
-    pub message_index: i64,
     pub payload: Value,
     pub created_at: DateTime<Utc>,
 }
@@ -115,21 +111,6 @@ pub struct PortRecord {
     pub settings: Value,
     pub active_sessions: u64,
     pub updated_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PolicyRecord {
-    pub policy_id: Uri,
-    pub policy: Value,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PolicyUseRecord {
-    pub policy_id: Uri,
-    pub entity_id: Uri,
-    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -223,7 +204,6 @@ pub struct ActorRecord {
     pub actor_id: Uri,
     pub name: String,
     pub system_prompt: String,
-    pub default_behavior_id: Uri,
     pub status: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -248,7 +228,6 @@ pub struct FileRecord {
 pub struct ActorMailboxRecord {
     pub actor_message_id: Uri,
     pub actor_id: Uri,
-    pub kind: String,
     pub session_id: Option<Uri>,
     pub payload: Value,
     pub status: String,
@@ -261,7 +240,7 @@ pub struct ActorMailboxRecord {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ClockworkJobRecord {
+pub struct ScheduleJobRecord {
     pub job_id: String,
     pub kind: String,
     pub status: String,
@@ -278,7 +257,7 @@ pub struct ClockworkJobRecord {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ClockworkJobRunRecord {
+pub struct ScheduleJobRunRecord {
     pub run_id: String,
     pub job_id: String,
     pub scheduled_for: DateTime<Utc>,
@@ -287,19 +266,6 @@ pub struct ClockworkJobRunRecord {
     pub target_session_id: String,
     pub message_id: String,
     pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct BehaviorRecord {
-    pub behavior_id: Uri,
-    pub name: String,
-    pub system_prompt: String,
-    pub preferred_provider_id: Option<String>,
-    pub required_capabilities_json: Value,
-    pub session_turn_concurrency: String,
-    pub status: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

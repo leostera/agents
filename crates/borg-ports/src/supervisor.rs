@@ -144,14 +144,12 @@ impl BorgPortsSupervisor {
         let sup = self.sup.clone();
         let db = self.rt.db.clone();
         let port_name = config.port_name.clone();
-        let port_id_for_bridge = port_id.clone();
         let assigned_actor_id = config.assigned_actor_id.clone();
         let bridge_task = tokio::spawn(async move {
             bridge_loop(
                 db,
                 sup,
                 port_name,
-                port_id_for_bridge,
                 assigned_actor_id,
                 inbound_rx,
                 outbound_tx,
@@ -248,7 +246,6 @@ async fn bridge_loop(
     db: BorgDb,
     sup: Arc<BorgSupervisor>,
     port_name: String,
-    port_id: Uri,
     assigned_actor_id: Option<Uri>,
     mut inbound_rx: Receiver<PortMessage>,
     outbound_tx: Sender<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
@@ -290,17 +287,6 @@ async fn bridge_loop(
                 None
             }
         };
-        if let Err(err) = ensure_session_row(&db, &session_id, &message.user_id, &port_id).await {
-            error!(
-                target: "borg_ports",
-                error = %err,
-                port_name = %port_name,
-                session_id = %session_id,
-                "failed to upsert canonical session row"
-            );
-            continue;
-        }
-
         if let Ok(ctx) = serde_json::to_value(&message.port_context) {
             if let Err(err) = db
                 .upsert_port_session_context(&port_name, &session_id, &ctx)
@@ -363,28 +349,6 @@ async fn bridge_loop(
     }
 }
 
-async fn ensure_session_row(
-    db: &BorgDb,
-    session_id: &Uri,
-    user_id: &Uri,
-    port_id: &Uri,
-) -> Result<()> {
-    let mut users = db
-        .get_session(session_id)
-        .await?
-        .map(|session| session.users)
-        .unwrap_or_default();
-
-    if !users.iter().any(|value| value == user_id) {
-        users.push(user_id.clone());
-    }
-    if users.is_empty() {
-        users.push(user_id.clone());
-    }
-
-    db.upsert_session(session_id, &users, port_id).await
-}
-
 fn select_actor_id(session_id: Uri, bound_actor_id: Option<Uri>) -> Uri {
     if let Some(actor_id) = bound_actor_id {
         return actor_id;
@@ -397,10 +361,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use super::{
-        ReconcileAction, RunningPortState, compute_reconcile_plan, ensure_session_row,
-        select_actor_id,
-    };
+    use super::{ReconcileAction, RunningPortState, compute_reconcile_plan, select_actor_id};
     use crate::port::{PortConfig, Privacy, Provider, Status};
     use borg_core::Uri;
     use borg_db::BorgDb;
@@ -541,32 +502,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_session_row_upserts_and_merges_users() {
-        let path = tmp_db_path("ensure-session");
+    async fn context_snapshot_roundtrips_through_port_bindings() {
+        let path = tmp_db_path("context-roundtrip");
         let db = BorgDb::open_local(path.to_str().expect("db path"))
             .await
             .expect("open db");
         db.migrate().await.expect("migrate db");
 
         let session_id = uri("borg:session:session-1");
-        let user_a = uri("borg:user:a");
-        let user_b = uri("borg:user:b");
-        let port_id = uri("borg:port:telegram");
+        let conversation_key = uri("telegram:chat:1");
+        db.upsert_port_binding_full_record("telegram", &conversation_key, &session_id, None)
+            .await
+            .expect("seed binding");
 
-        ensure_session_row(&db, &session_id, &user_a, &port_id)
-            .await
-            .expect("upsert first user");
-        ensure_session_row(&db, &session_id, &user_b, &port_id)
-            .await
-            .expect("upsert second user");
+        db.upsert_port_session_context(
+            "telegram",
+            &session_id,
+            &serde_json::json!({"chat":{"id":1}}),
+        )
+        .await
+        .expect("write context");
 
-        let session = db
-            .get_session(&session_id)
+        let context = db
+            .get_port_session_context("telegram", &session_id)
             .await
-            .expect("get session")
-            .expect("session exists");
-        assert_eq!(session.port, port_id);
-        assert!(session.users.contains(&user_a));
-        assert!(session.users.contains(&user_b));
+            .expect("read context");
+        assert_eq!(context, Some(serde_json::json!({"chat":{"id":1}})));
     }
 }

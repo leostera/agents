@@ -1,8 +1,11 @@
 import {
-  BorgApiError,
-  createBorgApiClient,
+  deleteProvider,
+  GraphQLRequestError,
+  listProviders,
   type ProviderRecord,
-} from "@borg/api";
+  startOpenAiDeviceCode,
+  upsertProvider,
+} from "@borg/graphql-client";
 import {
   Badge,
   Button,
@@ -35,8 +38,6 @@ import {
   ConnectProviderForm,
   type ConnectProviderInput,
 } from "./ConnectProviderForm";
-
-const borgApi = createBorgApiClient();
 
 function formatProviderKind(kind: string): string {
   if (kind === "openai") return "OpenAI";
@@ -95,7 +96,7 @@ export function ProvidersPage() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const providers = await borgApi.listProviders(100);
+      const providers = await listProviders(100);
       const byName = Object.fromEntries(
         providers.map((provider) => [provider.provider, provider])
       );
@@ -144,7 +145,7 @@ export function ProvidersPage() {
     setErrorMessage(null);
     setStatusMessage(null);
     try {
-      await borgApi.upsertProvider({
+      await upsertProvider({
         provider: input.providerId,
         providerKind: input.providerKind,
         apiKey,
@@ -170,14 +171,14 @@ export function ProvidersPage() {
     setErrorMessage(null);
     setStatusMessage(null);
     try {
-      await borgApi.startOpenAiDeviceCode();
+      await startOpenAiDeviceCode();
       setStatusMessage(
         "OpenAI device-code sign-in started. Continue in your Codex auth flow."
       );
       await loadProviders();
       setIsDialogOpen(false);
     } catch (error) {
-      if (error instanceof BorgApiError && error.status === 404) {
+      if (error instanceof GraphQLRequestError && error.status === 404) {
         setErrorMessage("OpenAI device-code flow is not wired in the API yet");
       } else {
         setErrorMessage(
@@ -195,7 +196,7 @@ export function ProvidersPage() {
     setErrorMessage(null);
     setStatusMessage(null);
     try {
-      await borgApi.deleteProvider(provider, { ignoreNotFound: true });
+      await deleteProvider(provider, { ignoreNotFound: true });
       const providerKind = providersByName[provider]?.provider_kind ?? provider;
       setStatusMessage(`${formatProviderKind(providerKind)} deleted`);
       await loadProviders();
@@ -212,7 +213,7 @@ export function ProvidersPage() {
     setErrorMessage(null);
     setStatusMessage(null);
     try {
-      await borgApi.upsertProvider({
+      await upsertProvider({
         provider: provider.provider,
         providerKind: provider.provider_kind,
         apiKey: provider.api_key || undefined,

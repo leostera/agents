@@ -5,7 +5,7 @@ impl QueryRoot {
     /// Fetches a single graph node by URI and resolves the concrete runtime type.
     ///
     /// Usage notes:
-    /// - Works for actor/behavior/session/port/provider/app/task/policy/user/memory entities.
+    /// - Works for actor/session/port/provider/app/task/memory entities.
     /// - Use inline fragments to read type-specific fields.
     ///
     /// Example:
@@ -28,13 +28,6 @@ impl QueryRoot {
                 .map_err(map_anyhow)?
                 .map(ActorObject::new)
                 .map(Node::from)),
-            Some("behavior") => Ok(data
-                .db
-                .get_behavior(&id.0)
-                .await
-                .map_err(map_anyhow)?
-                .map(BehaviorObject::new)
-                .map(Node::from)),
             Some("session") => Ok(data
                 .db
                 .get_session(&id.0)
@@ -55,20 +48,6 @@ impl QueryRoot {
                 .await
                 .map_err(map_anyhow)?
                 .map(AppObject::new)
-                .map(Node::from)),
-            Some("policy") => Ok(data
-                .db
-                .get_policy(&id.0)
-                .await
-                .map_err(map_anyhow)?
-                .map(PolicyObject::new)
-                .map(Node::from)),
-            Some("user") => Ok(data
-                .db
-                .get_user(&id.0)
-                .await
-                .map_err(map_anyhow)?
-                .map(UserObject::new)
                 .map(Node::from)),
             Some("task") => {
                 let store = TaskGraphStore::new(data.db.clone());
@@ -166,76 +145,11 @@ impl QueryRoot {
         })
     }
 
-    /// Fetches one behavior by URI.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($id: Uri!) { behavior(id: $id) { id name preferredProviderId } }
-    /// ```
-    async fn behavior(
-        &self,
-        ctx: &Context<'_>,
-        id: UriScalar,
-    ) -> GqlResult<Option<BehaviorObject>> {
-        let data = ctx_data(ctx)?;
-        Ok(data
-            .db
-            .get_behavior(&id.0)
-            .await
-            .map_err(map_anyhow)?
-            .map(BehaviorObject::new))
-    }
-
-    /// Lists behaviors ordered by most-recent update.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query {
-    ///   behaviors(first: 20) {
-    ///     edges { node { id name status requiredCapabilities } }
-    ///   }
-    /// }
-    /// ```
-    async fn behaviors(
-        &self,
-        ctx: &Context<'_>,
-        first: Option<i32>,
-        after: Option<String>,
-    ) -> GqlResult<BehaviorConnection> {
-        let data = ctx_data(ctx)?;
-        let first = data.normalize_first(first)?;
-        let start = decode_offset_cursor(after.as_deref())?;
-        let fetch_limit = start + first + 1;
-
-        let behaviors = data
-            .db
-            .list_behaviors(fetch_limit)
-            .await
-            .map_err(map_anyhow)?;
-        let (page, has_next_page) = apply_offset_pagination(behaviors, start, first);
-
-        let edges = page
-            .into_iter()
-            .map(|(index, record)| BehaviorEdge {
-                cursor: encode_offset_cursor(index),
-                node: BehaviorObject::new(record),
-            })
-            .collect::<Vec<_>>();
-
-        Ok(BehaviorConnection {
-            page_info: PageInfo {
-                has_next_page,
-                end_cursor: edges.last().map(|edge| edge.cursor.clone()),
-            },
-            edges,
-        })
-    }
-
     /// Fetches one session by URI.
     ///
     /// Example:
     /// ```graphql
-    /// query($id: Uri!) { session(id: $id) { id users portId updatedAt } }
+    /// query($id: Uri!) { session(id: $id) { id portId updatedAt } }
     /// ```
     async fn session(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<Option<SessionObject>> {
         let data = ctx_data(ctx)?;
@@ -250,7 +164,7 @@ impl QueryRoot {
     /// Lists sessions ordered by most-recent update.
     ///
     /// Usage notes:
-    /// - Optional filters: `portId` and `userId`.
+    /// - Optional filter: `portId`.
     /// - Use nested `messages` for chat timeline reads.
     ///
     /// Example:
@@ -267,7 +181,6 @@ impl QueryRoot {
         first: Option<i32>,
         after: Option<String>,
         port_id: Option<UriScalar>,
-        user_id: Option<UriScalar>,
     ) -> GqlResult<SessionConnection> {
         let data = ctx_data(ctx)?;
         let first = data.normalize_first(first)?;
@@ -276,11 +189,7 @@ impl QueryRoot {
 
         let sessions = data
             .db
-            .list_sessions(
-                fetch_limit,
-                port_id.as_ref().map(|uri| &uri.0),
-                user_id.as_ref().map(|uri| &uri.0),
-            )
+            .list_sessions(fetch_limit, port_id.as_ref().map(|uri| &uri.0), None)
             .await
             .map_err(map_anyhow)?;
 
@@ -518,43 +427,43 @@ impl QueryRoot {
         })
     }
 
-    /// Fetches one clockwork job by `jobId`.
+    /// Fetches one schedule job by `jobId`.
     ///
     /// Example:
     /// ```graphql
-    /// query { clockworkJob(jobId: "daily-digest") { id status nextRunAt } }
+    /// query { scheduleJob(jobId: "daily-digest") { id status nextRunAt } }
     /// ```
-    async fn clockwork_job(
+    async fn schedule_job(
         &self,
         ctx: &Context<'_>,
         job_id: String,
-    ) -> GqlResult<Option<ClockworkJobObject>> {
+    ) -> GqlResult<Option<ScheduleJobObject>> {
         let data = ctx_data(ctx)?;
         Ok(data
             .db
-            .get_clockwork_job(&job_id)
+            .get_schedule_job(&job_id)
             .await
             .map_err(map_anyhow)?
-            .map(ClockworkJobObject::new))
+            .map(ScheduleJobObject::new))
     }
 
-    /// Lists clockwork jobs with optional status filtering.
+    /// Lists schedule jobs with optional status filtering.
     ///
     /// Example:
     /// ```graphql
     /// query {
-    ///   clockworkJobs(first: 20, status: ACTIVE) {
+    ///   scheduleJobs(first: 20, status: ACTIVE) {
     ///     edges { node { id kind status runs(first: 5) { edges { node { id firedAt } } } } }
     ///   }
     /// }
     /// ```
-    async fn clockwork_jobs(
+    async fn schedule_jobs(
         &self,
         ctx: &Context<'_>,
         first: Option<i32>,
         after: Option<String>,
-        status: Option<ClockworkJobStatusValue>,
-    ) -> GqlResult<ClockworkJobConnection> {
+        status: Option<ScheduleJobStatusValue>,
+    ) -> GqlResult<ScheduleJobConnection> {
         let data = ctx_data(ctx)?;
         let first = data.normalize_first(first)?;
         let start = decode_offset_cursor(after.as_deref())?;
@@ -562,20 +471,20 @@ impl QueryRoot {
 
         let jobs = data
             .db
-            .list_clockwork_jobs(fetch_limit, status.map(ClockworkJobStatusValue::as_db_str))
+            .list_schedule_jobs(fetch_limit, status.map(ScheduleJobStatusValue::as_db_str))
             .await
             .map_err(map_anyhow)?;
         let (page, has_next_page) = apply_offset_pagination(jobs, start, first);
 
         let edges = page
             .into_iter()
-            .map(|(index, record)| ClockworkJobEdge {
+            .map(|(index, record)| ScheduleJobEdge {
                 cursor: encode_offset_cursor(index),
-                node: ClockworkJobObject::new(record),
+                node: ScheduleJobObject::new(record),
             })
             .collect::<Vec<_>>();
 
-        Ok(ClockworkJobConnection {
+        Ok(ScheduleJobConnection {
             page_info: PageInfo {
                 has_next_page,
                 end_cursor: edges.last().map(|edge| edge.cursor.clone()),
@@ -807,116 +716,6 @@ impl QueryRoot {
             .collect::<Vec<_>>();
 
         Ok(MemoryFactConnection {
-            page_info: PageInfo {
-                has_next_page,
-                end_cursor: edges.last().map(|edge| edge.cursor.clone()),
-            },
-            edges,
-        })
-    }
-
-    /// Fetches one policy by URI.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($id: Uri!) { policy(id: $id) { id uses(first: 10) { edges { node { entityId } } } } }
-    /// ```
-    async fn policy(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<Option<PolicyObject>> {
-        let data = ctx_data(ctx)?;
-        Ok(data
-            .db
-            .get_policy(&id.0)
-            .await
-            .map_err(map_anyhow)?
-            .map(PolicyObject::new))
-    }
-
-    /// Lists policies.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query { policies(first: 25) { edges { node { id updatedAt } } } }
-    /// ```
-    async fn policies(
-        &self,
-        ctx: &Context<'_>,
-        first: Option<i32>,
-        after: Option<String>,
-    ) -> GqlResult<PolicyConnection> {
-        let data = ctx_data(ctx)?;
-        let first = data.normalize_first(first)?;
-        let start = decode_offset_cursor(after.as_deref())?;
-        let fetch_limit = start + first + 1;
-
-        let policies = data
-            .db
-            .list_policies(fetch_limit)
-            .await
-            .map_err(map_anyhow)?;
-        let (page, has_next_page) = apply_offset_pagination(policies, start, first);
-
-        let edges = page
-            .into_iter()
-            .map(|(index, record)| PolicyEdge {
-                cursor: encode_offset_cursor(index),
-                node: PolicyObject::new(record),
-            })
-            .collect::<Vec<_>>();
-
-        Ok(PolicyConnection {
-            page_info: PageInfo {
-                has_next_page,
-                end_cursor: edges.last().map(|edge| edge.cursor.clone()),
-            },
-            edges,
-        })
-    }
-
-    /// Fetches one user by URI.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($id: Uri!) { user(id: $id) { id createdAt updatedAt } }
-    /// ```
-    async fn user(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<Option<UserObject>> {
-        let data = ctx_data(ctx)?;
-        Ok(data
-            .db
-            .get_user(&id.0)
-            .await
-            .map_err(map_anyhow)?
-            .map(UserObject::new))
-    }
-
-    /// Lists users.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query { users(first: 50) { edges { node { id updatedAt } } } }
-    /// ```
-    async fn users(
-        &self,
-        ctx: &Context<'_>,
-        first: Option<i32>,
-        after: Option<String>,
-    ) -> GqlResult<UserConnection> {
-        let data = ctx_data(ctx)?;
-        let first = data.normalize_first(first)?;
-        let start = decode_offset_cursor(after.as_deref())?;
-        let fetch_limit = start + first + 1;
-
-        let users = data.db.list_users(fetch_limit).await.map_err(map_anyhow)?;
-        let (page, has_next_page) = apply_offset_pagination(users, start, first);
-
-        let edges = page
-            .into_iter()
-            .map(|(index, record)| UserEdge {
-                cursor: encode_offset_cursor(index),
-                node: UserObject::new(record),
-            })
-            .collect::<Vec<_>>();
-
-        Ok(UserConnection {
             page_info: PageInfo {
                 has_next_page,
                 end_cursor: edges.last().map(|edge| edge.cursor.clone()),

@@ -2,6 +2,8 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
 
+use super::decode_tool_response;
+
 #[derive(Subcommand, Debug)]
 pub enum ShellCommand {
     #[command(about = "List ShellMode commands")]
@@ -65,11 +67,5 @@ async fn run_tool(command: &str, tool_name: &str, payload: &str) -> Result<Value
         })
         .await?;
 
-    Ok(json!({
-        "ok": true,
-        "namespace": "shell",
-        "command": command,
-        "tool": tool_name,
-        "content": response.content
-    }))
+    decode_tool_response(response)
 }

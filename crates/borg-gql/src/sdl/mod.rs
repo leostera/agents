@@ -12,9 +12,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use borg_core::{Entity, EntityPropValue, Uri};
 use borg_db::{
     ActorRecord, AppCapabilityRecord, AppConnectionRecord, AppRecord, AppSecretRecord,
-    BehaviorRecord, ClockworkJobRecord, ClockworkJobRunRecord, CreateClockworkJobInput,
-    PolicyRecord, PolicyUseRecord, PortRecord, ProviderRecord, SessionMessageRecord, SessionRecord,
-    UpdateClockworkJobInput, UserRecord,
+    CreateScheduleJobInput, PortRecord, ProviderRecord, ScheduleJobRecord, ScheduleJobRunRecord,
+    SessionMessageRecord, SessionRecord, UpdateScheduleJobInput,
 };
 use borg_memory::{FactArity, FactRecord, FactValue, SearchQuery, Uri as MemoryUri};
 use borg_taskgraph::{
@@ -74,7 +73,6 @@ macro_rules! connection_types {
 }
 
 connection_types!(ActorEdge, ActorConnection, ActorObject);
-connection_types!(BehaviorEdge, BehaviorConnection, BehaviorObject);
 connection_types!(SessionEdge, SessionConnection, SessionObject);
 connection_types!(
     SessionMessageEdge,
@@ -101,20 +99,17 @@ connection_types!(
     AppExternalConnectionObject
 );
 connection_types!(AppSecretEdge, AppSecretConnection, AppSecretObject);
-connection_types!(ClockworkJobEdge, ClockworkJobConnection, ClockworkJobObject);
+connection_types!(ScheduleJobEdge, ScheduleJobConnection, ScheduleJobObject);
 connection_types!(
-    ClockworkJobRunEdge,
-    ClockworkJobRunConnection,
-    ClockworkJobRunObject
+    ScheduleJobRunEdge,
+    ScheduleJobRunConnection,
+    ScheduleJobRunObject
 );
 connection_types!(TaskEdge, TaskConnection, TaskObject);
 connection_types!(TaskCommentEdge, TaskCommentConnection, TaskCommentObject);
 connection_types!(TaskEventEdge, TaskEventConnection, TaskEventObject);
 connection_types!(MemoryEntityEdge, MemoryEntityConnection, MemoryEntityObject);
 connection_types!(MemoryFactEdge, MemoryFactConnection, MemoryFactObject);
-connection_types!(PolicyEdge, PolicyConnection, PolicyObject);
-connection_types!(PolicyUseEdge, PolicyUseConnection, PolicyUseObject);
-connection_types!(UserEdge, UserConnection, UserObject);
 
 fn gql_error_with_code(message: impl Into<String>, code: &'static str) -> Error {
     Error::new(message).extend_with(|_, e| {
@@ -219,18 +214,6 @@ fn provider_uri(provider: &str) -> GqlResult<Uri> {
     Uri::from_parts("borg", "provider", Some(provider)).map_err(map_anyhow)
 }
 
-fn parse_string_array(value: &serde_json::Value) -> Vec<String> {
-    value
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| item.as_str().map(str::to_string))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
-}
-
 fn encode_task_cursor(created_at: &str, id: &str) -> String {
     URL_SAFE_NO_PAD.encode(format!("{created_at}|{id}"))
 }
@@ -247,11 +230,11 @@ fn normalize_poll_interval_ms(raw: Option<i32>) -> GqlResult<u64> {
     Ok((value as u64).clamp(MIN_SUBSCRIPTION_POLL_MS, MAX_SUBSCRIPTION_POLL_MS))
 }
 
-async fn resolve_session_stream_start_index(
+async fn resolve_session_stream_start_offset(
     data: &BorgGqlData,
     session_id: &Uri,
-    after_message_index: Option<i64>,
-) -> GqlResult<i64> {
+    after_message_id: Option<&Uri>,
+) -> GqlResult<usize> {
     let session_exists = data
         .db
         .get_session(session_id)
@@ -262,70 +245,62 @@ async fn resolve_session_stream_start_index(
         return Err(gql_error_with_code("session not found", "NOT_FOUND"));
     }
 
-    if let Some(after) = after_message_index {
-        if after < -1 {
-            return Err(gql_error_with_code(
-                "afterMessageIndex must be greater than or equal to -1",
-                "BAD_REQUEST",
-            ));
+    if let Some(after_id) = after_message_id {
+        let offset = data
+            .db
+            .get_session_message_offset_by_id(session_id, after_id)
+            .await
+            .map_err(map_anyhow)?;
+        if let Some(offset) = offset {
+            return Ok(offset.saturating_add(1));
         }
-        return Ok(after.saturating_add(1));
+        return Err(gql_error_with_code(
+            "afterMessageId not found in session",
+            "BAD_REQUEST",
+        ));
     }
 
-    let total = data
-        .db
-        .count_session_messages(session_id)
-        .await
-        .map_err(map_anyhow)?;
-    Ok(total as i64)
+    Ok(0)
 }
 
 fn session_message_subscription_stream(
     data: BorgGqlData,
     session_id: Uri,
-    start_index: i64,
+    start_offset: usize,
     poll_interval_ms: u64,
 ) -> impl Stream<Item = GqlResult<SessionMessageObject>> {
     let ticker = tokio::time::interval(Duration::from_millis(poll_interval_ms));
 
     stream::unfold(
-        (data, session_id, start_index, ticker),
-        |(data, session_id, mut next_index, mut ticker)| async move {
+        (data, session_id, start_offset, ticker),
+        |(data, session_id, mut next_offset, mut ticker)| async move {
             loop {
                 ticker.tick().await;
 
-                let total = match data.db.count_session_messages(&session_id).await {
-                    Ok(value) => value as i64,
+                let mut records = match data
+                    .db
+                    .list_session_message_records(&session_id, next_offset, 1)
+                    .await
+                {
+                    Ok(value) => value,
                     Err(err) => {
                         return Some((
                             Err(map_anyhow(err)),
-                            (data, session_id, next_index, ticker),
+                            (data, session_id, next_offset, ticker),
                         ));
                     }
                 };
 
-                if next_index >= total {
+                if records.is_empty() {
                     continue;
                 }
 
-                let index = next_index;
-                next_index += 1;
-
-                match data.db.get_session_message(&session_id, index).await {
-                    Ok(Some(record)) => {
-                        return Some((
-                            Ok(SessionMessageObject::new(record)),
-                            (data, session_id, next_index, ticker),
-                        ));
-                    }
-                    Ok(None) => continue,
-                    Err(err) => {
-                        return Some((
-                            Err(map_anyhow(err)),
-                            (data, session_id, next_index, ticker),
-                        ));
-                    }
-                }
+                let record = records.remove(0);
+                next_offset = next_offset.saturating_add(1);
+                return Some((
+                    Ok(SessionMessageObject::new(record)),
+                    (data, session_id, next_offset, ticker),
+                ));
             }
         },
     )
@@ -381,7 +356,7 @@ pub struct MutationRoot;
 /// ```graphql
 /// subscription($session: Uri!) {
 ///   sessionChat(sessionId: $session) {
-///     messageIndex
+///     id
 ///     messageType
 ///     role
 ///     text
@@ -410,7 +385,7 @@ enum SessionNotificationKind {
 /// - Notifications are fully typed and include the underlying `sessionMessage`.
 /// - `kind` is derived from `messageType`/`role`.
 struct SessionNotificationObject {
-    /// Stable notification identifier (`sessionId:messageIndex`).
+    /// Stable notification identifier (`sessionId:messageId`).
     id: String,
     /// Kind classification for UI routing and badges.
     kind: SessionNotificationKind,
@@ -418,8 +393,8 @@ struct SessionNotificationObject {
     title: String,
     /// Session URI this notification belongs to.
     session_id: UriScalar,
-    /// Source message index.
-    message_index: i64,
+    /// Source message URI.
+    message_id: UriScalar,
     /// Source message type.
     message_type: String,
     /// Source role, when available.
@@ -461,12 +436,12 @@ impl SessionNotificationObject {
         Self {
             id: format!(
                 "{}:{}",
-                message.record.session_id, message.record.message_index
+                message.record.session_id, message.record.message_id
             ),
             kind,
             title,
             session_id: message.record.session_id.clone().into(),
-            message_index: message.record.message_index,
+            message_id: message.record.message_id.clone().into(),
             message_type: parsed.message_type,
             role: parsed.role,
             text: parsed.text,
@@ -479,7 +454,7 @@ impl SessionNotificationObject {
 /// Creates or updates an actor definition in Borg's control-plane graph.
 ///
 /// Example:
-/// `{ id: "borg:actor:planner", name: "Planner", defaultBehaviorId: "borg:behavior:default", status: RUNNING }`
+/// `{ id: "borg:actor:planner", name: "Planner", status: RUNNING }`
 #[derive(InputObject)]
 struct UpsertActorInput {
     /// Stable actor URI (`borg:actor:*`).
@@ -488,36 +463,8 @@ struct UpsertActorInput {
     name: String,
     /// System prompt used when running this actor.
     system_prompt: String,
-    /// Behavior URI linked as actor default.
-    default_behavior_id: UriScalar,
     /// Actor lifecycle status (for example `RUNNING`).
     status: ActorStatusValue,
-}
-
-/// Creates or updates a behavior profile that actors can run with.
-///
-/// Usage notes:
-/// - `requiredCapabilities` should contain runtime tool/capability names.
-///
-/// Example:
-/// `{ id: "borg:behavior:default", name: "default", sessionTurnConcurrency: "serial", status: ACTIVE }`
-#[derive(InputObject)]
-struct UpsertBehaviorInput {
-    /// Stable behavior URI (`borg:behavior:*`).
-    id: UriScalar,
-    /// Human-readable behavior label.
-    name: String,
-    /// System prompt attached to this behavior.
-    system_prompt: String,
-    /// Preferred provider key (for example `openai`, `openrouter`).
-    preferred_provider_id: Option<String>,
-    /// Capability names required by this behavior.
-    #[graphql(default)]
-    required_capabilities: Vec<String>,
-    /// Turn execution policy (for example `serial`).
-    session_turn_concurrency: String,
-    /// Behavior lifecycle status.
-    status: BehaviorStatusValue,
 }
 
 /// Creates or updates a runtime ingress/egress port configuration.
@@ -687,13 +634,11 @@ struct UpsertAppSecretInput {
 /// Creates or updates a long-lived session in the Borg runtime graph.
 ///
 /// Example:
-/// `{ sessionId: "borg:session:s1", users: ["borg:user:u1"], port: "borg:port:http" }`
+/// `{ sessionId: "borg:session:s1", port: "borg:port:http" }`
 #[derive(InputObject)]
 struct UpsertSessionInput {
     /// Session URI (`borg:session:*`).
     session_id: UriScalar,
-    /// Participant user URIs.
-    users: Vec<UriScalar>,
     /// Owning ingress port URI.
     port: UriScalar,
 }
@@ -733,26 +678,26 @@ struct AppendSessionMessageInput {
     payload: Option<JsonValue>,
 }
 
-/// Replaces one indexed timeline message inside a session.
+/// Replaces one timeline message inside a session by message id.
 ///
 /// Example:
-/// `{ sessionId: "borg:session:s1", messageIndex: 0, message: { text: "Updated" } }`
+/// `{ sessionId: "borg:session:s1", messageId: "borg:session_message:...", message: { text: "Updated" } }`
 #[derive(InputObject)]
 struct PatchSessionMessageInput {
     /// Target session URI.
     session_id: UriScalar,
-    /// Zero-based message index in the session timeline.
-    message_index: i64,
+    /// Stable message URI.
+    message_id: UriScalar,
     /// Replacement message payload.
     message: SessionMessageInput,
 }
 
-/// Creates a new clockwork scheduler job definition.
+/// Creates a new schedule scheduler job definition.
 ///
 /// Example:
 /// `{ jobId: "daily-digest", kind: "cron", actorId: "borg:actor:planner", sessionId: "borg:session:s1" }`
 #[derive(InputObject)]
-struct CreateClockworkJobInputGql {
+struct CreateScheduleJobInputGql {
     /// Stable job identifier.
     job_id: String,
     /// Scheduler kind (`cron`, ...).
@@ -773,13 +718,13 @@ struct CreateClockworkJobInputGql {
     next_run_at: Option<String>,
 }
 
-/// Patches mutable fields on an existing clockwork scheduler job.
+/// Patches mutable fields on an existing schedule scheduler job.
 ///
 /// Usage notes:
 /// - Only pass fields that need to change.
 /// - `nextRunAt` set to `null` clears the existing schedule override.
 #[derive(InputObject)]
-struct UpdateClockworkJobInputGql {
+struct UpdateScheduleJobInputGql {
     /// New scheduler kind.
     kind: Option<String>,
     /// New target actor URI.
@@ -945,16 +890,16 @@ impl From<AppendSessionMessageInput> for SessionMessageInput {
 #[derive(Clone, Description)]
 /// Runtime actor definition.
 ///
-/// An actor is a named, long-lived Borg worker/persona with a default behavior
-/// and its own session participation history.
+/// An actor is a named, long-lived Borg worker/persona with its own session
+/// participation history.
 ///
 /// Usage notes:
 /// - Represents a runnable actor spec (`borg:actor:*`).
-/// - Use `defaultBehavior` and `sessions` for common workspace screens.
+/// - Use `sessions` for runtime timeline views.
 ///
 /// Example:
 /// ```graphql
-/// { actor(id: "borg:actor:planner") { id name defaultBehavior { id name } } }
+/// { actor(id: "borg:actor:planner") { id name status } }
 /// ```
 struct ActorObject {
     record: ActorRecord,
@@ -991,22 +936,6 @@ impl ActorObject {
 
     async fn updated_at(&self) -> DateTime<Utc> {
         self.record.updated_at
-    }
-
-    /// Default behavior used by this actor.
-    ///
-    /// Example:
-    /// ```graphql
-    /// { actor(id: "borg:actor:planner") { defaultBehavior { id name preferredProviderId } } }
-    /// ```
-    async fn default_behavior(&self, ctx: &Context<'_>) -> GqlResult<Option<BehaviorObject>> {
-        let data = ctx_data(ctx)?;
-        Ok(data
-            .db
-            .get_behavior(&self.record.default_behavior_id)
-            .await
-            .map_err(map_anyhow)?
-            .map(BehaviorObject::new))
     }
 
     /// Sessions this actor has participated in.
@@ -1057,96 +986,6 @@ impl ActorObject {
 }
 
 #[derive(Clone, Description)]
-/// Actor behavior profile.
-///
-/// A behavior captures system prompt, capability requirements, and model
-/// routing preferences that shape how an actor responds.
-///
-/// Usage notes:
-/// - Behaviors define prompts, preferred provider, and required capabilities.
-/// - `requiredCapabilities` maps directly to runtime capability names.
-///
-/// Example:
-/// ```graphql
-/// { behavior(id: "borg:behavior:default") { id name requiredCapabilities preferredProvider { provider } } }
-/// ```
-struct BehaviorObject {
-    record: BehaviorRecord,
-}
-
-impl BehaviorObject {
-    fn new(record: BehaviorRecord) -> Self {
-        Self { record }
-    }
-}
-
-#[Object(name = "Behavior", use_type_description)]
-impl BehaviorObject {
-    async fn id(&self) -> UriScalar {
-        self.record.behavior_id.clone().into()
-    }
-
-    async fn name(&self) -> &str {
-        &self.record.name
-    }
-
-    async fn system_prompt(&self) -> &str {
-        &self.record.system_prompt
-    }
-
-    async fn preferred_provider_id(&self) -> Option<&str> {
-        self.record.preferred_provider_id.as_deref()
-    }
-
-    /// Provider preferred by this behavior.
-    ///
-    /// Example:
-    /// ```graphql
-    /// { behavior(id: "borg:behavior:default") { preferredProvider { provider providerKind } } }
-    /// ```
-    async fn preferred_provider(&self, ctx: &Context<'_>) -> GqlResult<Option<ProviderObject>> {
-        let Some(provider_id) = self.record.preferred_provider_id.as_deref() else {
-            return Ok(None);
-        };
-
-        let data = ctx_data(ctx)?;
-        Ok(data
-            .db
-            .get_provider(provider_id)
-            .await
-            .map_err(map_anyhow)?
-            .map(ProviderObject::try_new)
-            .transpose()?)
-    }
-
-    /// Capability names required by this behavior.
-    ///
-    /// Example:
-    /// ```graphql
-    /// { behavior(id: "borg:behavior:default") { requiredCapabilities } }
-    /// ```
-    async fn required_capabilities(&self) -> Vec<String> {
-        parse_string_array(&self.record.required_capabilities_json)
-    }
-
-    async fn session_turn_concurrency(&self) -> &str {
-        &self.record.session_turn_concurrency
-    }
-
-    async fn status(&self) -> BehaviorStatusValue {
-        BehaviorStatusValue::from_raw(&self.record.status)
-    }
-
-    async fn created_at(&self) -> DateTime<Utc> {
-        self.record.created_at
-    }
-
-    async fn updated_at(&self) -> DateTime<Utc> {
-        self.record.updated_at
-    }
-}
-
-#[derive(Clone, Description)]
 /// Conversation and execution timeline container.
 ///
 /// A session is Borg's primary runtime context: messages append here, ports
@@ -1158,7 +997,7 @@ impl BehaviorObject {
 ///
 /// Example:
 /// ```graphql
-/// { session(id: "borg:session:s1") { id users portId messages(first: 5) { edges { node { messageIndex text } } } } }
+/// { session(id: "borg:session:s1") { id portId messages(first: 5) { edges { node { id text } } } } }
 /// ```
 struct SessionObject {
     record: SessionRecord,
@@ -1174,15 +1013,6 @@ impl SessionObject {
 impl SessionObject {
     async fn id(&self) -> UriScalar {
         self.record.session_id.clone().into()
-    }
-
-    async fn users(&self) -> Vec<UriScalar> {
-        self.record
-            .users
-            .iter()
-            .cloned()
-            .map(UriScalar)
-            .collect::<Vec<_>>()
     }
 
     async fn port_id(&self) -> UriScalar {
@@ -1224,14 +1054,14 @@ impl SessionObject {
         Ok(None)
     }
 
-    /// Messages ordered by `messageIndex` ascending.
+    /// Messages ordered by creation time ascending.
     ///
     /// Usage notes:
     /// - Use `after` with connection cursor for incremental timeline sync.
     ///
     /// Example:
     /// ```graphql
-    /// { session(id: "borg:session:s1") { messages(first: 20) { edges { node { messageIndex role text } } } } }
+    /// { session(id: "borg:session:s1") { messages(first: 20) { edges { node { id role text } } } } }
     /// ```
     async fn messages(
         &self,
@@ -1243,28 +1073,15 @@ impl SessionObject {
         let first = data.normalize_first(first)?;
         let start = decode_offset_cursor(after.as_deref())?;
 
-        let total = data
+        let messages = data
             .db
-            .count_session_messages(&self.record.session_id)
+            .list_session_message_records(&self.record.session_id, start, first + 1)
             .await
             .map_err(map_anyhow)?;
-        let end_exclusive = (start + first + 1).min(total);
-
-        let mut messages = Vec::new();
-        for index in start..end_exclusive {
-            if let Some(message) = data
-                .db
-                .get_session_message(&self.record.session_id, index as i64)
-                .await
-                .map_err(map_anyhow)?
-            {
-                messages.push(message);
-            }
-        }
-
-        let has_next_page = start + first < total;
+        let has_next_page = messages.len() > first;
         let edges = messages
             .into_iter()
+            .take(first)
             .enumerate()
             .map(|(offset, record)| SessionMessageEdge {
                 cursor: encode_offset_cursor(start + offset),
@@ -1290,11 +1107,11 @@ impl SessionObject {
 ///
 /// Usage notes:
 /// - Prefer `messageType`, `role`, and `text` over deprecated `payload`.
-/// - `messageIndex` is zero-based and monotonic within a session.
+/// - `id` is the stable timeline message URI.
 ///
 /// Example:
 /// ```graphql
-/// { session(id: "borg:session:s1") { messages(first: 5) { edges { node { messageIndex messageType role text } } } } }
+/// { session(id: "borg:session:s1") { messages(first: 5) { edges { node { id messageType role text } } } } }
 /// ```
 struct SessionMessageObject {
     record: SessionMessageRecord,
@@ -1318,10 +1135,6 @@ impl SessionMessageObject {
 
     async fn session_id(&self) -> UriScalar {
         self.record.session_id.clone().into()
-    }
-
-    async fn message_index(&self) -> i64 {
-        self.record.message_index
     }
 
     async fn created_at(&self) -> DateTime<Utc> {
@@ -2124,20 +1937,20 @@ impl AppSecretObject {
 ///
 /// Example:
 /// ```graphql
-/// { clockworkJob(jobId: "daily-digest") { id kind status nextRunAt runs(first: 5) { edges { node { id firedAt } } } } }
+/// { scheduleJob(jobId: "daily-digest") { id kind status nextRunAt runs(first: 5) { edges { node { id firedAt } } } } }
 /// ```
-struct ClockworkJobObject {
-    record: ClockworkJobRecord,
+struct ScheduleJobObject {
+    record: ScheduleJobRecord,
 }
 
-impl ClockworkJobObject {
-    fn new(record: ClockworkJobRecord) -> Self {
+impl ScheduleJobObject {
+    fn new(record: ScheduleJobRecord) -> Self {
         Self { record }
     }
 }
 
-#[Object(name = "ClockworkJob", use_type_description)]
-impl ClockworkJobObject {
+#[Object(name = "ScheduleJob", use_type_description)]
+impl ScheduleJobObject {
     async fn id(&self) -> &str {
         &self.record.job_id
     }
@@ -2146,8 +1959,8 @@ impl ClockworkJobObject {
         &self.record.kind
     }
 
-    async fn status(&self) -> ClockworkJobStatusValue {
-        ClockworkJobStatusValue::from_raw(&self.record.status)
+    async fn status(&self) -> ScheduleJobStatusValue {
+        ScheduleJobStatusValue::from_raw(&self.record.status)
     }
 
     async fn target_actor_id(&self) -> Option<UriScalar> {
@@ -2195,18 +2008,18 @@ impl ClockworkJobObject {
         JsonValue(self.record.schedule_spec.clone())
     }
 
-    /// Historical run rows for this clockwork job.
+    /// Historical run rows for this schedule job.
     ///
     /// Example:
     /// ```graphql
-    /// { clockworkJob(jobId: "daily") { runs(first: 10) { edges { node { id firedAt messageId } } } } }
+    /// { scheduleJob(jobId: "daily") { runs(first: 10) { edges { node { id firedAt messageId } } } } }
     /// ```
     async fn runs(
         &self,
         ctx: &Context<'_>,
         first: Option<i32>,
         after: Option<String>,
-    ) -> GqlResult<ClockworkJobRunConnection> {
+    ) -> GqlResult<ScheduleJobRunConnection> {
         let data = ctx_data(ctx)?;
         let first = data.normalize_first(first)?;
         let start = decode_offset_cursor(after.as_deref())?;
@@ -2214,20 +2027,20 @@ impl ClockworkJobObject {
 
         let runs = data
             .db
-            .list_clockwork_job_runs(&self.record.job_id, fetch_limit)
+            .list_schedule_job_runs(&self.record.job_id, fetch_limit)
             .await
             .map_err(map_anyhow)?;
         let (page, has_next_page) = apply_offset_pagination(runs, start, first);
 
         let edges = page
             .into_iter()
-            .map(|(index, record)| ClockworkJobRunEdge {
+            .map(|(index, record)| ScheduleJobRunEdge {
                 cursor: encode_offset_cursor(index),
-                node: ClockworkJobRunObject::new(record),
+                node: ScheduleJobRunObject::new(record),
             })
             .collect::<Vec<_>>();
 
-        Ok(ClockworkJobRunConnection {
+        Ok(ScheduleJobRunConnection {
             page_info: PageInfo {
                 has_next_page,
                 end_cursor: edges.last().map(|edge| edge.cursor.clone()),
@@ -2238,27 +2051,27 @@ impl ClockworkJobObject {
 }
 
 #[derive(Clone, Description)]
-/// Immutable execution record emitted when a clockwork job fires.
+/// Immutable execution record emitted when a schedule job fires.
 ///
 /// Usage notes:
-/// - Immutable execution row emitted by clockwork runtime.
+/// - Immutable execution row emitted by schedule runtime.
 ///
 /// Example:
 /// ```graphql
-/// { clockworkJob(jobId: "daily-digest") { runs(first: 5) { edges { node { id scheduledFor firedAt messageId } } } } }
+/// { scheduleJob(jobId: "daily-digest") { runs(first: 5) { edges { node { id scheduledFor firedAt messageId } } } } }
 /// ```
-struct ClockworkJobRunObject {
-    record: ClockworkJobRunRecord,
+struct ScheduleJobRunObject {
+    record: ScheduleJobRunRecord,
 }
 
-impl ClockworkJobRunObject {
-    fn new(record: ClockworkJobRunRecord) -> Self {
+impl ScheduleJobRunObject {
+    fn new(record: ScheduleJobRunRecord) -> Self {
         Self { record }
     }
 }
 
-#[Object(name = "ClockworkJobRun", use_type_description)]
-impl ClockworkJobRunObject {
+#[Object(name = "ScheduleJobRun", use_type_description)]
+impl ScheduleJobRunObject {
     async fn id(&self) -> &str {
         &self.record.run_id
     }
@@ -3216,164 +3029,6 @@ impl MemoryFactObject {
     }
 }
 
-#[derive(Clone, Description)]
-/// Policy definition node used for governance/control-plane rules.
-///
-/// Usage notes:
-/// - Control-plane policy row.
-/// - `uses` traverses entities policy is attached to.
-///
-/// Example:
-/// ```graphql
-/// { policies(first: 5) { edges { node { id uses(first: 5) { edges { node { entityId } } } } } } }
-/// ```
-struct PolicyObject {
-    record: PolicyRecord,
-}
-
-impl PolicyObject {
-    fn new(record: PolicyRecord) -> Self {
-        Self { record }
-    }
-}
-
-#[Object(name = "Policy", use_type_description)]
-impl PolicyObject {
-    async fn id(&self) -> UriScalar {
-        self.record.policy_id.clone().into()
-    }
-
-    #[graphql(deprecation = "Legacy JSON policy payload. Prefer typed policy fields over time.")]
-    async fn policy(&self) -> JsonValue {
-        JsonValue(self.record.policy.clone())
-    }
-
-    async fn created_at(&self) -> DateTime<Utc> {
-        self.record.created_at
-    }
-
-    async fn updated_at(&self) -> DateTime<Utc> {
-        self.record.updated_at
-    }
-
-    /// Entities that this policy is attached to.
-    ///
-    /// Example:
-    /// ```graphql
-    /// { policy(id: "borg:policy:p1") { uses(first: 20) { edges { node { entityId createdAt } } } } }
-    /// ```
-    async fn uses(
-        &self,
-        ctx: &Context<'_>,
-        first: Option<i32>,
-        after: Option<String>,
-    ) -> GqlResult<PolicyUseConnection> {
-        let data = ctx_data(ctx)?;
-        let first = data.normalize_first(first)?;
-        let start = decode_offset_cursor(after.as_deref())?;
-        let fetch_limit = start + first + 1;
-
-        let rows = data
-            .db
-            .list_policy_uses(&self.record.policy_id, fetch_limit)
-            .await
-            .map_err(map_anyhow)?;
-        let (page, has_next_page) = apply_offset_pagination(rows, start, first);
-
-        let edges = page
-            .into_iter()
-            .map(|(index, row)| PolicyUseEdge {
-                cursor: encode_offset_cursor(index),
-                node: PolicyUseObject::new(row),
-            })
-            .collect::<Vec<_>>();
-
-        Ok(PolicyUseConnection {
-            page_info: PageInfo {
-                has_next_page,
-                end_cursor: edges.last().map(|edge| edge.cursor.clone()),
-            },
-            edges,
-        })
-    }
-}
-
-#[derive(Clone, Description)]
-/// Edge indicating where a policy is applied in the entity graph.
-///
-/// Example:
-/// ```graphql
-/// { policies(first: 1) { edges { node { uses(first: 5) { edges { node { policyId entityId } } } } } } }
-/// ```
-struct PolicyUseObject {
-    record: PolicyUseRecord,
-}
-
-impl PolicyUseObject {
-    fn new(record: PolicyUseRecord) -> Self {
-        Self { record }
-    }
-}
-
-#[Object(name = "PolicyUse", use_type_description)]
-impl PolicyUseObject {
-    /// Policy URI.
-    async fn policy_id(&self) -> UriScalar {
-        self.record.policy_id.clone().into()
-    }
-
-    /// Target entity URI that policy applies to.
-    async fn entity_id(&self) -> UriScalar {
-        self.record.entity_id.clone().into()
-    }
-
-    /// Attachment timestamp.
-    async fn created_at(&self) -> DateTime<Utc> {
-        self.record.created_at
-    }
-}
-
-#[derive(Clone, Description)]
-/// Control-plane user/principal record.
-///
-/// Usage notes:
-/// - Minimal control-plane user row.
-/// - `profile` is transitional JSON.
-///
-/// Example:
-/// ```graphql
-/// { users(first: 10) { edges { node { id createdAt updatedAt } } } }
-/// ```
-struct UserObject {
-    record: UserRecord,
-}
-
-impl UserObject {
-    fn new(record: UserRecord) -> Self {
-        Self { record }
-    }
-}
-
-#[Object(name = "User", use_type_description)]
-impl UserObject {
-    async fn id(&self) -> UriScalar {
-        self.record.user_key.clone().into()
-    }
-
-    #[graphql(deprecation = "Legacy JSON profile payload. Prefer typed profile fields over time.")]
-    async fn profile(&self) -> JsonValue {
-        JsonValue(self.record.profile.clone())
-    }
-
-    async fn created_at(&self) -> DateTime<Utc> {
-        self.record.created_at
-    }
-
-    async fn updated_at(&self) -> DateTime<Utc> {
-        self.record.updated_at
-    }
-}
-
 #[derive(Interface, Clone)]
 #[graphql(field(name = "id", ty = "UriScalar"))]
 /// Unified node interface for cross-entity graph traversal.
@@ -3389,15 +3044,12 @@ impl UserObject {
 /// ```
 enum Node {
     Actor(ActorObject),
-    Behavior(BehaviorObject),
     Session(SessionObject),
     Port(PortObject),
     Provider(ProviderObject),
     App(AppObject),
     Task(TaskObject),
     MemoryEntity(MemoryEntityObject),
-    Policy(PolicyObject),
-    User(UserObject),
 }
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
@@ -3432,43 +3084,6 @@ impl ActorStatusValue {
             Self::Paused => "PAUSED",
             Self::Disabled => "DISABLED",
             Self::Error => "ERROR",
-            Self::Unknown => "UNKNOWN",
-        }
-    }
-}
-
-#[derive(Enum, Copy, Clone, Eq, PartialEq)]
-/// Lifecycle states for behavior profiles.
-enum BehaviorStatusValue {
-    /// Behavior is available for actor assignment.
-    Active,
-    /// Behavior exists but is currently inactive.
-    Inactive,
-    /// Behavior is disabled and should not be used.
-    Disabled,
-    /// Behavior is deprecated but retained for migration windows.
-    Deprecated,
-    /// Behavior row contains an unrecognized status value.
-    Unknown,
-}
-
-impl BehaviorStatusValue {
-    fn from_raw(raw: &str) -> Self {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "active" => Self::Active,
-            "inactive" => Self::Inactive,
-            "disabled" => Self::Disabled,
-            "deprecated" => Self::Deprecated,
-            _ => Self::Unknown,
-        }
-    }
-
-    fn as_db_str(self) -> &'static str {
-        match self {
-            Self::Active => "ACTIVE",
-            Self::Inactive => "INACTIVE",
-            Self::Disabled => "DISABLED",
-            Self::Deprecated => "DEPRECATED",
             Self::Unknown => "UNKNOWN",
         }
     }
@@ -3591,7 +3206,7 @@ impl AppConnectionStatusValue {
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
 /// Runtime lifecycle states for scheduler jobs.
-enum ClockworkJobStatusValue {
+enum ScheduleJobStatusValue {
     /// Job is active and eligible to run.
     Active,
     /// Job is paused and should not be scheduled.
@@ -3604,7 +3219,7 @@ enum ClockworkJobStatusValue {
     Unknown,
 }
 
-impl ClockworkJobStatusValue {
+impl ScheduleJobStatusValue {
     fn from_raw(raw: &str) -> Self {
         match raw.trim().to_ascii_lowercase().as_str() {
             "active" => Self::Active,

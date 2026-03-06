@@ -1,5 +1,6 @@
 use borg_agent::ToolResultData;
 use borg_core::Uri;
+use borg_llm::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 
 use crate::port_context::PortContext;
@@ -11,6 +12,8 @@ pub type RuntimeToolResult = borg_agent::BorgToolResult;
 pub enum BorgCommand {
     ModelShowCurrent,
     ModelSet { model: String },
+    ReasoningShowCurrent,
+    ReasoningSet { reasoning_effort: ReasoningEffort },
     ParticipantsList,
     ContextDump,
     CompactSession,

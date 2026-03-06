@@ -1,0 +1,12 @@
+[package]
+name = "borg-schedule"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+borg-agent = { path = "../borg-agent" }
+borg-db = { path = "../borg-db" }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+uuid.workspace = true

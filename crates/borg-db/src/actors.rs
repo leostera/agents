@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use borg_core::{Uri, uri};
 use chrono::Utc;
 use serde_json::Value;
-use sqlx::Row;
 
 use crate::utils::parse_ts;
 use crate::{ActorMailboxRecord, ActorRecord, BorgDb};
@@ -13,37 +12,34 @@ impl BorgDb {
         actor_id: &Uri,
         name: &str,
         system_prompt: &str,
-        default_behavior_id: &Uri,
         status: &str,
     ) -> Result<()> {
+        let actor_id = actor_id.to_string();
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
+        sqlx::query!(
             r#"
             INSERT INTO actors(
                 actor_id,
                 name,
                 system_prompt,
-                default_behavior_id,
                 status,
                 created_at,
                 updated_at
             )
-            VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            VALUES(?1, ?2, ?3, ?4, ?5, ?6)
             ON CONFLICT(actor_id) DO UPDATE SET
               name = excluded.name,
               system_prompt = excluded.system_prompt,
-              default_behavior_id = excluded.default_behavior_id,
               status = excluded.status,
               updated_at = excluded.updated_at
             "#,
+            actor_id,
+            name,
+            system_prompt,
+            status,
+            now,
+            now,
         )
-        .bind(actor_id.to_string())
-        .bind(name)
-        .bind(system_prompt)
-        .bind(default_behavior_id.to_string())
-        .bind(status)
-        .bind(now.clone())
-        .bind(now)
         .execute(self.conn.pool())
         .await
         .context("failed to upsert actor")?;
@@ -51,57 +47,77 @@ impl BorgDb {
     }
 
     pub async fn get_actor(&self, actor_id: &Uri) -> Result<Option<ActorRecord>> {
-        let row = sqlx::query(
+        let actor_id = actor_id.to_string();
+        let row = sqlx::query!(
             r#"
             SELECT
-                actor_id,
-                name,
-                system_prompt,
-                default_behavior_id,
-                status,
-                created_at,
-                updated_at
+                actor_id as "actor_id!: String",
+                name as "name!: String",
+                system_prompt as "system_prompt!: String",
+                status as "status!: String",
+                created_at as "created_at!: String",
+                updated_at as "updated_at!: String"
             FROM actors
             WHERE actor_id = ?1
             LIMIT 1
             "#,
+            actor_id,
         )
-        .bind(actor_id.to_string())
         .fetch_optional(self.conn.pool())
         .await
         .context("failed to get actor")?;
 
-        row.map(actor_from_row).transpose()
+        row.map(|row| {
+            Ok(ActorRecord {
+                actor_id: Uri::parse(&row.actor_id)?,
+                name: row.name,
+                system_prompt: row.system_prompt,
+                status: row.status,
+                created_at: parse_ts(&row.created_at)?,
+                updated_at: parse_ts(&row.updated_at)?,
+            })
+        })
+        .transpose()
     }
 
     pub async fn list_actors(&self, limit: usize) -> Result<Vec<ActorRecord>> {
         let limit = i64::try_from(limit).unwrap_or(100);
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT
-                actor_id,
-                name,
-                system_prompt,
-                default_behavior_id,
-                status,
-                created_at,
-                updated_at
+                actor_id as "actor_id!: String",
+                name as "name!: String",
+                system_prompt as "system_prompt!: String",
+                status as "status!: String",
+                created_at as "created_at!: String",
+                updated_at as "updated_at!: String"
             FROM actors
             ORDER BY updated_at DESC
             LIMIT ?1
             "#,
+            limit,
         )
-        .bind(limit)
         .fetch_all(self.conn.pool())
         .await
         .context("failed to list actors")?;
 
-        rows.into_iter().map(actor_from_row).collect()
+        rows.into_iter()
+            .map(|row| {
+                Ok(ActorRecord {
+                    actor_id: Uri::parse(&row.actor_id)?,
+                    name: row.name,
+                    system_prompt: row.system_prompt,
+                    status: row.status,
+                    created_at: parse_ts(&row.created_at)?,
+                    updated_at: parse_ts(&row.updated_at)?,
+                })
+            })
+            .collect()
     }
 
     pub async fn delete_actor(&self, actor_id: &Uri) -> Result<u64> {
-        let deleted = sqlx::query("DELETE FROM actors WHERE actor_id = ?1")
-            .bind(actor_id.to_string())
+        let actor_id = actor_id.to_string();
+        let deleted = sqlx::query!("DELETE FROM actors WHERE actor_id = ?1", actor_id,)
             .execute(self.conn.pool())
             .await
             .context("failed to delete actor")?
@@ -111,29 +127,26 @@ impl BorgDb {
 
     pub async fn list_actor_sessions(&self, actor_id: &Uri, limit: usize) -> Result<Vec<Uri>> {
         let limit = i64::try_from(limit).unwrap_or(100);
-        let rows = sqlx::query(
+        let actor_id = actor_id.to_string();
+        let rows = sqlx::query!(
             r#"
-            SELECT session_id
-            FROM actor_mailbox
-            WHERE actor_id = ?1
+            SELECT session_id as "session_id: String"
+            FROM messages
+            WHERE receiver_id = ?1
               AND session_id IS NOT NULL
             GROUP BY session_id
             ORDER BY MAX(created_at) DESC
             LIMIT ?2
             "#,
+            actor_id,
+            limit,
         )
-        .bind(actor_id.to_string())
-        .bind(limit)
         .fetch_all(self.conn.pool())
         .await
         .context("failed to list actor sessions")?;
 
         rows.into_iter()
-            .filter_map(|row| {
-                row.try_get::<Option<String>, _>("session_id")
-                    .ok()
-                    .flatten()
-            })
+            .filter_map(|row| row.session_id)
             .map(|value| Uri::parse(&value))
             .collect::<Result<Vec<_>, _>>()
     }
@@ -141,38 +154,45 @@ impl BorgDb {
     pub async fn enqueue_actor_message(
         &self,
         actor_id: &Uri,
-        kind: &str,
         session_id: Option<&Uri>,
         payload: &Value,
         reply_to_actor_id: Option<&Uri>,
         reply_to_message_id: Option<&Uri>,
     ) -> Result<Uri> {
         let actor_message_id = uri!("borg", "actor_message");
+        let actor_message_id_raw = actor_message_id.to_string();
+        let actor_id = actor_id.to_string();
+        let session_id = session_id.map(ToString::to_string);
+        let payload_json = payload.to_string();
+        let reply_to_actor_id = reply_to_actor_id.map(ToString::to_string);
+        let reply_to_message_id = reply_to_message_id.map(ToString::to_string);
         let now = Utc::now().to_rfc3339();
-        sqlx::query(
+        sqlx::query!(
             r#"
-            INSERT INTO actor_mailbox(
-                actor_message_id,
-                actor_id,
-                kind,
+            INSERT INTO messages(
+                message_id,
+                sender_id,
+                receiver_id,
                 session_id,
                 payload_json,
                 status,
-                reply_to_actor_id,
+                reply_to_sender_id,
                 reply_to_message_id,
-                created_at
+                error,
+                created_at,
+                started_at,
+                finished_at
             )
-            VALUES(?1, ?2, ?3, ?4, ?5, 'QUEUED', ?6, ?7, ?8)
+            VALUES(?1, NULL, ?2, ?3, ?4, 'QUEUED', ?5, ?6, NULL, ?7, NULL, NULL)
             "#,
+            actor_message_id_raw,
+            actor_id,
+            session_id,
+            payload_json,
+            reply_to_actor_id,
+            reply_to_message_id,
+            now,
         )
-        .bind(actor_message_id.to_string())
-        .bind(actor_id.to_string())
-        .bind(kind)
-        .bind(session_id.map(ToString::to_string))
-        .bind(payload.to_string())
-        .bind(reply_to_actor_id.map(ToString::to_string))
-        .bind(reply_to_message_id.map(ToString::to_string))
-        .bind(now)
         .execute(self.conn.pool())
         .await
         .context("failed to enqueue actor mailbox message")?;
@@ -185,41 +205,57 @@ impl BorgDb {
         actor_id: &Uri,
     ) -> Result<Option<ActorMailboxRecord>> {
         let now = Utc::now().to_rfc3339();
-        let row = sqlx::query(
+        let actor_id = actor_id.to_string();
+        let row = sqlx::query!(
             r#"
             WITH next AS (
-                SELECT actor_message_id
-                FROM actor_mailbox
-                WHERE actor_id = ?1 AND status = 'QUEUED'
+                SELECT message_id
+                FROM messages
+                WHERE receiver_id = ?1
+                  AND status = 'QUEUED'
                 ORDER BY created_at ASC
                 LIMIT 1
             )
-            UPDATE actor_mailbox
+            UPDATE messages
             SET status = 'IN_PROGRESS',
                 started_at = ?2
-            WHERE actor_message_id = (SELECT actor_message_id FROM next)
+            WHERE message_id = (SELECT message_id FROM next)
             RETURNING
-                actor_message_id,
-                actor_id,
-                kind,
-                session_id,
-                payload_json,
-                status,
-                reply_to_actor_id,
-                reply_to_message_id,
-                error,
-                created_at,
-                started_at,
-                finished_at
+                message_id as "actor_message_id!: String",
+                receiver_id as "actor_id!: String",
+                session_id as "session_id: String",
+                payload_json as "payload_json!: String",
+                status as "status!: String",
+                reply_to_sender_id as "reply_to_actor_id: String",
+                reply_to_message_id as "reply_to_message_id: String",
+                error as "error: String",
+                created_at as "created_at!: String",
+                started_at as "started_at: String",
+                finished_at as "finished_at: String"
             "#,
+            actor_id,
+            now,
         )
-        .bind(actor_id.to_string())
-        .bind(now)
         .fetch_optional(self.conn.pool())
         .await
         .context("failed to claim next actor mailbox message")?;
 
-        row.map(actor_mailbox_from_row).transpose()
+        row.map(|row| {
+            actor_mailbox_from_raw(
+                row.actor_message_id,
+                row.actor_id,
+                row.session_id,
+                row.payload_json,
+                row.status,
+                row.reply_to_actor_id,
+                row.reply_to_message_id,
+                row.error,
+                row.created_at,
+                row.started_at,
+                row.finished_at,
+            )
+        })
+        .transpose()
     }
 
     pub async fn list_queued_actor_messages(
@@ -227,48 +263,64 @@ impl BorgDb {
         limit: usize,
     ) -> Result<Vec<ActorMailboxRecord>> {
         let limit = i64::try_from(limit).unwrap_or(1_000);
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"
             SELECT
-                actor_message_id,
-                actor_id,
-                kind,
-                session_id,
-                payload_json,
-                status,
-                reply_to_actor_id,
-                reply_to_message_id,
-                error,
-                created_at,
-                started_at,
-                finished_at
-            FROM actor_mailbox
+                message_id as "actor_message_id!: String",
+                receiver_id as "actor_id!: String",
+                session_id as "session_id: String",
+                payload_json as "payload_json!: String",
+                status as "status!: String",
+                reply_to_sender_id as "reply_to_actor_id: String",
+                reply_to_message_id as "reply_to_message_id: String",
+                error as "error: String",
+                created_at as "created_at!: String",
+                started_at as "started_at: String",
+                finished_at as "finished_at: String"
+            FROM messages
             WHERE status = 'QUEUED'
             ORDER BY created_at ASC
             LIMIT ?1
             "#,
+            limit,
         )
-        .bind(limit)
         .fetch_all(self.conn.pool())
         .await
         .context("failed to list queued actor mailbox messages")?;
 
-        rows.into_iter().map(actor_mailbox_from_row).collect()
+        rows.into_iter()
+            .map(|row| {
+                actor_mailbox_from_raw(
+                    row.actor_message_id,
+                    row.actor_id,
+                    row.session_id,
+                    row.payload_json,
+                    row.status,
+                    row.reply_to_actor_id,
+                    row.reply_to_message_id,
+                    row.error,
+                    row.created_at,
+                    row.started_at,
+                    row.finished_at,
+                )
+            })
+            .collect()
     }
 
     pub async fn ack_actor_message(&self, actor_message_id: &Uri) -> Result<u64> {
         let now = Utc::now().to_rfc3339();
-        let updated = sqlx::query(
+        let actor_message_id = actor_message_id.to_string();
+        let updated = sqlx::query!(
             r#"
-            UPDATE actor_mailbox
+            UPDATE messages
             SET status = 'ACKED',
                 finished_at = ?2,
                 error = NULL
-            WHERE actor_message_id = ?1
+            WHERE message_id = ?1
             "#,
+            actor_message_id,
+            now,
         )
-        .bind(actor_message_id.to_string())
-        .bind(now)
         .execute(self.conn.pool())
         .await
         .context("failed to ack actor mailbox message")?
@@ -278,18 +330,19 @@ impl BorgDb {
 
     pub async fn fail_actor_message(&self, actor_message_id: &Uri, error: &str) -> Result<u64> {
         let now = Utc::now().to_rfc3339();
-        let updated = sqlx::query(
+        let actor_message_id = actor_message_id.to_string();
+        let updated = sqlx::query!(
             r#"
-            UPDATE actor_mailbox
+            UPDATE messages
             SET status = 'FAILED',
                 finished_at = ?2,
                 error = ?3
-            WHERE actor_message_id = ?1
+            WHERE message_id = ?1
             "#,
+            actor_message_id,
+            now,
+            error,
         )
-        .bind(actor_message_id.to_string())
-        .bind(now)
-        .bind(error)
         .execute(self.conn.pool())
         .await
         .context("failed to fail actor mailbox message")?
@@ -300,11 +353,12 @@ impl BorgDb {
     pub async fn fail_stale_in_progress_messages(&self, older_than_seconds: u64) -> Result<u64> {
         let cutoff = Utc::now()
             - chrono::Duration::seconds(i64::try_from(older_than_seconds).unwrap_or(300));
+        let cutoff_rfc3339 = cutoff.to_rfc3339();
         let finished_at = Utc::now().to_rfc3339();
         let error = "failed due to runtime restart while in progress";
-        let updated = sqlx::query(
+        let updated = sqlx::query!(
             r#"
-            UPDATE actor_mailbox
+            UPDATE messages
             SET status = 'FAILED',
                 finished_at = ?1,
                 error = ?2
@@ -312,10 +366,10 @@ impl BorgDb {
               AND started_at IS NOT NULL
               AND started_at <= ?3
             "#,
+            finished_at,
+            error,
+            cutoff_rfc3339,
         )
-        .bind(finished_at)
-        .bind(error)
-        .bind(cutoff.to_rfc3339())
         .execute(self.conn.pool())
         .await
         .context("failed to fail stale in-progress actor mailbox messages")?
@@ -324,56 +378,42 @@ impl BorgDb {
     }
 }
 
-fn actor_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ActorRecord> {
-    Ok(ActorRecord {
-        actor_id: Uri::parse(&row.try_get::<String, _>("actor_id")?)?,
-        name: row.try_get("name")?,
-        system_prompt: row.try_get("system_prompt")?,
-        default_behavior_id: Uri::parse(&row.try_get::<String, _>("default_behavior_id")?)?,
-        status: row.try_get("status")?,
-        created_at: parse_ts(&row.try_get::<String, _>("created_at")?)?,
-        updated_at: parse_ts(&row.try_get::<String, _>("updated_at")?)?,
-    })
-}
-
-fn actor_mailbox_from_row(row: sqlx::sqlite::SqliteRow) -> Result<ActorMailboxRecord> {
-    let payload_raw: String = row.try_get("payload_json")?;
+fn actor_mailbox_from_raw(
+    actor_message_id_raw: String,
+    actor_id_raw: String,
+    session_id_raw: Option<String>,
+    payload_raw: String,
+    status: String,
+    reply_to_actor_id_raw: Option<String>,
+    reply_to_message_id_raw: Option<String>,
+    error: Option<String>,
+    created_at_raw: String,
+    started_at_raw: Option<String>,
+    finished_at_raw: Option<String>,
+) -> Result<ActorMailboxRecord> {
     let payload: Value =
-        serde_json::from_str(&payload_raw).context("invalid actor_mailbox payload_json")?;
-    let session_id = row
-        .try_get::<Option<String>, _>("session_id")?
-        .map(|value| Uri::parse(&value))
-        .transpose()?;
-    let reply_to_actor_id = row
-        .try_get::<Option<String>, _>("reply_to_actor_id")?
-        .map(|value| Uri::parse(&value))
-        .transpose()?;
-    let reply_to_message_id = row
-        .try_get::<Option<String>, _>("reply_to_message_id")?
-        .map(|value| Uri::parse(&value))
-        .transpose()?;
-    let started_at = row
-        .try_get::<Option<String>, _>("started_at")?
+        serde_json::from_str(&payload_raw).context("invalid messages payload_json")?;
+    let session_id = session_id_raw.as_deref().map(Uri::parse).transpose()?;
+    let reply_to_actor_id = reply_to_actor_id_raw
         .as_deref()
-        .map(parse_ts)
+        .map(Uri::parse)
         .transpose()?;
-    let finished_at = row
-        .try_get::<Option<String>, _>("finished_at")?
+    let reply_to_message_id = reply_to_message_id_raw
         .as_deref()
-        .map(parse_ts)
+        .map(Uri::parse)
         .transpose()?;
-
+    let started_at = started_at_raw.as_deref().map(parse_ts).transpose()?;
+    let finished_at = finished_at_raw.as_deref().map(parse_ts).transpose()?;
     Ok(ActorMailboxRecord {
-        actor_message_id: Uri::parse(&row.try_get::<String, _>("actor_message_id")?)?,
-        actor_id: Uri::parse(&row.try_get::<String, _>("actor_id")?)?,
-        kind: row.try_get("kind")?,
+        actor_message_id: Uri::parse(&actor_message_id_raw)?,
+        actor_id: Uri::parse(&actor_id_raw)?,
         session_id,
         payload,
-        status: row.try_get("status")?,
+        status,
         reply_to_actor_id,
         reply_to_message_id,
-        error: row.try_get("error")?,
-        created_at: parse_ts(&row.try_get::<String, _>("created_at")?)?,
+        error,
+        created_at: parse_ts(&created_at_raw)?,
         started_at,
         finished_at,
     })
@@ -404,16 +444,14 @@ mod tests {
         db.migrate().await?;
 
         let actor_id = Uri::from_parts("devmode", "actor", Some("a1"))?;
-        let behavior_id = Uri::from_parts("borg", "behavior", Some("default"))?;
-        db.upsert_actor(&actor_id, "A1", "prompt", &behavior_id, "RUNNING")
+        db.upsert_actor(&actor_id, "A1", "prompt", "RUNNING")
             .await?;
 
         let m1 = db
             .enqueue_actor_message(
                 &actor_id,
-                "CAST",
                 None,
-                &serde_json::json!({"n": 1}),
+                &serde_json::json!({"kind":"cast","n":1}),
                 None,
                 None,
             )
@@ -421,9 +459,8 @@ mod tests {
         let _m2 = db
             .enqueue_actor_message(
                 &actor_id,
-                "CAST",
                 None,
-                &serde_json::json!({"n": 2}),
+                &serde_json::json!({"kind":"cast","n":2}),
                 None,
                 None,
             )
@@ -459,15 +496,13 @@ mod tests {
         db.migrate().await?;
 
         let actor_id = Uri::from_parts("devmode", "actor", Some("a2"))?;
-        let behavior_id = Uri::from_parts("borg", "behavior", Some("default"))?;
-        db.upsert_actor(&actor_id, "A2", "prompt", &behavior_id, "RUNNING")
+        db.upsert_actor(&actor_id, "A2", "prompt", "RUNNING")
             .await?;
         let msg_id = db
             .enqueue_actor_message(
                 &actor_id,
-                "CALL",
                 None,
-                &serde_json::json!({"task": "x"}),
+                &serde_json::json!({"kind":"call","task":"x"}),
                 None,
                 None,
             )
@@ -483,13 +518,19 @@ mod tests {
         let failed = db.fail_stale_in_progress_messages(0).await?;
         assert_eq!(failed, 1);
 
-        let row =
-            sqlx::query("SELECT status FROM actor_mailbox WHERE actor_message_id = ?1 LIMIT 1")
-                .bind(msg_id.to_string())
-                .fetch_one(db.pool())
-                .await?;
-        let status: String = row.try_get("status")?;
-        assert_eq!(status, "FAILED");
+        let msg_id_raw = msg_id.to_string();
+        let row = sqlx::query!(
+            r#"
+            SELECT status as "status!: String"
+            FROM messages
+            WHERE message_id = ?1
+            LIMIT 1
+            "#,
+            msg_id_raw,
+        )
+        .fetch_one(db.pool())
+        .await?;
+        assert_eq!(row.status, "FAILED");
 
         Ok(())
     }
@@ -505,35 +546,31 @@ mod tests {
         db.migrate().await?;
 
         let actor_id = Uri::from_parts("devmode", "actor", Some("a3"))?;
-        let behavior_id = Uri::from_parts("borg", "behavior", Some("default"))?;
-        db.upsert_actor(&actor_id, "A3", "prompt", &behavior_id, "RUNNING")
+        db.upsert_actor(&actor_id, "A3", "prompt", "RUNNING")
             .await?;
 
         let session_a = Uri::from_parts("borg", "session", Some("one"))?;
         let session_b = Uri::from_parts("borg", "session", Some("two"))?;
         db.enqueue_actor_message(
             &actor_id,
-            "CAST",
             Some(&session_a),
-            &serde_json::json!({"a":1}),
+            &serde_json::json!({"kind":"cast","a":1}),
             None,
             None,
         )
         .await?;
         db.enqueue_actor_message(
             &actor_id,
-            "CAST",
             Some(&session_b),
-            &serde_json::json!({"b":1}),
+            &serde_json::json!({"kind":"cast","b":1}),
             None,
             None,
         )
         .await?;
         db.enqueue_actor_message(
             &actor_id,
-            "CAST",
             Some(&session_a),
-            &serde_json::json!({"a":2}),
+            &serde_json::json!({"kind":"cast","a":2}),
             None,
             None,
         )

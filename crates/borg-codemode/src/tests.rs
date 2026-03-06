@@ -88,14 +88,11 @@ fn me_returns_current_user_uri_from_context() {
 fn env_get_and_keys_are_available_via_sdk() {
     let rt = CodeModeRuntime::default();
     let mut env = HashMap::new();
-    env.insert(
-        "APP_GITHUB_ACCESS_TOKEN".to_string(),
-        "token-123".to_string(),
-    );
-    env.insert("APP_GITHUB_SCOPE".to_string(), "read:user".to_string());
+    env.insert("GITHUB_ACCESS_TOKEN".to_string(), "token-123".to_string());
+    env.insert("GITHUB_SCOPE".to_string(), "read:user".to_string());
     let result = rt
         .execute(
-            "async () => { return { keys: Borg.env.keys(), token: Borg.env.get('APP_GITHUB_ACCESS_TOKEN'), missing: Borg.env.get('APP_GITHUB_MISSING', 'fallback') }; }",
+            "async () => { return { keys: Borg.env.keys(), token: Borg.env.get('GITHUB_ACCESS_TOKEN'), missing: Borg.env.get('GITHUB_MISSING', 'fallback') }; }",
             CodeModeContext {
                 env,
                 ..CodeModeContext::default()
@@ -110,7 +107,7 @@ fn env_get_and_keys_are_available_via_sdk() {
         .expect("keys array");
     assert!(
         keys.iter()
-            .any(|value| value.as_str() == Some("APP_GITHUB_ACCESS_TOKEN"))
+            .any(|value| value.as_str() == Some("GITHUB_ACCESS_TOKEN"))
     );
     assert_eq!(
         result.result.get("token").and_then(Value::as_str),
@@ -127,7 +124,7 @@ fn context_current_exposes_only_env_keys_not_values() {
     let rt = CodeModeRuntime::default();
     let mut env = HashMap::new();
     env.insert(
-        "APP_GITHUB_ACCESS_TOKEN".to_string(),
+        "GITHUB_ACCESS_TOKEN".to_string(),
         "super-secret-token".to_string(),
     );
     let result = rt
@@ -148,7 +145,7 @@ fn context_current_exposes_only_env_keys_not_values() {
     assert!(
         available
             .iter()
-            .any(|value| value.as_str() == Some("APP_GITHUB_ACCESS_TOKEN"))
+            .any(|value| value.as_str() == Some("GITHUB_ACCESS_TOKEN"))
     );
 }
 

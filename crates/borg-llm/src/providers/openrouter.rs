@@ -168,6 +168,11 @@ impl Provider for OpenRouterProvider {
             "tool_choice": "auto",
             "temperature": req.temperature,
             "max_tokens": req.max_tokens,
+            "reasoning": req.reasoning_effort.map(|effort| {
+                json!({
+                    "effort": openrouter_reasoning_effort_label(effort)
+                })
+            }),
         });
         let call =
             ProviderCallTrace::sent(provider, "chat_completion", model.clone(), body.clone());
@@ -351,6 +356,16 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     value
         .map(|entry| entry.trim().to_string())
         .filter(|entry| !entry.is_empty())
+}
+
+fn openrouter_reasoning_effort_label(effort: crate::ReasoningEffort) -> &'static str {
+    match effort {
+        crate::ReasoningEffort::Minimal => "low",
+        crate::ReasoningEffort::Low => "low",
+        crate::ReasoningEffort::Medium => "medium",
+        crate::ReasoningEffort::High => "high",
+        crate::ReasoningEffort::XHigh => "high",
+    }
 }
 
 fn to_openai_tools(tools: &[ToolDescriptor]) -> Vec<Value> {
@@ -608,6 +623,7 @@ mod tests {
             tools: vec![],
             temperature: None,
             max_tokens: None,
+            reasoning_effort: None,
             api_key: None,
         };
         let model = provider.resolve_chat_model(&request).expect("chat model");

@@ -1,20 +1,8 @@
 import {
   Bell,
-  Bot,
-  Brain,
-  Clock3,
-  FolderTree,
-  GitFork,
-  Hammer,
   LayoutDashboard,
-  Map,
   Route,
-  ScanSearch,
   Settings2,
-  Shield,
-  SlidersHorizontal,
-  Users,
-  Workflow,
 } from "lucide-react";
 import React from "react";
 
@@ -33,114 +21,6 @@ export type DashboardRouteGroup = {
 };
 
 export const SECTION_GROUPS: DashboardRouteGroup[] = [
-  {
-    id: "control",
-    title: "Control",
-    items: [
-      {
-        id: "control-sessions",
-        title: "Sessions",
-        icon: Workflow,
-        path: "/control/sessions",
-      },
-      {
-        id: "control-behaviors",
-        title: "Behaviors",
-        icon: Brain,
-        path: "/control/behaviors",
-      },
-      {
-        id: "control-actors",
-        title: "Actors",
-        icon: Bot,
-        path: "/control/actors",
-      },
-      {
-        id: "control-apps",
-        title: "Apps",
-        icon: Hammer,
-        path: "/control/apps",
-      },
-      {
-        id: "control-clockwork",
-        title: "Clockwork",
-        icon: Clock3,
-        path: "/control/clockwork",
-      },
-      {
-        id: "control-users",
-        title: "Users",
-        icon: Users,
-        path: "/control/users",
-      },
-      {
-        id: "control-ports",
-        title: "Ports",
-        icon: Route,
-        path: "/control/ports",
-      },
-      {
-        id: "control-policies",
-        title: "Policies",
-        icon: Shield,
-        path: "/control/policies",
-      },
-    ],
-  },
-  {
-    id: "memory",
-    title: "Memory",
-    items: [
-      {
-        id: "memory-explorer",
-        title: "Explorer",
-        icon: ScanSearch,
-        path: "/memory/explorer",
-      },
-      {
-        id: "memory-graph",
-        title: "Graph",
-        icon: Map,
-        path: "/memory/graph",
-      },
-    ],
-  },
-  {
-    id: "taskgraph",
-    title: "Task Graph",
-    items: [
-      {
-        id: "taskgraph-explorer",
-        title: "Explorer",
-        icon: GitFork,
-        path: "/taskgraph/explorer",
-      },
-      {
-        id: "taskgraph-kanban",
-        title: "Kanban",
-        icon: Workflow,
-        path: "/taskgraph/kanban",
-      },
-    ],
-  },
-  {
-    id: "fs",
-    title: "FS",
-    items: [
-      {
-        id: "fs-explorer",
-        title: "Explorer",
-        icon: FolderTree,
-        path: "/fs/explorer",
-      },
-      {
-        id: "fs-settings",
-        title: "Settings",
-        icon: SlidersHorizontal,
-        path: "/fs/settings",
-      },
-    ],
-  },
   {
     id: "settings",
     title: "Settings",
@@ -174,20 +54,6 @@ export const SECTION_GROUPS: DashboardRouteGroup[] = [
         title: "Tracing",
         icon: Route,
         path: "/observability/tracing",
-        children: [
-          {
-            id: "observability-tracing-llm-calls",
-            title: "LLM Calls",
-            icon: Route,
-            path: "/observability/tracing/llm-calls",
-          },
-          {
-            id: "observability-tracing-tool-calls",
-            title: "Tool Calls",
-            icon: Route,
-            path: "/observability/tracing/tool-calls",
-          },
-        ],
       },
     ],
   },

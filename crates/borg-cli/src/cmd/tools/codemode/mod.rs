@@ -5,6 +5,8 @@ use anyhow::Result;
 use clap::Subcommand;
 use serde_json::{Value, json};
 
+use super::decode_tool_response;
+
 #[derive(Subcommand, Debug)]
 pub enum CodeModeCommand {
     #[command(about = "List CodeMode commands")]
@@ -44,13 +46,7 @@ async fn run_tool(command: &str, tool_name: &str, payload: &str) -> Result<Value
         })
         .await?;
 
-    Ok(json!({
-        "ok": true,
-        "namespace": "codemode",
-        "command": command,
-        "tool": tool_name,
-        "content": response.content
-    }))
+    decode_tool_response(response)
 }
 
 pub(super) async fn run_execute_code(payload: &str) -> Result<Value> {

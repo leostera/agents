@@ -7,7 +7,7 @@
   "module": "./src/index.ts",
   "types": "./src/index.ts",
   "dependencies": {
-    "@borg/api": "workspace:*",
+    "@borg/graphql-client": "workspace:*",
     "@borg/ui": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

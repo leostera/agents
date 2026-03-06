@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fmt;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::Result;
@@ -11,6 +13,50 @@ pub enum StopReason {
     ToolCall,
     Aborted,
     Error,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Minimal,
+    Low,
+    Medium,
+    High,
+    XHigh,
+}
+
+impl ReasoningEffort {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+        }
+    }
+}
+
+impl fmt::Display for ReasoningEffort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ReasoningEffort {
+    type Err = ();
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let normalized = value.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "minimum" | "minimal" => Ok(Self::Minimal),
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "xhigh" => Ok(Self::XHigh),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +112,7 @@ pub struct LlmRequest {
     pub tools: Vec<ToolDescriptor>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub api_key: Option<String>,
 }
 

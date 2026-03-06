@@ -38,11 +38,6 @@ query($actorId: Uri!) {
     id
     name
     status
-    defaultBehavior {
-      id
-      name
-      preferredProvider { provider providerKind }
-    }
     sessions(first: 10) {
       edges {
         node {
@@ -138,11 +133,11 @@ query($slug: String!) {
 }
 ```
 
-### Clockwork Jobs + Runs
+### Schedule Jobs + Runs
 
 ```graphql
 query {
-  clockworkJobs(first: 20, status: "active") {
+  scheduleJobs(first: 20, status: "active") {
     edges {
       node {
         id
@@ -222,27 +217,6 @@ query {
 }
 ```
 
-### Policies + Users
-
-```graphql
-query {
-  policies(first: 20) {
-    edges {
-      node {
-        id
-        updatedAt
-        uses(first: 20) {
-          edges { node { policyId entityId createdAt } }
-        }
-      }
-    }
-  }
-  users(first: 20) {
-    edges { node { id createdAt updatedAt } }
-  }
-}
-```
-
 ## Mutation Recipes
 
 ### Actors + Behaviors
@@ -262,7 +236,6 @@ mutation($actorId: Uri!, $behaviorId: Uri!) {
     id: $actorId
     name: "Planner"
     systemPrompt: "Plan and execute tasks"
-    defaultBehaviorId: $behaviorId
     status: "RUNNING"
   }) { id name status }
 }
@@ -388,11 +361,11 @@ mutation($session: Uri!, $user: Uri!, $port: Uri!) {
 }
 ```
 
-### Clockwork
+### Schedule
 
 ```graphql
 mutation($actor: Uri!, $session: Uri!) {
-  createClockworkJob(input: {
+  createScheduleJob(input: {
     jobId: "daily-digest"
     kind: "cron"
     actorId: $actor
@@ -403,8 +376,8 @@ mutation($actor: Uri!, $session: Uri!) {
     scheduleSpec: { cron: "0 9 * * *" }
   }) { id status nextRunAt }
 
-  pauseClockworkJob(jobId: "daily-digest")
-  resumeClockworkJob(jobId: "daily-digest")
+  pauseScheduleJob(jobId: "daily-digest")
+  resumeScheduleJob(jobId: "daily-digest")
 }
 ```
 
@@ -460,7 +433,6 @@ query($id: Uri!) {
 ### Actor and Behavior
 
 Usage notes:
-- `Actor.defaultBehavior` resolves to `Behavior`.
 - `Actor.sessions` gives actor-participation history.
 - `Behavior.preferredProvider` resolves provider metadata.
 
@@ -471,7 +443,6 @@ query($actor: Uri!, $behavior: Uri!) {
     name
     systemPrompt
     status
-    defaultBehavior { id name preferredProviderId }
     sessions(first: 10) { edges { node { id updatedAt } } }
   }
   behavior(id: $behavior) {
@@ -611,15 +582,15 @@ query($slug: String!) {
 }
 ```
 
-### ClockworkJob and ClockworkJobRun
+### ScheduleJob and ScheduleJobRun
 
 Usage notes:
-- `ClockworkJob` describes schedule + target.
-- `ClockworkJob.runs` gives execution history.
+- `ScheduleJob` describes schedule + target.
+- `ScheduleJob.runs` gives execution history.
 
 ```graphql
 query($jobId: String!) {
-  clockworkJob(jobId: $jobId) {
+  scheduleJob(jobId: $jobId) {
     id
     kind
     status
@@ -745,38 +716,6 @@ query($entity: Uri!) {
 }
 ```
 
-### Policy, PolicyUse, User
-
-Usage notes:
-- `Policy.uses` links policies to target entities.
-- `User.profile` is currently transitional JSON.
-
-```graphql
-query {
-  policies(first: 20) {
-    edges {
-      node {
-        id
-        createdAt
-        updatedAt
-        uses(first: 20) {
-          edges { node { policyId entityId createdAt } }
-        }
-      }
-    }
-  }
-  users(first: 20) {
-    edges {
-      node {
-        id
-        createdAt
-        updatedAt
-      }
-    }
-  }
-}
-```
-
 ## Input Reference (Mutation Arguments)
 
 Usage notes:
@@ -804,7 +743,6 @@ mutation($actor: Uri!, $behavior: Uri!, $app: Uri!, $cap: Uri!, $session: Uri!, 
     id: $actor
     name: "Planner"
     systemPrompt: "Plan and execute."
-    defaultBehaviorId: $behavior
     status: "RUNNING"
   }) { id }
 
@@ -826,9 +764,9 @@ mutation($actor: Uri!, $behavior: Uri!, $app: Uri!, $cap: Uri!, $session: Uri!, 
 }
 ```
 
-### Messaging + Clockwork + Taskgraph
+### Messaging + Schedule + Taskgraph
 
-`SessionMessageInput`, `AppendSessionMessageInput`, `PatchSessionMessageInput`, `CreateClockworkJobInputGql`, `UpdateClockworkJobInputGql`, `CreateTaskInputGql`, `UpdateTaskInputGql`, `SetTaskStatusInput`.
+`SessionMessageInput`, `AppendSessionMessageInput`, `PatchSessionMessageInput`, `CreateScheduleJobInputGql`, `UpdateScheduleJobInputGql`, `CreateTaskInputGql`, `UpdateTaskInputGql`, `SetTaskStatusInput`.
 
 ```graphql
 mutation($session: Uri!, $creator: Uri!, $assignee: Uri!, $task: Uri!, $actor: Uri!) {
@@ -839,7 +777,7 @@ mutation($session: Uri!, $creator: Uri!, $assignee: Uri!, $task: Uri!, $actor: U
     text: "Please summarize the backlog."
   }) { id messageIndex }
 
-  createClockworkJob(input: {
+  createScheduleJob(input: {
     jobId: "daily-summary"
     kind: "cron"
     actorId: $actor
@@ -938,7 +876,7 @@ subscription($session: Uri!) {
 
 ## Transitional JSON Fields
 
-Some fields are still `JsonValue` for compatibility with legacy DB columns (for example app auth config, session message payload, policy JSON).
+Some fields are still `JsonValue` for compatibility with legacy DB columns (for example app auth config and session message payload).
 
 Recommendations:
 - Prefer typed fields when available (`messageType`, `role`, `text`, typed relation fields).

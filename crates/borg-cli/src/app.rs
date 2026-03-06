@@ -1,13 +1,13 @@
 use std::{io, io::Write};
 
 use anyhow::Result;
-use borg_api::BorgApiServer;
 use borg_apps::DefaultAppsCatalog;
 use borg_codemode::CodeModeRuntime;
 use borg_core::{Uri, borgdir::BorgDir};
 use borg_db::BorgDb;
 use borg_exec::{BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, PortContext};
 use borg_fs::BorgFs;
+use borg_gql::BorgHttpServer;
 use borg_memory::{FactInput, MemoryStore, SearchQuery};
 use borg_shellmode::ShellModeRuntime;
 use borg_taskgraph::{TaskDispatch, TaskGraphStore, TaskGraphSupervisor};
@@ -25,6 +25,9 @@ const OPENROUTER_PROVIDER: &str = "openrouter";
 const RUNTIME_SETTINGS_PORT: &str = "runtime";
 const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 const RUNTIME_PREFERRED_PROVIDER_ID_KEY: &str = "preferred_provider_id";
+const DEVMODE_PLANNER_ACTOR_ID: &str = "devmode:actor:planner";
+const DEVMODE_PLANNER_NAME: &str = "DevMode Planner";
+const DEVMODE_PLANNER_PROMPT: &str = "You are DevMode's planning lead. Help the user refine implementation-ready specs, ask focused clarifying questions, and break approved specs into parallelizable task-graph work.";
 
 #[derive(Clone)]
 pub(crate) struct BorgCliApp {
@@ -56,6 +59,7 @@ impl BorgCliApp {
             capabilities_created = app_seed_summary.capabilities_created,
             "default apps reconciled"
         );
+        ensure_devmode_planner(&db).await?;
         memory.migrate().await?;
 
         let memory_for_state_facts = memory.clone();
@@ -124,8 +128,8 @@ impl BorgCliApp {
         taskgraph_supervisor.start().await;
         info!(target: "borg_cli", "taskgraph supervisor started");
 
-        self.start_clockwork_supervisor(db.clone());
-        info!(target: "borg_cli", "clockwork supervisor started");
+        self.start_schedule_supervisor(db.clone());
+        info!(target: "borg_cli", "schedule supervisor started");
 
         let dashboard_url = format!("http://{bind}/");
         info!(
@@ -133,28 +137,23 @@ impl BorgCliApp {
             dashboard_url = %dashboard_url,
             "open admin dashboard"
         );
-        let api_server = BorgApiServer::new(
-            bind,
-            runtime,
-            supervisor,
-            self.borg_dir.assets().to_path_buf(),
-        );
-        api_server.run().await
+        let http_server = BorgHttpServer::new(bind, runtime, supervisor);
+        http_server.run().await
     }
 
-    fn start_clockwork_supervisor(&self, db: BorgDb) {
+    fn start_schedule_supervisor(&self, db: BorgDb) {
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(1));
             loop {
                 ticker.tick().await;
                 let now = chrono::Utc::now().to_rfc3339();
-                match db.list_due_clockwork_jobs(&now, 100).await {
+                match db.list_due_schedule_jobs(&now, 100).await {
                     Ok(due_jobs) => {
                         if !due_jobs.is_empty() {
                             tracing::debug!(
                                 target: "borg_cli",
                                 due_count = due_jobs.len(),
-                                "clockwork scaffold loop found due jobs"
+                                "schedule scaffold loop found due jobs"
                             );
                         }
                     }
@@ -162,7 +161,7 @@ impl BorgCliApp {
                         tracing::warn!(
                             target: "borg_cli",
                             error = %error,
-                            "clockwork supervisor poll failed"
+                            "schedule supervisor poll failed"
                         );
                     }
                 }
@@ -183,6 +182,7 @@ impl BorgCliApp {
             capabilities_created = app_seed_summary.capabilities_created,
             "default apps reconciled"
         );
+        ensure_devmode_planner(&db).await?;
         memory.migrate().await?;
         Ok(())
     }
@@ -407,6 +407,26 @@ impl BorgCliApp {
         );
         Ok(())
     }
+}
+
+async fn ensure_devmode_planner(db: &BorgDb) -> Result<()> {
+    let planner_actor_id = Uri::parse(DEVMODE_PLANNER_ACTOR_ID)?;
+    if db.get_actor(&planner_actor_id).await?.is_none() {
+        db.upsert_actor(
+            &planner_actor_id,
+            DEVMODE_PLANNER_NAME,
+            DEVMODE_PLANNER_PROMPT,
+            "RUNNING",
+        )
+        .await?;
+        info!(
+            target: "borg_cli",
+            actor_id = DEVMODE_PLANNER_ACTOR_ID,
+            "seeded devmode planner actor"
+        );
+    }
+
+    Ok(())
 }
 
 fn parse_single_arg<T: DeserializeOwned>(args: Vec<Value>, op_name: &str) -> Result<T> {

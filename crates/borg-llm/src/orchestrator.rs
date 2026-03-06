@@ -214,6 +214,7 @@ mod tests {
             tools: vec![],
             temperature: None,
             max_tokens: Some(64),
+            reasoning_effort: None,
             api_key: None,
         }
     }

@@ -1,10 +1,10 @@
 use anyhow::Result;
 use borg_agent::ToolSpec;
-use borg_clockwork::default_clockwork_tool_specs;
 use borg_codemode::default_tool_specs as default_codemode_tool_specs;
 use borg_core::{Config, Uri};
 use borg_db::BorgDb;
 use borg_memory::default_memory_tool_specs;
+use borg_schedule::default_schedule_tool_specs;
 use borg_shellmode::default_tool_specs as default_shellmode_tool_specs;
 use borg_taskgraph::default_taskgraph_tool_specs;
 use serde_json::{Value, json};
@@ -50,7 +50,7 @@ impl DefaultAppsCatalog {
                 Self::build_shellmode_app(),
                 Self::build_memory_app(),
                 Self::build_taskgraph_app(),
-                Self::build_clockwork_app(),
+                Self::build_schedule_app(),
                 Self::build_github_app(),
             ],
         }
@@ -173,20 +173,20 @@ impl DefaultAppsCatalog {
         }
     }
 
-    fn build_clockwork_app() -> DefaultApp {
+    fn build_schedule_app() -> DefaultApp {
         DefaultApp {
-            app_id: "borg:app:clockwork-system",
-            name: "Clockwork System",
-            slug: "clockwork-system",
+            app_id: "borg:app:schedule-system",
+            name: "Schedule System",
+            slug: "schedule-system",
             description: "Durable scheduler app for creating and managing one-shot and cron jobs that deliver Borg chat messages to actor sessions.",
             status: "active",
             auth_strategy: "none",
             auth_config_json: json!({}),
             available_secrets: Vec::new(),
             capabilities: Self::tool_specs_to_capabilities(
-                "clockwork-system",
+                "schedule-system",
                 "codemode",
-                default_clockwork_tool_specs(),
+                default_schedule_tool_specs(),
             ),
         }
     }

@@ -11,6 +11,7 @@ mod list_comments;
 mod list_duplicated_by;
 mod list_events;
 mod list_task_children;
+mod list_tasks;
 mod next_task;
 mod reassign_assignee;
 mod reconcile_in_progress;
@@ -34,6 +35,7 @@ pub fn all() -> &'static [CommandMapping] {
     &[
         create_task::MAPPING,
         get_task::MAPPING,
+        list_tasks::MAPPING,
         update_task_fields::MAPPING,
         reassign_assignee::MAPPING,
         add_task_labels::MAPPING,

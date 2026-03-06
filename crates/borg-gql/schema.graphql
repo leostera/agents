@@ -1,16 +1,16 @@
 """
 Runtime actor definition.
 
-An actor is a named, long-lived Borg worker/persona with a default behavior
-and its own session participation history.
+An actor is a named, long-lived Borg worker/persona with its own session
+participation history.
 
 Usage notes:
 - Represents a runnable actor spec (`borg:actor:*`).
-- Use `defaultBehavior` and `sessions` for common workspace screens.
+- Use `sessions` for runtime timeline views.
 
 Example:
 ```graphql
-{ actor(id: "borg:actor:planner") { id name defaultBehavior { id name } } }
+{ actor(id: "borg:actor:planner") { id name status } }
 ```
 """
 type Actor implements Node {
@@ -23,15 +23,6 @@ type Actor implements Node {
 	status: ActorStatusValue!
 	createdAt: DateTime!
 	updatedAt: DateTime!
-	"""
-	Default behavior used by this actor.
-	
-	Example:
-	```graphql
-	{ actor(id: "borg:actor:planner") { defaultBehavior { id name preferredProviderId } } }
-	```
-	"""
-	defaultBehavior: Behavior
 	"""
 	Sessions this actor has participated in.
 	
@@ -450,251 +441,12 @@ input AppendSessionMessageInput {
 }
 
 """
-Actor behavior profile.
-
-A behavior captures system prompt, capability requirements, and model
-routing preferences that shape how an actor responds.
-
-Usage notes:
-- Behaviors define prompts, preferred provider, and required capabilities.
-- `requiredCapabilities` maps directly to runtime capability names.
-
-Example:
-```graphql
-{ behavior(id: "borg:behavior:default") { id name requiredCapabilities preferredProvider { provider } } }
-```
-"""
-type Behavior implements Node {
-	id: Uri!
-	name: String!
-	systemPrompt: String!
-	preferredProviderId: String
-	"""
-	Provider preferred by this behavior.
-	
-	Example:
-	```graphql
-	{ behavior(id: "borg:behavior:default") { preferredProvider { provider providerKind } } }
-	```
-	"""
-	preferredProvider: Provider
-	"""
-	Capability names required by this behavior.
-	
-	Example:
-	```graphql
-	{ behavior(id: "borg:behavior:default") { requiredCapabilities } }
-	```
-	"""
-	requiredCapabilities: [String!]!
-	sessionTurnConcurrency: String!
-	status: BehaviorStatusValue!
-	createdAt: DateTime!
-	updatedAt: DateTime!
-}
-
-"""
-Relay-style page container for cursor-based list traversal.
-"""
-type BehaviorConnection {
-	"""
-	Returned edges for the current page.
-	"""
-	edges: [BehaviorEdge!]!
-	"""
-	Pagination state for the current page.
-	"""
-	pageInfo: PageInfo!
-}
-
-"""
-Relay-style edge carrying one node plus cursor for forward pagination.
-"""
-type BehaviorEdge {
-	"""
-	Opaque edge cursor to pass back into `after`.
-	"""
-	cursor: String!
-	"""
-	Materialized node for this edge.
-	"""
-	node: Behavior!
-}
-
-"""
-Lifecycle states for behavior profiles.
-"""
-enum BehaviorStatusValue {
-	"""
-	Behavior is available for actor assignment.
-	"""
-	ACTIVE
-	"""
-	Behavior exists but is currently inactive.
-	"""
-	INACTIVE
-	"""
-	Behavior is disabled and should not be used.
-	"""
-	DISABLED
-	"""
-	Behavior is deprecated but retained for migration windows.
-	"""
-	DEPRECATED
-	"""
-	Behavior row contains an unrecognized status value.
-	"""
-	UNKNOWN
-}
-
-"""
-Durable scheduler job definition for automated actor execution.
-
-Usage notes:
-- Defines recurring/queued actor execution plans.
-- Use `runs` to inspect execution history.
-
-Example:
-```graphql
-{ clockworkJob(jobId: "daily-digest") { id kind status nextRunAt runs(first: 5) { edges { node { id firedAt } } } } }
-```
-"""
-type ClockworkJob {
-	id: String!
-	kind: String!
-	status: ClockworkJobStatusValue!
-	targetActorId: Uri
-	targetSessionId: Uri
-	messageType: String!
-	nextRunAt: DateTime
-	lastRunAt: DateTime
-	createdAt: DateTime!
-	updatedAt: DateTime!
-	payload: JsonValue! @deprecated(reason: "Legacy JSON payload. Prefer typed fields over time.")
-	headers: JsonValue! @deprecated(reason: "Legacy JSON headers. Prefer typed fields over time.")
-	scheduleSpec: JsonValue! @deprecated(reason: "Legacy JSON schedule spec. Prefer typed schedule fields over time.")
-	"""
-	Historical run rows for this clockwork job.
-	
-	Example:
-	```graphql
-	{ clockworkJob(jobId: "daily") { runs(first: 10) { edges { node { id firedAt messageId } } } } }
-	```
-	"""
-	runs(first: Int, after: String): ClockworkJobRunConnection!
-}
-
-"""
-Relay-style page container for cursor-based list traversal.
-"""
-type ClockworkJobConnection {
-	"""
-	Returned edges for the current page.
-	"""
-	edges: [ClockworkJobEdge!]!
-	"""
-	Pagination state for the current page.
-	"""
-	pageInfo: PageInfo!
-}
-
-"""
-Relay-style edge carrying one node plus cursor for forward pagination.
-"""
-type ClockworkJobEdge {
-	"""
-	Opaque edge cursor to pass back into `after`.
-	"""
-	cursor: String!
-	"""
-	Materialized node for this edge.
-	"""
-	node: ClockworkJob!
-}
-
-"""
-Immutable execution record emitted when a clockwork job fires.
-
-Usage notes:
-- Immutable execution row emitted by clockwork runtime.
-
-Example:
-```graphql
-{ clockworkJob(jobId: "daily-digest") { runs(first: 5) { edges { node { id scheduledFor firedAt messageId } } } } }
-```
-"""
-type ClockworkJobRun {
-	id: String!
-	jobId: String!
-	scheduledFor: DateTime!
-	firedAt: DateTime!
-	targetActorId: Uri
-	targetSessionId: Uri
-	messageId: String!
-	createdAt: DateTime!
-}
-
-"""
-Relay-style page container for cursor-based list traversal.
-"""
-type ClockworkJobRunConnection {
-	"""
-	Returned edges for the current page.
-	"""
-	edges: [ClockworkJobRunEdge!]!
-	"""
-	Pagination state for the current page.
-	"""
-	pageInfo: PageInfo!
-}
-
-"""
-Relay-style edge carrying one node plus cursor for forward pagination.
-"""
-type ClockworkJobRunEdge {
-	"""
-	Opaque edge cursor to pass back into `after`.
-	"""
-	cursor: String!
-	"""
-	Materialized node for this edge.
-	"""
-	node: ClockworkJobRun!
-}
-
-"""
-Runtime lifecycle states for scheduler jobs.
-"""
-enum ClockworkJobStatusValue {
-	"""
-	Job is active and eligible to run.
-	"""
-	ACTIVE
-	"""
-	Job is paused and should not be scheduled.
-	"""
-	PAUSED
-	"""
-	Job has been cancelled.
-	"""
-	CANCELLED
-	"""
-	Job completed and will not run again.
-	"""
-	COMPLETED
-	"""
-	Job row contains an unrecognized status value.
-	"""
-	UNKNOWN
-}
-
-"""
-Creates a new clockwork scheduler job definition.
+Creates a new schedule scheduler job definition.
 
 Example:
 `{ jobId: "daily-digest", kind: "cron", actorId: "borg:actor:planner", sessionId: "borg:session:s1" }`
 """
-input CreateClockworkJobInputGql {
+input CreateScheduleJobInputGql {
 	"""
 	Stable job identifier.
 	"""
@@ -1047,12 +799,11 @@ type MutationRoot {
 	
 	Example:
 	```graphql
-	mutation($id: Uri!, $behavior: Uri!) {
+	mutation($id: Uri!) {
 	upsertActor(input: {
 	id: $id
 	name: "Planner"
 	systemPrompt: "You plan work."
-	defaultBehaviorId: $behavior
 	status: RUNNING
 	}) { id name status }
 	}
@@ -1068,33 +819,6 @@ type MutationRoot {
 	```
 	"""
 	deleteActor(id: Uri!): Boolean!
-	"""
-	Creates or updates a behavior.
-	
-	Example:
-	```graphql
-	mutation($id: Uri!) {
-	upsertBehavior(input: {
-	id: $id
-	name: "default"
-	systemPrompt: "..."
-	sessionTurnConcurrency: "serial"
-	status: ACTIVE
-	requiredCapabilities: ["TaskGraph-listTasks"]
-	}) { id name status requiredCapabilities }
-	}
-	```
-	"""
-	upsertBehavior(input: UpsertBehaviorInput!): Behavior!
-	"""
-	Deletes a behavior by URI.
-	
-	Example:
-	```graphql
-	mutation($id: Uri!) { deleteBehavior(id: $id) }
-	```
-	"""
-	deleteBehavior(id: Uri!): Boolean!
 	"""
 	Creates or updates a port.
 	
@@ -1252,8 +976,8 @@ type MutationRoot {
 	
 	Example:
 	```graphql
-	mutation($id: Uri!, $user: Uri!, $port: Uri!) {
-	upsertSession(input: { sessionId: $id, users: [$user], port: $port }) { id users portId }
+	mutation($id: Uri!, $port: Uri!) {
+	upsertSession(input: { sessionId: $id, port: $port }) { id portId }
 	}
 	```
 	"""
@@ -1272,7 +996,7 @@ type MutationRoot {
 	messageType: "user"
 	role: "user"
 	text: "Hello"
-	}) { id messageIndex messageType role text }
+	}) { id messageType role text }
 	}
 	```
 	"""
@@ -1285,20 +1009,20 @@ type MutationRoot {
 	mutation($session: Uri!) {
 	patchSessionMessage(input: {
 	sessionId: $session
-	messageIndex: 0
+	messageId: "borg:session_message:..."
 	message: { messageType: "user", role: "user", text: "Updated text" }
-	}) { id messageIndex text }
+	}) { id text }
 	}
 	```
 	"""
 	patchSessionMessage(input: PatchSessionMessageInput!): SessionMessage!
 	"""
-	Creates a clockwork job.
+	Creates a schedule job.
 	
 	Example:
 	```graphql
 	mutation($actor: Uri!, $session: Uri!) {
-	createClockworkJob(input: {
+	createScheduleJob(input: {
 	jobId: "daily-standup"
 	kind: "cron"
 	actorId: $actor
@@ -1310,48 +1034,48 @@ type MutationRoot {
 	}
 	```
 	"""
-	createClockworkJob(input: CreateClockworkJobInputGql!): ClockworkJob!
+	createScheduleJob(input: CreateScheduleJobInputGql!): ScheduleJob!
 	"""
-	Updates mutable clockwork job fields.
+	Updates mutable schedule job fields.
 	
 	Example:
 	```graphql
 	mutation {
-	updateClockworkJob(
+	updateScheduleJob(
 	jobId: "daily-standup",
 	patch: { scheduleSpec: { cron: "0 10 * * 1-5" } }
 	) { id status scheduleSpec }
 	}
 	```
 	"""
-	updateClockworkJob(jobId: String!, patch: UpdateClockworkJobInputGql!): ClockworkJob!
+	updateScheduleJob(jobId: String!, patch: UpdateScheduleJobInputGql!): ScheduleJob!
 	"""
-	Pauses an active clockwork job.
+	Pauses an active schedule job.
 	
 	Example:
 	```graphql
-	mutation { pauseClockworkJob(jobId: "daily-standup") }
+	mutation { pauseScheduleJob(jobId: "daily-standup") }
 	```
 	"""
-	pauseClockworkJob(jobId: String!): Boolean!
+	pauseScheduleJob(jobId: String!): Boolean!
 	"""
-	Resumes a paused clockwork job.
+	Resumes a paused schedule job.
 	
 	Example:
 	```graphql
-	mutation { resumeClockworkJob(jobId: "daily-standup") }
+	mutation { resumeScheduleJob(jobId: "daily-standup") }
 	```
 	"""
-	resumeClockworkJob(jobId: String!): Boolean!
+	resumeScheduleJob(jobId: String!): Boolean!
 	"""
-	Cancels a clockwork job.
+	Cancels a schedule job.
 	
 	Example:
 	```graphql
-	mutation { cancelClockworkJob(jobId: "daily-standup") }
+	mutation { cancelScheduleJob(jobId: "daily-standup") }
 	```
 	"""
-	cancelClockworkJob(jobId: String!): Boolean!
+	cancelScheduleJob(jobId: String!): Boolean!
 	"""
 	Creates a task in the taskgraph store.
 	
@@ -1483,10 +1207,10 @@ type PageInfo {
 }
 
 """
-Replaces one indexed timeline message inside a session.
+Replaces one timeline message inside a session by message id.
 
 Example:
-`{ sessionId: "borg:session:s1", messageIndex: 0, message: { text: "Updated" } }`
+`{ sessionId: "borg:session:s1", messageId: "borg:session_message:...", message: { text: "Updated" } }`
 """
 input PatchSessionMessageInput {
 	"""
@@ -1494,120 +1218,13 @@ input PatchSessionMessageInput {
 	"""
 	sessionId: Uri!
 	"""
-	Zero-based message index in the session timeline.
+	Stable message URI.
 	"""
-	messageIndex: Int!
+	messageId: Uri!
 	"""
 	Replacement message payload.
 	"""
 	message: SessionMessageInput!
-}
-
-"""
-Policy definition node used for governance/control-plane rules.
-
-Usage notes:
-- Control-plane policy row.
-- `uses` traverses entities policy is attached to.
-
-Example:
-```graphql
-{ policies(first: 5) { edges { node { id uses(first: 5) { edges { node { entityId } } } } } } }
-```
-"""
-type Policy implements Node {
-	id: Uri!
-	policy: JsonValue! @deprecated(reason: "Legacy JSON policy payload. Prefer typed policy fields over time.")
-	createdAt: DateTime!
-	updatedAt: DateTime!
-	"""
-	Entities that this policy is attached to.
-	
-	Example:
-	```graphql
-	{ policy(id: "borg:policy:p1") { uses(first: 20) { edges { node { entityId createdAt } } } } }
-	```
-	"""
-	uses(first: Int, after: String): PolicyUseConnection!
-}
-
-"""
-Relay-style page container for cursor-based list traversal.
-"""
-type PolicyConnection {
-	"""
-	Returned edges for the current page.
-	"""
-	edges: [PolicyEdge!]!
-	"""
-	Pagination state for the current page.
-	"""
-	pageInfo: PageInfo!
-}
-
-"""
-Relay-style edge carrying one node plus cursor for forward pagination.
-"""
-type PolicyEdge {
-	"""
-	Opaque edge cursor to pass back into `after`.
-	"""
-	cursor: String!
-	"""
-	Materialized node for this edge.
-	"""
-	node: Policy!
-}
-
-"""
-Edge indicating where a policy is applied in the entity graph.
-
-Example:
-```graphql
-{ policies(first: 1) { edges { node { uses(first: 5) { edges { node { policyId entityId } } } } } } }
-```
-"""
-type PolicyUse {
-	"""
-	Policy URI.
-	"""
-	policyId: Uri!
-	"""
-	Target entity URI that policy applies to.
-	"""
-	entityId: Uri!
-	"""
-	Attachment timestamp.
-	"""
-	createdAt: DateTime!
-}
-
-"""
-Relay-style page container for cursor-based list traversal.
-"""
-type PolicyUseConnection {
-	"""
-	Returned edges for the current page.
-	"""
-	edges: [PolicyUseEdge!]!
-	"""
-	Pagination state for the current page.
-	"""
-	pageInfo: PageInfo!
-}
-
-"""
-Relay-style edge carrying one node plus cursor for forward pagination.
-"""
-type PolicyUseEdge {
-	"""
-	Opaque edge cursor to pass back into `after`.
-	"""
-	cursor: String!
-	"""
-	Materialized node for this edge.
-	"""
-	node: PolicyUse!
 }
 
 """
@@ -1895,7 +1512,7 @@ type QueryRoot {
 	Fetches a single graph node by URI and resolves the concrete runtime type.
 	
 	Usage notes:
-	- Works for actor/behavior/session/port/provider/app/task/policy/user/memory entities.
+	- Works for actor/session/port/provider/app/task/memory entities.
 	- Use inline fragments to read type-specific fields.
 	
 	Example:
@@ -1937,33 +1554,11 @@ type QueryRoot {
 	"""
 	actors(first: Int, after: String): ActorConnection!
 	"""
-	Fetches one behavior by URI.
-	
-	Example:
-	```graphql
-	query($id: Uri!) { behavior(id: $id) { id name preferredProviderId } }
-	```
-	"""
-	behavior(id: Uri!): Behavior
-	"""
-	Lists behaviors ordered by most-recent update.
-	
-	Example:
-	```graphql
-	query {
-	behaviors(first: 20) {
-	edges { node { id name status requiredCapabilities } }
-	}
-	}
-	```
-	"""
-	behaviors(first: Int, after: String): BehaviorConnection!
-	"""
 	Fetches one session by URI.
 	
 	Example:
 	```graphql
-	query($id: Uri!) { session(id: $id) { id users portId updatedAt } }
+	query($id: Uri!) { session(id: $id) { id portId updatedAt } }
 	```
 	"""
 	session(id: Uri!): Session
@@ -1971,7 +1566,7 @@ type QueryRoot {
 	Lists sessions ordered by most-recent update.
 	
 	Usage notes:
-	- Optional filters: `portId` and `userId`.
+	- Optional filter: `portId`.
 	- Use nested `messages` for chat timeline reads.
 	
 	Example:
@@ -1983,7 +1578,7 @@ type QueryRoot {
 	}
 	```
 	"""
-	sessions(first: Int, after: String, portId: Uri, userId: Uri): SessionConnection!
+	sessions(first: Int, after: String, portId: Uri): SessionConnection!
 	"""
 	Fetches one port by canonical port name (for example `http`, `telegram`).
 	
@@ -2072,27 +1667,27 @@ type QueryRoot {
 	"""
 	apps(first: Int, after: String): AppListConnection!
 	"""
-	Fetches one clockwork job by `jobId`.
+	Fetches one schedule job by `jobId`.
 	
 	Example:
 	```graphql
-	query { clockworkJob(jobId: "daily-digest") { id status nextRunAt } }
+	query { scheduleJob(jobId: "daily-digest") { id status nextRunAt } }
 	```
 	"""
-	clockworkJob(jobId: String!): ClockworkJob
+	scheduleJob(jobId: String!): ScheduleJob
 	"""
-	Lists clockwork jobs with optional status filtering.
+	Lists schedule jobs with optional status filtering.
 	
 	Example:
 	```graphql
 	query {
-	clockworkJobs(first: 20, status: ACTIVE) {
+	scheduleJobs(first: 20, status: ACTIVE) {
 	edges { node { id kind status runs(first: 5) { edges { node { id firedAt } } } } }
 	}
 	}
 	```
 	"""
-	clockworkJobs(first: Int, after: String, status: ClockworkJobStatusValue): ClockworkJobConnection!
+	scheduleJobs(first: Int, after: String, status: ScheduleJobStatusValue): ScheduleJobConnection!
 	"""
 	Fetches one task by URI.
 	
@@ -2171,42 +1766,6 @@ type QueryRoot {
 	```
 	"""
 	memoryFacts(entityId: Uri, fieldId: Uri, includeRetracted: Boolean, first: Int, after: String): MemoryFactConnection!
-	"""
-	Fetches one policy by URI.
-	
-	Example:
-	```graphql
-	query($id: Uri!) { policy(id: $id) { id uses(first: 10) { edges { node { entityId } } } } }
-	```
-	"""
-	policy(id: Uri!): Policy
-	"""
-	Lists policies.
-	
-	Example:
-	```graphql
-	query { policies(first: 25) { edges { node { id updatedAt } } } }
-	```
-	"""
-	policies(first: Int, after: String): PolicyConnection!
-	"""
-	Fetches one user by URI.
-	
-	Example:
-	```graphql
-	query($id: Uri!) { user(id: $id) { id createdAt updatedAt } }
-	```
-	"""
-	user(id: Uri!): User
-	"""
-	Lists users.
-	
-	Example:
-	```graphql
-	query { users(first: 50) { edges { node { id updatedAt } } } }
-	```
-	"""
-	users(first: Int, after: String): UserConnection!
 }
 
 """
@@ -2309,6 +1868,147 @@ type RunPortHttpResult {
 }
 
 """
+Durable scheduler job definition for automated actor execution.
+
+Usage notes:
+- Defines recurring/queued actor execution plans.
+- Use `runs` to inspect execution history.
+
+Example:
+```graphql
+{ scheduleJob(jobId: "daily-digest") { id kind status nextRunAt runs(first: 5) { edges { node { id firedAt } } } } }
+```
+"""
+type ScheduleJob {
+	id: String!
+	kind: String!
+	status: ScheduleJobStatusValue!
+	targetActorId: Uri
+	targetSessionId: Uri
+	messageType: String!
+	nextRunAt: DateTime
+	lastRunAt: DateTime
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	payload: JsonValue! @deprecated(reason: "Legacy JSON payload. Prefer typed fields over time.")
+	headers: JsonValue! @deprecated(reason: "Legacy JSON headers. Prefer typed fields over time.")
+	scheduleSpec: JsonValue! @deprecated(reason: "Legacy JSON schedule spec. Prefer typed schedule fields over time.")
+	"""
+	Historical run rows for this schedule job.
+	
+	Example:
+	```graphql
+	{ scheduleJob(jobId: "daily") { runs(first: 10) { edges { node { id firedAt messageId } } } } }
+	```
+	"""
+	runs(first: Int, after: String): ScheduleJobRunConnection!
+}
+
+"""
+Relay-style page container for cursor-based list traversal.
+"""
+type ScheduleJobConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [ScheduleJobEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Relay-style edge carrying one node plus cursor for forward pagination.
+"""
+type ScheduleJobEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: ScheduleJob!
+}
+
+"""
+Immutable execution record emitted when a schedule job fires.
+
+Usage notes:
+- Immutable execution row emitted by schedule runtime.
+
+Example:
+```graphql
+{ scheduleJob(jobId: "daily-digest") { runs(first: 5) { edges { node { id scheduledFor firedAt messageId } } } } }
+```
+"""
+type ScheduleJobRun {
+	id: String!
+	jobId: String!
+	scheduledFor: DateTime!
+	firedAt: DateTime!
+	targetActorId: Uri
+	targetSessionId: Uri
+	messageId: String!
+	createdAt: DateTime!
+}
+
+"""
+Relay-style page container for cursor-based list traversal.
+"""
+type ScheduleJobRunConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [ScheduleJobRunEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Relay-style edge carrying one node plus cursor for forward pagination.
+"""
+type ScheduleJobRunEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: ScheduleJobRun!
+}
+
+"""
+Runtime lifecycle states for scheduler jobs.
+"""
+enum ScheduleJobStatusValue {
+	"""
+	Job is active and eligible to run.
+	"""
+	ACTIVE
+	"""
+	Job is paused and should not be scheduled.
+	"""
+	PAUSED
+	"""
+	Job has been cancelled.
+	"""
+	CANCELLED
+	"""
+	Job completed and will not run again.
+	"""
+	COMPLETED
+	"""
+	Job row contains an unrecognized status value.
+	"""
+	UNKNOWN
+}
+
+"""
 Conversation and execution timeline container.
 
 A session is Borg's primary runtime context: messages append here, ports
@@ -2320,12 +2020,11 @@ Usage notes:
 
 Example:
 ```graphql
-{ session(id: "borg:session:s1") { id users portId messages(first: 5) { edges { node { messageIndex text } } } } }
+{ session(id: "borg:session:s1") { id portId messages(first: 5) { edges { node { id text } } } } }
 ```
 """
 type Session implements Node {
 	id: Uri!
-	users: [Uri!]!
 	portId: Uri!
 	updatedAt: DateTime!
 	"""
@@ -2338,14 +2037,14 @@ type Session implements Node {
 	"""
 	port: Port
 	"""
-	Messages ordered by `messageIndex` ascending.
+	Messages ordered by creation time ascending.
 	
 	Usage notes:
 	- Use `after` with connection cursor for incremental timeline sync.
 	
 	Example:
 	```graphql
-	{ session(id: "borg:session:s1") { messages(first: 20) { edges { node { messageIndex role text } } } } }
+	{ session(id: "borg:session:s1") { messages(first: 20) { edges { node { id role text } } } } }
 	```
 	"""
 	messages(first: Int, after: String): SessionMessageConnection!
@@ -2387,17 +2086,16 @@ lifecycle events as ordered records.
 
 Usage notes:
 - Prefer `messageType`, `role`, and `text` over deprecated `payload`.
-- `messageIndex` is zero-based and monotonic within a session.
+- `id` is the stable timeline message URI.
 
 Example:
 ```graphql
-{ session(id: "borg:session:s1") { messages(first: 5) { edges { node { messageIndex messageType role text } } } } }
+{ session(id: "borg:session:s1") { messages(first: 5) { edges { node { id messageType role text } } } } }
 ```
 """
 type SessionMessage {
 	id: Uri!
 	sessionId: Uri!
-	messageIndex: Int!
 	createdAt: DateTime!
 	messageType: String!
 	role: String
@@ -2490,7 +2188,7 @@ Usage notes:
 """
 type SessionNotificationObject {
 	"""
-	Stable notification identifier (`sessionId:messageIndex`).
+	Stable notification identifier (`sessionId:messageId`).
 	"""
 	id: String!
 	"""
@@ -2506,9 +2204,9 @@ type SessionNotificationObject {
 	"""
 	sessionId: Uri!
 	"""
-	Source message index.
+	Source message URI.
 	"""
-	messageIndex: Int!
+	messageId: Uri!
 	"""
 	Source message type.
 	"""
@@ -2564,7 +2262,7 @@ Example:
 ```graphql
 subscription($session: Uri!) {
 sessionChat(sessionId: $session) {
-messageIndex
+id
 messageType
 role
 text
@@ -2577,16 +2275,15 @@ type SubscriptionRoot {
 	Streams new messages from a session timeline as they are appended.
 	
 	Usage notes:
-	- When `afterMessageIndex` is omitted, the stream starts from "now" (tail-follow mode).
-	- Provide `afterMessageIndex` to replay from a known point.
+	- When `afterMessageId` is omitted, the stream starts from the first message.
+	- Provide `afterMessageId` to replay from a known point.
 	- `pollIntervalMs` is clamped to safe server bounds.
 	
 	Example:
 	```graphql
-	subscription($session: Uri!, $after: Int) {
-	sessionChat(sessionId: $session, afterMessageIndex: $after, pollIntervalMs: 500) {
+	subscription($session: Uri!, $after: Uri) {
+	sessionChat(sessionId: $session, afterMessageId: $after, pollIntervalMs: 500) {
 	id
-	messageIndex
 	messageType
 	role
 	text
@@ -2594,7 +2291,7 @@ type SubscriptionRoot {
 	}
 	```
 	"""
-	sessionChat(sessionId: Uri!, afterMessageIndex: Int, pollIntervalMs: Int): SessionMessage!
+	sessionChat(sessionId: Uri!, afterMessageId: Uri, pollIntervalMs: Int): SessionMessage!
 	"""
 	Streams session notifications derived from new timeline messages.
 	
@@ -2610,12 +2307,12 @@ type SubscriptionRoot {
 	kind
 	title
 	text
-	sessionMessage { messageIndex messageType role }
+	sessionMessage { id messageType role }
 	}
 	}
 	```
 	"""
-	sessionNotifications(sessionId: Uri!, afterMessageIndex: Int, pollIntervalMs: Int, includeUserMessages: Boolean): SessionNotificationObject!
+	sessionNotifications(sessionId: Uri!, afterMessageId: Uri, pollIntervalMs: Int, includeUserMessages: Boolean): SessionNotificationObject!
 }
 
 """
@@ -2995,13 +2692,13 @@ enum TaskStatusValue {
 }
 
 """
-Patches mutable fields on an existing clockwork scheduler job.
+Patches mutable fields on an existing schedule scheduler job.
 
 Usage notes:
 - Only pass fields that need to change.
 - `nextRunAt` set to `null` clears the existing schedule override.
 """
-input UpdateClockworkJobInputGql {
+input UpdateScheduleJobInputGql {
 	"""
 	New scheduler kind.
 	"""
@@ -3070,7 +2767,7 @@ input UpdateTaskInputGql {
 Creates or updates an actor definition in Borg's control-plane graph.
 
 Example:
-`{ id: "borg:actor:planner", name: "Planner", defaultBehaviorId: "borg:behavior:default", status: RUNNING }`
+`{ id: "borg:actor:planner", name: "Planner", status: RUNNING }`
 """
 input UpsertActorInput {
 	"""
@@ -3085,10 +2782,6 @@ input UpsertActorInput {
 	System prompt used when running this actor.
 	"""
 	systemPrompt: String!
-	"""
-	Behavior URI linked as actor default.
-	"""
-	defaultBehaviorId: Uri!
 	"""
 	Actor lifecycle status (for example `RUNNING`).
 	"""
@@ -3252,46 +2945,6 @@ input UpsertAppSecretInput {
 }
 
 """
-Creates or updates a behavior profile that actors can run with.
-
-Usage notes:
-- `requiredCapabilities` should contain runtime tool/capability names.
-
-Example:
-`{ id: "borg:behavior:default", name: "default", sessionTurnConcurrency: "serial", status: ACTIVE }`
-"""
-input UpsertBehaviorInput {
-	"""
-	Stable behavior URI (`borg:behavior:*`).
-	"""
-	id: Uri!
-	"""
-	Human-readable behavior label.
-	"""
-	name: String!
-	"""
-	System prompt attached to this behavior.
-	"""
-	systemPrompt: String!
-	"""
-	Preferred provider key (for example `openai`, `openrouter`).
-	"""
-	preferredProviderId: String
-	"""
-	Capability names required by this behavior.
-	"""
-	requiredCapabilities: [String!]! = []
-	"""
-	Turn execution policy (for example `serial`).
-	"""
-	sessionTurnConcurrency: String!
-	"""
-	Behavior lifecycle status.
-	"""
-	status: BehaviorStatusValue!
-}
-
-"""
 Creates or updates the conversation-to-actor override row for a port.
 
 Example:
@@ -3407,7 +3060,7 @@ input UpsertProviderInput {
 Creates or updates a long-lived session in the Borg runtime graph.
 
 Example:
-`{ sessionId: "borg:session:s1", users: ["borg:user:u1"], port: "borg:port:http" }`
+`{ sessionId: "borg:session:s1", port: "borg:port:http" }`
 """
 input UpsertSessionInput {
 	"""
@@ -3415,63 +3068,12 @@ input UpsertSessionInput {
 	"""
 	sessionId: Uri!
 	"""
-	Participant user URIs.
-	"""
-	users: [Uri!]!
-	"""
 	Owning ingress port URI.
 	"""
 	port: Uri!
 }
 
 scalar Uri
-
-"""
-Control-plane user/principal record.
-
-Usage notes:
-- Minimal control-plane user row.
-- `profile` is transitional JSON.
-
-Example:
-```graphql
-{ users(first: 10) { edges { node { id createdAt updatedAt } } } }
-```
-"""
-type User implements Node {
-	id: Uri!
-	profile: JsonValue! @deprecated(reason: "Legacy JSON profile payload. Prefer typed profile fields over time.")
-	createdAt: DateTime!
-	updatedAt: DateTime!
-}
-
-"""
-Relay-style page container for cursor-based list traversal.
-"""
-type UserConnection {
-	"""
-	Returned edges for the current page.
-	"""
-	edges: [UserEdge!]!
-	"""
-	Pagination state for the current page.
-	"""
-	pageInfo: PageInfo!
-}
-
-"""
-Relay-style edge carrying one node plus cursor for forward pagination.
-"""
-type UserEdge {
-	"""
-	Opaque edge cursor to pass back into `after`.
-	"""
-	cursor: String!
-	"""
-	Materialized node for this edge.
-	"""
-	node: User!
-}
 
 """
 Marks an element of a GraphQL schema as no longer supported.

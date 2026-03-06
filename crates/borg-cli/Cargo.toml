@@ -10,13 +10,13 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
-borg-api = { path = "../borg-api" }
 borg-agent = { path = "../borg-agent" }
 borg-apps = { path = "../borg-apps" }
 borg-core = { path = "../borg-core" }
 borg-db = { path = "../borg-db" }
 borg-exec = { path = "../borg-exec" }
 borg-fs = { path = "../borg-fs" }
+borg-gql = { path = "../borg-gql" }
 borg-infer = { path = "../borg-infer" }
 borg-llm = { path = "../borg-llm" }
 borg-memory = { path = "../borg-memory" }

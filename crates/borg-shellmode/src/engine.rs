@@ -9,6 +9,7 @@ use tracing::{debug, info};
 use crate::types::ShellModeContext;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
+const MAX_COMMAND_LOG_CHARS: usize = 40;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ShellExecutionData {
@@ -59,7 +60,14 @@ impl ShellModeRuntime {
             .cloned()
             .or_else(|| self.default_working_directory.clone());
 
-        info!(target: "borg_shellmode", command = %command, cwd = ?cwd, timeout_secs = timeout.as_secs(), "executing shell command");
+        let command_preview = preview_command(command, MAX_COMMAND_LOG_CHARS);
+        info!(
+            target: "borg_shellmode",
+            command_preview = %command_preview,
+            cwd = ?cwd,
+            timeout_secs = timeout.as_secs(),
+            "executing shell command"
+        );
 
         let start = Instant::now();
 
@@ -96,4 +104,16 @@ impl ShellModeRuntime {
             duration,
         })
     }
+}
+
+fn preview_command(command: &str, max_chars: usize) -> String {
+    let mut preview = String::new();
+    for (idx, ch) in command.chars().enumerate() {
+        if idx >= max_chars {
+            preview.push_str("...");
+            break;
+        }
+        preview.push(ch);
+    }
+    preview
 }

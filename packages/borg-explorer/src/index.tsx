@@ -1,4 +1,4 @@
-import { createBorgApiClient, MemoryExplorerEdge } from "@borg/api";
+import { createBorgApiClient, MemoryExplorerEdge } from "@borg/graphql-client";
 import React, { useMemo, useState } from "react";
 import ReactFlow, {
   Background,

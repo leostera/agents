@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 const MAX_ATTEMPTS: usize = 6;
 const MAX_CONTAINER_START_ATTEMPTS: usize = 3;
+const OLLAMA_TEST_MODEL: &str = "qwen2.5:0.5b";
 const REQUIRED_MARKER: &str = "BORG_TOOL_TEST_OK";
 
 #[derive(Clone)]
@@ -343,7 +344,7 @@ async fn start_llm_container_with_retries() -> Option<LlmContainer> {
             max_attempts = MAX_CONTAINER_START_ATTEMPTS,
             "starting ollama container for e2e test"
         );
-        match LlmContainer::start_ollama().await {
+        match LlmContainer::start_ollama_with_model(OLLAMA_TEST_MODEL).await {
             Ok(container) => return Some(container),
             Err(err) => {
                 debug!(

@@ -5,16 +5,15 @@ impl SubscriptionRoot {
     /// Streams new messages from a session timeline as they are appended.
     ///
     /// Usage notes:
-    /// - When `afterMessageIndex` is omitted, the stream starts from "now" (tail-follow mode).
-    /// - Provide `afterMessageIndex` to replay from a known point.
+    /// - When `afterMessageId` is omitted, the stream starts from the first message.
+    /// - Provide `afterMessageId` to replay from a known point.
     /// - `pollIntervalMs` is clamped to safe server bounds.
     ///
     /// Example:
     /// ```graphql
-    /// subscription($session: Uri!, $after: Int) {
-    ///   sessionChat(sessionId: $session, afterMessageIndex: $after, pollIntervalMs: 500) {
+    /// subscription($session: Uri!, $after: Uri) {
+    ///   sessionChat(sessionId: $session, afterMessageId: $after, pollIntervalMs: 500) {
     ///     id
-    ///     messageIndex
     ///     messageType
     ///     role
     ///     text
@@ -25,14 +24,17 @@ impl SubscriptionRoot {
         &self,
         ctx: &Context<'_>,
         session_id: UriScalar,
-        after_message_index: Option<i64>,
+        after_message_id: Option<UriScalar>,
         poll_interval_ms: Option<i32>,
     ) -> BoxStream<'static, GqlResult<SessionMessageObject>> {
         let setup = async {
             let data = ctx_data(ctx)?.clone();
-            let start =
-                resolve_session_stream_start_index(&data, &session_id.0, after_message_index)
-                    .await?;
+            let start = resolve_session_stream_start_offset(
+                &data,
+                &session_id.0,
+                after_message_id.as_ref().map(|value| &value.0),
+            )
+            .await?;
             let poll_ms = normalize_poll_interval_ms(poll_interval_ms)?;
 
             Ok::<_, Error>(session_message_subscription_stream(
@@ -64,7 +66,7 @@ impl SubscriptionRoot {
     ///     kind
     ///     title
     ///     text
-    ///     sessionMessage { messageIndex messageType role }
+    ///     sessionMessage { id messageType role }
     ///   }
     /// }
     /// ```
@@ -72,15 +74,18 @@ impl SubscriptionRoot {
         &self,
         ctx: &Context<'_>,
         session_id: UriScalar,
-        after_message_index: Option<i64>,
+        after_message_id: Option<UriScalar>,
         poll_interval_ms: Option<i32>,
         include_user_messages: Option<bool>,
     ) -> BoxStream<'static, GqlResult<SessionNotificationObject>> {
         let setup = async {
             let data = ctx_data(ctx)?.clone();
-            let start =
-                resolve_session_stream_start_index(&data, &session_id.0, after_message_index)
-                    .await?;
+            let start = resolve_session_stream_start_offset(
+                &data,
+                &session_id.0,
+                after_message_id.as_ref().map(|value| &value.0),
+            )
+            .await?;
             let poll_ms = normalize_poll_interval_ms(poll_interval_ms)?;
             let include_users = include_user_messages.unwrap_or(false);
 

@@ -7,7 +7,7 @@
   "module": "./src/index.tsx",
   "types": "./src/index.tsx",
   "dependencies": {
-    "@borg/api": "workspace:*",
+    "@borg/graphql-client": "workspace:*",
     "react": "^18.3.1",
     "reactflow": "^11.11.4"
   },

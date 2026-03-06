@@ -5,6 +5,7 @@ pub mod shell;
 pub mod taskgraph;
 
 use anyhow::Result;
+use borg_agent::{BorgToolResult, ToolResponse, ToolResultData};
 use clap::Subcommand;
 use serde_json::{Value, json};
 
@@ -24,20 +25,10 @@ pub enum ToolsCommand {
         #[command(subcommand)]
         cmd: shell::ShellCommand,
     },
-    #[command(about = "Memory tools for facts, entities, schema, and search")]
-    Memory {
-        #[command(subcommand)]
-        cmd: memory::MemoryToolsCommand,
-    },
     #[command(about = "BorgFS tools for listing, reading, writing, and deleting files")]
     Fs {
         #[command(subcommand)]
         cmd: fs::FsToolsCommand,
-    },
-    #[command(about = "TaskGraph tools for task lifecycle, structure, and review flows")]
-    Taskgraph {
-        #[command(subcommand)]
-        cmd: taskgraph::TaskGraphCommand,
     },
 }
 
@@ -46,9 +37,7 @@ pub async fn run(app: &BorgCliApp, cmd: ToolsCommand) -> Result<()> {
         ToolsCommand::List => catalog(),
         ToolsCommand::Codemode { cmd } => codemode::run(cmd).await?,
         ToolsCommand::Shell { cmd } => shell::run(cmd).await?,
-        ToolsCommand::Memory { cmd } => memory::run(app, cmd).await?,
         ToolsCommand::Fs { cmd } => fs::run(app, cmd).await?,
-        ToolsCommand::Taskgraph { cmd } => taskgraph::run(app, cmd).await?,
     };
 
     println!("{}", serde_json::to_string(&output)?);
@@ -61,9 +50,22 @@ fn catalog() -> Value {
         "namespaces": {
             "codemode": codemode::command_names(),
             "shell": shell::command_names(),
-            "memory": memory::command_names(),
             "fs": fs::command_names(),
-            "taskgraph": taskgraph::command_names(),
         }
     })
+}
+
+pub(super) fn decode_tool_response(response: ToolResponse<BorgToolResult>) -> Result<Value> {
+    match response.content {
+        ToolResultData::Text(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(value) => Ok(value),
+            Err(_) => Ok(json!({ "text": text })),
+        },
+        ToolResultData::Capabilities(capabilities) => Ok(json!({ "capabilities": capabilities })),
+        ToolResultData::Execution { result, duration } => Ok(json!({
+            "result": result.to_value()?,
+            "duration_ms": duration.as_millis(),
+        })),
+        ToolResultData::Error { message } => Ok(json!({ "error": message })),
+    }
 }

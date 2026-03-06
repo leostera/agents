@@ -22,6 +22,7 @@ mod session_manager;
 mod tool_runner;
 mod types;
 
+pub use borg_llm::ReasoningEffort;
 pub use provider_config::ProviderConfigSnapshot;
 pub use provider_supervisor::ProviderConfigSupervisor;
 pub use types::{SessionTurnOutput, ToolCallSummary};

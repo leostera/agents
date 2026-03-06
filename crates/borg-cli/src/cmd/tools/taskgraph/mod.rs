@@ -2,6 +2,8 @@ use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
 
+use super::decode_tool_response;
+
 use crate::app::BorgCliApp;
 
 #[derive(Subcommand, Debug)]
@@ -12,6 +14,10 @@ pub enum TaskGraphCommand {
     CreateTask(CreateTaskArgs),
     #[command(about = "Get one task by URI")]
     GetTask(GetTaskArgs),
+    #[command(about = "List top-level tasks")]
+    ListTasks(ListTasksArgs),
+    #[command(about = "Delete a task (marks status as discarded)")]
+    Delete(SessionAndUriArgs),
     #[command(about = "Patch title/description/definition_of_done for a task")]
     UpdateTaskFields(UpdateTaskFieldsArgs),
     #[command(about = "Reviewer-only reassignment to a new assignee agent")]
@@ -108,6 +114,16 @@ pub struct CreateTaskArgs {
 pub struct GetTaskArgs {
     #[arg(long)]
     pub uri: Option<String>,
+    #[command(flatten)]
+    pub raw: RawPayloadArg,
+}
+
+#[derive(Args, Debug)]
+pub struct ListTasksArgs {
+    #[arg(long)]
+    pub cursor: Option<String>,
+    #[arg(long)]
+    pub limit: Option<u64>,
     #[command(flatten)]
     pub raw: RawPayloadArg,
 }
@@ -326,6 +342,8 @@ pub fn command_names() -> Vec<&'static str> {
     vec![
         "create-task",
         "get-task",
+        "list-tasks",
+        "delete",
         "update-task-fields",
         "reassign-assignee",
         "add-task-labels",
@@ -385,6 +403,22 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "TaskGraph-getTask",
                 args.raw.payload_json,
                 [req("uri", args.uri)],
+            )
+            .await
+        }
+        TaskGraphCommand::ListTasks(args) => {
+            execute_list_tasks(app, "list-tasks", "TaskGraph-listTasks", args).await
+        }
+        TaskGraphCommand::Delete(args) => {
+            let mut map = Map::new();
+            insert_req(&mut map, "session_uri", args.session_uri);
+            insert_req(&mut map, "uri", args.uri);
+            map.insert("status".to_string(), Value::String("discarded".to_string()));
+            execute(
+                app,
+                "delete",
+                "TaskGraph-setTaskStatus",
+                payload(args.raw.payload_json, map)?,
             )
             .await
         }
@@ -790,6 +824,26 @@ async fn execute_list_by_session(
     .await
 }
 
+async fn execute_list_tasks(
+    app: &BorgCliApp,
+    command: &str,
+    tool_name: &str,
+    args: ListTasksArgs,
+) -> Result<Value> {
+    let mut map = Map::new();
+    insert_opt(&mut map, "cursor", args.cursor);
+    if let Some(limit) = args.limit {
+        map.insert("limit".to_string(), Value::from(limit));
+    }
+    execute(
+        app,
+        command,
+        tool_name,
+        payload(args.raw.payload_json, map)?,
+    )
+    .await
+}
+
 async fn execute(
     app: &BorgCliApp,
     command: &str,
@@ -809,11 +863,5 @@ async fn execute(
         })
         .await?;
 
-    Ok(json!({
-        "ok": true,
-        "namespace": "taskgraph",
-        "command": command,
-        "tool": tool_name,
-        "content": response.content
-    }))
+    decode_tool_response(response)
 }

@@ -13,7 +13,6 @@ const OLLAMA_IMAGE_TAG: &str = "latest";
 const OLLAMA_PORT: u16 = 11434;
 const OLLAMA_MODELS_DIR_IN_CONTAINER: &str = "/root/.ollama";
 const OLLAMA_MODELS_DIR_RELATIVE: &str = ".docker/volumes/ollama";
-const DEFAULT_TEST_MODEL: &str = "qwen2.5:0.5b";
 const DEFAULT_TEST_API_KEY: &str = "test-key";
 const TAGS_PATH: &str = "/api/tags";
 const PULL_PATH: &str = "/api/pull";
@@ -30,10 +29,6 @@ pub struct LlmContainer {
 }
 
 impl LlmContainer {
-    pub async fn start_ollama() -> Result<Self> {
-        Self::start_ollama_with_model(DEFAULT_TEST_MODEL).await
-    }
-
     pub async fn start_ollama_with_model(model: impl Into<String>) -> Result<Self> {
         let model = model.into();
         info!(

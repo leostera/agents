@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_core::Uri;
+use borg_core::{Uri, uri};
 use borg_db::BorgDb;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -74,8 +74,9 @@ where
 
     pub async fn add_message(&mut self, message: Message<TToolCall, TToolResult>) -> Result<()> {
         let payload = serde_json::to_value(message)?;
+        let reasoning_effort = self.agent.reasoning_effort.map(|effort| effort.to_string());
         self.db
-            .append_session_message(&self.session_id, &payload)
+            .append_session_message(&self.session_id, &payload, reasoning_effort.as_deref())
             .await?;
         let appended = serde_json::from_value::<Message<TToolCall, TToolResult>>(payload)
             .map_err(|err| anyhow!(err))?;
@@ -201,16 +202,7 @@ where
     }
 
     pub async fn user_key(&self) -> Result<Uri> {
-        let record = self
-            .db
-            .get_session(&self.session_id)
-            .await?
-            .ok_or_else(|| anyhow!("session not found: {}", self.session_id))?;
-        record
-            .users
-            .first()
-            .cloned()
-            .ok_or_else(|| anyhow!("session has no users: {}", self.session_id))
+        Ok(uri!("borg", "user", "system"))
     }
 
     pub async fn record_provider_usage(&self, provider: &str, tokens_used: u64) -> Result<()> {
@@ -261,6 +253,15 @@ where
         let mut hash = 0_u64;
         hash = Self::mix_hash(hash, Self::hash_str(&self.agent.agent_id.to_string()));
         hash = Self::mix_hash(hash, Self::hash_str(&self.agent.model));
+        hash = Self::mix_hash(
+            hash,
+            Self::hash_str(
+                self.agent
+                    .reasoning_effort
+                    .map(|effort| effort.as_str())
+                    .unwrap_or(""),
+            ),
+        );
         hash = Self::mix_hash(hash, Self::hash_str(&self.agent.system_prompt));
         hash = Self::mix_hash(hash, Self::hash_str(&self.agent.behavior_prompt));
         for tool in &self.agent.tools {

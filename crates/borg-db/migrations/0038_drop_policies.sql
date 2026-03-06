@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS policies_use;
+DROP TABLE IF EXISTS policies;

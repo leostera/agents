@@ -34,6 +34,11 @@ fn parse_assigned_actor_id(settings: &Value, default_agent_id: Option<Uri>) -> R
     Ok(default_agent_id.filter(is_actor_uri))
 }
 
+enum ActorBindingUpdate<'a> {
+    Preserve,
+    Set(Option<&'a Uri>),
+}
+
 impl BorgDb {
     pub async fn list_ports(&self, limit: usize) -> Result<Vec<PortRecord>> {
         let limit = i64::try_from(limit).unwrap_or(200);
@@ -47,28 +52,20 @@ impl BorgDb {
                 p.allows_guests as "allows_guests!: i64",
                 p.default_agent_id as "default_agent_id: String",
                 p.settings_json as "settings_json!: String",
-                COALESCE(sess.active_sessions, 0) as "active_sessions!: i64",
+                COALESCE(bind.active_sessions, 0) as "active_sessions!: i64",
                 MAX(
                     COALESCE(p.updated_at, ''),
-                    COALESCE(sess.updated_at, ''),
-                    COALESCE(ctx.updated_at, '')
+                    COALESCE(bind.updated_at, '')
                 ) as "updated_at_effective!: String"
             FROM ports p
             LEFT JOIN (
                 SELECT
                     port,
-                    COUNT(*) AS active_sessions,
+                    COUNT(DISTINCT session_id) AS active_sessions,
                     MAX(updated_at) AS updated_at
-                FROM sessions
+                FROM port_bindings
                 GROUP BY port
-            ) sess ON sess.port = ('borg:port:' || p.port_name)
-            LEFT JOIN (
-                SELECT
-                    port,
-                    MAX(updated_at) AS updated_at
-                FROM port_session_ctx
-                GROUP BY port
-            ) ctx ON ctx.port = p.port_name
+            ) bind ON bind.port = p.port_name
             WHERE p.port_name != 'runtime'
             ORDER BY 9 DESC, p.port_name ASC
             LIMIT ?1
@@ -291,15 +288,10 @@ impl BorgDb {
     pub async fn delete_port(&self, port_name: &str) -> Result<()> {
         let port_name = port_name.to_string();
         let port_for_ports = port_name.clone();
-        let port_for_ctx = port_name.clone();
         sqlx::query!("DELETE FROM ports WHERE port_name = ?1", port_for_ports,)
             .execute(self.conn.pool())
             .await
             .context("failed deleting port record")?;
-        sqlx::query!("DELETE FROM port_session_ctx WHERE port = ?1", port_for_ctx,)
-            .execute(self.conn.pool())
-            .await
-            .context("failed deleting port session context")?;
         sqlx::query!("DELETE FROM port_bindings WHERE port = ?1", port_name,)
             .execute(self.conn.pool())
             .await
@@ -464,12 +456,16 @@ impl BorgDb {
         port: &str,
         conversation_key: &Uri,
         requested_session_id: Option<&Uri>,
-        requested_agent_id: Option<&Uri>,
-    ) -> Result<(Uri, Option<Uri>)> {
+    ) -> Result<Uri> {
         if let Some(session_id) = requested_session_id {
-            self.upsert_port_binding(port, conversation_key, session_id, requested_agent_id)
-                .await?;
-            return Ok((session_id.clone(), requested_agent_id.cloned()));
+            self.upsert_port_binding(
+                port,
+                conversation_key,
+                session_id,
+                ActorBindingUpdate::Preserve,
+            )
+            .await?;
+            return Ok(session_id.clone());
         }
 
         if let Some(existing) = self.get_port_binding(port, conversation_key).await? {
@@ -477,22 +473,22 @@ impl BorgDb {
         }
 
         let session_id = uri!("borg", "session");
-        self.upsert_port_binding(port, conversation_key, &session_id, requested_agent_id)
-            .await?;
-        Ok((session_id, requested_agent_id.cloned()))
+        self.upsert_port_binding(
+            port,
+            conversation_key,
+            &session_id,
+            ActorBindingUpdate::Preserve,
+        )
+        .await?;
+        Ok(session_id)
     }
 
-    async fn get_port_binding(
-        &self,
-        port: &str,
-        conversation_key: &Uri,
-    ) -> Result<Option<(Uri, Option<Uri>)>> {
+    async fn get_port_binding(&self, port: &str, conversation_key: &Uri) -> Result<Option<Uri>> {
         let port = port.to_string();
         let conversation_key = conversation_key.to_string();
         let row = sqlx::query!(
             r#"SELECT
-                session_id as "session_id!: String",
-                agent_id as "agent_id: String"
+                session_id as "session_id!: String"
             FROM port_bindings
             WHERE port = ?1 AND conversation_key = ?2
             LIMIT 1"#,
@@ -507,41 +503,50 @@ impl BorgDb {
             return Ok(None);
         };
 
-        Ok(Some((
-            Uri::parse(&row.session_id)?,
-            row.agent_id.map(|value| Uri::parse(&value)).transpose()?,
-        )))
+        Ok(Some(Uri::parse(&row.session_id)?))
     }
 
     pub async fn get_port_binding_record(
         &self,
         port: &str,
         conversation_key: &Uri,
+    ) -> Result<Option<(Uri, Uri)>> {
+        Ok(self
+            .get_port_binding_full_record(port, conversation_key)
+            .await?
+            .map(|(conversation_key, session_id, _actor_id)| (conversation_key, session_id)))
+    }
+
+    pub async fn get_port_binding_full_record(
+        &self,
+        port: &str,
+        conversation_key: &Uri,
     ) -> Result<Option<(Uri, Uri, Option<Uri>)>> {
-        let port = port.to_string();
-        let conversation_key = conversation_key.to_string();
-        let row = sqlx::query!(
-            r#"SELECT
-                conversation_key as "conversation_key!: String",
-                session_id as "session_id!: String",
-                agent_id as "agent_id: String"
+        let row = sqlx::query(
+            r#"
+            SELECT conversation_key, session_id, actor_id
             FROM port_bindings
             WHERE port = ?1 AND conversation_key = ?2
-            LIMIT 1"#,
-            port,
-            conversation_key,
+            LIMIT 1
+            "#,
         )
+        .bind(port)
+        .bind(conversation_key.to_string())
         .fetch_optional(self.conn.pool())
         .await
-        .context("failed to query port binding record")?;
+        .context("failed to query full port binding record")?;
 
         let Some(row) = row else {
             return Ok(None);
         };
+
+        let conversation_key_raw: String = row.try_get("conversation_key")?;
+        let session_id_raw: String = row.try_get("session_id")?;
+        let actor_id_raw: Option<String> = row.try_get("actor_id")?;
         Ok(Some((
-            Uri::parse(&row.conversation_key)?,
-            Uri::parse(&row.session_id)?,
-            row.agent_id.map(|value| Uri::parse(&value)).transpose()?,
+            Uri::parse(&conversation_key_raw)?,
+            Uri::parse(&session_id_raw)?,
+            actor_id_raw.map(|value| Uri::parse(&value)).transpose()?,
         )))
     }
 
@@ -550,35 +555,81 @@ impl BorgDb {
         port: &str,
         conversation_key: &Uri,
         session_id: &Uri,
-        agent_id: Option<&Uri>,
+        actor_update: ActorBindingUpdate<'_>,
     ) -> Result<()> {
-        let port = port.to_string();
-        let conversation_key = conversation_key.to_string();
-        let session_id = session_id.to_string();
-        let agent_id = agent_id.map(|value| value.to_string());
         let now = Utc::now().to_rfc3339();
-        let created_at = now.clone();
-        let updated_at = now;
-        sqlx::query!(
-            r#"
-            INSERT INTO port_bindings(port, conversation_key, session_id, agent_id, created_at, updated_at)
-            VALUES(?1, ?2, ?3, ?4, ?5, ?6)
-            ON CONFLICT(port, conversation_key) DO UPDATE SET
-              session_id = excluded.session_id,
-              agent_id = excluded.agent_id,
-              updated_at = excluded.updated_at
-            "#,
-            port,
-            conversation_key,
-            session_id,
-            agent_id,
-            created_at,
-            updated_at,
-        )
-            .execute(self.conn.pool())
-            .await
-            .context("failed to upsert port binding")?;
+        match actor_update {
+            ActorBindingUpdate::Preserve => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO port_bindings(
+                        port,
+                        conversation_key,
+                        session_id,
+                        actor_id,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES(?1, ?2, ?3, NULL, ?4, ?5)
+                    ON CONFLICT(port, conversation_key) DO UPDATE SET
+                      session_id = excluded.session_id,
+                      updated_at = excluded.updated_at
+                    "#,
+                )
+                .bind(port)
+                .bind(conversation_key.to_string())
+                .bind(session_id.to_string())
+                .bind(now.clone())
+                .bind(now.clone())
+                .execute(self.conn.pool())
+                .await
+                .context("failed to upsert port binding")?;
+            }
+            ActorBindingUpdate::Set(actor_id) => {
+                sqlx::query(
+                    r#"
+                    INSERT INTO port_bindings(
+                        port,
+                        conversation_key,
+                        session_id,
+                        actor_id,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+                    ON CONFLICT(port, conversation_key) DO UPDATE SET
+                      session_id = excluded.session_id,
+                      actor_id = excluded.actor_id,
+                      updated_at = excluded.updated_at
+                    "#,
+                )
+                .bind(port)
+                .bind(conversation_key.to_string())
+                .bind(session_id.to_string())
+                .bind(actor_id.map(ToString::to_string))
+                .bind(now.clone())
+                .bind(now.clone())
+                .execute(self.conn.pool())
+                .await
+                .context("failed to upsert port binding")?;
+            }
+        }
         Ok(())
+    }
+
+    pub async fn upsert_port_binding_full_record(
+        &self,
+        port: &str,
+        conversation_key: &Uri,
+        session_id: &Uri,
+        actor_id: Option<Option<&Uri>>,
+    ) -> Result<()> {
+        let actor_update = match actor_id {
+            Some(actor_id) => ActorBindingUpdate::Set(actor_id),
+            None => ActorBindingUpdate::Preserve,
+        };
+        self.upsert_port_binding(port, conversation_key, session_id, actor_update)
+            .await
     }
 
     pub async fn upsert_port_binding_record(
@@ -586,44 +637,53 @@ impl BorgDb {
         port: &str,
         conversation_key: &Uri,
         session_id: &Uri,
-        agent_id: Option<&Uri>,
     ) -> Result<()> {
-        self.upsert_port_binding(port, conversation_key, session_id, agent_id)
+        self.upsert_port_binding_full_record(port, conversation_key, session_id, None)
             .await
     }
 
-    pub async fn list_port_bindings(
+    pub async fn list_port_binding_records(
         &self,
         port: &str,
         limit: usize,
     ) -> Result<Vec<(Uri, Uri, Option<Uri>)>> {
         let limit = i64::try_from(limit).unwrap_or(200);
-        let port = port.to_string();
-        let rows = sqlx::query!(
-            r#"SELECT
-                conversation_key as "conversation_key!: String",
-                session_id as "session_id!: String",
-                agent_id as "agent_id: String"
+        let rows = sqlx::query(
+            r#"
+            SELECT conversation_key, session_id, actor_id
             FROM port_bindings
             WHERE port = ?1
             ORDER BY updated_at DESC
-            LIMIT ?2"#,
-            port,
-            limit,
+            LIMIT ?2
+            "#,
         )
+        .bind(port)
+        .bind(limit)
         .fetch_all(self.conn.pool())
         .await
-        .context("failed to list port bindings")?;
+        .context("failed to list full port bindings")?;
 
         rows.into_iter()
             .map(|row| {
+                let conversation_key_raw: String = row.try_get("conversation_key")?;
+                let session_id_raw: String = row.try_get("session_id")?;
+                let actor_id_raw: Option<String> = row.try_get("actor_id")?;
                 Ok((
-                    Uri::parse(&row.conversation_key)?,
-                    Uri::parse(&row.session_id)?,
-                    row.agent_id.map(|value| Uri::parse(&value)).transpose()?,
+                    Uri::parse(&conversation_key_raw)?,
+                    Uri::parse(&session_id_raw)?,
+                    actor_id_raw.map(|value| Uri::parse(&value)).transpose()?,
                 ))
             })
             .collect()
+    }
+
+    pub async fn list_port_bindings(&self, port: &str, limit: usize) -> Result<Vec<(Uri, Uri)>> {
+        Ok(self
+            .list_port_binding_records(port, limit)
+            .await?
+            .into_iter()
+            .map(|(conversation_key, session_id, _actor_id)| (conversation_key, session_id))
+            .collect())
     }
 
     pub async fn delete_port_binding(&self, port: &str, conversation_key: &Uri) -> Result<u64> {
@@ -648,51 +708,45 @@ impl BorgDb {
         ctx: &Value,
     ) -> Result<()> {
         let ctx_json = ctx.to_string();
+        let ctx_json_ref = ctx_json.as_str();
         let now = Utc::now().to_rfc3339();
-        let session_id = session_id.to_string();
-        let expected_port_id = format!("borg:port:{port}");
-        let updated = sqlx::query(
+        let now_ref = now.as_str();
+        let session_id_raw = session_id.to_string();
+        let session_id_ref = session_id_raw.as_str();
+        let updated = sqlx::query!(
             r#"
-            UPDATE sessions
+            UPDATE port_bindings
             SET context_snapshot_json = ?1, updated_at = ?2
-            WHERE session_id = ?3
-              AND (port = ?4 OR port = ?5)
+            WHERE port = ?3
+              AND session_id = ?4
             "#,
+            ctx_json_ref,
+            now_ref,
+            port,
+            session_id_ref,
         )
-        .bind(&ctx_json)
-        .bind(now)
-        .bind(&session_id)
-        .bind(port)
-        .bind(&expected_port_id)
         .execute(self.conn.pool())
         .await
-        .context("failed to upsert session context snapshot")?
+        .context("failed to upsert port session context snapshot")?
         .rows_affected();
         if updated == 0 {
-            let fallback_users_json = serde_json::json!(["borg:user:system"]).to_string();
-            sqlx::query(
+            self.upsert_port_binding_full_record(port, session_id, session_id, None)
+                .await?;
+            sqlx::query!(
                 r#"
-                INSERT INTO sessions(
-                    session_id,
-                    users_json,
-                    port,
-                    context_snapshot_json,
-                    updated_at
-                )
-                VALUES(?1, ?2, ?3, ?4, ?5)
-                ON CONFLICT(session_id) DO UPDATE SET
-                  context_snapshot_json = excluded.context_snapshot_json,
-                  updated_at = excluded.updated_at
+                UPDATE port_bindings
+                SET context_snapshot_json = ?1, updated_at = ?2
+                WHERE port = ?3
+                  AND conversation_key = ?4
                 "#,
+                ctx_json_ref,
+                now_ref,
+                port,
+                session_id_ref,
             )
-            .bind(&session_id)
-            .bind(fallback_users_json)
-            .bind(expected_port_id)
-            .bind(ctx_json)
-            .bind(Utc::now().to_rfc3339())
             .execute(self.conn.pool())
             .await
-            .context("failed to create fallback session context snapshot")?;
+            .context("failed to write session context snapshot after binding upsert")?;
         }
         Ok(())
     }
@@ -702,19 +756,18 @@ impl BorgDb {
         port: &str,
         session_id: &Uri,
     ) -> Result<Option<Value>> {
-        let session_id = session_id.to_string();
-        let expected_port_id = format!("borg:port:{port}");
-        let row = sqlx::query(
-            r#"SELECT context_snapshot_json
-            FROM sessions
-            WHERE session_id = ?1
-              AND (port = ?2 OR port = ?3)
+        let session_id_raw = session_id.to_string();
+        let row = sqlx::query!(
+            r#"SELECT context_snapshot_json as "context_snapshot_json: String"
+            FROM port_bindings
+            WHERE port = ?1
+              AND session_id = ?2
               AND context_snapshot_json IS NOT NULL
+            ORDER BY updated_at DESC
             LIMIT 1"#,
+            port,
+            session_id_raw,
         )
-        .bind(&session_id)
-        .bind(port)
-        .bind(expected_port_id)
         .fetch_optional(self.conn.pool())
         .await
         .context("failed to query session context snapshot")?;
@@ -722,7 +775,7 @@ impl BorgDb {
         let Some(row) = row else {
             return Ok(None);
         };
-        let raw: Option<String> = row.try_get("context_snapshot_json")?;
+        let raw = row.context_snapshot_json;
         let Some(raw) = raw else {
             return Ok(None);
         };
@@ -735,14 +788,17 @@ impl BorgDb {
         session_id: &Uri,
     ) -> Result<Option<(String, Value)>> {
         let session_id = session_id.to_string();
-        let row = sqlx::query(
-            r#"SELECT port, context_snapshot_json
-            FROM sessions
+        let row = sqlx::query!(
+            r#"SELECT
+                port as "port!: String",
+                context_snapshot_json as "context_snapshot_json: String"
+            FROM port_bindings
             WHERE session_id = ?1
               AND context_snapshot_json IS NOT NULL
+            ORDER BY updated_at DESC
             LIMIT 1"#,
+            session_id
         )
-        .bind(&session_id)
         .fetch_optional(self.conn.pool())
         .await
         .context("failed to query session context snapshot")?;
@@ -750,8 +806,8 @@ impl BorgDb {
         let Some(row) = row else {
             return Ok(None);
         };
-        let port_value: String = row.try_get("port")?;
-        let raw: Option<String> = row.try_get("context_snapshot_json")?;
+        let port_value = row.port;
+        let raw = row.context_snapshot_json;
         let Some(raw) = raw else {
             return Ok(None);
         };
@@ -782,21 +838,19 @@ impl BorgDb {
 
     pub async fn clear_port_session_context(&self, port: &str, session_id: &Uri) -> Result<u64> {
         let session_id = session_id.to_string();
-        let expected_port_id = format!("borg:port:{port}");
         let now = Utc::now().to_rfc3339();
         let deleted = sqlx::query(
             r#"
-            UPDATE sessions
+            UPDATE port_bindings
             SET context_snapshot_json = NULL, updated_at = ?1
-            WHERE session_id = ?2
-              AND (port = ?3 OR port = ?4)
+            WHERE port = ?2
+              AND session_id = ?3
               AND context_snapshot_json IS NOT NULL
             "#,
         )
         .bind(now)
-        .bind(session_id)
         .bind(port)
-        .bind(expected_port_id)
+        .bind(session_id)
         .execute(self.conn.pool())
         .await
         .context("failed to clear session context snapshot")?

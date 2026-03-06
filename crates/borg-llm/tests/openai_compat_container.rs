@@ -5,6 +5,8 @@ use std::sync::Once;
 use tracing::{debug, info, trace};
 use tracing_subscriber::EnvFilter;
 
+const OLLAMA_TEST_MODEL: &str = "qwen2.5:0.5b";
+
 fn init_test_tracing() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -23,7 +25,7 @@ fn init_test_tracing() {
 async fn e2e_openai_provider_chat_against_vllm_container() {
     init_test_tracing();
     info!(target: "borg_llm_it", "starting openai compatibility integration test");
-    let llm = match LlmContainer::start_ollama().await {
+    let llm = match LlmContainer::start_ollama_with_model(OLLAMA_TEST_MODEL).await {
         Ok(llm) => llm,
         Err(err) => {
             info!(
@@ -51,6 +53,7 @@ async fn e2e_openai_provider_chat_against_vllm_container() {
         tools: Vec::new(),
         temperature: Some(0.0),
         max_tokens: Some(32),
+        reasoning_effort: None,
         api_key: Some(llm.api_key.clone()),
     };
     debug!(

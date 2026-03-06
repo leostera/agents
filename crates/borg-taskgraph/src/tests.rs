@@ -218,6 +218,60 @@ async fn toolchain_smoke_create_get() -> Result<()> {
 }
 
 #[tokio::test]
+async fn toolchain_smoke_list_tasks() -> Result<()> {
+    let db = test_db().await?;
+    let toolchain = crate::build_taskgraph_toolchain(db.clone())?;
+
+    for title in ["alpha", "beta"] {
+        let _ = toolchain
+            .run(borg_agent::ToolRequest {
+                tool_call_id: format!("create-{title}"),
+                tool_name: "TaskGraph-createTask".to_string(),
+                arguments: json!({
+                    "session_uri": "borg:session:creator",
+                    "creator_agent_id": "agent:creator",
+                    "title": title,
+                    "assignee_agent_id": "agent:worker",
+                })
+                .into(),
+            })
+            .await?;
+    }
+
+    let list = toolchain
+        .run(borg_agent::ToolRequest {
+            tool_call_id: "call-list".to_string(),
+            tool_name: "TaskGraph-listTasks".to_string(),
+            arguments: json!({ "limit": 10 }).into(),
+        })
+        .await?;
+
+    match list.content {
+        borg_agent::ToolResultData::Text(raw) => {
+            #[derive(serde::Deserialize)]
+            struct Task {
+                title: String,
+            }
+            #[derive(serde::Deserialize)]
+            struct Payload {
+                tasks: Vec<Task>,
+                next_cursor: Option<String>,
+            }
+
+            let payload: Payload = serde_json::from_str(&raw)?;
+            assert_eq!(payload.tasks.len(), 2);
+            let titles: Vec<String> = payload.tasks.into_iter().map(|task| task.title).collect();
+            assert!(titles.contains(&"alpha".to_string()));
+            assert!(titles.contains(&"beta".to_string()));
+            assert!(payload.next_cursor.is_none());
+        }
+        _ => panic!("unexpected output variant"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn taskgraph_supervisor_creation_and_lifecycle() -> Result<()> {
     let db = test_db().await?;
     let supervisor = crate::TaskGraphSupervisor::new(db);

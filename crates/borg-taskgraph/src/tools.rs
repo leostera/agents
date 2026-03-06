@@ -35,6 +35,14 @@ struct GetTaskArgs {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct ListTasksArgs {
+    #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct TaskPatchArgs {
     #[serde(default)]
     title: Option<String>,
@@ -200,6 +208,19 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
                     "uri": { "type": "string", "format": "uri" }
                 },
                 "required": ["uri"],
+                "additionalProperties": false
+            }),
+        ),
+        tool_spec(
+            "TaskGraph-listTasks",
+            "List top-level tasks with cursor pagination.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "cursor": { "type": "string" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
+                },
+                "required": [],
                 "additionalProperties": false
             }),
         ),
@@ -567,6 +588,7 @@ pub fn build_taskgraph_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, B
     Toolchain::builder()
         .add_tool(TaskGraphTools::create_task(store.clone())?)?
         .add_tool(TaskGraphTools::get_task(store.clone())?)?
+        .add_tool(TaskGraphTools::list_tasks(store.clone())?)?
         .add_tool(TaskGraphTools::update_task_fields(store.clone())?)?
         .add_tool(TaskGraphTools::reassign_assignee(store.clone())?)?
         .add_tool(TaskGraphTools::add_task_labels(store.clone())?)?
@@ -601,6 +623,7 @@ pub fn build_taskgraph_worker_toolchain(
 
     Toolchain::builder()
         .add_tool(TaskGraphTools::get_task(store.clone())?)?
+        .add_tool(TaskGraphTools::list_tasks(store.clone())?)?
         .add_tool(TaskGraphTools::update_task_fields(store.clone())?)?
         .add_tool(TaskGraphTools::reassign_assignee(store.clone())?)?
         .add_tool(TaskGraphTools::add_task_labels(store.clone())?)?
@@ -693,6 +716,22 @@ impl TaskGraphTools {
                     }
                     let task = store.get_task(&uri).await?;
                     json_text(json!({ "task": task }))
+                }
+            },
+        ))
+    }
+
+    fn list_tasks(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+        let spec = required_spec("TaskGraph-listTasks")?;
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<ListTasksArgs>| {
+                let store = store.clone();
+                async move {
+                    let params = list_params(request.arguments.cursor, request.arguments.limit);
+                    let (tasks, next_cursor) = store.list_tasks(params).await?;
+                    json_text(json!({ "tasks": tasks, "next_cursor": next_cursor }))
                 }
             },
         ))

@@ -1,8 +1,10 @@
 import {
-  createBorgApiClient,
+  getProvider,
+  getProviderModels,
   type ProviderModelsResponse,
   type ProviderRecord,
-} from "@borg/api";
+  upsertProvider,
+} from "@borg/graphql-client";
 import {
   Badge,
   Button,
@@ -24,14 +26,13 @@ import {
   Settings2,
 } from "lucide-react";
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Section,
   SectionContent,
   SectionEmpty,
   SectionToolbar,
 } from "../../../../components/Section";
-
-const borgApi = createBorgApiClient();
 
 type EditState = {
   provider: string;
@@ -56,6 +57,7 @@ function isLocalProvider(providerKind: string): boolean {
 }
 
 export function ProviderDetailsPage({ providerId }: { providerId: string }) {
+  const navigate = useNavigate();
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -70,9 +72,7 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
     setIsLoading(true);
     setError(null);
     try {
-      const providers = await borgApi.listProviders(100);
-      const found =
-        providers.find((item) => item.provider === providerId) ?? null;
+      const found = await getProvider(providerId);
       setProvider(found);
       if (!found) {
         setForm(null);
@@ -91,7 +91,7 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
       });
 
       try {
-        const providerModels = await borgApi.getProviderModels(found.provider);
+        const providerModels = await getProviderModels(found.provider);
         setModels(providerModels);
       } catch {
         setModels({ provider: found.provider, models: [] });
@@ -115,9 +115,8 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
   }, [load]);
 
   const goBack = React.useCallback(() => {
-    window.history.pushState(null, "", "/settings/providers");
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  }, []);
+    navigate("/settings/providers");
+  }, [navigate]);
 
   const handleSave = async () => {
     if (!form) return;
@@ -136,7 +135,7 @@ export function ProviderDetailsPage({ providerId }: { providerId: string }) {
     setError(null);
     setStatus(null);
     try {
-      await borgApi.upsertProvider({
+      await upsertProvider({
         provider: form.provider,
         providerKind: form.providerKind,
         apiKey: apiKey || undefined,

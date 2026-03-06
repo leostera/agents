@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
 
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| {
-            "info,borg_cli=debug,borg_api=debug,borg_ports=debug,borg_db=debug,borg_exec=debug,borg_memory=debug,borg_codemode=debug"
+            "info,borg_cli=debug,borg_gql=debug,borg_ports=debug,borg_db=debug,borg_exec=debug,borg_memory=debug,borg_codemode=debug"
                 .to_string()
         }))
         .with_writer(std::io::stderr)

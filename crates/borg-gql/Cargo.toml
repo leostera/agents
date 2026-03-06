@@ -11,7 +11,9 @@ axum = { workspace = true, features = ["ws"] }
 base64.workspace = true
 borg-core = { path = "../borg-core" }
 borg-db = { path = "../borg-db" }
+borg-exec = { path = "../borg-exec" }
 borg-memory = { path = "../borg-memory" }
+borg-ports = { path = "../borg-ports" }
 borg-taskgraph = { path = "../borg-taskgraph" }
 chrono.workspace = true
 serde.workspace = true

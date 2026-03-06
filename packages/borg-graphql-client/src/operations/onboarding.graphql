@@ -1,0 +1,53 @@
+mutation OnboardingUpsertActor($input: UpsertActorInput!) {
+  upsertActor(input: $input) {
+    id
+  }
+}
+
+mutation OnboardingUpsertPort($input: UpsertPortInput!) {
+  upsertPort(input: $input) {
+    id
+  }
+}
+
+query OnboardingPortBindingsByPortId($portId: Uri!, $first: Int!) {
+  portById(id: $portId) {
+    bindings(first: $first) {
+      edges {
+        node {
+          conversationKey
+          sessionId
+          actor {
+            id
+          }
+        }
+      }
+    }
+  }
+}
+
+query OnboardingSessionMessages(
+  $sessionId: Uri!
+  $first: Int!
+  $after: String
+) {
+  session(id: $sessionId) {
+    messages(first: $first, after: $after) {
+      edges {
+        node {
+          id
+          sessionId
+          createdAt
+          messageType
+          role
+          text
+          payload
+        }
+      }
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+    }
+  }
+}
