@@ -25,7 +25,7 @@ export const Search: Story = {
       <InputGroupAddon>
         <MagnifyingGlassIcon />
       </InputGroupAddon>
-      <InputGroupInput placeholder="Search sessions..." />
+      <InputGroupInput placeholder="Search actors..." />
       <InputGroupAddon align="inline-end">
         <Kbd>/</Kbd>
       </InputGroupAddon>

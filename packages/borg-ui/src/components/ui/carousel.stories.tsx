@@ -27,8 +27,8 @@ const slides = [
     description: "OpenAI, Anthropic, Gemini",
   },
   {
-    title: "Daily Active Sessions",
-    description: "1,284 sessions",
+    title: "Daily Active Actors",
+    description: "1,284 actors",
   },
 ];
 

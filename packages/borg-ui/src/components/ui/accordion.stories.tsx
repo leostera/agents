@@ -27,7 +27,7 @@ export const Default: Story = {
         <AccordionTrigger>What is included in onboarding?</AccordionTrigger>
         <AccordionContent>
           <p>
-            Provider setup, API key validation, and a first successful session
+            Provider setup, API key validation, and a first successful actor
             handoff.
           </p>
         </AccordionContent>
@@ -45,7 +45,7 @@ export const Default: Story = {
         <AccordionTrigger>Can we switch providers later?</AccordionTrigger>
         <AccordionContent>
           <p>
-            Yes. Provider choice is session-scoped and can be changed without
+            Yes. Provider choice is actor-scoped and can be changed without
             rebuilding the UI.
           </p>
         </AccordionContent>
@@ -64,7 +64,7 @@ export const Multiple: Story = {
       <AccordionItem value="item-1">
         <AccordionTrigger>Runtime status</AccordionTrigger>
         <AccordionContent>
-          <p>3 ports connected, 2 sessions active.</p>
+          <p>3 ports connected, 2 actors active.</p>
         </AccordionContent>
       </AccordionItem>
       <AccordionItem value="item-2">

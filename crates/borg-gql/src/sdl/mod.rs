@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::time::Duration;
 
 use async_graphql::futures_util::stream::{self, BoxStream};
@@ -11,10 +10,13 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use borg_core::{Entity, EntityPropValue, Uri};
 use borg_db::{
-    ActorRecord, AppCapabilityRecord, AppConnectionRecord, AppRecord, AppSecretRecord,
-    CreateScheduleJobInput, PortRecord, ProviderRecord, ScheduleJobRecord, ScheduleJobRunRecord,
-    SessionMessageRecord, SessionRecord, UpdateScheduleJobInput,
+    ActorMessageRecord, ActorRecord, AppCapabilityRecord, AppConnectionRecord, AppRecord,
+    AppSecretRecord, CreateScheduleJobInput, PortRecord, ProviderRecord, ScheduleJobRecord,
+    ScheduleJobRunRecord, UpdateScheduleJobInput,
 };
+use borg_llm::Provider as LlmProvider;
+use borg_llm::providers::openai::OpenAiProvider;
+use borg_llm::providers::openrouter::OpenRouterProvider;
 use borg_memory::{FactArity, FactRecord, FactValue, SearchQuery, Uri as MemoryUri};
 use borg_taskgraph::{
     CreateTaskInput, EventRecord, ListParams, TaskGraphStore, TaskPatch, TaskRecord, TaskStatus,
@@ -73,12 +75,7 @@ macro_rules! connection_types {
 }
 
 connection_types!(ActorEdge, ActorConnection, ActorObject);
-connection_types!(SessionEdge, SessionConnection, SessionObject);
-connection_types!(
-    SessionMessageEdge,
-    SessionMessageConnection,
-    SessionMessageObject
-);
+connection_types!(ActorMessageEdge, ActorMessageConnection, ActorMessageObject);
 connection_types!(PortEdge, PortConnection, PortObject);
 connection_types!(PortBindingEdge, PortBindingConnection, PortBindingObject);
 connection_types!(
@@ -214,6 +211,66 @@ fn provider_uri(provider: &str) -> GqlResult<Uri> {
     Uri::from_parts("borg", "provider", Some(provider)).map_err(map_anyhow)
 }
 
+async fn fetch_provider_models(record: &ProviderRecord) -> GqlResult<Vec<ModelObject>> {
+    let provider_kind = record.provider_kind.trim().to_ascii_lowercase();
+
+    let mut model_names = match provider_kind.as_str() {
+        "openai" => {
+            let mut builder = OpenAiProvider::build().api_key(record.api_key.clone());
+            if let Some(base_url) = record.base_url.as_ref() {
+                builder = builder.base_url(base_url.clone());
+            }
+            if let Some(default_text_model) = record.default_text_model.as_ref() {
+                builder = builder.chat_completions_model(default_text_model.clone());
+            }
+            if let Some(default_audio_model) = record.default_audio_model.as_ref() {
+                builder = builder.audio_transcriptions_model(default_audio_model.clone());
+            }
+            let provider = builder
+                .build()
+                .map_err(|err| gql_error_with_code(err.to_string(), "BAD_REQUEST"))?;
+            provider
+                .available_models()
+                .await
+                .map_err(|err| gql_error_with_code(err.to_string(), "INTERNAL"))?
+        }
+        "openrouter" => {
+            let mut builder = OpenRouterProvider::build().api_key(record.api_key.clone());
+            if let Some(base_url) = record.base_url.as_ref() {
+                builder = builder.base_url(base_url.clone());
+            }
+            if let Some(default_text_model) = record.default_text_model.as_ref() {
+                builder = builder.chat_completions_model(default_text_model.clone());
+            }
+            if let Some(default_audio_model) = record.default_audio_model.as_ref() {
+                builder = builder.audio_transcriptions_model(default_audio_model.clone());
+            }
+            let provider = builder
+                .build()
+                .map_err(|err| gql_error_with_code(err.to_string(), "BAD_REQUEST"))?;
+            provider
+                .available_models()
+                .await
+                .map_err(|err| gql_error_with_code(err.to_string(), "INTERNAL"))?
+        }
+        _ => Vec::new(),
+    };
+
+    if let Some(default_model) = record.default_text_model.as_ref()
+        && !default_model.trim().is_empty()
+    {
+        model_names.push(default_model.clone());
+    }
+
+    model_names.sort();
+    model_names.dedup();
+
+    Ok(model_names
+        .into_iter()
+        .map(|name| ModelObject { name })
+        .collect())
+}
+
 fn encode_task_cursor(created_at: &str, id: &str) -> String {
     URL_SAFE_NO_PAD.encode(format!("{created_at}|{id}"))
 }
@@ -230,32 +287,32 @@ fn normalize_poll_interval_ms(raw: Option<i32>) -> GqlResult<u64> {
     Ok((value as u64).clamp(MIN_SUBSCRIPTION_POLL_MS, MAX_SUBSCRIPTION_POLL_MS))
 }
 
-async fn resolve_session_stream_start_offset(
+async fn resolve_actor_stream_start_offset(
     data: &BorgGqlData,
-    session_id: &Uri,
+    actor_id: &Uri,
     after_message_id: Option<&Uri>,
 ) -> GqlResult<usize> {
-    let session_exists = data
+    let actor_exists = data
         .db
-        .get_session(session_id)
+        .get_actor(actor_id)
         .await
         .map_err(map_anyhow)?
         .is_some();
-    if !session_exists {
-        return Err(gql_error_with_code("session not found", "NOT_FOUND"));
+    if !actor_exists {
+        return Err(gql_error_with_code("actor not found", "NOT_FOUND"));
     }
 
     if let Some(after_id) = after_message_id {
         let offset = data
             .db
-            .get_session_message_offset_by_id(session_id, after_id)
+            .get_actor_message_offset_by_id(actor_id, after_id)
             .await
             .map_err(map_anyhow)?;
         if let Some(offset) = offset {
             return Ok(offset.saturating_add(1));
         }
         return Err(gql_error_with_code(
-            "afterMessageId not found in session",
+            "afterMessageId not found in actor history",
             "BAD_REQUEST",
         ));
     }
@@ -263,31 +320,28 @@ async fn resolve_session_stream_start_offset(
     Ok(0)
 }
 
-fn session_message_subscription_stream(
+fn actor_message_subscription_stream(
     data: BorgGqlData,
-    session_id: Uri,
+    actor_id: Uri,
     start_offset: usize,
     poll_interval_ms: u64,
-) -> impl Stream<Item = GqlResult<SessionMessageObject>> {
+) -> impl Stream<Item = GqlResult<ActorMessageObject>> {
     let ticker = tokio::time::interval(Duration::from_millis(poll_interval_ms));
 
     stream::unfold(
-        (data, session_id, start_offset, ticker),
-        |(data, session_id, mut next_offset, mut ticker)| async move {
+        (data, actor_id, start_offset, ticker),
+        |(data, actor_id, mut next_offset, mut ticker)| async move {
             loop {
                 ticker.tick().await;
 
                 let mut records = match data
                     .db
-                    .list_session_message_records(&session_id, next_offset, 1)
+                    .list_actor_message_records(&actor_id, next_offset, 1)
                     .await
                 {
                     Ok(value) => value,
                     Err(err) => {
-                        return Some((
-                            Err(map_anyhow(err)),
-                            (data, session_id, next_offset, ticker),
-                        ));
+                        return Some((Err(map_anyhow(err)), (data, actor_id, next_offset, ticker)));
                     }
                 };
 
@@ -298,8 +352,8 @@ fn session_message_subscription_stream(
                 let record = records.remove(0);
                 next_offset = next_offset.saturating_add(1);
                 return Some((
-                    Ok(SessionMessageObject::new(record)),
-                    (data, session_id, next_offset, ticker),
+                    Ok(ActorMessageObject::new(record)),
+                    (data, actor_id, next_offset, ticker),
                 ));
             }
         },
@@ -349,13 +403,13 @@ pub struct MutationRoot;
 ///
 /// Usage notes:
 /// - Subscription transport is expected to run over WebSockets (`graphql-transport-ws`).
-/// - Use `sessionChat` for full timeline streaming.
-/// - Use `sessionNotifications` for notification-friendly filtered events.
+/// - Use `actorChat` for actor timeline streaming.
+/// - Use `actorNotifications` for notification-friendly filtered events.
 ///
 /// Example:
 /// ```graphql
-/// subscription($session: Uri!) {
-///   sessionChat(sessionId: $session) {
+/// subscription($actor: Uri!) {
+///   actorChat(actorId: $actor) {
 ///     id
 ///     messageType
 ///     role
@@ -366,33 +420,33 @@ pub struct MutationRoot;
 pub struct SubscriptionRoot;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
-/// High-level classification for UI routing of session notifications.
-enum SessionNotificationKind {
+/// High-level classification for UI routing of actor notifications.
+enum ActorNotificationKind {
     /// Assistant-authored response message.
     AssistantReply,
     /// Tool call or tool result activity.
     ToolActivity,
-    /// Session lifecycle or system event message.
-    SessionEvent,
+    /// Actor lifecycle or system event message.
+    ActorEvent,
     /// Fallback generic message classification.
     Message,
 }
 
 #[derive(SimpleObject, Clone, Description)]
-/// Notification payload projected from a session message.
+/// Notification payload projected from an actor message.
 ///
 /// Usage notes:
-/// - Notifications are fully typed and include the underlying `sessionMessage`.
+/// - Notifications are fully typed and include the underlying `actorMessage`.
 /// - `kind` is derived from `messageType`/`role`.
-struct SessionNotificationObject {
-    /// Stable notification identifier (`sessionId:messageId`).
+struct ActorNotificationObject {
+    /// Stable notification identifier (`actorId:messageId`).
     id: String,
     /// Kind classification for UI routing and badges.
-    kind: SessionNotificationKind,
+    kind: ActorNotificationKind,
     /// Short user-facing title.
     title: String,
-    /// Session URI this notification belongs to.
-    session_id: UriScalar,
+    /// Actor URI this notification belongs to.
+    actor_id: UriScalar,
     /// Source message URI.
     message_id: UriScalar,
     /// Source message type.
@@ -404,49 +458,40 @@ struct SessionNotificationObject {
     /// Source message timestamp.
     created_at: DateTime<Utc>,
     /// Full underlying message object.
-    session_message: SessionMessageObject,
+    actor_message: ActorMessageObject,
 }
 
-impl SessionNotificationObject {
-    fn from_message(message: SessionMessageObject) -> Self {
+impl ActorNotificationObject {
+    fn from_message(message: ActorMessageObject) -> Self {
         let parsed = message.parsed();
         let (kind, title) = match parsed.message_type.as_str() {
             "assistant" => (
-                SessionNotificationKind::AssistantReply,
+                ActorNotificationKind::AssistantReply,
                 "Assistant reply".to_string(),
             ),
             "tool_call" => (
-                SessionNotificationKind::ToolActivity,
+                ActorNotificationKind::ToolActivity,
                 "Tool call requested".to_string(),
             ),
             "tool_result" => (
-                SessionNotificationKind::ToolActivity,
+                ActorNotificationKind::ToolActivity,
                 "Tool result received".to_string(),
             ),
-            "session_event" => (
-                SessionNotificationKind::SessionEvent,
-                "Session event".to_string(),
-            ),
-            _ => (
-                SessionNotificationKind::Message,
-                "Session message".to_string(),
-            ),
+            "actor_event" => (ActorNotificationKind::ActorEvent, "Actor event".to_string()),
+            _ => (ActorNotificationKind::Message, "Actor message".to_string()),
         };
 
         Self {
-            id: format!(
-                "{}:{}",
-                message.record.session_id, message.record.message_id
-            ),
+            id: format!("{}:{}", message.record.actor_id, message.record.message_id),
             kind,
             title,
-            session_id: message.record.session_id.clone().into(),
+            actor_id: message.record.actor_id.clone().into(),
             message_id: message.record.message_id.clone().into(),
             message_type: parsed.message_type,
             role: parsed.role,
             text: parsed.text,
             created_at: message.record.created_at,
-            session_message: message,
+            actor_message: message,
         }
     }
 }
@@ -461,6 +506,8 @@ struct UpsertActorInput {
     id: UriScalar,
     /// Human-readable actor name.
     name: String,
+    /// Optional runtime model id (for example `gpt-4.1`).
+    model: Option<String>,
     /// System prompt used when running this actor.
     system_prompt: String,
     /// Actor lifecycle status (for example `RUNNING`).
@@ -487,18 +534,18 @@ struct UpsertPortInput {
     settings: Option<JsonValue>,
 }
 
-/// Creates or updates the conversation-to-session routing row for a port.
+/// Creates or updates the conversation-to-actor routing row for a port.
 ///
 /// Example:
-/// `{ portName: "telegram", conversationKey: "borg:conversation:123", sessionId: "borg:session:s1" }`
+/// `{ portName: "telegram", conversationKey: "borg:conversation:123", actorId: "borg:actor:planner" }`
 #[derive(InputObject)]
 struct UpsertPortBindingInput {
     /// Port name (`http`, `telegram`, ...).
     port_name: String,
     /// Stable conversation key for ingress routing.
     conversation_key: UriScalar,
-    /// Target long-lived session URI.
-    session_id: UriScalar,
+    /// Target actor URI.
+    actor_id: UriScalar,
 }
 
 /// Creates or updates the conversation-to-actor override row for a port.
@@ -631,71 +678,10 @@ struct UpsertAppSecretInput {
     kind: String,
 }
 
-/// Creates or updates a long-lived session in the Borg runtime graph.
-///
-/// Example:
-/// `{ sessionId: "borg:session:s1", port: "borg:port:http" }`
-#[derive(InputObject)]
-struct UpsertSessionInput {
-    /// Session URI (`borg:session:*`).
-    session_id: UriScalar,
-    /// Owning ingress port URI.
-    port: UriScalar,
-}
-
-/// Typed session message shape used by append/patch mutations.
-///
-/// Usage notes:
-/// - Prefer typed fields over `payload` for new clients.
-/// - At least one field should be set.
-#[derive(InputObject, Clone)]
-struct SessionMessageInput {
-    /// Message type (`user`, `assistant`, `tool_call`, ...).
-    message_type: Option<String>,
-    /// Logical role (`user`, `assistant`, `tool`, ...).
-    role: Option<String>,
-    /// Primary human-readable content.
-    text: Option<String>,
-    /// Transitional raw payload.
-    payload: Option<JsonValue>,
-}
-
-/// Appends a new timeline message to an existing session.
-///
-/// Example:
-/// `{ sessionId: "borg:session:s1", messageType: "user", role: "user", text: "Hello" }`
-#[derive(InputObject)]
-struct AppendSessionMessageInput {
-    /// Target session URI.
-    session_id: UriScalar,
-    /// Message type (`user`, `assistant`, ...).
-    message_type: Option<String>,
-    /// Logical role (`user`, `assistant`, ...).
-    role: Option<String>,
-    /// Message text content.
-    text: Option<String>,
-    /// Transitional raw payload.
-    payload: Option<JsonValue>,
-}
-
-/// Replaces one timeline message inside a session by message id.
-///
-/// Example:
-/// `{ sessionId: "borg:session:s1", messageId: "borg:session_message:...", message: { text: "Updated" } }`
-#[derive(InputObject)]
-struct PatchSessionMessageInput {
-    /// Target session URI.
-    session_id: UriScalar,
-    /// Stable message URI.
-    message_id: UriScalar,
-    /// Replacement message payload.
-    message: SessionMessageInput,
-}
-
 /// Creates a new schedule scheduler job definition.
 ///
 /// Example:
-/// `{ jobId: "daily-digest", kind: "cron", actorId: "borg:actor:planner", sessionId: "borg:session:s1" }`
+/// `{ jobId: "daily-digest", kind: "cron", actorId: "borg:actor:planner" }`
 #[derive(InputObject)]
 struct CreateScheduleJobInputGql {
     /// Stable job identifier.
@@ -704,8 +690,6 @@ struct CreateScheduleJobInputGql {
     kind: String,
     /// Actor URI executed by this job.
     actor_id: UriScalar,
-    /// Session URI used as job context.
-    session_id: UriScalar,
     /// Message envelope type.
     message_type: String,
     /// Job payload (transitional JSON).
@@ -729,8 +713,6 @@ struct UpdateScheduleJobInputGql {
     kind: Option<String>,
     /// New target actor URI.
     actor_id: Option<UriScalar>,
-    /// New target session URI.
-    session_id: Option<UriScalar>,
     /// New message type.
     message_type: Option<String>,
     /// New payload (transitional JSON).
@@ -746,11 +728,11 @@ struct UpdateScheduleJobInputGql {
 /// Creates a new durable taskgraph task.
 ///
 /// Example:
-/// `{ sessionUri: "borg:session:s1", creatorAgentId: "borg:actor:creator", assigneeAgentId: "borg:actor:assignee", title: "Ship docs" }`
+/// `{ actorId: "borg:actor:creator", creatorActorId: "borg:actor:creator", assigneeActorId: "borg:actor:assignee", title: "Ship docs" }`
 #[derive(InputObject)]
 struct CreateTaskInputGql {
-    /// Session URI authoring the task create event.
-    session_uri: UriScalar,
+    /// Actor URI authoring the task create event.
+    actor_id: UriScalar,
     /// Creator actor URI.
     creator_actor_id: UriScalar,
     /// Short task title.
@@ -785,8 +767,8 @@ struct CreateTaskInputGql {
 struct UpdateTaskInputGql {
     /// Task URI to patch.
     task_id: UriScalar,
-    /// Session URI authoring the update event.
-    session_uri: UriScalar,
+    /// Actor URI authoring the update event.
+    actor_id: UriScalar,
     /// Optional new title.
     title: Option<String>,
     /// Optional new description.
@@ -798,13 +780,13 @@ struct UpdateTaskInputGql {
 /// Requests a task status transition under taskgraph rules.
 ///
 /// Example:
-/// `{ taskId: "borg:task:t1", sessionUri: "borg:session:s-assignee", status: DOING }`
+/// `{ taskId: "borg:task:t1", actorId: "borg:actor:assignee", status: DOING }`
 #[derive(InputObject)]
 struct SetTaskStatusInput {
     /// Task URI to transition.
     task_id: UriScalar,
-    /// Session URI authoring the status transition.
-    session_uri: UriScalar,
+    /// Actor URI authoring the status transition.
+    actor_id: UriScalar,
     /// Target status value.
     status: TaskStatusValue,
 }
@@ -817,8 +799,6 @@ struct SetTaskStatusInput {
 struct RunActorChatInput {
     /// Actor URI to execute.
     actor_id: UriScalar,
-    /// Session URI context.
-    session_id: UriScalar,
     /// User URI authoring the request.
     user_id: UriScalar,
     /// User text to send.
@@ -835,67 +815,19 @@ struct RunPortHttpInput {
     user_id: UriScalar,
     /// User text to send.
     text: String,
-    /// Optional existing session URI.
-    session_id: Option<UriScalar>,
     /// Optional explicit actor URI override.
     actor_id: Option<UriScalar>,
-}
-
-fn build_session_message_payload(input: &SessionMessageInput) -> GqlResult<serde_json::Value> {
-    if let Some(payload) = &input.payload {
-        return Ok(payload.0.clone());
-    }
-
-    let mut object = BTreeMap::new();
-
-    if let Some(message_type) = &input.message_type {
-        object.insert(
-            "type".to_string(),
-            serde_json::Value::String(message_type.clone()),
-        );
-    }
-
-    if let Some(role) = &input.role {
-        object.insert("role".to_string(), serde_json::Value::String(role.clone()));
-    }
-
-    if let Some(text) = &input.text {
-        object.insert(
-            "content".to_string(),
-            serde_json::Value::String(text.clone()),
-        );
-    }
-
-    if object.is_empty() {
-        return Err(gql_error_with_code(
-            "message requires either payload or typed fields",
-            "BAD_REQUEST",
-        ));
-    }
-
-    Ok(serde_json::Value::Object(object.into_iter().collect()))
-}
-
-impl From<AppendSessionMessageInput> for SessionMessageInput {
-    fn from(value: AppendSessionMessageInput) -> Self {
-        Self {
-            message_type: value.message_type,
-            role: value.role,
-            text: value.text,
-            payload: value.payload,
-        }
-    }
 }
 
 #[derive(Clone, Description)]
 /// Runtime actor definition.
 ///
-/// An actor is a named, long-lived Borg worker/persona with its own session
-/// participation history.
+/// An actor is a named, long-lived Borg worker/persona with its own message
+/// history.
 ///
 /// Usage notes:
 /// - Represents a runnable actor spec (`borg:actor:*`).
-/// - Use `sessions` for runtime timeline views.
+/// - Use `messages` for runtime timeline views.
 ///
 /// Example:
 /// ```graphql
@@ -926,6 +858,14 @@ impl ActorObject {
         &self.record.system_prompt
     }
 
+    async fn model(&self) -> Option<&str> {
+        self.record.model.as_deref()
+    }
+
+    async fn default_provider_id(&self) -> Option<&str> {
+        self.record.default_provider_id.as_deref()
+    }
+
     async fn status(&self) -> ActorStatusValue {
         ActorStatusValue::from_raw(&self.record.status)
     }
@@ -938,158 +878,41 @@ impl ActorObject {
         self.record.updated_at
     }
 
-    /// Sessions this actor has participated in.
+    /// Actor history messages.
     ///
     /// Usage notes:
     /// - Backed by actor mailbox activity.
     ///
     /// Example:
     /// ```graphql
-    /// { actor(id: "borg:actor:planner") { sessions(first: 5) { edges { node { id updatedAt } } } } }
-    /// ```
-    async fn sessions(
-        &self,
-        ctx: &Context<'_>,
-        first: Option<i32>,
-        after: Option<String>,
-    ) -> GqlResult<SessionConnection> {
-        let data = ctx_data(ctx)?;
-        let first = data.normalize_first(first)?;
-        let start = decode_offset_cursor(after.as_deref())?;
-        let fetch_limit = start + first + 1;
-
-        let ids = data
-            .db
-            .list_actor_sessions(&self.record.actor_id, fetch_limit)
-            .await
-            .map_err(map_anyhow)?;
-
-        let (page, has_next_page) = apply_offset_pagination(ids, start, first);
-        let mut edges = Vec::new();
-        for (index, session_id) in page {
-            if let Some(session) = data.db.get_session(&session_id).await.map_err(map_anyhow)? {
-                edges.push(SessionEdge {
-                    cursor: encode_offset_cursor(index),
-                    node: SessionObject::new(session),
-                });
-            }
-        }
-
-        Ok(SessionConnection {
-            page_info: PageInfo {
-                has_next_page,
-                end_cursor: edges.last().map(|edge| edge.cursor.clone()),
-            },
-            edges,
-        })
-    }
-}
-
-#[derive(Clone, Description)]
-/// Conversation and execution timeline container.
-///
-/// A session is Borg's primary runtime context: messages append here, ports
-/// resolve into this identity, and actors operate within this thread.
-///
-/// Usage notes:
-/// - Session is the primary unit for chat/task execution context.
-/// - Traverse into `messages` for timeline rows and `port` for ingress metadata.
-///
-/// Example:
-/// ```graphql
-/// { session(id: "borg:session:s1") { id portId messages(first: 5) { edges { node { id text } } } } }
-/// ```
-struct SessionObject {
-    record: SessionRecord,
-}
-
-impl SessionObject {
-    fn new(record: SessionRecord) -> Self {
-        Self { record }
-    }
-}
-
-#[Object(name = "Session", use_type_description)]
-impl SessionObject {
-    async fn id(&self) -> UriScalar {
-        self.record.session_id.clone().into()
-    }
-
-    async fn port_id(&self) -> UriScalar {
-        self.record.port.clone().into()
-    }
-
-    async fn updated_at(&self) -> DateTime<Utc> {
-        self.record.updated_at
-    }
-
-    /// Port metadata associated with this session.
-    ///
-    /// Example:
-    /// ```graphql
-    /// { session(id: "borg:session:s1") { port { id name provider } } }
-    /// ```
-    async fn port(&self, ctx: &Context<'_>) -> GqlResult<Option<PortObject>> {
-        let data = ctx_data(ctx)?;
-
-        if let Some(port) = data
-            .db
-            .get_port_by_id(&self.record.port)
-            .await
-            .map_err(map_anyhow)?
-        {
-            return Ok(Some(PortObject::new(port)));
-        }
-
-        let fallback_name = parse_uri_id(&self.record.port).map(str::to_string);
-        if let Some(port_name) = fallback_name {
-            return Ok(data
-                .db
-                .get_port(&port_name)
-                .await
-                .map_err(map_anyhow)?
-                .map(PortObject::new));
-        }
-
-        Ok(None)
-    }
-
-    /// Messages ordered by creation time ascending.
-    ///
-    /// Usage notes:
-    /// - Use `after` with connection cursor for incremental timeline sync.
-    ///
-    /// Example:
-    /// ```graphql
-    /// { session(id: "borg:session:s1") { messages(first: 20) { edges { node { id role text } } } } }
+    /// { actor(id: "borg:actor:planner") { messages(first: 5) { edges { node { id messageType text } } } } }
     /// ```
     async fn messages(
         &self,
         ctx: &Context<'_>,
         first: Option<i32>,
         after: Option<String>,
-    ) -> GqlResult<SessionMessageConnection> {
+    ) -> GqlResult<ActorMessageConnection> {
         let data = ctx_data(ctx)?;
         let first = data.normalize_first(first)?;
         let start = decode_offset_cursor(after.as_deref())?;
-
-        let messages = data
+        let records = data
             .db
-            .list_session_message_records(&self.record.session_id, start, first + 1)
+            .list_actor_message_records(&self.record.actor_id, start, first + 1)
             .await
             .map_err(map_anyhow)?;
-        let has_next_page = messages.len() > first;
-        let edges = messages
+        let has_next_page = records.len() > first;
+        let edges = records
             .into_iter()
             .take(first)
             .enumerate()
-            .map(|(offset, record)| SessionMessageEdge {
+            .map(|(offset, record)| ActorMessageEdge {
                 cursor: encode_offset_cursor(start + offset),
-                node: SessionMessageObject::new(record),
+                node: ActorMessageObject::new(record),
             })
             .collect::<Vec<_>>();
 
-        Ok(SessionMessageConnection {
+        Ok(ActorMessageConnection {
             page_info: PageInfo {
                 has_next_page,
                 end_cursor: edges.last().map(|edge| edge.cursor.clone()),
@@ -1100,9 +923,9 @@ impl SessionObject {
 }
 
 #[derive(Clone, Description)]
-/// Persisted timeline entry inside a session.
+/// Persisted timeline entry inside an actor history.
 ///
-/// Session messages represent user inputs, assistant outputs, tool activity, and
+/// Actor messages represent user inputs, assistant outputs, tool activity, and
 /// lifecycle events as ordered records.
 ///
 /// Usage notes:
@@ -1111,30 +934,30 @@ impl SessionObject {
 ///
 /// Example:
 /// ```graphql
-/// { session(id: "borg:session:s1") { messages(first: 5) { edges { node { id messageType role text } } } } }
+/// { actor(id: "borg:actor:planner") { messages(first: 5) { edges { node { id messageType role text } } } } }
 /// ```
-struct SessionMessageObject {
-    record: SessionMessageRecord,
+struct ActorMessageObject {
+    record: ActorMessageRecord,
 }
 
-impl SessionMessageObject {
-    fn new(record: SessionMessageRecord) -> Self {
+impl ActorMessageObject {
+    fn new(record: ActorMessageRecord) -> Self {
         Self { record }
     }
 
-    fn parsed(&self) -> ParsedSessionMessage {
-        parse_session_message(&self.record.payload)
+    fn parsed(&self) -> ParsedActorMessage {
+        parse_actor_message(&self.record.payload)
     }
 }
 
-#[Object(name = "SessionMessage", use_type_description)]
-impl SessionMessageObject {
+#[Object(name = "ActorMessage", use_type_description)]
+impl ActorMessageObject {
     async fn id(&self) -> UriScalar {
         self.record.message_id.clone().into()
     }
 
-    async fn session_id(&self) -> UriScalar {
-        self.record.session_id.clone().into()
+    async fn actor_id(&self) -> UriScalar {
+        self.record.actor_id.clone().into()
     }
 
     async fn created_at(&self) -> DateTime<Utc> {
@@ -1165,15 +988,15 @@ impl SessionMessageObject {
 /// External transport adapter configuration.
 ///
 /// Ports model how Borg receives/sends traffic (for example HTTP, Telegram) and
-/// how incoming conversations map into long-lived sessions.
+/// how incoming conversations map into actors.
 ///
 /// Usage notes:
-/// - Ports bind external channels (`http`, `telegram`, ...) to session routing.
+/// - Ports bind external channels (`http`, `telegram`, ...) to actor routing.
 /// - `bindings` and `actorBindings` expose live routing maps.
 ///
 /// Example:
 /// ```graphql
-/// { port(name: "telegram") { id provider enabled bindings(first: 5) { edges { node { conversationKey sessionId } } } } }
+/// { port(name: "telegram") { id provider enabled bindings(first: 5) { edges { node { conversationKey actorId } } } } }
 /// ```
 struct PortObject {
     record: PortRecord,
@@ -1211,8 +1034,8 @@ impl PortObject {
         self.record.assigned_actor_id.clone().map(UriScalar)
     }
 
-    async fn active_sessions(&self) -> u64 {
-        self.record.active_sessions
+    async fn active_bindings(&self) -> u64 {
+        self.record.active_bindings
     }
 
     async fn updated_at(&self) -> Option<DateTime<Utc>> {
@@ -1243,11 +1066,11 @@ impl PortObject {
             .map(ActorObject::new))
     }
 
-    /// Session binding rows for this port.
+    /// Actor binding rows for this port.
     ///
     /// Example:
     /// ```graphql
-    /// { port(name: "telegram") { bindings(first: 10) { edges { node { conversationKey sessionId } } } } }
+    /// { port(name: "telegram") { bindings(first: 10) { edges { node { conversationKey actorId } } } } }
     /// ```
     async fn bindings(
         &self,
@@ -1269,12 +1092,12 @@ impl PortObject {
 
         let edges = page
             .into_iter()
-            .map(|(index, (conversation_key, session_id))| PortBindingEdge {
+            .map(|(index, (conversation_key, actor_id))| PortBindingEdge {
                 cursor: encode_offset_cursor(index),
                 node: PortBindingObject {
                     port_name: self.record.port_name.clone(),
                     conversation_key,
-                    session_id,
+                    actor_id,
                 },
             })
             .collect::<Vec<_>>();
@@ -1337,23 +1160,20 @@ impl PortObject {
 }
 
 #[derive(Clone, Description)]
-/// Conversation routing edge from a port to a session.
-///
-/// This row preserves session continuity for repeated messages in the same
-/// external conversation.
+/// Conversation routing edge from a port to an actor.
 ///
 /// Usage notes:
-/// - Canonical ingress-session routing row.
-/// - `actor` resolves optional per-conversation actor override.
+/// - Canonical ingress-actor routing row.
+/// - `actor` resolves the bound actor object.
 ///
 /// Example:
 /// ```graphql
-/// { port(name: "telegram") { bindings(first: 5) { edges { node { conversationKey sessionId actor { id } } } } } }
+/// { port(name: "telegram") { bindings(first: 5) { edges { node { conversationKey actorId actor { id } } } } } }
 /// ```
 struct PortBindingObject {
     port_name: String,
     conversation_key: Uri,
-    session_id: Uri,
+    actor_id: Uri,
 }
 
 #[Object(name = "PortBinding", use_type_description)]
@@ -1370,24 +1190,8 @@ impl PortBindingObject {
         self.conversation_key.clone().into()
     }
 
-    async fn session_id(&self) -> UriScalar {
-        self.session_id.clone().into()
-    }
-
-    /// Resolved session object for this binding.
-    ///
-    /// Example:
-    /// ```graphql
-    /// { port(name: "telegram") { bindings(first: 1) { edges { node { session { id updatedAt } } } } } }
-    /// ```
-    async fn session(&self, ctx: &Context<'_>) -> GqlResult<Option<SessionObject>> {
-        let data = ctx_data(ctx)?;
-        Ok(data
-            .db
-            .get_session(&self.session_id)
-            .await
-            .map_err(map_anyhow)?
-            .map(SessionObject::new))
+    async fn actor_id(&self) -> UriScalar {
+        self.actor_id.clone().into()
     }
 
     /// Actor bound to this conversation key, if any.
@@ -1398,19 +1202,9 @@ impl PortBindingObject {
     /// ```
     async fn actor(&self, ctx: &Context<'_>) -> GqlResult<Option<ActorObject>> {
         let data = ctx_data(ctx)?;
-        let actor = data
-            .db
-            .get_port_actor_binding(&self.port_name, &self.conversation_key)
-            .await
-            .map_err(map_anyhow)?;
-
-        let Some(actor_id) = actor else {
-            return Ok(None);
-        };
-
         Ok(data
             .db
-            .get_actor(&actor_id)
+            .get_actor(&self.actor_id)
             .await
             .map_err(map_anyhow)?
             .map(ActorObject::new))
@@ -1421,11 +1215,10 @@ impl PortBindingObject {
 /// Conversation-specific actor override edge.
 ///
 /// This row pins a conversation to a specific actor independently from the
-/// session binding.
+/// default port actor.
 ///
 /// Usage notes:
-/// - Stores actor override independent of session binding.
-/// - `actorId = null` means no override exists.
+/// - Stores explicit actor overrides for a conversation key.
 ///
 /// Example:
 /// ```graphql
@@ -1470,6 +1263,11 @@ impl PortActorBindingObject {
     }
 }
 
+#[derive(SimpleObject, Clone)]
+struct ModelObject {
+    name: String,
+}
+
 #[derive(Clone, Description)]
 /// LLM provider configuration and usage counters.
 ///
@@ -1482,7 +1280,7 @@ impl PortActorBindingObject {
 ///
 /// Example:
 /// ```graphql
-/// { provider(provider: "openai") { provider providerKind enabled defaultTextModel } }
+/// { provider(provider: "openai") { provider providerKind enabled defaultTextModel models { name } defaultModel { name } } }
 /// ```
 struct ProviderObject {
     id: Uri,
@@ -1546,6 +1344,19 @@ impl ProviderObject {
 
     async fn updated_at(&self) -> DateTime<Utc> {
         self.record.updated_at
+    }
+
+    async fn default_model(&self) -> ModelObject {
+        let name = self
+            .record
+            .default_text_model
+            .clone()
+            .unwrap_or_else(|| "gpt-4o-mini".to_string());
+        ModelObject { name }
+    }
+
+    async fn models(&self) -> GqlResult<Vec<ModelObject>> {
+        fetch_provider_models(&self.record).await
     }
 }
 
@@ -1967,12 +1778,6 @@ impl ScheduleJobObject {
         Uri::parse(&self.record.target_actor_id).ok().map(UriScalar)
     }
 
-    async fn target_session_id(&self) -> Option<UriScalar> {
-        Uri::parse(&self.record.target_session_id)
-            .ok()
-            .map(UriScalar)
-    }
-
     async fn message_type(&self) -> &str {
         &self.record.message_type
     }
@@ -2092,12 +1897,6 @@ impl ScheduleJobRunObject {
         Uri::parse(&self.record.target_actor_id).ok().map(UriScalar)
     }
 
-    async fn target_session_id(&self) -> Option<UriScalar> {
-        Uri::parse(&self.record.target_session_id)
-            .ok()
-            .map(UriScalar)
-    }
-
     async fn message_id(&self) -> &str {
         &self.record.message_id
     }
@@ -2159,20 +1958,8 @@ impl TaskObject {
         &self.record.assignee_actor_id
     }
 
-    async fn assignee_session_id(&self) -> Option<UriScalar> {
-        Uri::parse(&self.record.assignee_session_uri)
-            .ok()
-            .map(UriScalar)
-    }
-
     async fn reviewer_actor_id(&self) -> &str {
         &self.record.reviewer_actor_id
-    }
-
-    async fn reviewer_session_id(&self) -> Option<UriScalar> {
-        Uri::parse(&self.record.reviewer_session_uri)
-            .ok()
-            .map(UriScalar)
     }
 
     async fn labels(&self) -> Vec<String> {
@@ -2303,7 +2090,7 @@ impl TaskObject {
     ///
     /// Example:
     /// ```graphql
-    /// { task(id: "borg:task:t1") { comments(first: 20) { edges { node { id body authorSessionUri } } } } }
+    /// { task(id: "borg:task:t1") { comments(first: 20) { edges { node { id body authorActorId } } } } }
     /// ```
     async fn comments(
         &self,
@@ -2440,11 +2227,9 @@ impl TaskCommentObject {
         Uri::parse(&self.record.task_uri).ok().map(UriScalar)
     }
 
-    /// Session URI that authored this comment.
-    async fn author_session_uri(&self) -> Option<UriScalar> {
-        Uri::parse(&self.record.author_session_uri)
-            .ok()
-            .map(UriScalar)
+    /// Actor URI that authored this comment.
+    async fn author_actor_id(&self) -> Option<UriScalar> {
+        Uri::parse(&self.record.author_actor_id).ok().map(UriScalar)
     }
 
     /// Comment body text.
@@ -2490,11 +2275,9 @@ impl TaskEventObject {
         Uri::parse(&self.record.task_uri).ok().map(UriScalar)
     }
 
-    /// Session URI that triggered the event.
-    async fn actor_session_uri(&self) -> Option<UriScalar> {
-        Uri::parse(&self.record.actor_session_uri)
-            .ok()
-            .map(UriScalar)
+    /// Actor URI that triggered the event.
+    async fn actor_id(&self) -> Option<UriScalar> {
+        Uri::parse(&self.record.actor_id).ok().map(UriScalar)
     }
 
     #[graphql(name = "type")]
@@ -2537,12 +2320,8 @@ struct TaskEventDataObject {
     kind: String,
     /// New assignee actor ID when relevant.
     assignee_actor_id: Option<String>,
-    /// New assignee session URI when relevant.
-    assignee_session_uri: Option<String>,
     /// Reviewer actor ID when relevant.
     reviewer_actor_id: Option<String>,
-    /// Reviewer session URI when relevant.
-    reviewer_session_uri: Option<String>,
     /// Parent task URI when relevant.
     parent_uri: Option<String>,
     /// Updated title when relevant.
@@ -2553,12 +2332,8 @@ struct TaskEventDataObject {
     definition_of_done: Option<String>,
     /// Previous assignee actor ID when relevant.
     old_assignee_actor_id: Option<String>,
-    /// Previous assignee session URI when relevant.
-    old_assignee_session_uri: Option<String>,
     /// Replacement assignee actor ID when relevant.
     new_assignee_actor_id: Option<String>,
-    /// Replacement assignee session URI when relevant.
-    new_assignee_session_uri: Option<String>,
     /// Label list payload when relevant.
     labels: Option<Vec<String>>,
     /// Blocking dependency URI when relevant.
@@ -2590,11 +2365,7 @@ struct TaskEventDataSerde {
     #[serde(default)]
     assignee_actor_id: Option<String>,
     #[serde(default)]
-    assignee_session_uri: Option<String>,
-    #[serde(default)]
     reviewer_actor_id: Option<String>,
-    #[serde(default)]
-    reviewer_session_uri: Option<String>,
     #[serde(default)]
     parent_uri: Option<String>,
     #[serde(default)]
@@ -2606,11 +2377,7 @@ struct TaskEventDataSerde {
     #[serde(default)]
     old_assignee_actor_id: Option<String>,
     #[serde(default)]
-    old_assignee_session_uri: Option<String>,
-    #[serde(default)]
     new_assignee_actor_id: Option<String>,
-    #[serde(default)]
-    new_assignee_session_uri: Option<String>,
     #[serde(default)]
     labels: Option<Vec<String>>,
     #[serde(default)]
@@ -2643,17 +2410,13 @@ impl TaskEventDataObject {
         Self {
             kind,
             assignee_actor_id: parsed.assignee_actor_id,
-            assignee_session_uri: parsed.assignee_session_uri,
             reviewer_actor_id: parsed.reviewer_actor_id,
-            reviewer_session_uri: parsed.reviewer_session_uri,
             parent_uri: parsed.parent_uri,
             title: parsed.title,
             description: parsed.description,
             definition_of_done: parsed.definition_of_done,
             old_assignee_actor_id: parsed.old_assignee_actor_id,
-            old_assignee_session_uri: parsed.old_assignee_session_uri,
             new_assignee_actor_id: parsed.new_assignee_actor_id,
-            new_assignee_session_uri: parsed.new_assignee_session_uri,
             labels: parsed.labels,
             blocked_by: parsed.blocked_by,
             duplicate_of: parsed.duplicate_of,
@@ -3038,13 +2801,12 @@ impl MemoryFactObject {
 /// query($id: Uri!) {
 ///   node(id: $id) {
 ///     id
-///     ... on Session { updatedAt }
+///     ... on Actor { name status }
 ///   }
 /// }
 /// ```
 enum Node {
     Actor(ActorObject),
-    Session(SessionObject),
     Port(PortObject),
     Provider(ProviderObject),
     App(AppObject),
@@ -3300,15 +3062,15 @@ struct RunPortHttpResult {
 }
 
 #[derive(Default)]
-struct ParsedSessionMessage {
+struct ParsedActorMessage {
     message_type: String,
     role: Option<String>,
     text: Option<String>,
 }
 
-fn parse_session_message(payload: &serde_json::Value) -> ParsedSessionMessage {
+fn parse_actor_message(payload: &serde_json::Value) -> ParsedActorMessage {
     let Some(obj) = payload.as_object() else {
-        return ParsedSessionMessage {
+        return ParsedActorMessage {
             message_type: "unknown".to_string(),
             role: None,
             text: None,
@@ -3329,7 +3091,7 @@ fn parse_session_message(payload: &serde_json::Value) -> ParsedSessionMessage {
             "assistant" => Some("assistant".to_string()),
             "system" => Some("system".to_string()),
             "tool_call" | "tool_result" => Some("tool".to_string()),
-            "session_event" => Some("event".to_string()),
+            "actor_event" => Some("event".to_string()),
             _ => None,
         }
     };
@@ -3349,7 +3111,7 @@ fn parse_session_message(payload: &serde_json::Value) -> ParsedSessionMessage {
                 .map(str::to_string)
         });
 
-    ParsedSessionMessage {
+    ParsedActorMessage {
         message_type,
         role,
         text,

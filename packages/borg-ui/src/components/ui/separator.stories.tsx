@@ -32,7 +32,7 @@ export const Vertical: Story = {
     >
       <span>Runs</span>
       <Separator orientation="vertical" />
-      <span>Sessions</span>
+      <span>Actors</span>
       <Separator orientation="vertical" />
       <span>Tasks</span>
     </div>

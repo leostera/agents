@@ -1,11 +1,12 @@
 use anyhow::Result;
+use borg_core::Uri;
 use borg_db::BorgDb;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc};
 use tokio::time;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::model::{TaskEventData, TaskStatus};
 use crate::store::TaskGraphStore;
@@ -33,24 +34,30 @@ pub struct TaskNotification {
 
 #[derive(Debug, Clone)]
 pub struct TaskDispatch {
-    pub task_uri: String,
+    pub task_uri: Uri,
     pub title: String,
     pub description: String,
     pub definition_of_done: String,
-    pub assignee_session_uri: String,
-    pub assignee_actor_id: String,
+    pub assignee_actor_id: Uri,
 }
 
-impl From<crate::model::TaskRecord> for TaskDispatch {
-    fn from(value: crate::model::TaskRecord) -> Self {
-        Self {
-            task_uri: value.uri,
+impl TryFrom<crate::model::TaskRecord> for TaskDispatch {
+    type Error = anyhow::Error;
+
+    fn try_from(value: crate::model::TaskRecord) -> Result<Self> {
+        Ok(Self {
+            task_uri: Uri::parse(&value.uri)
+                .map_err(|_| anyhow::anyhow!("task.invalid_uri: {}", value.uri))?,
             title: value.title,
             description: value.description,
             definition_of_done: value.definition_of_done,
-            assignee_session_uri: value.assignee_session_uri,
-            assignee_actor_id: value.assignee_actor_id,
-        }
+            assignee_actor_id: Uri::parse(&value.assignee_actor_id).map_err(|_| {
+                anyhow::anyhow!(
+                    "task.invalid_assignee_actor_id: {}",
+                    value.assignee_actor_id
+                )
+            })?,
+        })
     }
 }
 
@@ -75,7 +82,7 @@ impl TaskGraphSupervisor {
         self
     }
 
-    pub async fn start(&self) {
+    pub async fn start(self) -> tokio::task::JoinHandle<Result<()>> {
         info!("TaskGraphSupervisor starting");
 
         let store = self.store.clone();
@@ -102,7 +109,7 @@ impl TaskGraphSupervisor {
                     error!(target: "borg_taskgraph", error = %err, "error dispatching tasks");
                 }
             }
-        });
+        })
     }
 
     async fn initialize_statuses(
@@ -168,9 +175,42 @@ impl TaskGraphSupervisor {
             return Ok(());
         };
 
-        let sessions = store.list_assignee_sessions().await?;
-        for session_uri in sessions {
-            let tasks = store.next_task(&session_uri, 10).await?;
+        let assignee_actor_ids = store.list_assignee_actor_ids().await?;
+        for assignee_actor_id in assignee_actor_ids {
+            let assignee_actor_uri = match Uri::parse(&assignee_actor_id) {
+                Ok(uri) => uri,
+                Err(_) => {
+                    warn!(
+                        target: "borg_taskgraph",
+                        assignee_actor_id = %assignee_actor_id,
+                        "skipping task dispatch for invalid assignee actor uri"
+                    );
+                    continue;
+                }
+            };
+            let assignee_exists = match store.db().get_actor(&assignee_actor_uri).await {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
+                Err(err) => {
+                    warn!(
+                        target: "borg_taskgraph",
+                        assignee_actor_id = %assignee_actor_id,
+                        error = %err,
+                        "failed to check assignee actor before dispatch"
+                    );
+                    continue;
+                }
+            };
+            if !assignee_exists {
+                debug!(
+                    target: "borg_taskgraph",
+                    assignee_actor_id = %assignee_actor_id,
+                    "skipping task dispatch because assignee actor does not exist"
+                );
+                continue;
+            }
+
+            let tasks = store.next_task(&assignee_actor_id, 10).await?;
             for task in tasks {
                 {
                     let mut guard = dispatched.write().await;
@@ -182,7 +222,7 @@ impl TaskGraphSupervisor {
 
                 if task.status == TaskStatus::Pending.as_str()
                     && let Err(err) = store
-                        .set_task_status(&task.assignee_session_uri, &task.uri, TaskStatus::Doing)
+                        .set_task_status(&task.assignee_actor_id, &task.uri, TaskStatus::Doing)
                         .await
                 {
                     error!(
@@ -196,14 +236,28 @@ impl TaskGraphSupervisor {
                     continue;
                 }
 
-                let dispatch = TaskDispatch::from(task.clone());
+                let dispatch = match TaskDispatch::try_from(task.clone()) {
+                    Ok(dispatch) => dispatch,
+                    Err(err) => {
+                        error!(
+                            target: "borg_taskgraph",
+                            task_uri = %task.uri,
+                            assignee_actor_id = %task.assignee_actor_id,
+                            error = %err,
+                            "failed to encode task dispatch"
+                        );
+                        let mut guard = dispatched.write().await;
+                        guard.remove(&task.uri);
+                        continue;
+                    }
+                };
                 if dispatch_tx.send(dispatch.clone()).await.is_err() {
                     return Ok(());
                 }
                 info!(
                     target: "borg_taskgraph",
                     task_uri = %dispatch.task_uri,
-                    session_uri = %dispatch.assignee_session_uri,
+                    assignee_actor_id = %dispatch.assignee_actor_id,
                     "dispatched task to runtime"
                 );
             }
@@ -263,13 +317,13 @@ impl TaskGraphStore {
         Ok(row.and_then(|(s,)| if s.is_empty() { None } else { Some(s) }))
     }
 
-    pub async fn list_assignee_sessions(&self) -> Result<Vec<String>> {
+    pub async fn list_assignee_actor_ids(&self) -> Result<Vec<String>> {
         let mut tx = self.db().pool().begin().await?;
         let rows: Vec<(String,)> = sqlx::query_as::<_, (String,)>(
-            r#"SELECT DISTINCT assignee_session_uri
+            r#"SELECT DISTINCT assignee_actor_id
                FROM taskgraph_tasks
                WHERE status IN ('pending', 'doing')
-               ORDER BY assignee_session_uri ASC"#,
+               ORDER BY assignee_actor_id ASC"#,
         )
         .fetch_all(tx.as_mut())
         .await?;

@@ -59,7 +59,7 @@ pub fn default_actor_admin_tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "Actors-whoAmI",
-            "Return the current runtime identity (actor + session).",
+            "Return the current runtime actor identity.",
             json!({
                 "type": "object",
                 "properties": {},
@@ -113,11 +113,9 @@ pub fn default_actor_admin_tool_specs() -> Vec<ToolSpec> {
 
 pub fn build_actor_admin_toolchain(
     db: BorgDb,
-    current_session_id: Uri,
     current_actor_id: Uri,
 ) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let whoami_actor_id = current_actor_id.to_string();
-    let whoami_session_id = current_session_id.to_string();
 
     let db_list = db.clone();
     let db_create = db.clone();
@@ -142,11 +140,9 @@ pub fn build_actor_admin_toolchain(
             None,
             move |_request: crate::ToolRequest<WhoAmIArgs>| {
                 let actor_id = whoami_actor_id.clone();
-                let session_id = whoami_session_id.clone();
                 async move {
                     json_text(&json!({
-                        "actor_id": actor_id,
-                        "session_id": session_id
+                        "actor_id": actor_id
                     }))
                 }
             },

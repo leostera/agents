@@ -29,9 +29,9 @@ export const ProductNavigation: Story = {
             <ul className="grid w-[420px] gap-1">
               <li>
                 <NavigationMenuLink href="#">
-                  <span className="font-medium">Sessions</span>
+                  <span className="font-medium">Actors</span>
                   <span className="text-muted-foreground">
-                    Manage long-running assistant sessions.
+                    Manage long-running assistant actors.
                   </span>
                 </NavigationMenuLink>
               </li>

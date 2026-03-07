@@ -32,7 +32,7 @@ export const ToastStates: Story = {
         <Button
           size="sm"
           variant="outline"
-          onClick={() => toast.info("Syncing session snapshots")}
+          onClick={() => toast.info("Syncing actor snapshots")}
         >
           Info
         </Button>

@@ -9,7 +9,6 @@ pub struct CreateScheduleJobInput {
     pub job_id: String,
     pub kind: String,
     pub target_actor_id: String,
-    pub target_session_id: String,
     pub message_type: String,
     pub payload: Value,
     pub headers: Value,
@@ -21,7 +20,6 @@ pub struct CreateScheduleJobInput {
 pub struct UpdateScheduleJobInput {
     pub kind: Option<String>,
     pub target_actor_id: Option<String>,
-    pub target_session_id: Option<String>,
     pub message_type: Option<String>,
     pub payload: Option<Value>,
     pub headers: Option<Value>,
@@ -45,7 +43,6 @@ impl BorgDb {
                     kind as "kind!: String",
                     status as "status!: String",
                     target_actor_id as "target_actor_id!: String",
-                    target_session_id as "target_session_id!: String",
                     message_type as "message_type!: String",
                     payload_json as "payload!: serde_json::Value",
                     headers_json as "headers!: serde_json::Value",
@@ -74,7 +71,6 @@ impl BorgDb {
                     kind as "kind!: String",
                     status as "status!: String",
                     target_actor_id as "target_actor_id!: String",
-                    target_session_id as "target_session_id!: String",
                     message_type as "message_type!: String",
                     payload_json as "payload!: serde_json::Value",
                     headers_json as "headers!: serde_json::Value",
@@ -110,7 +106,6 @@ impl BorgDb {
                 kind as "kind!: String",
                 status as "status!: String",
                 target_actor_id as "target_actor_id!: String",
-                target_session_id as "target_session_id!: String",
                 message_type as "message_type!: String",
                 payload_json as "payload!: serde_json::Value",
                 headers_json as "headers!: serde_json::Value",
@@ -144,7 +139,6 @@ impl BorgDb {
                 kind as "kind!: String",
                 status as "status!: String",
                 target_actor_id as "target_actor_id!: String",
-                target_session_id as "target_session_id!: String",
                 message_type as "message_type!: String",
                 payload_json as "payload!: serde_json::Value",
                 headers_json as "headers!: serde_json::Value",
@@ -182,7 +176,6 @@ impl BorgDb {
                 kind,
                 status,
                 target_actor_id,
-                target_session_id,
                 message_type,
                 payload_json,
                 headers_json,
@@ -192,13 +185,12 @@ impl BorgDb {
                 created_at,
                 updated_at
             )
-            VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, ?12)
+            VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11)
             "#,
             input.job_id,
             input.kind,
             status,
             input.target_actor_id,
-            input.target_session_id,
             input.message_type,
             payload_json,
             headers_json,
@@ -233,10 +225,6 @@ impl BorgDb {
             .target_actor_id
             .clone()
             .unwrap_or(current.target_actor_id);
-        let target_session_id = patch
-            .target_session_id
-            .clone()
-            .unwrap_or(current.target_session_id);
         let message_type = patch.message_type.clone().unwrap_or(current.message_type);
         let payload = patch.payload.clone().unwrap_or(current.payload);
         let headers = patch.headers.clone().unwrap_or(current.headers);
@@ -255,19 +243,17 @@ impl BorgDb {
             SET
                 kind = ?2,
                 target_actor_id = ?3,
-                target_session_id = ?4,
-                message_type = ?5,
-                payload_json = ?6,
-                headers_json = ?7,
-                schedule_spec_json = ?8,
-                next_run_at = ?9,
-                updated_at = ?10
+                message_type = ?4,
+                payload_json = ?5,
+                headers_json = ?6,
+                schedule_spec_json = ?7,
+                next_run_at = ?8,
+                updated_at = ?9
             WHERE job_id = ?1
             "#,
             job_id,
             kind,
             target_actor_id,
-            target_session_id,
             message_type,
             payload_json,
             headers_json,
@@ -317,7 +303,6 @@ impl BorgDb {
                 scheduled_for as "scheduled_for!: DateTime<Utc>",
                 fired_at as "fired_at!: DateTime<Utc>",
                 target_actor_id as "target_actor_id!: String",
-                target_session_id as "target_session_id!: String",
                 message_id as "message_id!: String",
                 created_at as "created_at!: DateTime<Utc>"
             FROM schedule_job_runs

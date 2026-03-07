@@ -1,14 +1,14 @@
 import { Icon } from "@iconify/react";
 import React, { useMemo } from "react";
 
-import type { SessionMessage } from "../lib/messages";
+import type { ActorMessage } from "../lib/messages";
 import { ChoiceInput } from "./ChoiceInput";
 import { Message } from "./Message";
 import { Spacer } from "./Spacer";
 import { TextInput } from "./TextInput";
 
-type SessionProps = {
-  messages: Array<SessionMessage>;
+type ActorTimelineProps = {
+  messages: Array<ActorMessage>;
   choices: Record<string, string>;
   animatedIds?: Array<string>;
   onChoice: (messageId: string, value: string) => void;
@@ -19,7 +19,7 @@ type SessionProps = {
   userName?: string;
 };
 
-export function Session(props: SessionProps) {
+export function ActorTimeline(props: ActorTimelineProps) {
   const animated = useMemo(
     () => new Set(props.animatedIds ?? []),
     [props.animatedIds]
@@ -53,7 +53,7 @@ export function Session(props: SessionProps) {
   );
 
   const renderMessageControls = (
-    message: Extract<SessionMessage, { type: "message" }>
+    message: Extract<ActorMessage, { type: "message" }>
   ) => (
     <>
       {message.choices && !animated.has(message.id) ? (
@@ -84,7 +84,7 @@ export function Session(props: SessionProps) {
       {message.input && !animated.has(message.id) ? (
         <>
           <Spacer size={10} />
-          <div className="borg-session__input-body">
+          <div className="borg-chat__input-body">
             <TextInput
               name={message.input.name}
               placeholder={message.input.placeholder}
@@ -117,7 +117,7 @@ export function Session(props: SessionProps) {
   );
 
   const renderComposer = (
-    message: Extract<SessionMessage, { type: "message" }>
+    message: Extract<ActorMessage, { type: "message" }>
   ) => {
     const primaryAction = message.actions?.[0];
 
@@ -190,8 +190,8 @@ export function Session(props: SessionProps) {
   };
 
   return (
-    <section className="borg-session">
-      <div className="borg-session__feed">
+    <section className="borg-chat">
+      <div className="borg-chat__feed">
         {feedMessages.map((message) => {
           if (message.type === "message") {
             return (
@@ -220,7 +220,7 @@ export function Session(props: SessionProps) {
                 text={message.prompt}
                 timestamp={message.timestamp}
               >
-                <div className="borg-session__input-body">
+                <div className="borg-chat__input-body">
                   <ChoiceInput
                     name={message.payload.name}
                     placeholder={message.payload.placeholder}
@@ -242,7 +242,7 @@ export function Session(props: SessionProps) {
                 text={message.prompt}
                 timestamp={message.timestamp}
               >
-                <div className="borg-session__input-body">
+                <div className="borg-chat__input-body">
                   <TextInput
                     name={message.payload.name}
                     placeholder={message.payload.placeholder}
@@ -259,7 +259,7 @@ export function Session(props: SessionProps) {
         })}
       </div>
       {composerMessage ? (
-        <div className="borg-session__composer">
+        <div className="borg-chat__composer">
           {renderComposer(composerMessage)}
         </div>
       ) : null}

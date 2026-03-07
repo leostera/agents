@@ -38,12 +38,12 @@ export type Scalars = {
 /**
  * Runtime actor definition.
  *
- * An actor is a named, long-lived Borg worker/persona with its own session
- * participation history.
+ * An actor is a named, long-lived Borg worker/persona with its own message
+ * history.
  *
  * Usage notes:
  * - Represents a runnable actor spec (`borg:actor:*`).
- * - Use `sessions` for runtime timeline views.
+ * - Use `messages` for runtime timeline views.
  *
  * Example:
  * ```graphql
@@ -53,21 +53,23 @@ export type Scalars = {
 export type Actor = Node & {
   __typename?: "Actor";
   createdAt: Scalars["DateTime"]["output"];
+  defaultProviderId?: Maybe<Scalars["String"]["output"]>;
   /** Stable actor URI. */
   id: Scalars["Uri"]["output"];
-  name: Scalars["String"]["output"];
   /**
-   * Sessions this actor has participated in.
+   * Actor history messages.
    *
    * Usage notes:
    * - Backed by actor mailbox activity.
    *
    * Example:
    * ```graphql
-   * { actor(id: "borg:actor:planner") { sessions(first: 5) { edges { node { id updatedAt } } } } }
+   * { actor(id: "borg:actor:planner") { messages(first: 5) { edges { node { id messageType text } } } } }
    * ```
    */
-  sessions: SessionConnection;
+  messages: ActorMessageConnection;
+  model?: Maybe<Scalars["String"]["output"]>;
+  name: Scalars["String"]["output"];
   status: ActorStatusValue;
   systemPrompt: Scalars["String"]["output"];
   updatedAt: Scalars["DateTime"]["output"];
@@ -76,19 +78,19 @@ export type Actor = Node & {
 /**
  * Runtime actor definition.
  *
- * An actor is a named, long-lived Borg worker/persona with its own session
- * participation history.
+ * An actor is a named, long-lived Borg worker/persona with its own message
+ * history.
  *
  * Usage notes:
  * - Represents a runnable actor spec (`borg:actor:*`).
- * - Use `sessions` for runtime timeline views.
+ * - Use `messages` for runtime timeline views.
  *
  * Example:
  * ```graphql
  * { actor(id: "borg:actor:planner") { id name status } }
  * ```
  */
-export type ActorSessionsArgs = {
+export type ActorMessagesArgs = {
   after?: InputMaybe<Scalars["String"]["input"]>;
   first?: InputMaybe<Scalars["Int"]["input"]>;
 };
@@ -109,6 +111,94 @@ export type ActorEdge = {
   cursor: Scalars["String"]["output"];
   /** Materialized node for this edge. */
   node: Actor;
+};
+
+/**
+ * Persisted timeline entry inside an actor history.
+ *
+ * Actor messages represent user inputs, assistant outputs, tool activity, and
+ * lifecycle events as ordered records.
+ *
+ * Usage notes:
+ * - Prefer `messageType`, `role`, and `text` over deprecated `payload`.
+ * - `id` is the stable timeline message URI.
+ *
+ * Example:
+ * ```graphql
+ * { actor(id: "borg:actor:planner") { messages(first: 5) { edges { node { id messageType role text } } } } }
+ * ```
+ */
+export type ActorMessage = {
+  __typename?: "ActorMessage";
+  actorId: Scalars["Uri"]["output"];
+  createdAt: Scalars["DateTime"]["output"];
+  id: Scalars["Uri"]["output"];
+  messageType: Scalars["String"]["output"];
+  /** @deprecated Legacy JSON payload. Prefer typed fields (`messageType`, `role`, `text`). */
+  payload: Scalars["JsonValue"]["output"];
+  role?: Maybe<Scalars["String"]["output"]>;
+  text?: Maybe<Scalars["String"]["output"]>;
+};
+
+/** Relay-style page container for cursor-based list traversal. */
+export type ActorMessageConnection = {
+  __typename?: "ActorMessageConnection";
+  /** Returned edges for the current page. */
+  edges: Array<ActorMessageEdge>;
+  /** Pagination state for the current page. */
+  pageInfo: PageInfo;
+};
+
+/** Relay-style edge carrying one node plus cursor for forward pagination. */
+export type ActorMessageEdge = {
+  __typename?: "ActorMessageEdge";
+  /** Opaque edge cursor to pass back into `after`. */
+  cursor: Scalars["String"]["output"];
+  /** Materialized node for this edge. */
+  node: ActorMessage;
+};
+
+/** High-level classification for UI routing of actor notifications. */
+export enum ActorNotificationKind {
+  /** Actor lifecycle or system event message. */
+  ActorEvent = "ACTOR_EVENT",
+  /** Assistant-authored response message. */
+  AssistantReply = "ASSISTANT_REPLY",
+  /** Fallback generic message classification. */
+  Message = "MESSAGE",
+  /** Tool call or tool result activity. */
+  ToolActivity = "TOOL_ACTIVITY",
+}
+
+/**
+ * Notification payload projected from an actor message.
+ *
+ * Usage notes:
+ * - Notifications are fully typed and include the underlying `actorMessage`.
+ * - `kind` is derived from `messageType`/`role`.
+ */
+export type ActorNotificationObject = {
+  __typename?: "ActorNotificationObject";
+  /** Actor URI this notification belongs to. */
+  actorId: Scalars["Uri"]["output"];
+  /** Full underlying message object. */
+  actorMessage: ActorMessage;
+  /** Source message timestamp. */
+  createdAt: Scalars["DateTime"]["output"];
+  /** Stable notification identifier (`actorId:messageId`). */
+  id: Scalars["String"]["output"];
+  /** Kind classification for UI routing and badges. */
+  kind: ActorNotificationKind;
+  /** Source message URI. */
+  messageId: Scalars["Uri"]["output"];
+  /** Source message type. */
+  messageType: Scalars["String"]["output"];
+  /** Source role, when available. */
+  role?: Maybe<Scalars["String"]["output"]>;
+  /** Source text content, when available. */
+  text?: Maybe<Scalars["String"]["output"]>;
+  /** Short user-facing title. */
+  title: Scalars["String"]["output"];
 };
 
 /** Lifecycle states for actor records. */
@@ -435,29 +525,10 @@ export enum AppStatusValue {
 }
 
 /**
- * Appends a new timeline message to an existing session.
- *
- * Example:
- * `{ sessionId: "borg:session:s1", messageType: "user", role: "user", text: "Hello" }`
- */
-export type AppendSessionMessageInput = {
-  /** Message type (`user`, `assistant`, ...). */
-  messageType?: InputMaybe<Scalars["String"]["input"]>;
-  /** Transitional raw payload. */
-  payload?: InputMaybe<Scalars["JsonValue"]["input"]>;
-  /** Logical role (`user`, `assistant`, ...). */
-  role?: InputMaybe<Scalars["String"]["input"]>;
-  /** Target session URI. */
-  sessionId: Scalars["Uri"]["input"];
-  /** Message text content. */
-  text?: InputMaybe<Scalars["String"]["input"]>;
-};
-
-/**
  * Creates a new schedule scheduler job definition.
  *
  * Example:
- * `{ jobId: "daily-digest", kind: "cron", actorId: "borg:actor:planner", sessionId: "borg:session:s1" }`
+ * `{ jobId: "daily-digest", kind: "cron", actorId: "borg:actor:planner" }`
  */
 export type CreateScheduleJobInputGql = {
   /** Actor URI executed by this job. */
@@ -476,23 +547,23 @@ export type CreateScheduleJobInputGql = {
   payload: Scalars["JsonValue"]["input"];
   /** Schedule specification (transitional JSON). */
   scheduleSpec: Scalars["JsonValue"]["input"];
-  /** Session URI used as job context. */
-  sessionId: Scalars["Uri"]["input"];
 };
 
 /**
  * Creates a new durable taskgraph task.
  *
  * Example:
- * `{ sessionUri: "borg:session:s1", creatorAgentId: "borg:actor:creator", assigneeAgentId: "borg:actor:assignee", title: "Ship docs" }`
+ * `{ actorId: "borg:actor:creator", creatorActorId: "borg:actor:creator", assigneeActorId: "borg:actor:assignee", title: "Ship docs" }`
  */
 export type CreateTaskInputGql = {
+  /** Actor URI authoring the task create event. */
+  actorId: Scalars["Uri"]["input"];
   /** Assignee actor URI. */
-  assigneeAgentId: Scalars["Uri"]["input"];
+  assigneeActorId: Scalars["Uri"]["input"];
   /** Task URIs that block this task. */
   blockedBy?: Array<Scalars["Uri"]["input"]>;
   /** Creator actor URI. */
-  creatorAgentId: Scalars["Uri"]["input"];
+  creatorActorId: Scalars["Uri"]["input"];
   /** Completion criteria. */
   definitionOfDone?: Scalars["String"]["input"];
   /** Task description/body. */
@@ -503,8 +574,6 @@ export type CreateTaskInputGql = {
   parentUri?: InputMaybe<Scalars["Uri"]["input"]>;
   /** Related entity/task URIs. */
   references?: Array<Scalars["Uri"]["input"]>;
-  /** Session URI authoring the task create event. */
-  sessionUri: Scalars["Uri"]["input"];
   /** Short task title. */
   title: Scalars["String"]["input"];
 };
@@ -696,6 +765,11 @@ export type MemoryValueObject = {
   text?: Maybe<Scalars["String"]["output"]>;
 };
 
+export type ModelObject = {
+  __typename?: "ModelObject";
+  name: Scalars["String"]["output"];
+};
+
 /**
  * Root mutation entrypoint for control-plane and task/memory writes.
  *
@@ -717,25 +791,6 @@ export type MemoryValueObject = {
 export type MutationRoot = {
   __typename?: "MutationRoot";
   /**
-   * Appends a session message.
-   *
-   * Usage notes:
-   * - Prefer typed fields (`messageType`, `role`, `text`) over raw `payload`.
-   *
-   * Example:
-   * ```graphql
-   * mutation($session: Uri!) {
-   * appendSessionMessage(input: {
-   * sessionId: $session
-   * messageType: "user"
-   * role: "user"
-   * text: "Hello"
-   * }) { id messageType role text }
-   * }
-   * ```
-   */
-  appendSessionMessage: SessionMessage;
-  /**
    * Cancels a schedule job.
    *
    * Example:
@@ -749,12 +804,11 @@ export type MutationRoot = {
    *
    * Example:
    * ```graphql
-   * mutation($actor: Uri!, $session: Uri!) {
+   * mutation($actor: Uri!) {
    * createScheduleJob(input: {
    * jobId: "daily-standup"
    * kind: "cron"
    * actorId: $actor
-   * sessionId: $session
    * messageType: "user"
    * payload: { text: "Daily standup" }
    * scheduleSpec: { cron: "0 9 * * 1-5" }
@@ -768,11 +822,11 @@ export type MutationRoot = {
    *
    * Example:
    * ```graphql
-   * mutation($session: Uri!, $creator: Uri!, $assignee: Uri!) {
+   * mutation($actor: Uri!, $creator: Uri!, $assignee: Uri!) {
    * createTask(input: {
-   * sessionUri: $session
-   * creatorAgentId: $creator
-   * assigneeAgentId: $assignee
+   * actorId: $actor
+   * creatorActorId: $creator
+   * assigneeActorId: $assignee
    * title: "Ship borg-gql docs"
    * description: "Document all schema entrypoints"
    * }) { id title status }
@@ -798,21 +852,6 @@ export type MutationRoot = {
    * ```
    */
   deleteProvider: Scalars["Boolean"]["output"];
-  /**
-   * Updates an existing session message.
-   *
-   * Example:
-   * ```graphql
-   * mutation($session: Uri!) {
-   * patchSessionMessage(input: {
-   * sessionId: $session
-   * messageId: "borg:session_message:..."
-   * message: { messageType: "user", role: "user", text: "Updated text" }
-   * }) { id text }
-   * }
-   * ```
-   */
-  patchSessionMessage: SessionMessage;
   /**
    * Pauses an active schedule job.
    *
@@ -840,10 +879,9 @@ export type MutationRoot = {
    *
    * Example:
    * ```graphql
-   * mutation($actor: Uri!, $session: Uri!, $user: Uri!) {
+   * mutation($actor: Uri!, $user: Uri!) {
    * runActorChat(input: {
    * actorId: $actor
-   * sessionId: $session
    * userId: $user
    * text: "Summarize pending tasks"
    * }) { ok message }
@@ -870,12 +908,12 @@ export type MutationRoot = {
    * Moves a task to a new allowed status.
    *
    * Usage notes:
-   * - Auth/session constraints follow taskgraph rules (assignee/reviewer checks).
+   * - Auth constraints follow taskgraph rules (assignee/reviewer checks).
    *
    * Example:
    * ```graphql
-   * mutation($task: Uri!, $session: Uri!) {
-   * setTaskStatus(input: { taskId: $task, sessionUri: $session, status: DOING }) {
+   * mutation($task: Uri!, $actor: Uri!) {
+   * setTaskStatus(input: { taskId: $task, actorId: $actor, status: DOING }) {
    * id
    * status
    * }
@@ -902,10 +940,10 @@ export type MutationRoot = {
    *
    * Example:
    * ```graphql
-   * mutation($task: Uri!, $session: Uri!) {
+   * mutation($task: Uri!, $actor: Uri!) {
    * updateTask(input: {
    * taskId: $task
-   * sessionUri: $session
+   * actorId: $actor
    * title: "Updated title"
    * }) { id title updatedAt }
    * }
@@ -1040,16 +1078,16 @@ export type MutationRoot = {
    */
   upsertPortActorBinding: PortActorBinding;
   /**
-   * Creates or updates a port/session binding.
+   * Creates or updates a port/actor binding.
    *
    * Example:
    * ```graphql
-   * mutation($session: Uri!, $key: Uri!) {
+   * mutation($actor: Uri!, $key: Uri!) {
    * upsertPortBinding(input: {
    * portName: "telegram"
    * conversationKey: $key
-   * sessionId: $session
-   * }) { portName conversationKey sessionId }
+   * actorId: $actor
+   * }) { portName conversationKey actorId }
    * }
    * ```
    */
@@ -1071,39 +1109,6 @@ export type MutationRoot = {
    * ```
    */
   upsertProvider: Provider;
-  /**
-   * Creates or updates a session.
-   *
-   * Example:
-   * ```graphql
-   * mutation($id: Uri!, $port: Uri!) {
-   * upsertSession(input: { sessionId: $id, port: $port }) { id portId }
-   * }
-   * ```
-   */
-  upsertSession: Session;
-};
-
-/**
- * Root mutation entrypoint for control-plane and task/memory writes.
- *
- * Usage notes:
- * - Mutations return the written object whenever possible.
- * - URI arguments are strictly validated by the `Uri` scalar.
- * - Runtime wrapper mutations are intentionally stubbed until `borg-api` integration.
- *
- * Example:
- * ```graphql
- * mutation {
- * upsertProvider(input: { provider: "openai", providerKind: "openai", enabled: true }) {
- * provider
- * enabled
- * }
- * }
- * ```
- */
-export type MutationRootAppendSessionMessageArgs = {
-  input: AppendSessionMessageInput;
 };
 
 /**
@@ -1214,28 +1219,6 @@ export type MutationRootDeleteActorArgs = {
  */
 export type MutationRootDeleteProviderArgs = {
   provider: Scalars["String"]["input"];
-};
-
-/**
- * Root mutation entrypoint for control-plane and task/memory writes.
- *
- * Usage notes:
- * - Mutations return the written object whenever possible.
- * - URI arguments are strictly validated by the `Uri` scalar.
- * - Runtime wrapper mutations are intentionally stubbed until `borg-api` integration.
- *
- * Example:
- * ```graphql
- * mutation {
- * upsertProvider(input: { provider: "openai", providerKind: "openai", enabled: true }) {
- * provider
- * enabled
- * }
- * }
- * ```
- */
-export type MutationRootPatchSessionMessageArgs = {
-  input: PatchSessionMessageInput;
 };
 
 /**
@@ -1592,28 +1575,6 @@ export type MutationRootUpsertProviderArgs = {
 };
 
 /**
- * Root mutation entrypoint for control-plane and task/memory writes.
- *
- * Usage notes:
- * - Mutations return the written object whenever possible.
- * - URI arguments are strictly validated by the `Uri` scalar.
- * - Runtime wrapper mutations are intentionally stubbed until `borg-api` integration.
- *
- * Example:
- * ```graphql
- * mutation {
- * upsertProvider(input: { provider: "openai", providerKind: "openai", enabled: true }) {
- * provider
- * enabled
- * }
- * }
- * ```
- */
-export type MutationRootUpsertSessionArgs = {
-  input: UpsertSessionInput;
-};
-
-/**
  * Unified node interface for cross-entity graph traversal.
  *
  * Example:
@@ -1621,7 +1582,7 @@ export type MutationRootUpsertSessionArgs = {
  * query($id: Uri!) {
  * node(id: $id) {
  * id
- * ... on Session { updatedAt }
+ * ... on Actor { name status }
  * }
  * }
  * ```
@@ -1655,38 +1616,23 @@ export type PageInfo = {
 };
 
 /**
- * Replaces one timeline message inside a session by message id.
- *
- * Example:
- * `{ sessionId: "borg:session:s1", messageId: "borg:session_message:...", message: { text: "Updated" } }`
- */
-export type PatchSessionMessageInput = {
-  /** Replacement message payload. */
-  message: SessionMessageInput;
-  /** Stable message URI. */
-  messageId: Scalars["Uri"]["input"];
-  /** Target session URI. */
-  sessionId: Scalars["Uri"]["input"];
-};
-
-/**
  * External transport adapter configuration.
  *
  * Ports model how Borg receives/sends traffic (for example HTTP, Telegram) and
- * how incoming conversations map into long-lived sessions.
+ * how incoming conversations map into actors.
  *
  * Usage notes:
- * - Ports bind external channels (`http`, `telegram`, ...) to session routing.
+ * - Ports bind external channels (`http`, `telegram`, ...) to actor routing.
  * - `bindings` and `actorBindings` expose live routing maps.
  *
  * Example:
  * ```graphql
- * { port(name: "telegram") { id provider enabled bindings(first: 5) { edges { node { conversationKey sessionId } } } } }
+ * { port(name: "telegram") { id provider enabled bindings(first: 5) { edges { node { conversationKey actorId } } } } }
  * ```
  */
 export type Port = Node & {
   __typename?: "Port";
-  activeSessions: Scalars["Int"]["output"];
+  activeBindings: Scalars["Int"]["output"];
   /**
    * Actor binding rows for this port.
    *
@@ -1708,11 +1654,11 @@ export type Port = Node & {
   assignedActor?: Maybe<Actor>;
   assignedActorId?: Maybe<Scalars["Uri"]["output"]>;
   /**
-   * Session binding rows for this port.
+   * Actor binding rows for this port.
    *
    * Example:
    * ```graphql
-   * { port(name: "telegram") { bindings(first: 10) { edges { node { conversationKey sessionId } } } } }
+   * { port(name: "telegram") { bindings(first: 10) { edges { node { conversationKey actorId } } } } }
    * ```
    */
   bindings: PortBindingConnection;
@@ -1729,15 +1675,15 @@ export type Port = Node & {
  * External transport adapter configuration.
  *
  * Ports model how Borg receives/sends traffic (for example HTTP, Telegram) and
- * how incoming conversations map into long-lived sessions.
+ * how incoming conversations map into actors.
  *
  * Usage notes:
- * - Ports bind external channels (`http`, `telegram`, ...) to session routing.
+ * - Ports bind external channels (`http`, `telegram`, ...) to actor routing.
  * - `bindings` and `actorBindings` expose live routing maps.
  *
  * Example:
  * ```graphql
- * { port(name: "telegram") { id provider enabled bindings(first: 5) { edges { node { conversationKey sessionId } } } } }
+ * { port(name: "telegram") { id provider enabled bindings(first: 5) { edges { node { conversationKey actorId } } } } }
  * ```
  */
 export type PortActorBindingsArgs = {
@@ -1749,15 +1695,15 @@ export type PortActorBindingsArgs = {
  * External transport adapter configuration.
  *
  * Ports model how Borg receives/sends traffic (for example HTTP, Telegram) and
- * how incoming conversations map into long-lived sessions.
+ * how incoming conversations map into actors.
  *
  * Usage notes:
- * - Ports bind external channels (`http`, `telegram`, ...) to session routing.
+ * - Ports bind external channels (`http`, `telegram`, ...) to actor routing.
  * - `bindings` and `actorBindings` expose live routing maps.
  *
  * Example:
  * ```graphql
- * { port(name: "telegram") { id provider enabled bindings(first: 5) { edges { node { conversationKey sessionId } } } } }
+ * { port(name: "telegram") { id provider enabled bindings(first: 5) { edges { node { conversationKey actorId } } } } }
  * ```
  */
 export type PortBindingsArgs = {
@@ -1769,11 +1715,10 @@ export type PortBindingsArgs = {
  * Conversation-specific actor override edge.
  *
  * This row pins a conversation to a specific actor independently from the
- * session binding.
+ * default port actor.
  *
  * Usage notes:
- * - Stores actor override independent of session binding.
- * - `actorId = null` means no override exists.
+ * - Stores explicit actor overrides for a conversation key.
  *
  * Example:
  * ```graphql
@@ -1809,18 +1754,15 @@ export type PortActorBindingEdge = {
 };
 
 /**
- * Conversation routing edge from a port to a session.
- *
- * This row preserves session continuity for repeated messages in the same
- * external conversation.
+ * Conversation routing edge from a port to an actor.
  *
  * Usage notes:
- * - Canonical ingress-session routing row.
- * - `actor` resolves optional per-conversation actor override.
+ * - Canonical ingress-actor routing row.
+ * - `actor` resolves the bound actor object.
  *
  * Example:
  * ```graphql
- * { port(name: "telegram") { bindings(first: 5) { edges { node { conversationKey sessionId actor { id } } } } } }
+ * { port(name: "telegram") { bindings(first: 5) { edges { node { conversationKey actorId actor { id } } } } } }
  * ```
  */
 export type PortBinding = {
@@ -1834,19 +1776,10 @@ export type PortBinding = {
    * ```
    */
   actor?: Maybe<Actor>;
+  actorId: Scalars["Uri"]["output"];
   conversationKey: Scalars["Uri"]["output"];
   id: Scalars["String"]["output"];
   portName: Scalars["String"]["output"];
-  /**
-   * Resolved session object for this binding.
-   *
-   * Example:
-   * ```graphql
-   * { port(name: "telegram") { bindings(first: 1) { edges { node { session { id updatedAt } } } } } }
-   * ```
-   */
-  session?: Maybe<Session>;
-  sessionId: Scalars["Uri"]["output"];
 };
 
 /** Relay-style page container for cursor-based list traversal. */
@@ -1897,7 +1830,7 @@ export type PortEdge = {
  *
  * Example:
  * ```graphql
- * { provider(provider: "openai") { provider providerKind enabled defaultTextModel } }
+ * { provider(provider: "openai") { provider providerKind enabled defaultTextModel models { name } defaultModel { name } } }
  * ```
  */
 export type Provider = Node & {
@@ -1906,10 +1839,12 @@ export type Provider = Node & {
   baseUrl?: Maybe<Scalars["String"]["output"]>;
   createdAt: Scalars["DateTime"]["output"];
   defaultAudioModel?: Maybe<Scalars["String"]["output"]>;
+  defaultModel: ModelObject;
   defaultTextModel?: Maybe<Scalars["String"]["output"]>;
   enabled: Scalars["Boolean"]["output"];
   id: Scalars["Uri"]["output"];
   lastUsed?: Maybe<Scalars["DateTime"]["output"]>;
+  models: Array<ModelObject>;
   provider: Scalars["String"]["output"];
   providerKind: Scalars["String"]["output"];
   tokensUsed: Scalars["Int"]["output"];
@@ -2063,7 +1998,7 @@ export type QueryRoot = {
    * Fetches a single graph node by URI and resolves the concrete runtime type.
    *
    * Usage notes:
-   * - Works for actor/session/port/provider/app/task/memory entities.
+   * - Works for actor/port/provider/app/task/memory entities.
    * - Use inline fragments to read type-specific fields.
    *
    * Example:
@@ -2099,13 +2034,13 @@ export type QueryRoot = {
    * Lists ports ordered by activity.
    *
    * Usage notes:
-   * - Includes `activeSessions` and binding relations for routing debugging.
+   * - Includes `activeBindings` and binding relations for routing debugging.
    *
    * Example:
    * ```graphql
    * query {
    * ports(first: 20) {
-   * edges { node { name provider activeSessions } }
+   * edges { node { name provider activeBindings } }
    * }
    * }
    * ```
@@ -2155,32 +2090,6 @@ export type QueryRoot = {
    * ```
    */
   scheduleJobs: ScheduleJobConnection;
-  /**
-   * Fetches one session by URI.
-   *
-   * Example:
-   * ```graphql
-   * query($id: Uri!) { session(id: $id) { id portId updatedAt } }
-   * ```
-   */
-  session?: Maybe<Session>;
-  /**
-   * Lists sessions ordered by most-recent update.
-   *
-   * Usage notes:
-   * - Optional filter: `portId`.
-   * - Use nested `messages` for chat timeline reads.
-   *
-   * Example:
-   * ```graphql
-   * query($port: Uri!) {
-   * sessions(first: 10, portId: $port) {
-   * edges { node { id updatedAt } }
-   * }
-   * }
-   * ```
-   */
-  sessions: SessionConnection;
   /**
    * Fetches one task by URI.
    *
@@ -2620,52 +2529,6 @@ export type QueryRootScheduleJobsArgs = {
  * }
  * ```
  */
-export type QueryRootSessionArgs = {
-  id: Scalars["Uri"]["input"];
-};
-
-/**
- * Root query entrypoint for the Borg entity graph.
- *
- * Usage notes:
- * - Use `node(id: Uri!)` for generic cross-entity lookup.
- * - Use typed roots (`actor`, `tasks`, `apps`, etc.) for stronger discoverability.
- * - Connection fields use cursor pagination via `first` + `after`.
- * - For full operation recipes, see `crates/borg-gql/SCHEMA_USAGE.md`.
- *
- * Example:
- * ```graphql
- * query {
- * actors(first: 5) {
- * edges { node { id name status } }
- * }
- * }
- * ```
- */
-export type QueryRootSessionsArgs = {
-  after?: InputMaybe<Scalars["String"]["input"]>;
-  first?: InputMaybe<Scalars["Int"]["input"]>;
-  portId?: InputMaybe<Scalars["Uri"]["input"]>;
-};
-
-/**
- * Root query entrypoint for the Borg entity graph.
- *
- * Usage notes:
- * - Use `node(id: Uri!)` for generic cross-entity lookup.
- * - Use typed roots (`actor`, `tasks`, `apps`, etc.) for stronger discoverability.
- * - Connection fields use cursor pagination via `first` + `after`.
- * - For full operation recipes, see `crates/borg-gql/SCHEMA_USAGE.md`.
- *
- * Example:
- * ```graphql
- * query {
- * actors(first: 5) {
- * edges { node { id name status } }
- * }
- * }
- * ```
- */
 export type QueryRootTaskArgs = {
   id: Scalars["Uri"]["input"];
 };
@@ -2718,8 +2581,6 @@ export type ReviewStateObject = {
 export type RunActorChatInput = {
   /** Actor URI to execute. */
   actorId: Scalars["Uri"]["input"];
-  /** Session URI context. */
-  sessionId: Scalars["Uri"]["input"];
   /** User text to send. */
   text: Scalars["String"]["input"];
   /** User URI authoring the request. */
@@ -2744,8 +2605,6 @@ export type RunActorChatResult = {
 export type RunPortHttpInput = {
   /** Optional explicit actor URI override. */
   actorId?: InputMaybe<Scalars["Uri"]["input"]>;
-  /** Optional existing session URI. */
-  sessionId?: InputMaybe<Scalars["Uri"]["input"]>;
   /** User text to send. */
   text: Scalars["String"]["input"];
   /** User URI authoring the request. */
@@ -2798,7 +2657,6 @@ export type ScheduleJob = {
   scheduleSpec: Scalars["JsonValue"]["output"];
   status: ScheduleJobStatusValue;
   targetActorId?: Maybe<Scalars["Uri"]["output"]>;
-  targetSessionId?: Maybe<Scalars["Uri"]["output"]>;
   updatedAt: Scalars["DateTime"]["output"];
 };
 
@@ -2857,7 +2715,6 @@ export type ScheduleJobRun = {
   messageId: Scalars["String"]["output"];
   scheduledFor: Scalars["DateTime"]["output"];
   targetActorId?: Maybe<Scalars["Uri"]["output"]>;
-  targetSessionId?: Maybe<Scalars["Uri"]["output"]>;
 };
 
 /** Relay-style page container for cursor-based list traversal. */
@@ -2893,201 +2750,14 @@ export enum ScheduleJobStatusValue {
 }
 
 /**
- * Conversation and execution timeline container.
- *
- * A session is Borg's primary runtime context: messages append here, ports
- * resolve into this identity, and actors operate within this thread.
- *
- * Usage notes:
- * - Session is the primary unit for chat/task execution context.
- * - Traverse into `messages` for timeline rows and `port` for ingress metadata.
- *
- * Example:
- * ```graphql
- * { session(id: "borg:session:s1") { id portId messages(first: 5) { edges { node { id text } } } } }
- * ```
- */
-export type Session = Node & {
-  __typename?: "Session";
-  id: Scalars["Uri"]["output"];
-  /**
-   * Messages ordered by creation time ascending.
-   *
-   * Usage notes:
-   * - Use `after` with connection cursor for incremental timeline sync.
-   *
-   * Example:
-   * ```graphql
-   * { session(id: "borg:session:s1") { messages(first: 20) { edges { node { id role text } } } } }
-   * ```
-   */
-  messages: SessionMessageConnection;
-  /**
-   * Port metadata associated with this session.
-   *
-   * Example:
-   * ```graphql
-   * { session(id: "borg:session:s1") { port { id name provider } } }
-   * ```
-   */
-  port?: Maybe<Port>;
-  portId: Scalars["Uri"]["output"];
-  updatedAt: Scalars["DateTime"]["output"];
-};
-
-/**
- * Conversation and execution timeline container.
- *
- * A session is Borg's primary runtime context: messages append here, ports
- * resolve into this identity, and actors operate within this thread.
- *
- * Usage notes:
- * - Session is the primary unit for chat/task execution context.
- * - Traverse into `messages` for timeline rows and `port` for ingress metadata.
- *
- * Example:
- * ```graphql
- * { session(id: "borg:session:s1") { id portId messages(first: 5) { edges { node { id text } } } } }
- * ```
- */
-export type SessionMessagesArgs = {
-  after?: InputMaybe<Scalars["String"]["input"]>;
-  first?: InputMaybe<Scalars["Int"]["input"]>;
-};
-
-/** Relay-style page container for cursor-based list traversal. */
-export type SessionConnection = {
-  __typename?: "SessionConnection";
-  /** Returned edges for the current page. */
-  edges: Array<SessionEdge>;
-  /** Pagination state for the current page. */
-  pageInfo: PageInfo;
-};
-
-/** Relay-style edge carrying one node plus cursor for forward pagination. */
-export type SessionEdge = {
-  __typename?: "SessionEdge";
-  /** Opaque edge cursor to pass back into `after`. */
-  cursor: Scalars["String"]["output"];
-  /** Materialized node for this edge. */
-  node: Session;
-};
-
-/**
- * Persisted timeline entry inside a session.
- *
- * Session messages represent user inputs, assistant outputs, tool activity, and
- * lifecycle events as ordered records.
- *
- * Usage notes:
- * - Prefer `messageType`, `role`, and `text` over deprecated `payload`.
- * - `id` is the stable timeline message URI.
- *
- * Example:
- * ```graphql
- * { session(id: "borg:session:s1") { messages(first: 5) { edges { node { id messageType role text } } } } }
- * ```
- */
-export type SessionMessage = {
-  __typename?: "SessionMessage";
-  createdAt: Scalars["DateTime"]["output"];
-  id: Scalars["Uri"]["output"];
-  messageType: Scalars["String"]["output"];
-  /** @deprecated Legacy JSON payload. Prefer typed fields (`messageType`, `role`, `text`). */
-  payload: Scalars["JsonValue"]["output"];
-  role?: Maybe<Scalars["String"]["output"]>;
-  sessionId: Scalars["Uri"]["output"];
-  text?: Maybe<Scalars["String"]["output"]>;
-};
-
-/** Relay-style page container for cursor-based list traversal. */
-export type SessionMessageConnection = {
-  __typename?: "SessionMessageConnection";
-  /** Returned edges for the current page. */
-  edges: Array<SessionMessageEdge>;
-  /** Pagination state for the current page. */
-  pageInfo: PageInfo;
-};
-
-/** Relay-style edge carrying one node plus cursor for forward pagination. */
-export type SessionMessageEdge = {
-  __typename?: "SessionMessageEdge";
-  /** Opaque edge cursor to pass back into `after`. */
-  cursor: Scalars["String"]["output"];
-  /** Materialized node for this edge. */
-  node: SessionMessage;
-};
-
-/**
- * Typed session message shape used by append/patch mutations.
- *
- * Usage notes:
- * - Prefer typed fields over `payload` for new clients.
- * - At least one field should be set.
- */
-export type SessionMessageInput = {
-  /** Message type (`user`, `assistant`, `tool_call`, ...). */
-  messageType?: InputMaybe<Scalars["String"]["input"]>;
-  /** Transitional raw payload. */
-  payload?: InputMaybe<Scalars["JsonValue"]["input"]>;
-  /** Logical role (`user`, `assistant`, `tool`, ...). */
-  role?: InputMaybe<Scalars["String"]["input"]>;
-  /** Primary human-readable content. */
-  text?: InputMaybe<Scalars["String"]["input"]>;
-};
-
-/** High-level classification for UI routing of session notifications. */
-export enum SessionNotificationKind {
-  /** Assistant-authored response message. */
-  AssistantReply = "ASSISTANT_REPLY",
-  /** Fallback generic message classification. */
-  Message = "MESSAGE",
-  /** Session lifecycle or system event message. */
-  SessionEvent = "SESSION_EVENT",
-  /** Tool call or tool result activity. */
-  ToolActivity = "TOOL_ACTIVITY",
-}
-
-/**
- * Notification payload projected from a session message.
- *
- * Usage notes:
- * - Notifications are fully typed and include the underlying `sessionMessage`.
- * - `kind` is derived from `messageType`/`role`.
- */
-export type SessionNotificationObject = {
-  __typename?: "SessionNotificationObject";
-  /** Source message timestamp. */
-  createdAt: Scalars["DateTime"]["output"];
-  /** Stable notification identifier (`sessionId:messageId`). */
-  id: Scalars["String"]["output"];
-  /** Kind classification for UI routing and badges. */
-  kind: SessionNotificationKind;
-  /** Source message URI. */
-  messageId: Scalars["Uri"]["output"];
-  /** Source message type. */
-  messageType: Scalars["String"]["output"];
-  /** Source role, when available. */
-  role?: Maybe<Scalars["String"]["output"]>;
-  /** Session URI this notification belongs to. */
-  sessionId: Scalars["Uri"]["output"];
-  /** Full underlying message object. */
-  sessionMessage: SessionMessage;
-  /** Source text content, when available. */
-  text?: Maybe<Scalars["String"]["output"]>;
-  /** Short user-facing title. */
-  title: Scalars["String"]["output"];
-};
-
-/**
  * Requests a task status transition under taskgraph rules.
  *
  * Example:
- * `{ taskId: "borg:task:t1", sessionUri: "borg:session:s-assignee", status: DOING }`
+ * `{ taskId: "borg:task:t1", actorId: "borg:actor:assignee", status: DOING }`
  */
 export type SetTaskStatusInput = {
-  /** Session URI authoring the status transition. */
-  sessionUri: Scalars["Uri"]["input"];
+  /** Actor URI authoring the status transition. */
+  actorId: Scalars["Uri"]["input"];
   /** Target status value. */
   status: TaskStatusValue;
   /** Task URI to transition. */
@@ -3099,13 +2769,13 @@ export type SetTaskStatusInput = {
  *
  * Usage notes:
  * - Subscription transport is expected to run over WebSockets (`graphql-transport-ws`).
- * - Use `sessionChat` for full timeline streaming.
- * - Use `sessionNotifications` for notification-friendly filtered events.
+ * - Use `actorChat` for actor timeline streaming.
+ * - Use `actorNotifications` for notification-friendly filtered events.
  *
  * Example:
  * ```graphql
- * subscription($session: Uri!) {
- * sessionChat(sessionId: $session) {
+ * subscription($actor: Uri!) {
+ * actorChat(actorId: $actor) {
  * id
  * messageType
  * role
@@ -3117,7 +2787,7 @@ export type SetTaskStatusInput = {
 export type SubscriptionRoot = {
   __typename?: "SubscriptionRoot";
   /**
-   * Streams new messages from a session timeline as they are appended.
+   * Streams new messages from an actor timeline as they are appended.
    *
    * Usage notes:
    * - When `afterMessageId` is omitted, the stream starts from the first message.
@@ -3126,8 +2796,8 @@ export type SubscriptionRoot = {
    *
    * Example:
    * ```graphql
-   * subscription($session: Uri!, $after: Uri) {
-   * sessionChat(sessionId: $session, afterMessageId: $after, pollIntervalMs: 500) {
+   * subscription($actor: Uri!, $after: Uri) {
+   * actorChat(actorId: $actor, afterMessageId: $after, pollIntervalMs: 500) {
    * id
    * messageType
    * role
@@ -3136,9 +2806,9 @@ export type SubscriptionRoot = {
    * }
    * ```
    */
-  sessionChat: SessionMessage;
+  actorChat: ActorMessage;
   /**
-   * Streams session notifications derived from new timeline messages.
+   * Streams actor notifications derived from new timeline messages.
    *
    * Usage notes:
    * - By default, user-authored messages are filtered out.
@@ -3146,18 +2816,18 @@ export type SubscriptionRoot = {
    *
    * Example:
    * ```graphql
-   * subscription($session: Uri!) {
-   * sessionNotifications(sessionId: $session) {
+   * subscription($actor: Uri!) {
+   * actorNotifications(actorId: $actor) {
    * id
    * kind
    * title
    * text
-   * sessionMessage { id messageType role }
+   * actorMessage { id messageType role }
    * }
    * }
    * ```
    */
-  sessionNotifications: SessionNotificationObject;
+  actorNotifications: ActorNotificationObject;
 };
 
 /**
@@ -3165,13 +2835,13 @@ export type SubscriptionRoot = {
  *
  * Usage notes:
  * - Subscription transport is expected to run over WebSockets (`graphql-transport-ws`).
- * - Use `sessionChat` for full timeline streaming.
- * - Use `sessionNotifications` for notification-friendly filtered events.
+ * - Use `actorChat` for actor timeline streaming.
+ * - Use `actorNotifications` for notification-friendly filtered events.
  *
  * Example:
  * ```graphql
- * subscription($session: Uri!) {
- * sessionChat(sessionId: $session) {
+ * subscription($actor: Uri!) {
+ * actorChat(actorId: $actor) {
  * id
  * messageType
  * role
@@ -3180,10 +2850,10 @@ export type SubscriptionRoot = {
  * }
  * ```
  */
-export type SubscriptionRootSessionChatArgs = {
+export type SubscriptionRootActorChatArgs = {
+  actorId: Scalars["Uri"]["input"];
   afterMessageId?: InputMaybe<Scalars["Uri"]["input"]>;
   pollIntervalMs?: InputMaybe<Scalars["Int"]["input"]>;
-  sessionId: Scalars["Uri"]["input"];
 };
 
 /**
@@ -3191,13 +2861,13 @@ export type SubscriptionRootSessionChatArgs = {
  *
  * Usage notes:
  * - Subscription transport is expected to run over WebSockets (`graphql-transport-ws`).
- * - Use `sessionChat` for full timeline streaming.
- * - Use `sessionNotifications` for notification-friendly filtered events.
+ * - Use `actorChat` for actor timeline streaming.
+ * - Use `actorNotifications` for notification-friendly filtered events.
  *
  * Example:
  * ```graphql
- * subscription($session: Uri!) {
- * sessionChat(sessionId: $session) {
+ * subscription($actor: Uri!) {
+ * actorChat(actorId: $actor) {
  * id
  * messageType
  * role
@@ -3206,11 +2876,11 @@ export type SubscriptionRootSessionChatArgs = {
  * }
  * ```
  */
-export type SubscriptionRootSessionNotificationsArgs = {
+export type SubscriptionRootActorNotificationsArgs = {
+  actorId: Scalars["Uri"]["input"];
   afterMessageId?: InputMaybe<Scalars["Uri"]["input"]>;
   includeUserMessages?: InputMaybe<Scalars["Boolean"]["input"]>;
   pollIntervalMs?: InputMaybe<Scalars["Int"]["input"]>;
-  sessionId: Scalars["Uri"]["input"];
 };
 
 /**
@@ -3230,8 +2900,7 @@ export type SubscriptionRootSessionNotificationsArgs = {
  */
 export type Task = Node & {
   __typename?: "Task";
-  assigneeAgentId: Scalars["String"]["output"];
-  assigneeSessionId?: Maybe<Scalars["Uri"]["output"]>;
+  assigneeActorId: Scalars["String"]["output"];
   blockedBy: Array<Scalars["Uri"]["output"]>;
   /**
    * Child task rows directly under this task.
@@ -3247,7 +2916,7 @@ export type Task = Node & {
    *
    * Example:
    * ```graphql
-   * { task(id: "borg:task:t1") { comments(first: 20) { edges { node { id body authorSessionUri } } } } }
+   * { task(id: "borg:task:t1") { comments(first: 20) { edges { node { id body authorActorId } } } } }
    * ```
    */
   comments: TaskCommentConnection;
@@ -3286,8 +2955,7 @@ export type Task = Node & {
    * ```
    */
   review: ReviewStateObject;
-  reviewerAgentId: Scalars["String"]["output"];
-  reviewerSessionId?: Maybe<Scalars["Uri"]["output"]>;
+  reviewerActorId: Scalars["String"]["output"];
   status: TaskStatusValue;
   title: Scalars["String"]["output"];
   updatedAt: Scalars["String"]["output"];
@@ -3366,8 +3034,8 @@ export type TaskEventsArgs = {
  */
 export type TaskComment = {
   __typename?: "TaskComment";
-  /** Session URI that authored this comment. */
-  authorSessionUri?: Maybe<Scalars["Uri"]["output"]>;
+  /** Actor URI that authored this comment. */
+  authorActorId?: Maybe<Scalars["Uri"]["output"]>;
   /** Comment body text. */
   body: Scalars["String"]["output"];
   /** Comment creation timestamp. */
@@ -3427,8 +3095,8 @@ export type TaskEdge = {
  */
 export type TaskEvent = {
   __typename?: "TaskEvent";
-  /** Session URI that triggered the event. */
-  actorSessionUri?: Maybe<Scalars["Uri"]["output"]>;
+  /** Actor URI that triggered the event. */
+  actorId?: Maybe<Scalars["Uri"]["output"]>;
   /** Event creation timestamp. */
   createdAt: Scalars["String"]["output"];
   /**
@@ -3471,9 +3139,7 @@ export type TaskEventDataObject = {
   /** Review approval timestamp when relevant. */
   approvedAt?: Maybe<Scalars["String"]["output"]>;
   /** New assignee actor ID when relevant. */
-  assigneeAgentId?: Maybe<Scalars["String"]["output"]>;
-  /** New assignee session URI when relevant. */
-  assigneeSessionUri?: Maybe<Scalars["String"]["output"]>;
+  assigneeActorId?: Maybe<Scalars["String"]["output"]>;
   /** Blocking dependency URI when relevant. */
   blockedBy?: Maybe<Scalars["String"]["output"]>;
   /** Review changes-requested timestamp when relevant. */
@@ -3491,15 +3157,11 @@ export type TaskEventDataObject = {
   /** Label list payload when relevant. */
   labels?: Maybe<Array<Scalars["String"]["output"]>>;
   /** Replacement assignee actor ID when relevant. */
-  newAssigneeAgentId?: Maybe<Scalars["String"]["output"]>;
-  /** Replacement assignee session URI when relevant. */
-  newAssigneeSessionUri?: Maybe<Scalars["String"]["output"]>;
+  newAssigneeActorId?: Maybe<Scalars["String"]["output"]>;
   /** Free-text note when relevant. */
   note?: Maybe<Scalars["String"]["output"]>;
   /** Previous assignee actor ID when relevant. */
-  oldAssigneeAgentId?: Maybe<Scalars["String"]["output"]>;
-  /** Previous assignee session URI when relevant. */
-  oldAssigneeSessionUri?: Maybe<Scalars["String"]["output"]>;
+  oldAssigneeActorId?: Maybe<Scalars["String"]["output"]>;
   /** Parent task URI when relevant. */
   parentUri?: Maybe<Scalars["String"]["output"]>;
   /** Reference URI when relevant. */
@@ -3507,9 +3169,7 @@ export type TaskEventDataObject = {
   /** Return status destination when relevant. */
   returnTo?: Maybe<Scalars["String"]["output"]>;
   /** Reviewer actor ID when relevant. */
-  reviewerAgentId?: Maybe<Scalars["String"]["output"]>;
-  /** Reviewer session URI when relevant. */
-  reviewerSessionUri?: Maybe<Scalars["String"]["output"]>;
+  reviewerActorId?: Maybe<Scalars["String"]["output"]>;
   /** Status value when relevant. */
   status?: Maybe<Scalars["String"]["output"]>;
   /** Review submit timestamp when relevant. */
@@ -3565,8 +3225,6 @@ export type UpdateScheduleJobInputGql = {
   payload?: InputMaybe<Scalars["JsonValue"]["input"]>;
   /** New schedule spec (transitional JSON). */
   scheduleSpec?: InputMaybe<Scalars["JsonValue"]["input"]>;
-  /** New target session URI. */
-  sessionId?: InputMaybe<Scalars["Uri"]["input"]>;
 };
 
 /**
@@ -3577,12 +3235,12 @@ export type UpdateScheduleJobInputGql = {
  * - Leave fields as `null` to keep previous values.
  */
 export type UpdateTaskInputGql = {
+  /** Actor URI authoring the update event. */
+  actorId: Scalars["Uri"]["input"];
   /** Optional new definition of done. */
   definitionOfDone?: InputMaybe<Scalars["String"]["input"]>;
   /** Optional new description. */
   description?: InputMaybe<Scalars["String"]["input"]>;
-  /** Session URI authoring the update event. */
-  sessionUri: Scalars["Uri"]["input"];
   /** Task URI to patch. */
   taskId: Scalars["Uri"]["input"];
   /** Optional new title. */
@@ -3598,6 +3256,8 @@ export type UpdateTaskInputGql = {
 export type UpsertActorInput = {
   /** Stable actor URI (`borg:actor:*`). */
   id: Scalars["Uri"]["input"];
+  /** Optional runtime model id (for example `gpt-4.1`). */
+  model?: InputMaybe<Scalars["String"]["input"]>;
   /** Human-readable actor name. */
   name: Scalars["String"]["input"];
   /** Actor lifecycle status (for example `RUNNING`). */
@@ -3718,18 +3378,18 @@ export type UpsertPortActorBindingInput = {
 };
 
 /**
- * Creates or updates the conversation-to-session routing row for a port.
+ * Creates or updates the conversation-to-actor routing row for a port.
  *
  * Example:
- * `{ portName: "telegram", conversationKey: "borg:conversation:123", sessionId: "borg:session:s1" }`
+ * `{ portName: "telegram", conversationKey: "borg:conversation:123", actorId: "borg:actor:planner" }`
  */
 export type UpsertPortBindingInput = {
+  /** Target actor URI. */
+  actorId: Scalars["Uri"]["input"];
   /** Stable conversation key for ingress routing. */
   conversationKey: Scalars["Uri"]["input"];
   /** Port name (`http`, `telegram`, ...). */
   portName: Scalars["String"]["input"];
-  /** Target long-lived session URI. */
-  sessionId: Scalars["Uri"]["input"];
 };
 
 /**
@@ -3774,17 +3434,4 @@ export type UpsertProviderInput = {
   provider: Scalars["String"]["input"];
   /** Provider family/kind. Defaults to `provider` when omitted. */
   providerKind?: InputMaybe<Scalars["String"]["input"]>;
-};
-
-/**
- * Creates or updates a long-lived session in the Borg runtime graph.
- *
- * Example:
- * `{ sessionId: "borg:session:s1", port: "borg:port:http" }`
- */
-export type UpsertSessionInput = {
-  /** Owning ingress port URI. */
-  port: Scalars["Uri"]["input"];
-  /** Session URI (`borg:session:*`). */
-  sessionId: Scalars["Uri"]["input"];
 };

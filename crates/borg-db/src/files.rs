@@ -261,7 +261,7 @@ mod tests {
             "audio",
             Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"),
         )?;
-        let owner = Uri::from_parts("borg", "user", Some("alice"))?;
+        let owner = Uri::from_parts("borg", "actor", Some("alice"))?;
         let record = db
             .upsert_file(
                 &file_id,
@@ -271,7 +271,7 @@ mod tests {
                 42,
                 "abcdef0123456789",
                 Some(&owner),
-                &serde_json::json!({"session_id":"borg:session:s1"}),
+                &serde_json::json!({"actor_id":"borg:actor:alice"}),
             )
             .await?;
 

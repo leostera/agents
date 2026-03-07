@@ -16,7 +16,7 @@ query OnboardingPortBindingsByPortId($portId: Uri!, $first: Int!) {
       edges {
         node {
           conversationKey
-          sessionId
+          actorId
           actor {
             id
           }
@@ -26,17 +26,17 @@ query OnboardingPortBindingsByPortId($portId: Uri!, $first: Int!) {
   }
 }
 
-query OnboardingSessionMessages(
-  $sessionId: Uri!
+query OnboardingActorMessages(
+  $actorId: Uri!
   $first: Int!
   $after: String
 ) {
-  session(id: $sessionId) {
+  actor(id: $actorId) {
     messages(first: $first, after: $after) {
       edges {
         node {
           id
-          sessionId
+          actorId
           createdAt
           messageType
           role

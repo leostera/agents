@@ -43,8 +43,8 @@ where
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SessionTurnOutput<TToolCall, TToolResult> {
-    pub session_id: Uri,
+pub struct ActorTurnOutput<TToolCall, TToolResult> {
+    pub actor_id: Uri,
     pub reply: Option<String>,
     #[serde(default)]
     pub tool_calls: Vec<ToolCallSummary<TToolCall, TToolResult>>,

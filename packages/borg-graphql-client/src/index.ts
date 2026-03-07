@@ -1,15 +1,15 @@
 export * from "./generated/operations";
 export type {
+  OnboardingActorMessage,
+  OnboardingActorMessagesPage,
   OnboardingPortBinding,
-  OnboardingSessionMessage,
-  OnboardingSessionMessagesPage,
   UpsertOnboardingActorPayload,
   UpsertOnboardingPortPayload,
 } from "./onboarding";
 export {
+  listOnboardingActorMessages,
+  listOnboardingActorMessagesPage,
   listOnboardingPortBindingsByPortId,
-  listOnboardingSessionMessages,
-  listOnboardingSessionMessagesPage,
   upsertOnboardingActor,
   upsertOnboardingPort,
 } from "./onboarding";

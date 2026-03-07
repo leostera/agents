@@ -4,8 +4,8 @@ use borg_agent::ToolResultData;
 use borg_cmd::CommandRegistry;
 use borg_core::{TelegramUserId, Uri};
 use borg_exec::{
-    BorgCommand, PortContext, ReasoningEffort, RuntimeToolCall, RuntimeToolResult, SessionOutput,
-    TelegramSessionContext,
+    ActorOutput, BorgCommand, PortContext, ReasoningEffort, RuntimeToolCall, RuntimeToolResult,
+    TelegramContext,
 };
 use serde::{Deserialize, Serialize};
 use teloxide::prelude::*;
@@ -58,7 +58,7 @@ impl TelegramPort {
     fn port_message_from_input(&self, message: &Message, input: PortInput) -> Option<PortMessage> {
         let user_id = conversation_user_id(message)?;
         let conversation_key = conversation_routing_key(message)?;
-        let ctx = telegram_session_context_from_message(message);
+        let ctx = telegram_context_from_message(message);
         if !self.allows_guests
             && !is_allowed_external_user(&self.telegram_config.allowed_external_user_ids, &ctx)
         {
@@ -76,7 +76,7 @@ impl TelegramPort {
 
     async fn send_output(
         &self,
-        output: SessionOutput<RuntimeToolCall, RuntimeToolResult>,
+        output: ActorOutput<RuntimeToolCall, RuntimeToolResult>,
     ) -> Result<()> {
         let Some(ctx) = output.port_context.as_telegram() else {
             return Ok(());
@@ -139,7 +139,7 @@ impl Port for TelegramPort {
     async fn run(
         self,
         inbound: Sender<PortMessage>,
-        mut outbound: Receiver<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
+        mut outbound: Receiver<ActorOutput<RuntimeToolCall, RuntimeToolResult>>,
     ) -> Result<()> {
         let outbound_port = self.clone();
         let outbound_task = tokio::spawn(async move {
@@ -295,7 +295,7 @@ fn build_telegram_command_registry() -> Result<CommandRegistry<(), TelegramComma
             Ok(TelegramCommandRoute::Forward(BorgCommand::ResetContext))
         })
         .add_command("compact", |_req| async move {
-            Ok(TelegramCommandRoute::Forward(BorgCommand::CompactSession))
+            Ok(TelegramCommandRoute::Forward(BorgCommand::CompactContext))
         })
         .build()
 }
@@ -360,7 +360,7 @@ fn is_help_command(input: &str) -> bool {
 }
 
 fn format_participants_for_message(message: &Message) -> String {
-    let ctx = telegram_session_context_from_message(message);
+    let ctx = telegram_context_from_message(message);
     if ctx.participants.is_empty() {
         return "No participants available for this conversation.".to_string();
     }
@@ -395,8 +395,8 @@ fn conversation_routing_key(message: &Message) -> Option<Uri> {
     routing_key_for_chat_id(chat_id)
 }
 
-fn telegram_session_context_from_message(message: &Message) -> TelegramSessionContext {
-    let mut ctx = TelegramSessionContext::default();
+fn telegram_context_from_message(message: &Message) -> TelegramContext {
+    let mut ctx = TelegramContext::default();
     ctx.set_chat(message.chat.id.0, chat_type_label(message));
     ctx.set_last_message_refs(
         Some(i64::from(message.id.0)),
@@ -438,10 +438,7 @@ fn routing_key_for_chat_id(chat_id: i64) -> Option<Uri> {
     .ok()
 }
 
-fn is_allowed_external_user(
-    allowed_external_user_ids: &[String],
-    ctx: &TelegramSessionContext,
-) -> bool {
+fn is_allowed_external_user(allowed_external_user_ids: &[String], ctx: &TelegramContext) -> bool {
     if allowed_external_user_ids.is_empty() {
         return false;
     }
@@ -457,7 +454,7 @@ fn is_allowed_external_user(
         .any(|allowed| candidates.iter().any(|candidate| candidate == &allowed))
 }
 
-fn telegram_candidates(ctx: &TelegramSessionContext) -> Vec<TelegramUserId> {
+fn telegram_candidates(ctx: &TelegramContext) -> Vec<TelegramUserId> {
     let mut out = Vec::new();
     for participant in ctx.participants.values() {
         if let Ok(id) = participant.id.parse::<u64>() {
@@ -486,7 +483,7 @@ mod tests {
         parse_model_command_action, parse_settings_command_action, routing_key_for_chat_id,
     };
     use borg_exec::ReasoningEffort;
-    use borg_exec::TelegramSessionContext;
+    use borg_exec::TelegramContext;
 
     #[test]
     fn routing_key_uses_chat_id() {
@@ -496,7 +493,7 @@ mod tests {
 
     #[test]
     fn allowlist_matches_numeric_id() {
-        let mut ctx = TelegramSessionContext::default();
+        let mut ctx = TelegramContext::default();
         ctx.set_chat(1, "private");
         ctx.set_last_message_refs(Some(10), None);
         ctx.upsert_participant(2_654_566, None, Some("Leo".to_string()), None);
@@ -507,7 +504,7 @@ mod tests {
 
     #[test]
     fn allowlist_matches_username() {
-        let mut ctx = TelegramSessionContext::default();
+        let mut ctx = TelegramContext::default();
         ctx.set_chat(1, "private");
         ctx.set_last_message_refs(Some(11), None);
         ctx.upsert_participant(

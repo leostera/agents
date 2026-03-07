@@ -151,6 +151,14 @@ impl Provider for OpenRouterProvider {
         OPENROUTER_PROVIDER_NAME
     }
 
+    fn supports_chat_completion(&self) -> bool {
+        true
+    }
+
+    fn supports_audio_transcription(&self) -> bool {
+        true
+    }
+
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
         let provider = self.provider_name();
         let model = self.resolve_chat_model(req)?;

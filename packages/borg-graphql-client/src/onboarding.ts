@@ -1,11 +1,9 @@
 import {
   ActorStatusValue,
-  OnboardingPortBindingsByPortIdDocument,
-  OnboardingSessionMessagesDocument,
   OnboardingUpsertActorDocument,
   OnboardingUpsertPortDocument,
 } from "./generated/operations";
-import { requestGraphQLDocument } from "./runtime/client";
+import { requestGraphQL, requestGraphQLDocument } from "./runtime/client";
 
 export type UpsertOnboardingActorPayload = {
   actorId: string;
@@ -24,13 +22,12 @@ export type UpsertOnboardingPortPayload = {
 
 export type OnboardingPortBinding = {
   conversationKey: string;
-  sessionId: string;
   actorId: string | null;
 };
 
-export type OnboardingSessionMessage = {
+export type OnboardingActorMessage = {
   id: string;
-  sessionId: string;
+  actorId: string;
   createdAt: string;
   messageType: string;
   role: string | null;
@@ -38,11 +35,50 @@ export type OnboardingSessionMessage = {
   payload: unknown;
 };
 
-export type OnboardingSessionMessagesPage = {
-  messages: OnboardingSessionMessage[];
+export type OnboardingActorMessagesPage = {
+  messages: OnboardingActorMessage[];
   endCursor: string | null;
   hasNextPage: boolean;
 };
+
+const ONBOARDING_PORT_BINDINGS_QUERY = `
+  query OnboardingPortBindingsByPortId($portId: Uri!, $first: Int!) {
+    portById(id: $portId) {
+      bindings(first: $first) {
+        edges {
+          node {
+            conversationKey
+            actorId
+          }
+        }
+      }
+    }
+  }
+`;
+
+const ONBOARDING_ACTOR_MESSAGES_QUERY = `
+  query OnboardingActorMessages($actorId: Uri!, $first: Int!, $after: String) {
+    actor(id: $actorId) {
+      messages(first: $first, after: $after) {
+        edges {
+          node {
+            id
+            actorId
+            createdAt
+            messageType
+            role
+            text
+            payload
+          }
+        }
+        pageInfo {
+          endCursor
+          hasNextPage
+        }
+      }
+    }
+  }
+`;
 
 export async function upsertOnboardingActor(
   payload: UpsertOnboardingActorPayload
@@ -77,55 +113,95 @@ export async function listOnboardingPortBindingsByPortId(
   portId: string,
   first = 50
 ): Promise<OnboardingPortBinding[]> {
-  const data = await requestGraphQLDocument(
-    OnboardingPortBindingsByPortIdDocument,
-    {
-      portId,
-      first,
-    }
-  );
+  type BindingData = {
+    portById?: {
+      bindings: {
+        edges: Array<{
+          node: {
+            conversationKey: string;
+            actorId?: string | null;
+          };
+        }>;
+      };
+    } | null;
+  };
+
+  const data = await requestGraphQL<
+    BindingData,
+    { portId: string; first: number }
+  >({
+    query: ONBOARDING_PORT_BINDINGS_QUERY,
+    variables: { portId, first },
+  });
   const edges = data.portById?.bindings.edges ?? [];
   return edges.map((edge) => ({
     conversationKey: edge.node.conversationKey,
-    sessionId: edge.node.sessionId,
-    actorId: edge.node.actor?.id ?? null,
+    actorId: edge.node.actorId ?? null,
   }));
 }
 
-export async function listOnboardingSessionMessages(
-  sessionId: string,
+export async function listOnboardingActorMessages(
+  actorId: string,
   first = 250
-): Promise<OnboardingSessionMessage[]> {
-  const page = await listOnboardingSessionMessagesPage(sessionId, {
+): Promise<OnboardingActorMessage[]> {
+  const page = await listOnboardingActorMessagesPage(actorId, {
     first,
   });
   return page.messages;
 }
 
-export async function listOnboardingSessionMessagesPage(
-  sessionId: string,
+export async function listOnboardingActorMessagesPage(
+  actorId: string,
   options: {
     first?: number;
     after?: string | null;
   } = {}
-): Promise<OnboardingSessionMessagesPage> {
-  const data = await requestGraphQLDocument(OnboardingSessionMessagesDocument, {
-    sessionId,
-    first: options.first ?? 250,
-    after: options.after ?? null,
+): Promise<OnboardingActorMessagesPage> {
+  type MessagesData = {
+    actor?: {
+      messages: {
+        edges: Array<{
+          node: {
+            id: string;
+            actorId: string;
+            createdAt: string;
+            messageType: string;
+            role?: string | null;
+            text?: string | null;
+            payload: unknown;
+          };
+        }>;
+        pageInfo: {
+          endCursor?: string | null;
+          hasNextPage: boolean;
+        };
+      };
+    } | null;
+  };
+
+  const data = await requestGraphQL<
+    MessagesData,
+    { actorId: string; first: number; after: string | null }
+  >({
+    query: ONBOARDING_ACTOR_MESSAGES_QUERY,
+    variables: {
+      actorId,
+      first: options.first ?? 250,
+      after: options.after ?? null,
+    },
   });
-  const edges = data.session?.messages.edges ?? [];
+  const edges = data.actor?.messages.edges ?? [];
   return {
     messages: edges.map((edge) => ({
       id: edge.node.id,
-      sessionId: edge.node.sessionId,
+      actorId: edge.node.actorId,
       createdAt: edge.node.createdAt,
       messageType: edge.node.messageType,
       role: edge.node.role ?? null,
       text: edge.node.text ?? null,
       payload: edge.node.payload,
     })),
-    endCursor: data.session?.messages.pageInfo.endCursor ?? null,
-    hasNextPage: data.session?.messages.pageInfo.hasNextPage ?? false,
+    endCursor: data.actor?.messages.pageInfo.endCursor ?? null,
+    hasNextPage: data.actor?.messages.pageInfo.hasNextPage ?? false,
   };
 }

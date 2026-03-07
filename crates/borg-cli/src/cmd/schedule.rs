@@ -37,8 +37,6 @@ pub enum ScheduleCommand {
     Create {
         #[arg(long)]
         actor_id: String,
-        #[arg(long)]
-        session_id: String,
         #[arg(long, value_enum)]
         kind: JobKindArg,
         #[arg(long, help = "RFC3339 UTC next run timestamp")]
@@ -58,8 +56,6 @@ pub enum ScheduleCommand {
         job_id: String,
         #[arg(long)]
         actor_id: Option<String>,
-        #[arg(long)]
-        session_id: Option<String>,
         #[arg(long, value_enum)]
         kind: Option<JobKindArg>,
         #[arg(long)]
@@ -96,7 +92,6 @@ pub async fn run(app: &BorgCliApp, cmd: ScheduleCommand) -> Result<()> {
         }
         ScheduleCommand::Create {
             actor_id,
-            session_id,
             kind,
             next_run_at,
             cron,
@@ -104,8 +99,8 @@ pub async fn run(app: &BorgCliApp, cmd: ScheduleCommand) -> Result<()> {
             payload_json,
             headers_json,
         } => {
-            if actor_id.trim().is_empty() || session_id.trim().is_empty() {
-                anyhow::bail!("actor_id and session_id are required");
+            if actor_id.trim().is_empty() {
+                anyhow::bail!("actor_id is required");
             }
 
             let payload = parse_json("payload_json", &payload_json)?;
@@ -127,7 +122,6 @@ pub async fn run(app: &BorgCliApp, cmd: ScheduleCommand) -> Result<()> {
                 job_id: job_id.clone(),
                 kind: kind.as_str().to_string(),
                 target_actor_id: actor_id,
-                target_session_id: session_id,
                 message_type: "BorgMessage".to_string(),
                 payload,
                 headers,
@@ -142,7 +136,6 @@ pub async fn run(app: &BorgCliApp, cmd: ScheduleCommand) -> Result<()> {
         ScheduleCommand::Update {
             job_id,
             actor_id,
-            session_id,
             kind,
             next_run_at,
             cron,
@@ -173,7 +166,6 @@ pub async fn run(app: &BorgCliApp, cmd: ScheduleCommand) -> Result<()> {
                 &borg_db::UpdateScheduleJobInput {
                     kind: kind.map(|value| value.as_str().to_string()),
                     target_actor_id: actor_id,
-                    target_session_id: session_id,
                     message_type: None,
                     payload,
                     headers,

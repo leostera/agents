@@ -11,12 +11,12 @@ import {
 } from "./chart";
 
 const trafficData = [
-  { month: "Jan", sessions: 540, conversions: 142 },
-  { month: "Feb", sessions: 610, conversions: 175 },
-  { month: "Mar", sessions: 720, conversions: 198 },
-  { month: "Apr", sessions: 830, conversions: 236 },
-  { month: "May", sessions: 790, conversions: 220 },
-  { month: "Jun", sessions: 910, conversions: 274 },
+  { month: "Jan", actors: 540, conversions: 142 },
+  { month: "Feb", actors: 610, conversions: 175 },
+  { month: "Mar", actors: 720, conversions: 198 },
+  { month: "Apr", actors: 830, conversions: 236 },
+  { month: "May", actors: 790, conversions: 220 },
+  { month: "Jun", actors: 910, conversions: 274 },
 ];
 
 const eventsData = [
@@ -28,8 +28,8 @@ const eventsData = [
 ];
 
 const chartConfig = {
-  sessions: {
-    label: "Sessions",
+  actors: {
+    label: "Actors",
     color: "hsl(217 91% 60%)",
   },
   conversions: {
@@ -59,9 +59,9 @@ export const ConversionTrend: Story = {
         <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
         <ChartLegend content={<ChartLegendContent />} />
         <Line
-          dataKey="sessions"
+          dataKey="actors"
           type="monotone"
-          stroke="var(--color-sessions)"
+          stroke="var(--color-actors)"
           strokeWidth={2}
           dot={false}
         />

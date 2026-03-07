@@ -32,9 +32,9 @@ export const Default: Story = {
 
 export const WithLegacyTitleProp: Story = {
   render: () => (
-    <Card title="Sessions">
+    <Card title="Actors">
       <CardContent>
-        <p style={{ margin: 0 }}>42 active sessions</p>
+        <p style={{ margin: 0 }}>42 active actors</p>
       </CardContent>
     </Card>
   ),

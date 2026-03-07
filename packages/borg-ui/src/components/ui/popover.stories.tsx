@@ -22,11 +22,11 @@ export const Default: Story = {
   render: () => (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline">Session details</Button>
+        <Button variant="outline">Actor details</Button>
       </PopoverTrigger>
       <PopoverContent>
         <PopoverHeader>
-          <PopoverTitle>session_7f4a</PopoverTitle>
+          <PopoverTitle>actor_7f4a</PopoverTitle>
           <PopoverDescription>
             Started 2 minutes ago on the HTTP port. 3 pending tool calls.
           </PopoverDescription>

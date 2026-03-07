@@ -3,80 +3,79 @@ use serde::{Deserialize, Serialize};
 use crate::{Uri, uri};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionToolSchema<TParameters> {
+pub struct ActorToolSchema<TParameters> {
     pub name: String,
     pub description: String,
     pub parameters: TParameters,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionContextSnapshot<TMessage, TParameters> {
+pub struct ActorContextSnapshot<TMessage, TParameters> {
     pub model: String,
     pub messages: Vec<TMessage>,
-    pub tools: Vec<SessionToolSchema<TParameters>>,
+    pub tools: Vec<ActorToolSchema<TParameters>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event<TMessage, TParameters, TArguments, TOutput> {
-    SessionStarted {
-        session_id: Uri,
+    ActorStarted {
         actor_id: Uri,
     },
-    SessionMessage {
-        session_id: Uri,
+    ActorMessage {
+        actor_id: Uri,
         index: usize,
         message: TMessage,
     },
     ContextBuilt {
-        session_id: Uri,
-        context: SessionContextSnapshot<TMessage, TParameters>,
+        actor_id: Uri,
+        context: ActorContextSnapshot<TMessage, TParameters>,
     },
     LlmRequestSent {
-        session_id: Uri,
+        actor_id: Uri,
         model: String,
         message_count: usize,
         tool_count: usize,
     },
     LlmResponseReceived {
-        session_id: Uri,
+        actor_id: Uri,
         stop_reason: String,
         content_blocks: usize,
         tool_call_count: usize,
     },
     AgentIdle {
-        session_id: Uri,
+        actor_id: Uri,
     },
     AgentToolCall {
-        session_id: Uri,
+        actor_id: Uri,
         name: String,
         arguments: TArguments,
         output: TOutput,
     },
     AgentOutput {
-        session_id: Uri,
+        actor_id: Uri,
         message: String,
     },
 }
 
 impl<TMessage, TParameters, TArguments, TOutput> Event<TMessage, TParameters, TArguments, TOutput> {
-    pub fn session_id(&self) -> &Uri {
+    pub fn actor_id(&self) -> &Uri {
         match self {
-            Self::SessionStarted { session_id, .. } => session_id,
-            Self::SessionMessage { session_id, .. } => session_id,
-            Self::ContextBuilt { session_id, .. } => session_id,
-            Self::LlmRequestSent { session_id, .. } => session_id,
-            Self::LlmResponseReceived { session_id, .. } => session_id,
-            Self::AgentIdle { session_id } => session_id,
-            Self::AgentToolCall { session_id, .. } => session_id,
-            Self::AgentOutput { session_id, .. } => session_id,
+            Self::ActorStarted { actor_id, .. } => actor_id,
+            Self::ActorMessage { actor_id, .. } => actor_id,
+            Self::ContextBuilt { actor_id, .. } => actor_id,
+            Self::LlmRequestSent { actor_id, .. } => actor_id,
+            Self::LlmResponseReceived { actor_id, .. } => actor_id,
+            Self::AgentIdle { actor_id } => actor_id,
+            Self::AgentToolCall { actor_id, .. } => actor_id,
+            Self::AgentOutput { actor_id, .. } => actor_id,
         }
     }
 
     pub fn event_type(&self) -> Uri {
         match self {
-            Self::SessionStarted { .. } => uri!("borg", "session", "started"),
-            Self::SessionMessage { .. } => uri!("borg", "session", "message"),
-            Self::ContextBuilt { .. } => uri!("borg", "session", "context_built"),
+            Self::ActorStarted { .. } => uri!("borg", "actor", "started"),
+            Self::ActorMessage { .. } => uri!("borg", "actor", "message"),
+            Self::ContextBuilt { .. } => uri!("borg", "actor", "context_built"),
             Self::LlmRequestSent { .. } => uri!("borg", "llm", "request_sent"),
             Self::LlmResponseReceived { .. } => uri!("borg", "llm", "response_received"),
             Self::AgentIdle { .. } => uri!("borg", "agent", "idle"),

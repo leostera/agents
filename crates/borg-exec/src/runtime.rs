@@ -9,8 +9,8 @@ use borg_memory::MemoryStore;
 use borg_shellmode::ShellModeRuntime;
 use std::collections::HashMap;
 
+use crate::actor_context_manager::ActorContextManager;
 use crate::llm_resolver::BorgLLMResolver;
-use crate::session_manager::SessionManager;
 use crate::tool_runner::build_exec_toolchain_with_context;
 
 pub struct BorgRuntime {
@@ -20,7 +20,7 @@ pub struct BorgRuntime {
     pub shell_runtime: ShellModeRuntime,
     pub files: BorgFs,
     pub llm_resolver: BorgLLMResolver,
-    pub session_manager: SessionManager,
+    pub actor_context_manager: ActorContextManager,
 }
 
 impl BorgRuntime {
@@ -31,7 +31,7 @@ impl BorgRuntime {
         shell_runtime: ShellModeRuntime,
         files: BorgFs,
     ) -> Self {
-        let session_manager = SessionManager::new(db.clone());
+        let actor_context_manager = ActorContextManager::new(db.clone());
         Self {
             db: db.clone(),
             memory,
@@ -39,7 +39,7 @@ impl BorgRuntime {
             shell_runtime,
             files,
             llm_resolver: BorgLLMResolver::new(db),
-            session_manager,
+            actor_context_manager,
         }
     }
 
@@ -50,12 +50,9 @@ impl BorgRuntime {
     pub async fn build_toolchain(
         &self,
         user_id: &Uri,
-        _session_id: &Uri,
         actor_id: &Uri,
     ) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
-        let context = self
-            .code_mode_context_for_turn(user_id, actor_id, actor_id)
-            .await?;
+        let context = self.code_mode_context_for_turn(user_id, actor_id).await?;
         let runtime_toolchain = build_exec_toolchain_with_context(
             self.runtime.clone(),
             self.shell_runtime.clone(),
@@ -63,7 +60,6 @@ impl BorgRuntime {
             self.memory.clone(),
             self.db.clone(),
             self.files.clone(),
-            actor_id.clone(),
             actor_id.clone(),
             user_id.clone(),
             true,
@@ -76,20 +72,18 @@ impl BorgRuntime {
     async fn code_mode_context_for_turn(
         &self,
         user_id: &Uri,
-        session_id: &Uri,
         actor_id: &Uri,
     ) -> Result<CodeModeContext> {
         Ok(CodeModeContext {
             current_port_id: None,
             current_message_id: None,
-            current_session_id: Some(session_id.clone()),
             current_actor_id: Some(actor_id.clone()),
             current_user_id: Some(user_id.clone()),
-            env: self.app_env_for_session(user_id).await?,
+            env: self.app_env_for_actor(user_id).await?,
         })
     }
 
-    async fn app_env_for_session(&self, current_user_id: &Uri) -> Result<HashMap<String, String>> {
+    async fn app_env_for_actor(&self, current_user_id: &Uri) -> Result<HashMap<String, String>> {
         let mut env = HashMap::new();
         let apps = self.db.list_apps(500).await?;
 

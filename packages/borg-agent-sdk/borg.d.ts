@@ -98,7 +98,7 @@ interface BorgFetchResponse {
 }
 
 /**
- * Environment variables injected for the current session/app context.
+ * Environment variables injected for the current actor/app context.
  *
  * Keys are discoverable with `Borg.env.keys()`.
  * Values are read with `Borg.env.get(name, fallback)`.
@@ -187,7 +187,7 @@ interface BorgUser {
  * Root Borg SDK available in Code Mode runtime.
  */
 interface BorgSdk {
-  /** Session-scoped environment variables derived from enabled app connections. */
+  /** Actor-scoped environment variables derived from enabled app connections. */
   env: BorgEnv;
   /** Operating-system helpers. */
   OS: BorgOS;

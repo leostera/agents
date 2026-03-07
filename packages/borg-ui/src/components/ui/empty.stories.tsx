@@ -26,13 +26,13 @@ export const Default: Story = {
         <EmptyMedia variant="icon">
           <ArchiveBoxIcon />
         </EmptyMedia>
-        <EmptyTitle>No sessions yet</EmptyTitle>
+        <EmptyTitle>No actors yet</EmptyTitle>
         <EmptyDescription>
-          Start your first conversation to create a session and capture context.
+          Start your first conversation to create a actor and capture context.
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
-        <Button size="sm">Start session</Button>
+        <Button size="sm">Start actor</Button>
       </EmptyContent>
     </Empty>
   ),

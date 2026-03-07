@@ -15,7 +15,7 @@ impl BorgDb {
             .list_port_binding_records(port, limit)
             .await?
             .into_iter()
-            .map(|(conversation_key, _session_id, actor_id)| (conversation_key, actor_id))
+            .map(|(conversation_key, actor_id)| (conversation_key, actor_id))
             .collect())
     }
 
@@ -28,20 +28,9 @@ impl BorgDb {
         if self.get_actor(actor_id).await?.is_none() {
             return Err(anyhow!("actor not found for actor_id {}", actor_id));
         }
-        let session_id = self
-            .get_port_binding_full_record(port, conversation_key)
-            .await?
-            .map(|(_conversation_key, session_id, _bound_actor_id)| session_id)
-            .unwrap_or_else(|| conversation_key.clone());
-
-        self.upsert_port_binding_full_record(
-            port,
-            conversation_key,
-            &session_id,
-            Some(Some(actor_id)),
-        )
-        .await
-        .context("failed to upsert port actor binding")
+        self.upsert_port_binding_full_record(port, conversation_key, Some(Some(actor_id)))
+            .await
+            .context("failed to upsert port actor binding")
     }
 
     pub async fn get_port_actor_binding(
@@ -52,7 +41,7 @@ impl BorgDb {
         Ok(self
             .get_port_binding_full_record(port, conversation_key)
             .await?
-            .and_then(|(_conversation_key, _session_id, actor_id)| actor_id))
+            .and_then(|(_conversation_key, actor_id)| actor_id))
     }
 
     pub async fn clear_port_actor_binding(
@@ -101,11 +90,6 @@ impl BorgDb {
             return Ok(default_actor_id.clone());
         }
 
-        let session_id = self
-            .get_port_binding_full_record(port, conversation_key)
-            .await?
-            .map(|(_conversation_key, session_id, _bound_actor_id)| session_id)
-            .unwrap_or_else(|| conversation_key.clone());
         let actor_id = deterministic_actor_id(port, conversation_key)?;
         if self.get_actor(&actor_id).await?.is_none() {
             self.upsert_actor(
@@ -116,13 +100,8 @@ impl BorgDb {
             )
             .await?;
         }
-        self.upsert_port_binding_full_record(
-            port,
-            conversation_key,
-            &session_id,
-            Some(Some(&actor_id)),
-        )
-        .await?;
+        self.upsert_port_binding_full_record(port, conversation_key, Some(Some(&actor_id)))
+            .await?;
         Ok(actor_id)
     }
 }

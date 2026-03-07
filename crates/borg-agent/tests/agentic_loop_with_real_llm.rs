@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use borg_agent::{
-    Agent, Message, Session, SessionOutput, SessionResult, Tool, ToolRequest, ToolResponse,
+    ActorRunOutput, ActorRunResult, ActorThread, Agent, Message, Tool, ToolRequest, ToolResponse,
     ToolResultData, ToolSpec, Toolchain,
 };
 use borg_core::{Uri, uri};
@@ -367,33 +367,31 @@ async fn start_llm_container_with_retries() -> Option<LlmContainer> {
     None
 }
 
-fn session_output_or_retry(
-    result: SessionResult<SessionOutput<Value, Value>>,
-) -> Option<SessionOutput<Value, Value>> {
+fn actor_output_or_retry(
+    result: ActorRunResult<ActorRunOutput<Value, Value>>,
+) -> Option<ActorRunOutput<Value, Value>> {
     match result {
-        SessionResult::Completed(Ok(output)) => Some(output),
-        SessionResult::Completed(Err(err)) => panic!("unexpected completed error: {}", err),
-        SessionResult::SessionError(err) => panic!("unexpected session error: {}", err),
-        SessionResult::Idle => None,
+        ActorRunResult::Completed(Ok(output)) => Some(output),
+        ActorRunResult::Completed(Err(err)) => panic!("unexpected completed error: {}", err),
+        ActorRunResult::ActorError(err) => panic!("unexpected thread error: {}", err),
+        ActorRunResult::Idle => None,
     }
 }
 
 fn count_events(messages: &[Message<Value, Value>], event_name: &str) -> usize {
     messages
         .iter()
-        .filter(
-            |message| matches!(message, Message::SessionEvent { name, .. } if name == event_name),
-        )
+        .filter(|message| matches!(message, Message::ActorEvent { name, .. } if name == event_name))
         .count()
 }
 
-fn log_session_messages(test_name: &str, attempt: usize, messages: &[Message<Value, Value>]) {
+fn log_actor_messages(test_name: &str, attempt: usize, messages: &[Message<Value, Value>]) {
     info!(
         target: "borg_agent_it",
         test = test_name,
         attempt,
         message_count = messages.len(),
-        "session message dump start"
+        "thread message dump start"
     );
     for (idx, message) in messages.iter().enumerate() {
         let encoded = serde_json::to_string(message).unwrap_or_else(|_| format!("{:?}", message));
@@ -403,14 +401,14 @@ fn log_session_messages(test_name: &str, attempt: usize, messages: &[Message<Val
             attempt,
             index = idx,
             message = encoded.as_str(),
-            "session message"
+            "thread message"
         );
     }
     info!(
         target: "borg_agent_it",
         test = test_name,
         attempt,
-        "session message dump end"
+        "thread message dump end"
     );
 }
 
@@ -452,10 +450,10 @@ After receiving the tool result, return a concise assistant answer.",
             ),
             single_tool_specs(),
         );
-        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
             .await
             .unwrap();
-        session
+        thread
             .add_message(Message::User {
                 content: "Find a battery recommendation and explain briefly.".to_string(),
             })
@@ -463,12 +461,11 @@ After receiving the tool result, return a concise assistant answer.",
             .unwrap();
 
         let tools = runner.toolchain(&agent.tools).unwrap();
-        let Some(output) =
-            session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
+        let Some(output) = actor_output_or_retry(agent.run(&mut thread, &provider, &tools).await)
         else {
             debug!(target: "borg_agent_it", attempt, "single-tool run returned idle; retrying");
-            let messages = session.read_messages(0, 1024).await.unwrap();
-            log_session_messages(
+            let messages = thread.read_messages(0, 1024).await.unwrap();
+            log_actor_messages(
                 "e2e_single_tool_happy_path_persists_messages_and_output",
                 attempt,
                 &messages,
@@ -476,7 +473,7 @@ After receiving the tool result, return a concise assistant answer.",
             continue;
         };
         let calls = runner.calls();
-        let messages = session.read_messages(0, 1024).await.unwrap();
+        let messages = thread.read_messages(0, 1024).await.unwrap();
 
         let has_tool_result = messages.iter().any(|message| {
             matches!(
@@ -550,10 +547,10 @@ Then provide one final answer that references the three result labels.",
             ),
             multi_chain_tool_specs(),
         );
-        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
             .await
             .unwrap();
-        session
+        thread
             .add_message(Message::User {
                 content: "Customer c-22 cannot start the app. Diagnose and suggest steps."
                     .to_string(),
@@ -562,12 +559,11 @@ Then provide one final answer that references the three result labels.",
             .unwrap();
 
         let tools = runner.toolchain(&agent.tools).unwrap();
-        let Some(output) =
-            session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
+        let Some(output) = actor_output_or_retry(agent.run(&mut thread, &provider, &tools).await)
         else {
             debug!(target: "borg_agent_it", attempt, "multi-chain run returned idle; retrying");
-            let messages = session.read_messages(0, 1024).await.unwrap();
-            log_session_messages(
+            let messages = thread.read_messages(0, 1024).await.unwrap();
+            log_actor_messages(
                 "e2e_multi_tool_chain_then_final_answer_uses_all_results",
                 attempt,
                 &messages,
@@ -575,7 +571,7 @@ Then provide one final answer that references the three result labels.",
             continue;
         };
         let calls = runner.calls();
-        let messages = session.read_messages(0, 1024).await.unwrap();
+        let messages = thread.read_messages(0, 1024).await.unwrap();
 
         let seen_names: Vec<String> = calls.iter().map(|call| call.tool_name.clone()).collect();
         let expected_any = [
@@ -605,7 +601,7 @@ Then provide one final answer that references the three result labels.",
                 has_matching_tool_result,
                 "did not see sufficient multi-chain tool evidence"
             );
-            log_session_messages(
+            log_actor_messages(
                 "e2e_multi_tool_chain_then_final_answer_uses_all_results",
                 attempt,
                 &messages,
@@ -616,7 +612,7 @@ Then provide one final answer that references the three result labels.",
         assert!(!output.tool_calls.is_empty());
         if !has_non_empty_assistant(&messages) {
             debug!(target: "borg_agent_it", attempt, "multi-chain had tool calls but empty assistant; retrying");
-            log_session_messages(
+            log_actor_messages(
                 "e2e_multi_tool_chain_then_final_answer_uses_all_results",
                 attempt,
                 &messages,
@@ -661,10 +657,10 @@ After the second result, answer briefly with the fetched record."
                 .to_string(),
             dependent_chain_tool_specs(),
         );
-        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
             .await
             .unwrap();
-        session
+        thread
             .add_message(Message::User {
                 content: "Fetch the secure record for alpha account.".to_string(),
             })
@@ -672,12 +668,11 @@ After the second result, answer briefly with the fetched record."
             .unwrap();
 
         let tools = runner.toolchain(&agent.tools).unwrap();
-        let Some(output) =
-            session_output_or_retry(agent.run(&mut session, &provider, &tools).await)
+        let Some(output) = actor_output_or_retry(agent.run(&mut thread, &provider, &tools).await)
         else {
             debug!(target: "borg_agent_it", attempt, "dependent-chain run returned idle; retrying");
-            let messages = session.read_messages(0, 1024).await.unwrap();
-            log_session_messages(
+            let messages = thread.read_messages(0, 1024).await.unwrap();
+            log_actor_messages(
                 "e2e_multi_tool_with_intermediate_dependency_updates_arguments",
                 attempt,
                 &messages,
@@ -690,8 +685,8 @@ After the second result, answer briefly with the fetched record."
         let has_fetch = calls.iter().any(|call| call.tool_name == "fetch_by_key");
         if !has_discover && !has_fetch {
             debug!(target: "borg_agent_it", attempt, "dependent-chain had no relevant tool calls");
-            let messages = session.read_messages(0, 1024).await.unwrap();
-            log_session_messages(
+            let messages = thread.read_messages(0, 1024).await.unwrap();
+            log_actor_messages(
                 "e2e_multi_tool_with_intermediate_dependency_updates_arguments",
                 attempt,
                 &messages,
@@ -699,7 +694,7 @@ After the second result, answer briefly with the fetched record."
             continue;
         }
 
-        let messages = session.read_messages(0, 1024).await.unwrap();
+        let messages = thread.read_messages(0, 1024).await.unwrap();
         if has_discover && has_fetch {
             let fetch_call = calls
                 .iter()
@@ -712,7 +707,7 @@ After the second result, answer briefly with the fetched record."
                     fetch_args = ?fetch_call.arguments,
                     "fetch_by_key arguments did not include discovered key after discover_key"
                 );
-                log_session_messages(
+                log_actor_messages(
                     "e2e_multi_tool_with_intermediate_dependency_updates_arguments",
                     attempt,
                     &messages,
@@ -721,7 +716,7 @@ After the second result, answer briefly with the fetched record."
             }
         } else if !has_non_empty_assistant(&messages) {
             debug!(target: "borg_agent_it", attempt, "dependent-chain had no assistant reply; retrying");
-            log_session_messages(
+            log_actor_messages(
                 "e2e_multi_tool_with_intermediate_dependency_updates_arguments",
                 attempt,
                 &messages,
@@ -777,10 +772,10 @@ Return a final answer after stage_three."
                 .to_string(),
             staged_tool_specs(),
         );
-        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
             .await
             .unwrap();
-        session
+        thread
             .add_message(Message::User {
                 content: "Run the full staged repair flow.".to_string(),
             })
@@ -788,23 +783,23 @@ Return a final answer after stage_three."
             .unwrap();
 
         let tools = runner.toolchain(&agent.tools).unwrap();
-        let result = agent.run(&mut session, &provider, &tools).await;
-        if let SessionResult::SessionError(err) = result {
+        let result = agent.run(&mut thread, &provider, &tools).await;
+        if let ActorRunResult::ActorError(err) = result {
             debug!(
                 target: "borg_agent_it",
                 attempt,
                 error = err.as_str(),
-                "partial-failure run returned session error; retrying"
+                "partial-failure run returned thread error; retrying"
             );
-            let messages = session.read_messages(0, 1024).await.unwrap();
-            log_session_messages(
+            let messages = thread.read_messages(0, 1024).await.unwrap();
+            log_actor_messages(
                 "e2e_multi_tool_partial_failure_then_recovery",
                 attempt,
                 &messages,
             );
             continue;
         }
-        let messages = session.read_messages(0, 1024).await.unwrap();
+        let messages = thread.read_messages(0, 1024).await.unwrap();
 
         let has_error = messages.iter().any(|message| {
             matches!(
@@ -834,7 +829,7 @@ Return a final answer after stage_three."
                 has_any_stage_call,
                 "partial failure + recovery path not observed; retrying"
             );
-            log_session_messages(
+            log_actor_messages(
                 "e2e_multi_tool_partial_failure_then_recovery",
                 attempt,
                 &messages,
@@ -877,10 +872,10 @@ then continue and summarize that error briefly in your final response."
                 .to_string(),
             single_tool_specs(),
         );
-        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
             .await
             .unwrap();
-        session
+        thread
             .add_message(Message::User {
                 content: "Try to find catalog data.".to_string(),
             })
@@ -888,8 +883,8 @@ then continue and summarize that error briefly in your final response."
             .unwrap();
 
         let tools = runner.toolchain(&agent.tools).unwrap();
-        let result = agent.run(&mut session, &provider, &tools).await;
-        let messages = session.read_messages(0, 1024).await.unwrap();
+        let result = agent.run(&mut thread, &provider, &tools).await;
+        let messages = thread.read_messages(0, 1024).await.unwrap();
         let has_error_result = messages.iter().any(|message| {
             matches!(
                 message,
@@ -898,12 +893,12 @@ then continue and summarize that error briefly in your final response."
         });
         if !has_error_result {
             debug!(target: "borg_agent_it", attempt, "no persisted tool error found; retrying");
-            log_session_messages("e2e_tool_error_is_recorded_not_fatal", attempt, &messages);
+            log_actor_messages("e2e_tool_error_is_recorded_not_fatal", attempt, &messages);
             continue;
         }
 
-        if let SessionResult::SessionError(err) = result {
-            panic!("tool error path should not become session error: {}", err);
+        if let ActorRunResult::ActorError(err) = result {
+            panic!("tool error path should not become thread error: {}", err);
         }
         assert_eq!(count_events(&messages, "agent_finished"), 1);
         return;
@@ -917,7 +912,7 @@ then continue and summarize that error briefly in your final response."
 
 #[tokio::test]
 #[serial]
-async fn e2e_follow_up_turn_reuses_session_state_and_calls_tools_again() {
+async fn e2e_follow_up_turn_reuses_actor_state_and_calls_tools_again() {
     init_test_tracing();
     let Some(llm) = start_llm_container_with_retries().await else {
         return;
@@ -947,35 +942,35 @@ Do not skip tool calls on any turn."
                 .to_string(),
             single_tool_specs(),
         );
-        let mut session = Session::new(uri!("borg", "session"), agent.clone(), db)
+        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
             .await
             .unwrap();
 
-        session
+        thread
             .add_message(Message::User {
                 content: "first-query".to_string(),
             })
             .await
             .unwrap();
         let tools = runner.toolchain(&agent.tools).unwrap();
-        let first = agent.run(&mut session, &provider, &tools).await;
-        if matches!(first, SessionResult::SessionError(_)) {
+        let first = agent.run(&mut thread, &provider, &tools).await;
+        if matches!(first, ActorRunResult::ActorError(_)) {
             continue;
         }
 
-        session
+        thread
             .add_message(Message::User {
                 content: "second-query".to_string(),
             })
             .await
             .unwrap();
-        let second = agent.run(&mut session, &provider, &tools).await;
-        if matches!(second, SessionResult::SessionError(_)) {
+        let second = agent.run(&mut thread, &provider, &tools).await;
+        if matches!(second, ActorRunResult::ActorError(_)) {
             continue;
         }
 
         let calls = runner.calls();
-        let messages = session.read_messages(0, 2048).await.unwrap();
+        let messages = thread.read_messages(0, 2048).await.unwrap();
         let tool_result_texts: Vec<String> = messages
             .iter()
             .filter_map(|message| match message {
@@ -1001,8 +996,8 @@ Do not skip tool calls on any turn."
                 calls = calls.len(),
                 "follow-up path did not capture both tool outputs"
             );
-            log_session_messages(
-                "e2e_follow_up_turn_reuses_session_state_and_calls_tools_again",
+            log_actor_messages(
+                "e2e_follow_up_turn_reuses_actor_state_and_calls_tools_again",
                 attempt,
                 &messages,
             );

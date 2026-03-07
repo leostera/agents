@@ -32,7 +32,7 @@ export function ChatThread({
   isLoading = false,
   showEmptyState = true,
   emptyTitle = "No messages yet",
-  emptyDescription = "Session messages will appear here.",
+  emptyDescription = "Actor messages will appear here.",
   className,
   children,
 }: ChatThreadProps) {

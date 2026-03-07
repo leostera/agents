@@ -1,4 +1,5 @@
 use anyhow::Result;
+use borg_core::Uri;
 use borg_db::BorgDb;
 use serde_json::json;
 use tokio::time::{Duration, timeout};
@@ -33,15 +34,15 @@ async fn create_and_get_task_roundtrip() -> Result<()> {
 
     let created = store
         .create_task(
-            "borg:session:creator",
-            "agent:creator",
-            create_input("agent:worker"),
+            "borg:actor:creator",
+            "borg:actor:creator",
+            create_input("borg:actor:worker"),
         )
         .await?;
 
     assert_eq!(created.status, "pending");
-    assert_eq!(created.assignee_actor_id, "agent:worker");
-    assert_eq!(created.reviewer_actor_id, "agent:creator");
+    assert_eq!(created.assignee_actor_id, "borg:actor:worker");
+    assert_eq!(created.reviewer_actor_id, "borg:actor:creator");
 
     let fetched = store.get_task(&created.uri).await?;
     assert_eq!(fetched.uri, created.uri);
@@ -55,18 +56,26 @@ async fn blocks_cycle_is_rejected() -> Result<()> {
     let store = TaskGraphStore::new(db);
 
     let a = store
-        .create_task("borg:session:c1", "agent:c1", create_input("agent:w1"))
+        .create_task(
+            "borg:actor:c1",
+            "borg:actor:c1",
+            create_input("borg:actor:w1"),
+        )
         .await?;
     let b = store
-        .create_task("borg:session:c2", "agent:c2", create_input("agent:w2"))
+        .create_task(
+            "borg:actor:c2",
+            "borg:actor:c2",
+            create_input("borg:actor:w2"),
+        )
         .await?;
 
     store
-        .add_task_blocked_by(&a.reviewer_session_uri, &a.uri, &b.uri)
+        .add_task_blocked_by(&a.reviewer_actor_id, &a.uri, &b.uri)
         .await?;
 
     let err = store
-        .add_task_blocked_by(&b.reviewer_session_uri, &b.uri, &a.uri)
+        .add_task_blocked_by(&b.reviewer_actor_id, &b.uri, &a.uri)
         .await
         .expect_err("cycle should fail");
     assert!(err.to_string().contains("task.cycle_detected"));
@@ -80,20 +89,20 @@ async fn review_flow_transitions_pending_review_done() -> Result<()> {
 
     let created = store
         .create_task(
-            "borg:session:creator",
-            "agent:creator",
-            create_input("agent:worker"),
+            "borg:actor:creator",
+            "borg:actor:creator",
+            create_input("borg:actor:worker"),
         )
         .await?;
 
     let review = store
-        .submit_review(&created.assignee_session_uri, &created.uri)
+        .submit_review(&created.assignee_actor_id, &created.uri)
         .await?;
     assert_eq!(review.status, "review");
     assert!(review.review.submitted_at.is_some());
 
     let done = store
-        .approve_review(&created.reviewer_session_uri, &created.uri)
+        .approve_review(&created.reviewer_actor_id, &created.uri)
         .await?;
     assert_eq!(done.status, "done");
     assert!(done.review.approved_at.is_some());
@@ -107,47 +116,47 @@ async fn queue_returns_pending_and_doing_when_dependencies_complete() -> Result<
 
     let base = store
         .create_task(
-            "borg:session:creator-a",
-            "agent:creator-a",
-            create_input("agent:a"),
+            "borg:actor:creator-a",
+            "borg:actor:creator-a",
+            create_input("borg:actor:b"),
         )
         .await?;
     let blocked = store
         .create_task(
-            "borg:session:creator-b",
-            "agent:creator-b",
-            create_input("agent:a"),
+            "borg:actor:creator-b",
+            "borg:actor:creator-b",
+            create_input("borg:actor:a"),
         )
         .await?;
 
     store
-        .add_task_blocked_by(&blocked.reviewer_session_uri, &blocked.uri, &base.uri)
+        .add_task_blocked_by(&blocked.reviewer_actor_id, &blocked.uri, &base.uri)
         .await?;
 
-    let initial = store.next_task(&blocked.assignee_session_uri, 10).await?;
+    let initial = store.next_task(&blocked.assignee_actor_id, 10).await?;
     assert!(initial.is_empty());
 
     let _ = store
-        .submit_review(&base.assignee_session_uri, &base.uri)
+        .submit_review(&base.assignee_actor_id, &base.uri)
         .await?;
     let _ = store
-        .approve_review(&base.reviewer_session_uri, &base.uri)
+        .approve_review(&base.reviewer_actor_id, &base.uri)
         .await?;
 
-    let next = store.next_task(&blocked.assignee_session_uri, 10).await?;
+    let next = store.next_task(&blocked.assignee_actor_id, 10).await?;
     assert_eq!(next.len(), 1);
     assert_eq!(next[0].uri, blocked.uri);
 
     // Doing is also eligible for startup reconcile.
     let _ = store
         .set_task_status(
-            &blocked.assignee_session_uri,
+            &blocked.assignee_actor_id,
             &blocked.uri,
             crate::model::TaskStatus::Doing,
         )
         .await?;
     let in_progress = store
-        .reconcile_in_progress(&blocked.assignee_session_uri, 10)
+        .reconcile_in_progress(&blocked.assignee_actor_id, 10)
         .await?;
     assert_eq!(in_progress.len(), 1);
     assert_eq!(in_progress[0].uri, blocked.uri);
@@ -165,10 +174,10 @@ async fn toolchain_smoke_create_get() -> Result<()> {
             tool_call_id: "call-1".to_string(),
             tool_name: "TaskGraph-createTask".to_string(),
             arguments: json!({
-                "session_uri": "borg:session:creator",
-                "creator_actor_id": "agent:creator",
+                "actor_id": "borg:actor:creator",
+                "creator_actor_id": "borg:actor:creator",
                 "title": "hello",
-                "assignee_actor_id": "agent:worker",
+                "assignee_actor_id": "borg:actor:worker",
                 "labels": ["initiative:test"]
             })
             .into(),
@@ -228,10 +237,10 @@ async fn toolchain_smoke_list_tasks() -> Result<()> {
                 tool_call_id: format!("create-{title}"),
                 tool_name: "TaskGraph-createTask".to_string(),
                 arguments: json!({
-                    "session_uri": "borg:session:creator",
-                    "creator_actor_id": "agent:creator",
+                    "actor_id": "borg:actor:creator",
+                    "creator_actor_id": "borg:actor:creator",
                     "title": title,
-                    "assignee_actor_id": "agent:worker",
+                    "assignee_actor_id": "borg:actor:worker",
                 })
                 .into(),
             })
@@ -276,9 +285,10 @@ async fn taskgraph_supervisor_creation_and_lifecycle() -> Result<()> {
     let db = test_db().await?;
     let supervisor = crate::TaskGraphSupervisor::new(db);
 
-    supervisor.start().await;
+    let handle = supervisor.clone().start().await;
 
     supervisor.shutdown().await;
+    handle.abort();
 
     Ok(())
 }
@@ -286,12 +296,15 @@ async fn taskgraph_supervisor_creation_and_lifecycle() -> Result<()> {
 #[tokio::test]
 async fn taskgraph_supervisor_dispatches_runnable_tasks() -> Result<()> {
     let db = test_db().await?;
+    let worker_id = Uri::parse("borg:actor:worker")?;
+    db.upsert_actor(&worker_id, "Worker", "worker prompt", "RUNNING")
+        .await?;
     let store = TaskGraphStore::new(db.clone());
     let created = store
         .create_task(
-            "borg:session:creator",
-            "agent:creator",
-            create_input("agent:worker"),
+            "borg:actor:creator",
+            "borg:actor:creator",
+            create_input("borg:actor:worker"),
         )
         .await?;
 
@@ -305,8 +318,11 @@ async fn taskgraph_supervisor_dispatches_runnable_tasks() -> Result<()> {
         .await
         .expect("dispatch timeout")
         .expect("dispatch message");
-    assert_eq!(dispatch.task_uri, created.uri);
-    assert_eq!(dispatch.assignee_session_uri, created.assignee_session_uri);
+    assert_eq!(dispatch.task_uri.as_str(), created.uri.as_str());
+    assert_eq!(
+        dispatch.assignee_actor_id.as_str(),
+        created.assignee_actor_id.as_str()
+    );
     Ok(())
 }
 
@@ -317,9 +333,9 @@ async fn taskgraph_supervisor_tracks_task_status_changes() -> Result<()> {
 
     let task = store
         .create_task(
-            "borg:session:creator",
-            "agent:creator",
-            create_input("agent:worker"),
+            "borg:actor:creator",
+            "borg:actor:creator",
+            create_input("borg:actor:worker"),
         )
         .await?;
 
@@ -330,7 +346,7 @@ async fn taskgraph_supervisor_tracks_task_status_changes() -> Result<()> {
 
     store
         .set_task_status(
-            &task.assignee_session_uri,
+            &task.assignee_actor_id,
             &task.uri,
             crate::model::TaskStatus::Doing,
         )
@@ -349,9 +365,9 @@ async fn taskgraph_supervisor_get_task_parent() -> Result<()> {
 
     let parent = store
         .create_task(
-            "borg:session:creator",
-            "agent:creator",
-            create_input("agent:worker"),
+            "borg:actor:creator",
+            "borg:actor:creator",
+            create_input("borg:actor:worker"),
         )
         .await?;
 
@@ -359,7 +375,7 @@ async fn taskgraph_supervisor_get_task_parent() -> Result<()> {
         title: "Child".to_string(),
         description: "child desc".to_string(),
         definition_of_done: "child dod".to_string(),
-        assignee_actor_id: "agent:worker".to_string(),
+        assignee_actor_id: "borg:actor:worker".to_string(),
         parent_uri: Some(parent.uri.clone()),
         blocked_by: vec![],
         references: vec![],
@@ -367,7 +383,7 @@ async fn taskgraph_supervisor_get_task_parent() -> Result<()> {
     };
 
     let child = store
-        .create_task("borg:session:creator2", "agent:creator2", child_input)
+        .create_task("borg:actor:creator2", "borg:actor:creator2", child_input)
         .await?;
 
     let parent_uri = parent.uri.clone();

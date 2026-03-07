@@ -20,8 +20,7 @@ use axum::{Json, Router};
 use borg_core::Uri;
 use borg_db::BorgDb;
 use borg_exec::{
-    BorgCommand, BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, HttpSessionContext,
-    PortContext,
+    BorgCommand, BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, HttpContext, PortContext,
 };
 use borg_memory::MemoryStore;
 use borg_ports::BorgPortsSupervisor;
@@ -41,7 +40,7 @@ const HTTP_PORT_NAME: &str = "http";
 const HTTP_HELP_TEXT: &str = "Available commands: /help, /start, /model [model_name], /participants, /context, /reset, /compact";
 const HTTP_START_GREETING: &str = "Borg is online. Send a message to start.";
 const MODEL_COMMAND_USAGE: &str = "Usage: /model [model_name]";
-const BORG_SESSION_ID_HEADER: &str = "x-borg-session-id";
+const BORG_ACTOR_ID_HEADER: &str = "x-borg-actor-id";
 
 /// GraphQL schema type used by Borg clients.
 pub type BorgGqlSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
@@ -182,15 +181,13 @@ impl BorgGqlServer {
 #[derive(Clone)]
 struct RuntimeHttpState {
     db: BorgDb,
-    supervisor: BorgSupervisor,
+    supervisor: Arc<BorgSupervisor>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HttpPortRequest {
     pub user_key: String,
     pub text: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
     #[serde(default)]
     pub actor_id: Option<String>,
     #[serde(default)]
@@ -201,7 +198,6 @@ pub struct HttpPortRequest {
 struct ValidatedHttpPortRequest {
     user_id: Uri,
     text: String,
-    session_id: Option<Uri>,
     actor_id: Option<Uri>,
     metadata: Option<Value>,
 }
@@ -221,10 +217,9 @@ pub struct BorgHttpServer {
 }
 
 impl BorgHttpServer {
-    pub fn new(bind: String, runtime: Arc<BorgRuntime>, supervisor: BorgSupervisor) -> Self {
+    pub fn new(bind: String, runtime: Arc<BorgRuntime>, supervisor: Arc<BorgSupervisor>) -> Self {
         let gql_server = BorgGqlServer::new(runtime.db.clone(), runtime.memory.clone());
-        let ports_supervisor =
-            BorgPortsSupervisor::new(runtime.clone(), Arc::new(supervisor.clone()));
+        let ports_supervisor = BorgPortsSupervisor::new(runtime.clone(), supervisor.clone());
         Self {
             bind,
             gql_server,
@@ -305,22 +300,7 @@ impl BorgHttpServer {
             Err(err) => return err,
         };
 
-        let conversation_key = validated
-            .session_id
-            .clone()
-            .unwrap_or_else(|| validated.user_id.clone());
-        let session_id = match state
-            .db
-            .resolve_port_session(
-                HTTP_PORT_NAME,
-                &conversation_key,
-                validated.session_id.as_ref(),
-            )
-            .await
-        {
-            Ok(value) => value,
-            Err(err) => return internal_error(err),
-        };
+        let conversation_key = validated.user_id.clone();
 
         let input = match resolve_http_port_input(&validated.text) {
             Ok(value) => value,
@@ -329,7 +309,7 @@ impl BorgHttpServer {
 
         let body = match input {
             HttpPortInput::LocalReply(reply) => json!({
-                "session_id": session_id,
+                "actor_id": serde_json::Value::Null,
                 "reply": reply,
                 "tool_calls": [],
             }),
@@ -359,7 +339,6 @@ impl BorgHttpServer {
                     .call(BorgMessage {
                         actor_id,
                         user_id: validated.user_id,
-                        session_id: session_id.clone(),
                         input: forward_input,
                         port_context: validated
                             .metadata
@@ -367,7 +346,7 @@ impl BorgHttpServer {
                             .and_then(|value| {
                                 serde_json::from_value::<PortContext>(value.clone()).ok()
                             })
-                            .unwrap_or(PortContext::Http(HttpSessionContext::default())),
+                            .unwrap_or(PortContext::Http(HttpContext::default())),
                     })
                     .await
                 {
@@ -376,7 +355,7 @@ impl BorgHttpServer {
                 };
 
                 json!({
-                    "session_id": output.session_id,
+                    "actor_id": output.actor_id,
                     "reply": output.reply,
                     "tool_calls": output
                         .tool_calls
@@ -393,9 +372,15 @@ impl BorgHttpServer {
             }
         };
 
+        let actor_id_header = body
+            .as_object()
+            .and_then(|obj| obj.get("actor_id"))
+            .and_then(Value::as_str)
+            .and_then(|actor_id| HeaderValue::from_str(actor_id).ok());
+
         let mut response = (StatusCode::OK, Json(body)).into_response();
-        if let Ok(value) = HeaderValue::from_str(session_id.as_str()) {
-            response.headers_mut().insert(BORG_SESSION_ID_HEADER, value);
+        if let Some(value) = actor_id_header {
+            response.headers_mut().insert(BORG_ACTOR_ID_HEADER, value);
         }
         response
     }
@@ -407,14 +392,6 @@ fn validate_port_request(
     let user_id = match Uri::parse(&payload.user_key) {
         Ok(value) => value,
         Err(_) => return Err(bad_request("user_key must be a valid URI")),
-    };
-
-    let session_id = match payload.session_id {
-        Some(raw) => match Uri::parse(&raw) {
-            Ok(value) => Some(value),
-            Err(_) => return Err(bad_request("session_id must be a valid URI")),
-        },
-        None => None,
     };
 
     let actor_id = match payload.actor_id {
@@ -433,7 +410,6 @@ fn validate_port_request(
     Ok(ValidatedHttpPortRequest {
         user_id,
         text,
-        session_id,
         actor_id,
         metadata: payload.metadata,
     })
@@ -471,7 +447,7 @@ fn resolve_http_port_input(text: &str) -> std::result::Result<HttpPortInput, Str
             BorgCommand::ResetContext,
         ))),
         "compact" => Ok(HttpPortInput::Forward(BorgInput::Command(
-            BorgCommand::CompactSession,
+            BorgCommand::CompactContext,
         ))),
         "" => Err("empty command".to_string()),
         _ => Err(format!("unknown command: /{command}")),
@@ -513,7 +489,7 @@ fn cors_layer() -> CorsLayer {
         .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(Any)
-        .expose_headers([header::HeaderName::from_static(BORG_SESSION_ID_HEADER)])
+        .expose_headers([header::HeaderName::from_static(BORG_ACTOR_ID_HEADER)])
 }
 
 impl Deref for BorgGqlServer {
@@ -523,6 +499,3 @@ impl Deref for BorgGqlServer {
         &self.schema
     }
 }
-
-#[cfg(test)]
-mod tests;

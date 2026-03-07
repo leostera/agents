@@ -8,7 +8,7 @@ mod uri;
 
 pub use config::Config;
 pub use entity::{Entity, EntityPropValue, EntityProps};
-pub use event::{Event, SessionContextSnapshot, SessionToolSchema};
+pub use event::{ActorContextSnapshot, ActorToolSchema, Event};
 pub use execution::ExecutionResult;
 pub use telegram::TelegramUserId;
 pub use uri::Uri;

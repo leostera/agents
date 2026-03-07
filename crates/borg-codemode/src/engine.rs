@@ -28,7 +28,6 @@ const EXEC_SCRIPT_ORIGIN: &str = "file:///__borg_exec_fn__.js";
 pub struct CodeModeContext {
     pub current_port_id: Option<Uri>,
     pub current_message_id: Option<Uri>,
-    pub current_session_id: Option<Uri>,
     pub current_actor_id: Option<Uri>,
     pub current_user_id: Option<Uri>,
     pub env: HashMap<String, String>,
@@ -46,12 +45,6 @@ impl CodeModeContext {
         if let Some(value) = &self.current_message_id {
             obj.insert(
                 "current_message_id".to_string(),
-                Value::String(value.to_string()),
-            );
-        }
-        if let Some(value) = &self.current_session_id {
-            obj.insert(
-                "current_session_id".to_string(),
                 Value::String(value.to_string()),
             );
         }
@@ -99,12 +92,6 @@ impl CodeModeContext {
                 Value::String(value.to_string()),
             );
         }
-        if let Some(value) = &self.current_session_id {
-            obj.insert(
-                "current_session_id".to_string(),
-                Value::String(value.to_string()),
-            );
-        }
         if let Some(value) = &self.current_actor_id {
             obj.insert(
                 "current_actor_id".to_string(),
@@ -134,7 +121,6 @@ impl CodeModeContext {
         Ok(Self {
             current_port_id: parse_uri_field(obj, "current_port_id")?,
             current_message_id: parse_uri_field(obj, "current_message_id")?,
-            current_session_id: parse_uri_field(obj, "current_session_id")?,
             current_actor_id: parse_uri_field(obj, "current_actor_id")?,
             current_user_id: parse_uri_field(obj, "current_user_id")?,
             env: parse_env_field(obj)?,

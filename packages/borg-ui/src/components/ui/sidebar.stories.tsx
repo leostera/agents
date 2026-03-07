@@ -58,11 +58,11 @@ function SidebarDemo({ defaultOpen = true }: { defaultOpen?: boolean }) {
                 <SidebarMenu>
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      tooltip="Search sessions"
+                      tooltip="Search actors"
                       className="h-8 w-8 justify-center p-0 data-[state=open]:ml-auto"
                     >
                       <MagnifyingGlassIcon />
-                      <span className="sr-only">Search sessions</span>
+                      <span className="sr-only">Search actors</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
@@ -75,7 +75,7 @@ function SidebarDemo({ defaultOpen = true }: { defaultOpen?: boolean }) {
                   <SidebarMenuItem>
                     <SidebarMenuButton>
                       <RobotIcon />
-                      <span>Sessions</span>
+                      <span>Actors</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
@@ -98,7 +98,7 @@ function SidebarDemo({ defaultOpen = true }: { defaultOpen?: boolean }) {
             <div className="min-w-0 w-full overflow-hidden border rounded-md p-2 text-xs/relaxed">
               <p className="truncate font-medium">Pro workspace</p>
               <p className="truncate text-muted-foreground">
-                42 sessions this week
+                42 actors this week
               </p>
             </div>
           </SidebarFooter>
@@ -107,10 +107,10 @@ function SidebarDemo({ defaultOpen = true }: { defaultOpen?: boolean }) {
         <SidebarInset className="p-4 gap-3">
           <div className="flex items-center justify-between">
             <SidebarTrigger />
-            <Badge variant="outline">session_0f9a</Badge>
+            <Badge variant="outline">actor_0f9a</Badge>
           </div>
           <div className="border rounded-lg p-4 text-xs/relaxed space-y-1">
-            <p className="font-medium">Session transcript</p>
+            <p className="font-medium">Actor transcript</p>
             <p className="text-muted-foreground">
               Provider connected and waiting for the next user message.
             </p>

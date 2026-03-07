@@ -2,7 +2,7 @@ use super::super::*;
 
 #[Subscription(use_type_description)]
 impl SubscriptionRoot {
-    /// Streams new messages from a session timeline as they are appended.
+    /// Streams new messages from an actor timeline as they are appended.
     ///
     /// Usage notes:
     /// - When `afterMessageId` is omitted, the stream starts from the first message.
@@ -11,8 +11,8 @@ impl SubscriptionRoot {
     ///
     /// Example:
     /// ```graphql
-    /// subscription($session: Uri!, $after: Uri) {
-    ///   sessionChat(sessionId: $session, afterMessageId: $after, pollIntervalMs: 500) {
+    /// subscription($actor: Uri!, $after: Uri) {
+    ///   actorChat(actorId: $actor, afterMessageId: $after, pollIntervalMs: 500) {
     ///     id
     ///     messageType
     ///     role
@@ -20,28 +20,25 @@ impl SubscriptionRoot {
     ///   }
     /// }
     /// ```
-    async fn session_chat(
+    async fn actor_chat(
         &self,
         ctx: &Context<'_>,
-        session_id: UriScalar,
+        actor_id: UriScalar,
         after_message_id: Option<UriScalar>,
         poll_interval_ms: Option<i32>,
-    ) -> BoxStream<'static, GqlResult<SessionMessageObject>> {
+    ) -> BoxStream<'static, GqlResult<ActorMessageObject>> {
         let setup = async {
             let data = ctx_data(ctx)?.clone();
-            let start = resolve_session_stream_start_offset(
+            let start = resolve_actor_stream_start_offset(
                 &data,
-                &session_id.0,
+                &actor_id.0,
                 after_message_id.as_ref().map(|value| &value.0),
             )
             .await?;
             let poll_ms = normalize_poll_interval_ms(poll_interval_ms)?;
 
-            Ok::<_, Error>(session_message_subscription_stream(
-                data,
-                session_id.0,
-                start,
-                poll_ms,
+            Ok::<_, Error>(actor_message_subscription_stream(
+                data, actor_id.0, start, poll_ms,
             ))
         }
         .await;
@@ -52,7 +49,7 @@ impl SubscriptionRoot {
         }
     }
 
-    /// Streams session notifications derived from new timeline messages.
+    /// Streams actor notifications derived from new timeline messages.
     ///
     /// Usage notes:
     /// - By default, user-authored messages are filtered out.
@@ -60,36 +57,36 @@ impl SubscriptionRoot {
     ///
     /// Example:
     /// ```graphql
-    /// subscription($session: Uri!) {
-    ///   sessionNotifications(sessionId: $session) {
+    /// subscription($actor: Uri!) {
+    ///   actorNotifications(actorId: $actor) {
     ///     id
     ///     kind
     ///     title
     ///     text
-    ///     sessionMessage { id messageType role }
+    ///     actorMessage { id messageType role }
     ///   }
     /// }
     /// ```
-    async fn session_notifications(
+    async fn actor_notifications(
         &self,
         ctx: &Context<'_>,
-        session_id: UriScalar,
+        actor_id: UriScalar,
         after_message_id: Option<UriScalar>,
         poll_interval_ms: Option<i32>,
         include_user_messages: Option<bool>,
-    ) -> BoxStream<'static, GqlResult<SessionNotificationObject>> {
+    ) -> BoxStream<'static, GqlResult<ActorNotificationObject>> {
         let setup = async {
             let data = ctx_data(ctx)?.clone();
-            let start = resolve_session_stream_start_offset(
+            let start = resolve_actor_stream_start_offset(
                 &data,
-                &session_id.0,
+                &actor_id.0,
                 after_message_id.as_ref().map(|value| &value.0),
             )
             .await?;
             let poll_ms = normalize_poll_interval_ms(poll_interval_ms)?;
             let include_users = include_user_messages.unwrap_or(false);
 
-            let stream = session_message_subscription_stream(data, session_id.0, start, poll_ms)
+            let stream = actor_message_subscription_stream(data, actor_id.0, start, poll_ms)
                 .filter_map(move |item| async move {
                     match item {
                         Ok(message) => {
@@ -98,7 +95,7 @@ impl SubscriptionRoot {
                             if is_user && !include_users {
                                 return None;
                             }
-                            Some(Ok(SessionNotificationObject::from_message(message)))
+                            Some(Ok(ActorNotificationObject::from_message(message)))
                         }
                         Err(err) => Some(Err(err)),
                     }

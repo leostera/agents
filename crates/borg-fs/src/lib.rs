@@ -49,7 +49,7 @@ impl FileKind {
 
 #[derive(Debug, Clone)]
 pub struct PutFileMetadata {
-    pub session_id: Uri,
+    pub actor_id: Uri,
 }
 
 pub struct FileReadHandle {
@@ -104,7 +104,7 @@ impl BorgFs {
         let put_result = self.backend.put_reader(kind, reader).await?;
         let file_id = Uri::from_parts("borg", kind.as_str(), Some(&put_result.sha512))?;
         let metadata_json = json!({
-            "session_id": metadata.session_id.as_str(),
+            "actor_id": metadata.actor_id.as_str(),
         });
         self.db
             .upsert_file(
@@ -234,11 +234,11 @@ pub fn default_borg_fs_tool_specs() -> Vec<ToolSpec> {
                 .to_string(),
             parameters: json!({
                 "type": "object",
-                "required": ["content_base64", "session_id"],
+                "required": ["content_base64", "actor_id"],
                 "properties": {
                     "kind": {"type": "string", "enum": ["audio", "image", "video"]},
                     "content_base64": {"type": "string"},
-                    "session_id": {"type": "string"}
+                    "actor_id": {"type": "string"}
                 }
             }),
         },
@@ -306,7 +306,7 @@ pub struct FsToolArgs {
     #[serde(default)]
     kind: Option<String>,
     #[serde(default)]
-    session_id: Option<String>,
+    actor_id: Option<String>,
     #[serde(default)]
     content_base64: Option<String>,
 }
@@ -403,14 +403,14 @@ pub async fn run_borg_fs_tool(
             let kind = option_non_empty(arguments.kind.clone())
                 .and_then(|value| FileKind::parse(&value))
                 .unwrap_or(FileKind::Audio);
-            let session_id = option_non_empty(arguments.session_id.clone())
-                .ok_or_else(|| anyhow!("session_id is required"))?;
-            let session_id = Uri::parse(&session_id)?;
+            let actor_id = option_non_empty(arguments.actor_id.clone())
+                .ok_or_else(|| anyhow!("actor_id is required"))?;
+            let actor_id = Uri::parse(&actor_id)?;
             let content = option_non_empty(arguments.content_base64.clone())
                 .ok_or_else(|| anyhow!("content_base64 is required"))?;
             let bytes = base64::engine::general_purpose::STANDARD.decode(content)?;
             let file = fs
-                .put_bytes(kind, &bytes, PutFileMetadata { session_id })
+                .put_bytes(kind, &bytes, PutFileMetadata { actor_id })
                 .await?;
             Ok(FsToolOutput::Put { file })
         }
@@ -470,13 +470,13 @@ mod tests {
         db.migrate().await?;
         let fs = BorgFs::local(db.clone(), tmp_root("roundtrip"));
 
-        let session_id = Uri::from_parts("borg", "session", Some("s1"))?;
+        let actor_id = Uri::from_parts("borg", "actor", Some("s1"))?;
         let first = fs
             .put_bytes(
                 FileKind::Audio,
                 b"hello-audio",
                 PutFileMetadata {
-                    session_id: session_id.clone(),
+                    actor_id: actor_id.clone(),
                 },
             )
             .await?;
@@ -484,7 +484,7 @@ mod tests {
             .put_bytes(
                 FileKind::Audio,
                 b"hello-audio",
-                PutFileMetadata { session_id },
+                PutFileMetadata { actor_id },
             )
             .await?;
 
@@ -516,7 +516,7 @@ mod tests {
             "BorgFS-put",
             &FsToolArgs {
                 kind: Some("audio".to_string()),
-                session_id: Some("borg:session:tools".to_string()),
+                actor_id: Some("borg:actor:tools".to_string()),
                 content_base64: Some(
                     base64::engine::general_purpose::STANDARD.encode("hello-tools"),
                 ),

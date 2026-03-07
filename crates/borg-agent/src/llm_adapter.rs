@@ -111,7 +111,7 @@ where
                     content: vec![ProviderBlock::Text(tool_result_to_text(content))],
                 });
             }
-            Message::SessionEvent { .. } => {}
+            Message::ActorEvent { .. } => {}
         }
     }
 

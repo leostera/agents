@@ -20,7 +20,7 @@ export const HorizontalPanels: Story = {
       <ResizablePanelGroup direction="horizontal">
         <ResizablePanel defaultSize={35} minSize={20}>
           <div className="h-full p-3 text-xs/relaxed bg-muted/20">
-            Session timeline
+            Actor timeline
           </div>
         </ResizablePanel>
         <ResizableHandle withHandle />

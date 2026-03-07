@@ -494,15 +494,27 @@ function createDefaultAgents(
   });
 }
 
-function buildScannerPrompt(workspace: WorkspaceRecord): string {
-  return [
-    `You are the workspace scanner for ${workspace.name}.`,
-    `Workspace namespace: ${workspace.namespace}.`,
-    `Project root: ${workspace.projectRoot}.`,
-    "Prioritize docs that explain architecture and contribution rules.",
-    `Search order: ${workspace.scanner.priorities.join(", ")}.`,
-    "Produce concise findings, unresolved questions, and recommended follow-up scans.",
-  ].join(" ");
+function buildRuntimePrompt(
+  provider: string,
+  model: string,
+  prompt: string
+): string {
+  const normalizedProvider = provider.trim();
+  const normalizedModel = model.trim();
+  const normalizedPrompt = prompt.trim();
+
+  const lines: string[] = [];
+  if (normalizedProvider.length > 0) {
+    lines.push(`[runtime.provider] ${normalizedProvider}`);
+  }
+  if (normalizedModel.length > 0) {
+    lines.push(`[runtime.model] ${normalizedModel}`);
+  }
+  if (lines.length > 0 && normalizedPrompt.length > 0) {
+    lines.push("");
+  }
+  lines.push(normalizedPrompt);
+  return lines.join("\n");
 }
 
 function getTrioAgents(agents: WorkspaceAgent[]): WorkspaceAgent[] {
@@ -921,8 +933,8 @@ export function App() {
           activity: [
             createActivity({
               kind: "action",
-              summary: "Scanner actor bootstrapping started.",
-              detail: `Registering ${current.scanner.actorId} and ${current.agents.length} team actors through GraphQL.`,
+              summary: "Runtime actor synchronization started.",
+              detail: `Registering ${current.agents.length} team actors through GraphQL. Scanner bootstrap is disabled.`,
             }),
             ...current.activity,
           ],
@@ -930,18 +942,15 @@ export function App() {
       );
 
       try {
-        await upsertOnboardingActor({
-          actorId: workspace.scanner.actorId,
-          name: `${workspace.name} Scanner`,
-          systemPrompt: buildScannerPrompt(workspace),
-          status: ActorStatusValue.Running,
-        });
-
         for (const agent of workspace.agents) {
           await upsertOnboardingActor({
             actorId: agent.id,
             name: agent.name,
-            systemPrompt: agent.prompt,
+            systemPrompt: buildRuntimePrompt(
+              agent.provider,
+              agent.model,
+              agent.prompt
+            ),
             status: ActorStatusValue.Running,
           });
         }
@@ -958,7 +967,7 @@ export function App() {
               createActivity({
                 kind: "system",
                 summary: "Runtime actors synchronized.",
-                detail: `Scanner and ${current.agents.length} team agents are now registered for workspace ${current.namespace}.`,
+                detail: `${current.agents.length} team agents are now registered for workspace ${current.namespace}.`,
               }),
               ...current.activity,
             ],
@@ -968,7 +977,7 @@ export function App() {
         const message =
           error instanceof Error
             ? error.message
-            : "Unable to bootstrap scanner actor";
+            : "Unable to bootstrap workspace actors";
         setStore((previous) =>
           updateWorkspaceInStore(previous, workspace.id, (current) => ({
             ...current,
@@ -1008,7 +1017,11 @@ export function App() {
         await upsertOnboardingActor({
           actorId: agent.id,
           name: agent.name,
-          systemPrompt: agent.prompt,
+          systemPrompt: buildRuntimePrompt(
+            agent.provider,
+            agent.model,
+            agent.prompt
+          ),
           status: ActorStatusValue.Running,
         });
       } catch (error) {

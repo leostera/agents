@@ -480,7 +480,7 @@ When to use:
 
 Why use it:
 - Future turns can recall this information via `Memory-searchMemory`.
-- Facts are durable across sessions and improve personalization.
+- Facts are durable across actor runs and improve personalization.
 - Saving in batches reduces overhead and keeps memory writes coherent.
 
 How to use it well:
@@ -725,7 +725,7 @@ When to use:
 Why use it:
 - Improves answer quality with grounded recalled data.
 - Reduces unnecessary follow-up questions.
-- Keeps conversations consistent across sessions.
+- Keeps conversations consistent across actor runs.
 
 How to use it well:
 - Start with a focused `q` query and sensible `limit`.
@@ -2061,7 +2061,7 @@ you write facts in the form:
   { source, entity, field, value }
 
 where:
-- source is the uri/curie of the most specific provenance (prefer message uri, else session uri).
+- source is the uri/curie of the most specific provenance (prefer message uri, else actor uri).
 - entity is the subject uri/curie.
 - field is the predicate uri/curie (must be from the registry or created via the proposal process).
 - value is a typed object: { type, data } where type in { string, number, boolean, datetime, uri, entityRef, json }.

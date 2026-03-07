@@ -469,7 +469,7 @@ where
                 serde_json::to_string(content).ok()?
             )
         }
-        Message::SessionEvent { name, .. } => format!("Session event `{}`", name),
+        Message::ActorEvent { name, .. } => format!("Actor event `{}`", name),
     };
 
     if line.chars().count() > SUMMARY_ITEM_MAX_CHARS {
@@ -514,7 +514,7 @@ where
                     .map(|value| value.chars().count())
                     .unwrap_or(0)
         }
-        Message::SessionEvent { name, payload } => {
+        Message::ActorEvent { name, payload } => {
             name.chars().count()
                 + serde_json::to_string(payload)
                     .map(|value| value.chars().count())

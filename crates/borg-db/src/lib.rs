@@ -9,7 +9,6 @@ mod migrations;
 mod ports;
 mod providers;
 mod schedule;
-mod sessions;
 mod tool_calls;
 mod utils;
 
@@ -48,21 +47,6 @@ impl BorgDb {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SessionRecord {
-    pub session_id: Uri,
-    pub port: Uri,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SessionMessageRecord {
-    pub message_id: Uri,
-    pub session_id: Uri,
-    pub payload: Value,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProviderRecord {
     pub provider: String,
     pub provider_kind: String,
@@ -88,7 +72,7 @@ pub struct PortRecord {
     // Legacy compatibility field; prefer assigned_actor_id for all new flows.
     pub default_actor_id: Option<Uri>,
     pub settings: Value,
-    pub active_sessions: u64,
+    pub active_bindings: u64,
     pub updated_at: Option<DateTime<Utc>>,
 }
 
@@ -114,7 +98,7 @@ pub struct LlmCallRecord {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ToolCallRecord {
     pub call_id: String,
-    pub session_id: String,
+    pub actor_id: String,
     pub tool_name: String,
     pub arguments_json: Value,
     pub output_json: Value,
@@ -210,7 +194,6 @@ pub struct ActorMailboxRecord {
     pub actor_message_id: Uri,
     pub sender_actor_id: Option<Uri>,
     pub actor_id: Uri,
-    pub session_id: Option<Uri>,
     pub payload: Value,
     pub status: String,
     pub reply_to_actor_id: Option<Uri>,
@@ -222,12 +205,19 @@ pub struct ActorMailboxRecord {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ActorMessageRecord {
+    pub message_id: Uri,
+    pub actor_id: Uri,
+    pub payload: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScheduleJobRecord {
     pub job_id: String,
     pub kind: String,
     pub status: String,
     pub target_actor_id: String,
-    pub target_session_id: String,
     pub message_type: String,
     pub payload: Value,
     pub headers: Value,
@@ -245,7 +235,6 @@ pub struct ScheduleJobRunRecord {
     pub scheduled_for: DateTime<Utc>,
     pub fired_at: DateTime<Utc>,
     pub target_actor_id: String,
-    pub target_session_id: String,
     pub message_id: String,
     pub created_at: DateTime<Utc>,
 }

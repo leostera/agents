@@ -16,7 +16,7 @@ pub enum BorgCommand {
     ReasoningSet { reasoning_effort: ReasoningEffort },
     ParticipantsList,
     ContextDump,
-    CompactSession,
+    CompactContext,
     ResetContext,
 }
 
@@ -38,14 +38,13 @@ pub enum BorgInput {
 pub struct BorgMessage {
     pub actor_id: Uri,
     pub user_id: Uri,
-    pub session_id: Uri,
     pub input: BorgInput,
     pub port_context: PortContext,
 }
 
 #[derive(Debug, Clone)]
-pub struct SessionOutput<TToolCall, TToolResult> {
-    pub session_id: Uri,
+pub struct ActorOutput<TToolCall, TToolResult> {
+    pub actor_id: Uri,
     pub reply: Option<String>,
     pub tool_calls: Vec<ToolCallSummary<TToolCall, TToolResult>>,
     pub port_context: PortContext,

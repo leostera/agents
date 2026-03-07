@@ -18,7 +18,7 @@ export const Info: Story = {
   render: (args) => (
     <Alert {...args}>
       <WarningCircleIcon />
-      <AlertTitle>Session disconnected</AlertTitle>
+      <AlertTitle>Actor disconnected</AlertTitle>
       <AlertDescription>
         The HTTP port closed unexpectedly. Reconnect to continue receiving
         messages.

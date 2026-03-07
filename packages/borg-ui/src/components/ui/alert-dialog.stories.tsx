@@ -26,16 +26,16 @@ export const Default: Story = {
   render: () => (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="destructive">Delete session</Button>
+        <Button variant="destructive">Delete actor</Button>
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogMedia>
             <TrashIcon />
           </AlertDialogMedia>
-          <AlertDialogTitle>Delete this session?</AlertDialogTitle>
+          <AlertDialogTitle>Delete this actor?</AlertDialogTitle>
           <AlertDialogDescription>
-            This action removes all messages and task history for this session.
+            This action removes all messages and task history for this actor.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -57,7 +57,7 @@ export const Compact: Story = {
         <AlertDialogHeader>
           <AlertDialogTitle>Disconnect provider?</AlertDialogTitle>
           <AlertDialogDescription>
-            Existing sessions will stop generating responses until reconnected.
+            Existing actors will stop generating responses until reconnected.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

@@ -6,8 +6,8 @@ use anyhow::Result;
 use borg_core::Uri;
 use borg_db::BorgDb;
 use borg_exec::{
-    BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, RuntimeToolCall, RuntimeToolResult,
-    SessionOutput,
+    ActorOutput, BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, RuntimeToolCall,
+    RuntimeToolResult,
 };
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
@@ -137,8 +137,8 @@ impl BorgPortsSupervisor {
         let (inbound_tx, inbound_rx): (Sender<PortMessage>, Receiver<PortMessage>) =
             mpsc::channel(PORT_CHANNEL_CAPACITY);
         let (outbound_tx, outbound_rx): (
-            Sender<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
-            Receiver<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
+            Sender<ActorOutput<RuntimeToolCall, RuntimeToolResult>>,
+            Receiver<ActorOutput<RuntimeToolCall, RuntimeToolResult>>,
         ) = mpsc::channel(PORT_CHANNEL_CAPACITY);
 
         let sup = self.sup.clone();
@@ -248,25 +248,10 @@ async fn bridge_loop(
     port_name: String,
     assigned_actor_id: Option<Uri>,
     mut inbound_rx: Receiver<PortMessage>,
-    outbound_tx: Sender<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
+    outbound_tx: Sender<ActorOutput<RuntimeToolCall, RuntimeToolResult>>,
 ) {
     while let Some(message) = inbound_rx.recv().await {
-        let session_id = match db
-            .resolve_port_session(&port_name, &message.conversation_key, None)
-            .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                error!(
-                    target: "borg_ports",
-                    error = %err,
-                    port_name = %port_name,
-                    "failed to resolve port session"
-                );
-                continue;
-            }
-        };
-        let bound_actor_id = match db
+        let actor_id = match db
             .resolve_port_actor(
                 &port_name,
                 &message.conversation_key,
@@ -275,41 +260,38 @@ async fn bridge_loop(
             )
             .await
         {
-            Ok(value) => Some(value),
+            Ok(value) => value,
             Err(err) => {
                 warn!(
                     target: "borg_ports",
                     error = %err,
                     port_name = %port_name,
                     conversation_key = %message.conversation_key,
-                    "failed to resolve actor binding; falling back"
+                    "failed to resolve actor binding"
                 );
-                None
+                continue;
             }
         };
         if let Ok(ctx) = serde_json::to_value(&message.port_context) {
             if let Err(err) = db
-                .upsert_port_session_context(&port_name, &session_id, &ctx)
+                .upsert_port_actor_context(&port_name, &actor_id, &ctx)
                 .await
             {
                 warn!(
                     target: "borg_ports",
                     error = %err,
                     port_name = %port_name,
-                    session_id = %session_id,
-                    "failed to persist port session context snapshot"
+                    actor_id = %actor_id.as_str(),
+                    "failed to persist port actor context snapshot"
                 );
             }
         }
-
-        let actor_id = select_actor_id(session_id.clone(), bound_actor_id);
 
         let output = match sup
             .call_with_progress(
                 BorgMessage {
                     actor_id,
                     user_id: message.user_id,
-                    session_id,
                     input: match message.input {
                         PortInput::Chat { text } => BorgInput::Chat { text },
                         PortInput::Audio {
@@ -349,19 +331,12 @@ async fn bridge_loop(
     }
 }
 
-fn select_actor_id(session_id: Uri, bound_actor_id: Option<Uri>) -> Uri {
-    if let Some(actor_id) = bound_actor_id {
-        return actor_id;
-    }
-    session_id
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use super::{ReconcileAction, RunningPortState, compute_reconcile_plan, select_actor_id};
+    use super::{ReconcileAction, RunningPortState, compute_reconcile_plan};
     use crate::port::{PortConfig, Privacy, Provider, Status};
     use borg_core::Uri;
     use borg_db::BorgDb;
@@ -393,15 +368,6 @@ mod tests {
             "borg-ports-supervisor-{test_name}-{pid}-{nanos}.db"
         ));
         path
-    }
-
-    #[test]
-    fn select_actor_id_prefers_bound_actor_then_session() {
-        let session = uri("borg:session:s1");
-        let bound = uri("devmode:actor:bound");
-
-        assert_eq!(select_actor_id(session.clone(), Some(bound.clone())), bound);
-        assert_eq!(select_actor_id(session.clone(), None), session);
     }
 
     #[test]
@@ -509,22 +475,18 @@ mod tests {
             .expect("open db");
         db.migrate().await.expect("migrate db");
 
-        let session_id = uri("borg:session:session-1");
+        let actor_id = uri("borg:actor:actor-1");
         let conversation_key = uri("telegram:chat:1");
-        db.upsert_port_binding_full_record("telegram", &conversation_key, &session_id, None)
+        db.upsert_port_binding_full_record("telegram", &conversation_key, Some(Some(&actor_id)))
             .await
             .expect("seed binding");
 
-        db.upsert_port_session_context(
-            "telegram",
-            &session_id,
-            &serde_json::json!({"chat":{"id":1}}),
-        )
-        .await
-        .expect("write context");
+        db.upsert_port_actor_context("telegram", &actor_id, &serde_json::json!({"chat":{"id":1}}))
+            .await
+            .expect("write context");
 
         let context = db
-            .get_port_session_context("telegram", &session_id)
+            .get_port_actor_context("telegram", &actor_id)
             .await
             .expect("read context");
         assert_eq!(context, Some(serde_json::json!({"chat":{"id":1}})));

@@ -19,7 +19,7 @@ export const Default: Story = {};
 export const WithValue: Story = {
   args: {
     defaultValue:
-      "When I connect a new provider, I expect the session summary to appear in the sidebar immediately.",
+      "When I connect a new provider, I expect the actor summary to appear in the sidebar immediately.",
   },
 };
 

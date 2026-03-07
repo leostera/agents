@@ -85,7 +85,7 @@ pub struct PutArgs {
     #[arg(long, value_enum)]
     pub kind: Option<FileKindArg>,
     #[arg(long)]
-    pub session_id: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub content_base64: Option<String>,
     #[command(flatten)]
@@ -159,20 +159,20 @@ pub async fn run(app: &BorgCliApp, cmd: FsToolsCommand) -> Result<Value> {
             if let Some(kind) = args.kind {
                 map.insert("kind".to_string(), Value::String(kind.as_str().to_string()));
             }
-            insert_opt_string(&mut map, "session_id", args.session_id);
+            insert_opt_string(&mut map, "actor_id", args.actor_id);
             insert_opt_string(&mut map, "content_base64", args.content_base64);
             let payload = payload(args.raw.payload_json, map)?;
             let kind = read_string(&payload, &["kind"])
                 .and_then(|value| parse_file_kind(&value))
                 .unwrap_or(FileKind::Audio);
-            let session_id = read_string(&payload, &["session_id"])
-                .ok_or_else(|| anyhow::anyhow!("session_id is required"))?;
-            let session_id = Uri::parse(&session_id)?;
+            let actor_id = read_string(&payload, &["actor_id"])
+                .ok_or_else(|| anyhow::anyhow!("actor_id is required"))?;
+            let actor_id = Uri::parse(&actor_id)?;
             let content = read_string(&payload, &["content_base64"])
                 .ok_or_else(|| anyhow::anyhow!("content_base64 is required"))?;
             let bytes = base64::engine::general_purpose::STANDARD.decode(content)?;
             let file = fs
-                .put_bytes(kind, &bytes, PutFileMetadata { session_id })
+                .put_bytes(kind, &bytes, PutFileMetadata { actor_id })
                 .await?;
             Ok(json!({ "file": file }))
         }

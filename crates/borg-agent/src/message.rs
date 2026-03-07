@@ -31,29 +31,29 @@ pub enum Message<TToolCall, TToolResult> {
         name: String,
         content: ToolResultData<TToolResult>,
     },
-    SessionEvent {
+    ActorEvent {
         name: String,
-        payload: SessionEventPayload,
+        payload: ActorEventPayload,
     },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SessionEventPayload {
+pub enum ActorEventPayload {
     Started {
         actor_id: Uri,
     },
     Finished {
-        status: SessionEndStatus,
+        status: ActorRunStatus,
         reply: Option<String>,
         error: Option<String>,
     },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SessionEndStatus {
+pub enum ActorRunStatus {
     Completed,
     CompletedError,
-    SessionError,
+    ActorError,
     Idle,
 }
 
@@ -65,14 +65,14 @@ pub struct ToolCallRecord<TToolCall, TToolResult> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionOutput<TToolCall, TToolResult> {
+pub struct ActorRunOutput<TToolCall, TToolResult> {
     pub reply: String,
     pub tool_calls: Vec<ToolCallRecord<TToolCall, TToolResult>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum SessionResult<T> {
+pub enum ActorRunResult<T> {
     Completed(Result<T, String>),
-    SessionError(String),
+    ActorError(String),
     Idle,
 }

@@ -43,7 +43,6 @@ struct CreateJobArgs {
     job_id: Option<String>,
     kind: String,
     actor_id: String,
-    session_id: String,
     message_text: String,
     schedule_spec: ScheduleSpecDto,
     #[serde(default)]
@@ -59,8 +58,6 @@ struct UpdateJobArgs {
     kind: Option<String>,
     #[serde(default)]
     actor_id: Option<String>,
-    #[serde(default)]
-    session_id: Option<String>,
     #[serde(default)]
     message_text: Option<String>,
     #[serde(default)]
@@ -99,20 +96,19 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "Schedule-createJob",
-            "Create a schedule job that delivers a Borg chat message to an actor session.",
+            "Create a schedule job that delivers a Borg chat message to an actor.",
             json!({
                 "type": "object",
                 "properties": {
                     "job_id": { "type": "string" },
                     "kind": { "type": "string", "enum": ["once", "cron"] },
                     "actor_id": { "type": "string" },
-                    "session_id": { "type": "string" },
                     "message_text": { "type": "string" },
                     "schedule_spec": { "type": "object", "additionalProperties": true },
                     "next_run_at": { "type": "string" },
                     "headers": { "type": "object", "additionalProperties": true }
                 },
-                "required": ["kind", "actor_id", "session_id", "message_text", "schedule_spec"],
+                "required": ["kind", "actor_id", "message_text", "schedule_spec"],
                 "additionalProperties": false
             }),
         ),
@@ -125,7 +121,6 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
                     "job_id": { "type": "string" },
                     "kind": { "type": "string", "enum": ["once", "cron"] },
                     "actor_id": { "type": "string" },
-                    "session_id": { "type": "string" },
                     "message_text": { "type": "string" },
                     "schedule_spec": { "type": "object", "additionalProperties": true },
                     "next_run_at": {},
@@ -257,8 +252,6 @@ impl ScheduleTools {
                     }
 
                     let actor_id = require_non_empty(&request.arguments.actor_id, "actor_id")?;
-                    let session_id =
-                        require_non_empty(&request.arguments.session_id, "session_id")?;
                     let message_text =
                         require_non_empty(&request.arguments.message_text, "message_text")?;
                     if message_text.trim().is_empty() {
@@ -285,7 +278,6 @@ impl ScheduleTools {
                         job_id: job_id.clone(),
                         kind,
                         target_actor_id: actor_id,
-                        target_session_id: session_id,
                         message_type: MESSAGE_TYPE.to_string(),
                         payload: json!({ "text": message_text }),
                         headers,
@@ -332,7 +324,6 @@ impl ScheduleTools {
                     let patch = UpdateScheduleJobInput {
                         kind: option_non_empty(request.arguments.kind),
                         target_actor_id: option_non_empty(request.arguments.actor_id),
-                        target_session_id: option_non_empty(request.arguments.session_id),
                         message_type: Some(MESSAGE_TYPE.to_string()),
                         payload,
                         headers,

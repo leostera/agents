@@ -11,7 +11,7 @@ use crate::store::{CreateTaskInput, ListParams, SplitSubtaskInput, TaskGraphStor
 
 #[derive(Debug, Clone, Deserialize)]
 struct CreateTaskArgs {
-    session_uri: String,
+    actor_id: String,
     creator_actor_id: String,
     title: String,
     #[serde(default)]
@@ -54,27 +54,27 @@ struct TaskPatchArgs {
 
 #[derive(Debug, Clone, Deserialize)]
 struct UpdateTaskFieldsArgs {
-    session_uri: String,
+    actor_id: String,
     uri: String,
     patch: TaskPatchArgs,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct SessionUriUriArgs {
-    session_uri: String,
+struct ActorUriUriArgs {
+    actor_id: String,
     uri: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct ReassignAssigneeArgs {
-    session_uri: String,
+    actor_id: String,
     uri: String,
     assignee_actor_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct SessionUriUriLabelsArgs {
-    session_uri: String,
+struct ActorUriUriLabelsArgs {
+    actor_id: String,
     uri: String,
     #[serde(default)]
     labels: Vec<String>,
@@ -82,7 +82,7 @@ struct SessionUriUriLabelsArgs {
 
 #[derive(Debug, Clone, Deserialize)]
 struct SetTaskParentArgs {
-    session_uri: String,
+    actor_id: String,
     uri: String,
     parent_uri: String,
 }
@@ -97,36 +97,36 @@ struct UriListArgs {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct SessionUriUriBlockedByArgs {
-    session_uri: String,
+struct ActorUriUriBlockedByArgs {
+    actor_id: String,
     uri: String,
     blocked_by: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct SessionUriUriDuplicateOfArgs {
-    session_uri: String,
+struct ActorUriUriDuplicateOfArgs {
+    actor_id: String,
     uri: String,
     duplicate_of: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct SessionUriUriReferenceArgs {
-    session_uri: String,
+struct ActorUriUriReferenceArgs {
+    actor_id: String,
     uri: String,
     reference: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct SetTaskStatusArgs {
-    session_uri: String,
+    actor_id: String,
     uri: String,
     status: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct RequestReviewChangesArgs {
-    session_uri: String,
+    actor_id: String,
     uri: String,
     note: String,
     #[serde(default)]
@@ -135,7 +135,7 @@ struct RequestReviewChangesArgs {
 
 #[derive(Debug, Clone, Deserialize)]
 struct SplitTaskIntoSubtasksArgs {
-    session_uri: String,
+    actor_id: String,
     creator_actor_id: String,
     uri: String,
     subtasks: Vec<SplitSubtaskArgs>,
@@ -155,7 +155,7 @@ struct SplitSubtaskArgs {
 
 #[derive(Debug, Clone, Deserialize)]
 struct AddCommentArgs {
-    session_uri: String,
+    actor_id: String,
     task_uri: String,
     body: String,
 }
@@ -170,8 +170,8 @@ struct TaskUriListArgs {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct SessionUriLimitArgs {
-    session_uri: String,
+struct ActorUriLimitArgs {
+    actor_id: String,
     #[serde(default)]
     limit: Option<usize>,
 }
@@ -180,11 +180,11 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "TaskGraph-createTask",
-            "Create a new task and allocate fresh assignee/reviewer sessions.",
+            "Create a new task and allocate fresh assignee/reviewer actors.",
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "creator_actor_id": { "type": "string" },
                     "title": { "type": "string" },
                     "description": { "type": "string" },
@@ -195,7 +195,7 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
                     "blocked_by": { "type": "array", "items": { "type": "string", "format": "uri" } },
                     "references": { "type": "array", "items": { "type": "string", "format": "uri" } }
                 },
-                "required": ["session_uri", "creator_actor_id", "title", "assignee_actor_id"],
+                "required": ["actor_id", "creator_actor_id", "title", "assignee_actor_id"],
                 "additionalProperties": false
             }),
         ),
@@ -230,7 +230,7 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "patch": {
                         "type": "object",
@@ -242,21 +242,21 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
                         "additionalProperties": false
                     }
                 },
-                "required": ["session_uri", "uri", "patch"],
+                "required": ["actor_id", "uri", "patch"],
                 "additionalProperties": false
             }),
         ),
         tool_spec(
             "TaskGraph-reassignAssignee",
-            "Reviewer-only reassignment that allocates a fresh assignee session.",
+            "Reviewer-only reassignment that allocates a fresh assignee actor.",
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "assignee_actor_id": { "type": "string" }
                 },
-                "required": ["session_uri", "uri", "assignee_actor_id"],
+                "required": ["actor_id", "uri", "assignee_actor_id"],
                 "additionalProperties": false
             }),
         ),
@@ -266,11 +266,11 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "labels": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
                 },
-                "required": ["session_uri", "uri", "labels"],
+                "required": ["actor_id", "uri", "labels"],
                 "additionalProperties": false
             }),
         ),
@@ -280,11 +280,11 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "labels": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
                 },
-                "required": ["session_uri", "uri", "labels"],
+                "required": ["actor_id", "uri", "labels"],
                 "additionalProperties": false
             }),
         ),
@@ -294,11 +294,11 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "parent_uri": { "type": "string", "format": "uri" }
                 },
-                "required": ["session_uri", "uri", "parent_uri"],
+                "required": ["actor_id", "uri", "parent_uri"],
                 "additionalProperties": false
             }),
         ),
@@ -308,10 +308,10 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" }
                 },
-                "required": ["session_uri", "uri"],
+                "required": ["actor_id", "uri"],
                 "additionalProperties": false
             }),
         ),
@@ -335,11 +335,11 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "blocked_by": { "type": "string", "format": "uri" }
                 },
-                "required": ["session_uri", "uri", "blocked_by"],
+                "required": ["actor_id", "uri", "blocked_by"],
                 "additionalProperties": false
             }),
         ),
@@ -349,11 +349,11 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "blocked_by": { "type": "string", "format": "uri" }
                 },
-                "required": ["session_uri", "uri", "blocked_by"],
+                "required": ["actor_id", "uri", "blocked_by"],
                 "additionalProperties": false
             }),
         ),
@@ -363,11 +363,11 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "duplicate_of": { "type": "string", "format": "uri" }
                 },
-                "required": ["session_uri", "uri", "duplicate_of"],
+                "required": ["actor_id", "uri", "duplicate_of"],
                 "additionalProperties": false
             }),
         ),
@@ -377,10 +377,10 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" }
                 },
-                "required": ["session_uri", "uri"],
+                "required": ["actor_id", "uri"],
                 "additionalProperties": false
             }),
         ),
@@ -404,11 +404,11 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "reference": { "type": "string", "format": "uri" }
                 },
-                "required": ["session_uri", "uri", "reference"],
+                "required": ["actor_id", "uri", "reference"],
                 "additionalProperties": false
             }),
         ),
@@ -418,11 +418,11 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "reference": { "type": "string", "format": "uri" }
                 },
-                "required": ["session_uri", "uri", "reference"],
+                "required": ["actor_id", "uri", "reference"],
                 "additionalProperties": false
             }),
         ),
@@ -432,11 +432,11 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "status": { "type": "string", "enum": ["pending", "doing", "review", "done", "discarded"] }
                 },
-                "required": ["session_uri", "uri", "status"],
+                "required": ["actor_id", "uri", "status"],
                 "additionalProperties": false
             }),
         ),
@@ -446,10 +446,10 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" }
                 },
-                "required": ["session_uri", "uri"],
+                "required": ["actor_id", "uri"],
                 "additionalProperties": false
             }),
         ),
@@ -459,10 +459,10 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" }
                 },
-                "required": ["session_uri", "uri"],
+                "required": ["actor_id", "uri"],
                 "additionalProperties": false
             }),
         ),
@@ -472,12 +472,12 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "uri": { "type": "string", "format": "uri" },
                     "return_to": { "type": "string", "enum": ["pending", "doing"] },
                     "note": { "type": "string" }
                 },
-                "required": ["session_uri", "uri", "note"],
+                "required": ["actor_id", "uri", "note"],
                 "additionalProperties": false
             }),
         ),
@@ -487,7 +487,7 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "creator_actor_id": { "type": "string" },
                     "uri": { "type": "string", "format": "uri" },
                     "subtasks": {
@@ -507,21 +507,21 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
                         }
                     }
                 },
-                "required": ["session_uri", "creator_actor_id", "uri", "subtasks"],
+                "required": ["actor_id", "creator_actor_id", "uri", "subtasks"],
                 "additionalProperties": false
             }),
         ),
         tool_spec(
             "TaskGraph-addComment",
-            "Add an append-only comment. Any session may comment.",
+            "Add an append-only comment. Any actor may comment.",
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "task_uri": { "type": "string", "format": "uri" },
                     "body": { "type": "string" }
                 },
-                "required": ["session_uri", "task_uri", "body"],
+                "required": ["actor_id", "task_uri", "body"],
                 "additionalProperties": false
             }),
         ),
@@ -555,27 +555,27 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "TaskGraph-nextTask",
-            "Return next queue-eligible tasks for a session.",
+            "Return next queue-eligible tasks for an actor.",
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
                 },
-                "required": ["session_uri"],
+                "required": ["actor_id"],
                 "additionalProperties": false
             }),
         ),
         tool_spec(
             "TaskGraph-reconcileInProgress",
-            "Return currently eligible in-progress tasks for a session.",
+            "Return currently eligible in-progress tasks for an actor.",
             json!({
                 "type": "object",
                 "properties": {
-                    "session_uri": { "type": "string", "format": "uri" },
+                    "actor_id": { "type": "string", "format": "uri" },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 100 }
                 },
-                "required": ["session_uri"],
+                "required": ["actor_id"],
                 "additionalProperties": false
             }),
         ),
@@ -661,11 +661,11 @@ impl TaskGraphTools {
             move |request: borg_agent::ToolRequest<CreateTaskArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = request.arguments.session_uri.trim().to_string();
+                    let actor_id = request.arguments.actor_id.trim().to_string();
                     let creator_actor_id = request.arguments.creator_actor_id.trim().to_string();
                     let title = request.arguments.title.trim().to_string();
                     let assignee_actor_id = request.arguments.assignee_actor_id.trim().to_string();
-                    if session_uri.is_empty()
+                    if actor_id.is_empty()
                         || creator_actor_id.is_empty()
                         || title.is_empty()
                         || assignee_actor_id.is_empty()
@@ -694,7 +694,7 @@ impl TaskGraphTools {
                     };
 
                     let task = store
-                        .create_task(&session_uri, &creator_actor_id, input)
+                        .create_task(&actor_id, &creator_actor_id, input)
                         .await?;
                     json_text(json!({ "task": task }))
                 }
@@ -745,9 +745,9 @@ impl TaskGraphTools {
             move |request: borg_agent::ToolRequest<UpdateTaskFieldsArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = request.arguments.session_uri.trim().to_string();
+                    let actor_id = request.arguments.actor_id.trim().to_string();
                     let uri = request.arguments.uri.trim().to_string();
-                    if session_uri.is_empty() || uri.is_empty() {
+                    if actor_id.is_empty() || uri.is_empty() {
                         return Err(anyhow!("task.validation_failed: missing required fields"));
                     }
                     let patch = TaskPatch {
@@ -757,7 +757,7 @@ impl TaskGraphTools {
                             request.arguments.patch.definition_of_done,
                         ),
                     };
-                    let task = store.update_task_fields(&session_uri, &uri, patch).await?;
+                    let task = store.update_task_fields(&actor_id, &uri, patch).await?;
                     json_text(json!({ "task": task }))
                 }
             },
@@ -772,12 +772,12 @@ impl TaskGraphTools {
             move |request: borg_agent::ToolRequest<ReassignAssigneeArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let assignee_actor_id =
                         required_str(request.arguments.assignee_actor_id, "assignee_actor_id")?;
                     let task = store
-                        .reassign_assignee(&session_uri, &uri, &assignee_actor_id)
+                        .reassign_assignee(&actor_id, &uri, &assignee_actor_id)
                         .await?;
                     json_text(json!({ "task": task }))
                 }
@@ -790,13 +790,13 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriUriLabelsArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriUriLabelsArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let labels = normalize_strs(Some(request.arguments.labels));
-                    let task = store.add_task_labels(&session_uri, &uri, &labels).await?;
+                    let task = store.add_task_labels(&actor_id, &uri, &labels).await?;
                     json_text(json!({ "task": task }))
                 }
             },
@@ -808,15 +808,13 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriUriLabelsArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriUriLabelsArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let labels = normalize_strs(Some(request.arguments.labels));
-                    let task = store
-                        .remove_task_labels(&session_uri, &uri, &labels)
-                        .await?;
+                    let task = store.remove_task_labels(&actor_id, &uri, &labels).await?;
                     json_text(json!({ "task": task }))
                 }
             },
@@ -831,12 +829,11 @@ impl TaskGraphTools {
             move |request: borg_agent::ToolRequest<SetTaskParentArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let parent_uri = required_str(request.arguments.parent_uri, "parent_uri")?;
-                    let (child, parent) = store
-                        .set_task_parent(&session_uri, &uri, &parent_uri)
-                        .await?;
+                    let (child, parent) =
+                        store.set_task_parent(&actor_id, &uri, &parent_uri).await?;
                     json_text(json!({ "child": child, "parent": parent }))
                 }
             },
@@ -848,12 +845,12 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriUriArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
-                    let task = store.clear_task_parent(&session_uri, &uri).await?;
+                    let task = store.clear_task_parent(&actor_id, &uri).await?;
                     json_text(json!({ "task": task }))
                 }
             },
@@ -882,14 +879,14 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriUriBlockedByArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriUriBlockedByArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let blocked_by = required_str(request.arguments.blocked_by, "blocked_by")?;
                     let task = store
-                        .add_task_blocked_by(&session_uri, &uri, &blocked_by)
+                        .add_task_blocked_by(&actor_id, &uri, &blocked_by)
                         .await?;
                     json_text(json!({ "task": task }))
                 }
@@ -902,14 +899,14 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriUriBlockedByArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriUriBlockedByArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let blocked_by = required_str(request.arguments.blocked_by, "blocked_by")?;
                     let task = store
-                        .remove_task_blocked_by(&session_uri, &uri, &blocked_by)
+                        .remove_task_blocked_by(&actor_id, &uri, &blocked_by)
                         .await?;
                     json_text(json!({ "task": task }))
                 }
@@ -922,15 +919,15 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriUriDuplicateOfArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriUriDuplicateOfArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let duplicate_of =
                         required_str(request.arguments.duplicate_of, "duplicate_of")?;
                     let task = store
-                        .set_task_duplicate_of(&session_uri, &uri, &duplicate_of)
+                        .set_task_duplicate_of(&actor_id, &uri, &duplicate_of)
                         .await?;
                     json_text(json!({ "task": task }))
                 }
@@ -945,12 +942,12 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriUriArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
-                    let task = store.clear_task_duplicate_of(&session_uri, &uri).await?;
+                    let task = store.clear_task_duplicate_of(&actor_id, &uri).await?;
                     json_text(json!({ "task": task }))
                 }
             },
@@ -979,14 +976,14 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriUriReferenceArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriUriReferenceArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let reference = required_str(request.arguments.reference, "reference")?;
                     let task = store
-                        .add_task_reference(&session_uri, &uri, &reference)
+                        .add_task_reference(&actor_id, &uri, &reference)
                         .await?;
                     json_text(json!({ "task": task }))
                 }
@@ -999,14 +996,14 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriUriReferenceArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriUriReferenceArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let reference = required_str(request.arguments.reference, "reference")?;
                     let task = store
-                        .remove_task_reference(&session_uri, &uri, &reference)
+                        .remove_task_reference(&actor_id, &uri, &reference)
                         .await?;
                     json_text(json!({ "task": task }))
                 }
@@ -1022,10 +1019,10 @@ impl TaskGraphTools {
             move |request: borg_agent::ToolRequest<SetTaskStatusArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let status = parse_status(&required_str(request.arguments.status, "status")?)?;
-                    let task = store.set_task_status(&session_uri, &uri, status).await?;
+                    let task = store.set_task_status(&actor_id, &uri, status).await?;
                     json_text(json!({ "task": task }))
                 }
             },
@@ -1037,12 +1034,12 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriUriArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
-                    let task = store.submit_review(&session_uri, &uri).await?;
+                    let task = store.submit_review(&actor_id, &uri).await?;
                     json_text(json!({ "task": task }))
                 }
             },
@@ -1054,12 +1051,12 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriUriArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriUriArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
-                    let task = store.approve_review(&session_uri, &uri).await?;
+                    let task = store.approve_review(&actor_id, &uri).await?;
                     json_text(json!({ "task": task }))
                 }
             },
@@ -1074,13 +1071,13 @@ impl TaskGraphTools {
             move |request: borg_agent::ToolRequest<RequestReviewChangesArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
                     let note = required_str(request.arguments.note, "note")?;
                     let return_to =
                         parse_status(request.arguments.return_to.as_deref().unwrap_or("doing"))?;
                     let task = store
-                        .request_review_changes(&session_uri, &uri, return_to, &note)
+                        .request_review_changes(&actor_id, &uri, return_to, &note)
                         .await?;
                     json_text(json!({ "task": task }))
                 }
@@ -1098,7 +1095,7 @@ impl TaskGraphTools {
             move |request: borg_agent::ToolRequest<SplitTaskIntoSubtasksArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let creator_actor_id =
                         required_str(request.arguments.creator_actor_id, "creator_actor_id")?;
                     let uri = required_str(request.arguments.uri, "uri")?;
@@ -1128,7 +1125,7 @@ impl TaskGraphTools {
                         })
                         .collect::<Result<Vec<_>>>()?;
                     let (parent, created) = store
-                        .split_task_into_subtasks(&session_uri, &creator_actor_id, &uri, subtasks)
+                        .split_task_into_subtasks(&actor_id, &creator_actor_id, &uri, subtasks)
                         .await?;
                     json_text(json!({ "parent": parent, "created": created }))
                 }
@@ -1144,10 +1141,10 @@ impl TaskGraphTools {
             move |request: borg_agent::ToolRequest<AddCommentArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let task_uri = required_str(request.arguments.task_uri, "task_uri")?;
                     let body = required_str(request.arguments.body, "body")?;
-                    let comment = store.add_comment(&session_uri, &task_uri, &body).await?;
+                    let comment = store.add_comment(&actor_id, &task_uri, &body).await?;
                     json_text(json!({ "comment": comment }))
                 }
             },
@@ -1193,12 +1190,12 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriLimitArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriLimitArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let limit = request.arguments.limit.unwrap_or(1);
-                    let tasks = store.next_task(&session_uri, limit).await?;
+                    let tasks = store.next_task(&actor_id, limit).await?;
                     json_text(json!({ "tasks": tasks }))
                 }
             },
@@ -1210,12 +1207,12 @@ impl TaskGraphTools {
         Ok(Tool::new_transcoded(
             spec,
             None,
-            move |request: borg_agent::ToolRequest<SessionUriLimitArgs>| {
+            move |request: borg_agent::ToolRequest<ActorUriLimitArgs>| {
                 let store = store.clone();
                 async move {
-                    let session_uri = required_str(request.arguments.session_uri, "session_uri")?;
+                    let actor_id = required_str(request.arguments.actor_id, "actor_id")?;
                     let limit = request.arguments.limit.unwrap_or(25);
-                    let tasks = store.reconcile_in_progress(&session_uri, limit).await?;
+                    let tasks = store.reconcile_in_progress(&actor_id, limit).await?;
                     json_text(json!({ "tasks": tasks }))
                 }
             },

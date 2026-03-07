@@ -13,7 +13,7 @@ type Story = StoryObj<typeof ScrollArea>;
 
 const logs = [
   "Connected to provider: OpenAI",
-  "Created session: session_4db2",
+  "Created actor: actor_4db2",
   "Queued tool call: list_ports",
   "Received tool output: 3 ports",
   "Dispatched follow-up prompt",

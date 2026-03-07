@@ -194,6 +194,14 @@ impl Provider for OpenAiProvider {
         self.provider_name
     }
 
+    fn supports_chat_completion(&self) -> bool {
+        true
+    }
+
+    fn supports_audio_transcription(&self) -> bool {
+        true
+    }
+
     async fn chat(&self, req: &LlmRequest) -> Result<LlmAssistantMessage> {
         match self.api_mode {
             OpenAiApiMode::ChatCompletions => self.chat_via_chat_completions(req).await,

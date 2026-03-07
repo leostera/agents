@@ -11,7 +11,7 @@ export type MessageAction = {
   disabled?: boolean;
 };
 
-export type SessionMessage =
+export type ActorMessage =
   | {
       id: string;
       type: "message";

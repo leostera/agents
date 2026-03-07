@@ -148,17 +148,11 @@ pub trait AuthProvider: Send + Sync {
 
 #[async_trait]
 pub trait Provider: Send + Sync {
-    fn provider_name(&self) -> &'static str {
-        std::any::type_name::<Self>()
-    }
+    fn provider_name(&self) -> &'static str;
 
-    fn supports_chat_completion(&self) -> bool {
-        true
-    }
+    fn supports_chat_completion(&self) -> bool;
 
-    fn supports_audio_transcription(&self) -> bool {
-        true
-    }
+    fn supports_audio_transcription(&self) -> bool;
 
     async fn available_models(&self) -> Result<Vec<String>> {
         Err(crate::LlmError::configuration(format!(

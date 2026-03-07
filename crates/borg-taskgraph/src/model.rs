@@ -51,9 +51,7 @@ pub struct TaskRecord {
     pub definition_of_done: String,
     pub status: String,
     pub assignee_actor_id: String,
-    pub assignee_session_uri: String,
     pub reviewer_actor_id: String,
-    pub reviewer_session_uri: String,
     pub labels: Vec<String>,
     pub parent_uri: Option<String>,
     pub blocked_by: Vec<String>,
@@ -68,7 +66,7 @@ pub struct TaskRecord {
 pub struct CommentRecord {
     pub id: String,
     pub task_uri: String,
-    pub author_session_uri: String,
+    pub author_actor_id: String,
     pub body: String,
     pub created_at: String,
 }
@@ -77,7 +75,7 @@ pub struct CommentRecord {
 pub struct EventRecord {
     pub id: String,
     pub task_uri: String,
-    pub actor_session_uri: String,
+    pub actor_id: String,
     #[serde(rename = "type")]
     pub event_type: String,
     pub data: TaskEventData,
@@ -90,9 +88,7 @@ pub enum TaskEventData {
     Empty {},
     TaskCreated {
         assignee_actor_id: String,
-        assignee_session_uri: String,
         reviewer_actor_id: String,
-        reviewer_session_uri: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         parent_uri: Option<String>,
     },
@@ -103,9 +99,7 @@ pub enum TaskEventData {
     },
     TaskReassigned {
         old_assignee_actor_id: String,
-        old_assignee_session_uri: String,
         new_assignee_actor_id: String,
-        new_assignee_session_uri: String,
     },
     Labels {
         labels: Vec<String>,

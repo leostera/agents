@@ -21,13 +21,13 @@ export const Default: Story = {
 
     return (
       <Field orientation="horizontal" style={{ width: 380 }}>
-        <FieldLabel htmlFor="session-logs">Session logs</FieldLabel>
+        <FieldLabel htmlFor="actor-logs">Actor logs</FieldLabel>
         <Switch
           {...args}
-          id="session-logs"
+          id="actor-logs"
           checked={checked}
           onCheckedChange={setChecked}
-          aria-label="Session logs"
+          aria-label="Actor logs"
         />
       </Field>
     );

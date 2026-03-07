@@ -10,6 +10,9 @@
 
 This RFD proposes a large simplification pass over Borg's runtime and control-plane model.
 
+Update (2026-03-07):
+The identity model was simplified further after this draft and is now actor-only (`actor_id` only). See `RFD0030` for the final hard-cut semantics. Session-era wording below is historical context.
+
 The target model is:
 
 1. `Workspace`
@@ -23,7 +26,7 @@ The target model is:
 Primary cuts:
 
 1. Remove `behavior + agent_spec` indirection from runtime execution paths.
-2. Enforce `1 actor = 1 mailbox = 1 session` as a core identity rule.
+2. Enforce actor-only runtime identity (`actor_id` only).
 3. Remove legacy user-centric storage (`users`, `sessions.users_json`).
 4. Unify duplicated port binding APIs into one binding model.
 5. Remove legacy/compat storage paths (`port_session_ctx`, `message_index` sequencing).
@@ -48,6 +51,9 @@ Completed in mainline rewrite work:
 Remaining high-priority cuts:
 
 1. Keep enforcing typed-data boundaries so `serde_json::Value` stays restricted to explicit JSON boundary layers only (DB JSON columns, GraphQL `JsonValue`, provider/tool wire contracts).
+
+Update (2026-03-07):
+The actor-only hard cut from `RFD0030` is implemented in code. `sessions` and related runtime/API/storage surfaces were removed.
 
 ## Motivation
 [motivation]: #motivation

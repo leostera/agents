@@ -50,7 +50,7 @@ pub struct ListParams {
 struct TaskNode {
     uri: String,
     status: TaskStatus,
-    assignee_session_uri: String,
+    assignee_actor_id: String,
     parent_uri: Option<String>,
 }
 
@@ -80,11 +80,11 @@ impl TaskGraphStore {
 
     pub async fn create_task(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         creator_actor_id: &str,
         input: CreateTaskInput,
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_non_empty(creator_actor_id, "task.validation_failed: creator_actor_id")?;
         ensure_non_empty(&input.title, "task.validation_failed: title")?;
         ensure_non_empty(
@@ -121,8 +121,10 @@ impl TaskGraphStore {
         .ok();
 
         let task_uri = new_uri("task")?;
-        let assignee_session_uri = new_uri("session")?;
-        let reviewer_session_uri = new_uri("session")?;
+        let assignee_actor_id = input.assignee_actor_id.trim().to_string();
+        let reviewer_actor_id = creator_actor_id.trim().to_string();
+        let assignee_actor_id = assignee_actor_id.clone();
+        let reviewer_actor_id = reviewer_actor_id.clone();
         let now = now_rfc3339();
         let mut tx = self.db.pool().begin().await?;
 
@@ -142,9 +144,7 @@ impl TaskGraphStore {
                 definition_of_done,
                 status,
                 assignee_actor_id,
-                assignee_session_uri,
                 reviewer_actor_id,
-                reviewer_session_uri,
                 parent_uri,
                 duplicate_of,
                 review_submitted_at,
@@ -152,16 +152,14 @@ impl TaskGraphStore {
                 review_changes_requested_at,
                 created_at,
                 updated_at
-            ) VALUES(?1, ?2, ?3, ?4, 'pending', ?5, ?6, ?7, ?8, ?9, NULL, NULL, NULL, NULL, ?10, ?11)"#,
+            ) VALUES(?1, ?2, ?3, ?4, 'pending', ?5, ?6, ?7, NULL, NULL, NULL, NULL, ?8, ?9)"#,
         )
         .bind(&task_uri)
         .bind(input.title.trim())
         .bind(input.description.trim())
         .bind(input.definition_of_done.trim())
-        .bind(input.assignee_actor_id.trim())
-        .bind(&assignee_session_uri)
-        .bind(creator_actor_id.trim())
-        .bind(&reviewer_session_uri)
+        .bind(&assignee_actor_id)
+        .bind(&reviewer_actor_id)
         .bind(input.parent_uri.as_deref())
         .bind(&now)
         .bind(&now)
@@ -206,13 +204,11 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             &task_uri,
-            session_uri,
+            actor_id,
             "task.created",
             TaskEventData::TaskCreated {
-                assignee_actor_id: input.assignee_actor_id,
-                assignee_session_uri,
-                reviewer_actor_id: creator_actor_id.to_string(),
-                reviewer_session_uri,
+                assignee_actor_id,
+                reviewer_actor_id,
                 parent_uri: None,
             },
         )
@@ -293,15 +289,15 @@ impl TaskGraphStore {
 
     pub async fn update_task_fields(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         patch: TaskPatch,
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
 
         let mut tx = self.db.pool().begin().await?;
-        let before = ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        let before = ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
 
         let title = patch
             .title
@@ -338,7 +334,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "task.updated",
             TaskEventData::TaskUpdated {
                 title,
@@ -357,11 +353,11 @@ impl TaskGraphStore {
 
     pub async fn reassign_assignee(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         new_assignee_actor_id: &str,
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
         ensure_non_empty(
             new_assignee_actor_id,
@@ -369,29 +365,26 @@ impl TaskGraphStore {
         )?;
 
         let mut tx = self.db.pool().begin().await?;
-        let task = ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
-        if task.reviewer_session_uri != session_uri {
+        let task = ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
+        if task.reviewer_actor_id != actor_id {
             return Err(anyhow!("task.reassign_forbidden"));
         }
 
         let old_assignee_actor_id = task.assignee_actor_id.clone();
-        let old_assignee_session_uri = task.assignee_session_uri.clone();
-        let new_assignee_session_uri = new_uri("session")?;
+        let new_assignee_actor_id = new_assignee_actor_id.trim().to_string();
         let now = now_rfc3339();
 
         sqlx::query(
             r#"UPDATE taskgraph_tasks
                SET assignee_actor_id = ?1,
-                   assignee_session_uri = ?2,
                    status = 'pending',
                    review_submitted_at = NULL,
                    review_approved_at = NULL,
                    review_changes_requested_at = NULL,
-                   updated_at = ?3
-               WHERE uri = ?4"#,
+                   updated_at = ?2
+               WHERE uri = ?3"#,
         )
         .bind(new_assignee_actor_id.trim())
-        .bind(&new_assignee_session_uri)
         .bind(&now)
         .bind(uri)
         .execute(tx.as_mut())
@@ -400,13 +393,11 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "task.reassigned",
             TaskEventData::TaskReassigned {
                 old_assignee_actor_id,
-                old_assignee_session_uri,
                 new_assignee_actor_id: new_assignee_actor_id.trim().to_string(),
-                new_assignee_session_uri,
             },
         )
         .await?;
@@ -420,11 +411,11 @@ impl TaskGraphStore {
 
     pub async fn add_task_labels(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         labels: &[String],
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
 
         if labels.is_empty() {
@@ -432,7 +423,7 @@ impl TaskGraphStore {
         }
 
         let mut tx = self.db.pool().begin().await?;
-        ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
         let now = now_rfc3339();
 
         for label in labels {
@@ -456,7 +447,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "label.added",
             TaskEventData::Labels {
                 labels: labels.to_vec(),
@@ -473,11 +464,11 @@ impl TaskGraphStore {
 
     pub async fn remove_task_labels(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         labels: &[String],
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
 
         if labels.is_empty() {
@@ -485,7 +476,7 @@ impl TaskGraphStore {
         }
 
         let mut tx = self.db.pool().begin().await?;
-        ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
         let now = now_rfc3339();
 
         for label in labels {
@@ -505,7 +496,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "label.removed",
             TaskEventData::Labels {
                 labels: labels.to_vec(),
@@ -522,11 +513,11 @@ impl TaskGraphStore {
 
     pub async fn set_task_parent(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         parent_uri: &str,
     ) -> Result<(TaskRecord, TaskRecord)> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
         ensure_uri(parent_uri, "task.invalid_uri")?;
         if uri == parent_uri {
@@ -536,7 +527,7 @@ impl TaskGraphStore {
         }
 
         let mut tx = self.db.pool().begin().await?;
-        ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
         ensure_task_exists_tx(&mut tx, parent_uri).await?;
 
         let now = now_rfc3339();
@@ -552,7 +543,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "task.parent_set",
             TaskEventData::ParentSet {
                 parent_uri: parent_uri.to_string(),
@@ -571,12 +562,12 @@ impl TaskGraphStore {
         Ok((child, parent))
     }
 
-    pub async fn clear_task_parent(&self, session_uri: &str, uri: &str) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+    pub async fn clear_task_parent(&self, actor_id: &str, uri: &str) -> Result<TaskRecord> {
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
 
         let mut tx = self.db.pool().begin().await?;
-        ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
 
         let now = now_rfc3339();
         sqlx::query("UPDATE taskgraph_tasks SET parent_uri = NULL, updated_at = ?1 WHERE uri = ?2")
@@ -588,7 +579,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "task.parent_cleared",
             TaskEventData::Empty {},
         )
@@ -665,11 +656,11 @@ impl TaskGraphStore {
 
     pub async fn add_task_blocked_by(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         blocked_by: &str,
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
         ensure_uri(blocked_by, "task.invalid_uri")?;
         if uri == blocked_by {
@@ -677,7 +668,7 @@ impl TaskGraphStore {
         }
 
         let mut tx = self.db.pool().begin().await?;
-        ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
         ensure_task_exists_tx(&mut tx, blocked_by).await?;
 
         let now = now_rfc3339();
@@ -695,7 +686,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "dep.added",
             TaskEventData::BlockedBy {
                 blocked_by: blocked_by.to_string(),
@@ -712,16 +703,16 @@ impl TaskGraphStore {
 
     pub async fn remove_task_blocked_by(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         blocked_by: &str,
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
         ensure_uri(blocked_by, "task.invalid_uri")?;
 
         let mut tx = self.db.pool().begin().await?;
-        ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
 
         sqlx::query(
             "DELETE FROM taskgraph_task_blocked_by WHERE task_uri = ?1 AND blocked_by_uri = ?2",
@@ -741,7 +732,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "dep.removed",
             TaskEventData::BlockedBy {
                 blocked_by: blocked_by.to_string(),
@@ -758,11 +749,11 @@ impl TaskGraphStore {
 
     pub async fn set_task_duplicate_of(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         duplicate_of: &str,
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
         ensure_uri(duplicate_of, "task.invalid_uri")?;
 
@@ -773,7 +764,7 @@ impl TaskGraphStore {
         }
 
         let mut tx = self.db.pool().begin().await?;
-        ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
         ensure_task_exists_tx(&mut tx, duplicate_of).await?;
 
         let now = now_rfc3339();
@@ -787,7 +778,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "task.duplicate_set",
             TaskEventData::DuplicateOf {
                 duplicate_of: duplicate_of.to_string(),
@@ -795,7 +786,7 @@ impl TaskGraphStore {
         )
         .await?;
 
-        cascade_discard_tx(&mut tx, uri, session_uri, "status.discarded.duplicate").await?;
+        cascade_discard_tx(&mut tx, uri, actor_id, "status.discarded.duplicate").await?;
 
         let out = load_task_tx(&mut tx, uri)
             .await?
@@ -804,16 +795,12 @@ impl TaskGraphStore {
         Ok(out)
     }
 
-    pub async fn clear_task_duplicate_of(
-        &self,
-        session_uri: &str,
-        uri: &str,
-    ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+    pub async fn clear_task_duplicate_of(&self, actor_id: &str, uri: &str) -> Result<TaskRecord> {
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
 
         let mut tx = self.db.pool().begin().await?;
-        ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
 
         let now = now_rfc3339();
         sqlx::query(
@@ -827,7 +814,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "task.duplicate_cleared",
             TaskEventData::Empty {},
         )
@@ -905,16 +892,16 @@ impl TaskGraphStore {
 
     pub async fn add_task_reference(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         reference: &str,
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
         ensure_uri(reference, "task.invalid_uri")?;
         let mut tx = self.db.pool().begin().await?;
 
-        ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
         ensure_task_exists_tx(&mut tx, reference).await?;
         let now = now_rfc3339();
 
@@ -936,7 +923,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "reference.added",
             TaskEventData::Reference {
                 reference: reference.to_string(),
@@ -953,16 +940,16 @@ impl TaskGraphStore {
 
     pub async fn remove_task_reference(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         reference: &str,
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
         ensure_uri(reference, "task.invalid_uri")?;
 
         let mut tx = self.db.pool().begin().await?;
-        ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
 
         sqlx::query(
             "DELETE FROM taskgraph_task_references WHERE task_uri = ?1 AND reference_uri = ?2",
@@ -982,7 +969,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "reference.removed",
             TaskEventData::Reference {
                 reference: reference.to_string(),
@@ -999,20 +986,20 @@ impl TaskGraphStore {
 
     pub async fn set_task_status(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         status: TaskStatus,
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
 
         let mut tx = self.db.pool().begin().await?;
-        let task = ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        let task = ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
 
         match status {
             TaskStatus::Pending | TaskStatus::Doing => {
-                if task.assignee_session_uri != session_uri {
-                    return Err(anyhow!("auth.forbidden: assignee session required"));
+                if task.assignee_actor_id != actor_id {
+                    return Err(anyhow!("auth.forbidden: assignee actor required"));
                 }
                 let now = now_rfc3339();
                 sqlx::query(
@@ -1026,7 +1013,7 @@ impl TaskGraphStore {
                 append_event_tx(
                     &mut tx,
                     uri,
-                    session_uri,
+                    actor_id,
                     "status.changed",
                     TaskEventData::Status {
                         status: status.as_str().to_string(),
@@ -1035,10 +1022,10 @@ impl TaskGraphStore {
                 .await?;
             }
             TaskStatus::Discarded => {
-                if task.reviewer_session_uri != session_uri {
-                    return Err(anyhow!("auth.forbidden: reviewer session required"));
+                if task.reviewer_actor_id != actor_id {
+                    return Err(anyhow!("auth.forbidden: reviewer actor required"));
                 }
-                cascade_discard_tx(&mut tx, uri, session_uri, "status.discarded").await?;
+                cascade_discard_tx(&mut tx, uri, actor_id, "status.discarded").await?;
             }
             TaskStatus::Review | TaskStatus::Done => {
                 return Err(anyhow!(
@@ -1055,15 +1042,15 @@ impl TaskGraphStore {
         Ok(out)
     }
 
-    pub async fn submit_review(&self, session_uri: &str, uri: &str) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+    pub async fn submit_review(&self, actor_id: &str, uri: &str) -> Result<TaskRecord> {
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
 
         let mut tx = self.db.pool().begin().await?;
-        let task = ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        let task = ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
 
-        if task.assignee_session_uri != session_uri {
-            return Err(anyhow!("review.session_mismatch"));
+        if task.assignee_actor_id != actor_id {
+            return Err(anyhow!("review.actor_mismatch"));
         }
 
         let current =
@@ -1087,7 +1074,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "review.submitted",
             TaskEventData::ReviewSubmitted {
                 submitted_at: now.clone(),
@@ -1102,15 +1089,15 @@ impl TaskGraphStore {
         Ok(out)
     }
 
-    pub async fn approve_review(&self, session_uri: &str, uri: &str) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+    pub async fn approve_review(&self, actor_id: &str, uri: &str) -> Result<TaskRecord> {
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
 
         let mut tx = self.db.pool().begin().await?;
-        let task = ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        let task = ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
 
-        if task.reviewer_session_uri != session_uri {
-            return Err(anyhow!("review.session_mismatch"));
+        if task.reviewer_actor_id != actor_id {
+            return Err(anyhow!("review.actor_mismatch"));
         }
 
         if task.review.submitted_at.is_none() {
@@ -1137,7 +1124,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "review.approved",
             TaskEventData::ReviewApproved {
                 approved_at: now.clone(),
@@ -1154,12 +1141,12 @@ impl TaskGraphStore {
 
     pub async fn request_review_changes(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         uri: &str,
         return_to: TaskStatus,
         note: &str,
     ) -> Result<TaskRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
         ensure_non_empty(note, "review.note_required")?;
         if !matches!(return_to, TaskStatus::Pending | TaskStatus::Doing) {
@@ -1169,10 +1156,10 @@ impl TaskGraphStore {
         }
 
         let mut tx = self.db.pool().begin().await?;
-        let task = ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        let task = ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
 
-        if task.reviewer_session_uri != session_uri {
-            return Err(anyhow!("review.session_mismatch"));
+        if task.reviewer_actor_id != actor_id {
+            return Err(anyhow!("review.actor_mismatch"));
         }
 
         let now = now_rfc3339();
@@ -1194,7 +1181,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "review.changes_requested",
             TaskEventData::ReviewChangesRequested {
                 changes_requested_at: now.clone(),
@@ -1213,12 +1200,12 @@ impl TaskGraphStore {
 
     pub async fn split_task_into_subtasks(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         creator_actor_id: &str,
         uri: &str,
         subtasks: Vec<SplitSubtaskInput>,
     ) -> Result<(TaskRecord, Vec<TaskRecord>)> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(uri, "task.invalid_uri")?;
         ensure_non_empty(creator_actor_id, "task.validation_failed: creator_actor_id")?;
         if subtasks.is_empty() {
@@ -1228,7 +1215,7 @@ impl TaskGraphStore {
         }
 
         let mut tx = self.db.pool().begin().await?;
-        let parent = ensure_mutation_allowed_tx(&mut tx, uri, session_uri).await?;
+        let parent = ensure_mutation_allowed_tx(&mut tx, uri, actor_id).await?;
         if TaskStatus::parse(&parent.status) == Some(TaskStatus::Done) {
             return Err(anyhow!(
                 "task.validation_failed: done tasks cannot be split"
@@ -1249,8 +1236,10 @@ impl TaskGraphStore {
             }
 
             let task_uri = new_uri("task")?;
-            let assignee_session_uri = new_uri("session")?;
-            let reviewer_session_uri = new_uri("session")?;
+            let assignee_actor_id = subtask.assignee_actor_id.trim().to_string();
+            let reviewer_actor_id = creator_actor_id.trim().to_string();
+            let assignee_actor_id = assignee_actor_id.clone();
+            let reviewer_actor_id = reviewer_actor_id.clone();
 
             sqlx::query(
                 r#"INSERT INTO taskgraph_tasks(
@@ -1260,9 +1249,7 @@ impl TaskGraphStore {
                     definition_of_done,
                     status,
                     assignee_actor_id,
-                    assignee_session_uri,
                     reviewer_actor_id,
-                    reviewer_session_uri,
                     parent_uri,
                     duplicate_of,
                     review_submitted_at,
@@ -1270,16 +1257,14 @@ impl TaskGraphStore {
                     review_changes_requested_at,
                     created_at,
                     updated_at
-                ) VALUES(?1, ?2, ?3, ?4, 'pending', ?5, ?6, ?7, ?8, ?9, NULL, NULL, NULL, NULL, ?10, ?11)"#,
+                ) VALUES(?1, ?2, ?3, ?4, 'pending', ?5, ?6, ?7, NULL, NULL, NULL, NULL, ?8, ?9)"#,
             )
             .bind(&task_uri)
             .bind(subtask.title.trim())
             .bind(subtask.description.trim())
             .bind(subtask.definition_of_done.trim())
-            .bind(subtask.assignee_actor_id.trim())
-            .bind(&assignee_session_uri)
-            .bind(creator_actor_id.trim())
-            .bind(&reviewer_session_uri)
+            .bind(&assignee_actor_id)
+            .bind(&reviewer_actor_id)
             .bind(uri)
             .bind(&now)
             .bind(&now)
@@ -1300,13 +1285,11 @@ impl TaskGraphStore {
             append_event_tx(
                 &mut tx,
                 &task_uri,
-                session_uri,
+                actor_id,
                 "task.created",
                 TaskEventData::TaskCreated {
-                    assignee_actor_id: subtask.assignee_actor_id,
-                    assignee_session_uri,
-                    reviewer_actor_id: creator_actor_id.to_string(),
-                    reviewer_session_uri,
+                    assignee_actor_id,
+                    reviewer_actor_id,
                     parent_uri: Some(uri.to_string()),
                 },
             )
@@ -1326,7 +1309,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             uri,
-            session_uri,
+            actor_id,
             "task.split",
             TaskEventData::TaskSplit {
                 subtask_count: created.len() as i64,
@@ -1344,11 +1327,11 @@ impl TaskGraphStore {
 
     pub async fn add_comment(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         task_uri: &str,
         body: &str,
     ) -> Result<CommentRecord> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         ensure_uri(task_uri, "task.invalid_uri")?;
         ensure_non_empty(body, "task.validation_failed: comment body")?;
 
@@ -1358,11 +1341,11 @@ impl TaskGraphStore {
         let now = now_rfc3339();
 
         sqlx::query(
-            "INSERT INTO taskgraph_comments(id, task_uri, author_session_uri, body, created_at) VALUES(?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO taskgraph_comments(id, task_uri, author_actor_id, body, created_at) VALUES(?1, ?2, ?3, ?4, ?5)",
         )
         .bind(&id)
         .bind(task_uri)
-        .bind(session_uri)
+        .bind(actor_id)
         .bind(body.trim())
         .bind(&now)
         .execute(tx.as_mut())
@@ -1371,7 +1354,7 @@ impl TaskGraphStore {
         append_event_tx(
             &mut tx,
             task_uri,
-            session_uri,
+            actor_id,
             "comment.added",
             TaskEventData::CommentAdded {
                 comment_id: id.clone(),
@@ -1383,7 +1366,7 @@ impl TaskGraphStore {
         Ok(CommentRecord {
             id,
             task_uri: task_uri.to_string(),
-            author_session_uri: session_uri.to_string(),
+            author_actor_id: actor_id.to_string(),
             body: body.trim().to_string(),
             created_at: now,
         })
@@ -1402,7 +1385,7 @@ impl TaskGraphStore {
         let (cursor_ts, cursor_id) = decode_cursor(params.cursor.as_deref())?;
         let mut rows = if let (Some(ts), Some(id)) = (&cursor_ts, &cursor_id) {
             sqlx::query(
-                r#"SELECT id, task_uri, author_session_uri, body, created_at
+                r#"SELECT id, task_uri, author_actor_id, body, created_at
                    FROM taskgraph_comments
                    WHERE task_uri = ?1
                      AND (created_at > ?2 OR (created_at = ?2 AND id > ?3))
@@ -1417,7 +1400,7 @@ impl TaskGraphStore {
             .await?
         } else {
             sqlx::query(
-                r#"SELECT id, task_uri, author_session_uri, body, created_at
+                r#"SELECT id, task_uri, author_actor_id, body, created_at
                    FROM taskgraph_comments
                    WHERE task_uri = ?1
                    ORDER BY created_at ASC, id ASC
@@ -1444,7 +1427,7 @@ impl TaskGraphStore {
             .map(|row| CommentRecord {
                 id: row.get("id"),
                 task_uri: row.get("task_uri"),
-                author_session_uri: row.get("author_session_uri"),
+                author_actor_id: row.get("author_actor_id"),
                 body: row.get("body"),
                 created_at: row.get("created_at"),
             })
@@ -1467,7 +1450,7 @@ impl TaskGraphStore {
         let (cursor_ts, cursor_id) = decode_cursor(params.cursor.as_deref())?;
         let mut rows = if let (Some(ts), Some(id)) = (&cursor_ts, &cursor_id) {
             sqlx::query(
-                r#"SELECT id, task_uri, actor_session_uri, event_type, data_json, created_at
+                r#"SELECT id, task_uri, actor_id, event_type, data_json, created_at
                    FROM taskgraph_events
                    WHERE task_uri = ?1
                      AND (created_at > ?2 OR (created_at = ?2 AND id > ?3))
@@ -1482,7 +1465,7 @@ impl TaskGraphStore {
             .await?
         } else {
             sqlx::query(
-                r#"SELECT id, task_uri, actor_session_uri, event_type, data_json, created_at
+                r#"SELECT id, task_uri, actor_id, event_type, data_json, created_at
                    FROM taskgraph_events
                    WHERE task_uri = ?1
                    ORDER BY created_at ASC, id ASC
@@ -1509,7 +1492,7 @@ impl TaskGraphStore {
             .map(|row| EventRecord {
                 id: row.get("id"),
                 task_uri: row.get("task_uri"),
-                actor_session_uri: row.get("actor_session_uri"),
+                actor_id: row.get("actor_id"),
                 event_type: row.get("event_type"),
                 data: parse_event_data_or_empty(row.get("data_json")),
                 created_at: row.get("created_at"),
@@ -1520,8 +1503,8 @@ impl TaskGraphStore {
         Ok((events, next_cursor))
     }
 
-    pub async fn next_task(&self, session_uri: &str, limit: usize) -> Result<Vec<TaskRecord>> {
-        ensure_uri(session_uri, "auth.session_required")?;
+    pub async fn next_task(&self, actor_id: &str, limit: usize) -> Result<Vec<TaskRecord>> {
+        ensure_uri(actor_id, "auth.actor_required")?;
         let limit = normalized_limit(limit);
         let mut tx = self.db.pool().begin().await?;
         let tasks = load_all_task_nodes_tx(&mut tx).await?;
@@ -1537,7 +1520,7 @@ impl TaskGraphStore {
             let Some(task) = by_uri.get(&task_uri) else {
                 continue;
             };
-            if task.assignee_session_uri != session_uri {
+            if task.assignee_actor_id != actor_id {
                 continue;
             }
             if !matches!(task.status, TaskStatus::Pending | TaskStatus::Doing) {
@@ -1559,10 +1542,10 @@ impl TaskGraphStore {
 
     pub async fn reconcile_in_progress(
         &self,
-        session_uri: &str,
+        actor_id: &str,
         limit: usize,
     ) -> Result<Vec<TaskRecord>> {
-        ensure_uri(session_uri, "auth.session_required")?;
+        ensure_uri(actor_id, "auth.actor_required")?;
         let limit = normalized_limit(limit);
         let mut tx = self.db.pool().begin().await?;
         let tasks = load_all_task_nodes_tx(&mut tx).await?;
@@ -1578,7 +1561,7 @@ impl TaskGraphStore {
             let Some(task) = by_uri.get(&task_uri) else {
                 continue;
             };
-            if task.assignee_session_uri != session_uri {
+            if task.assignee_actor_id != actor_id {
                 continue;
             }
             if task.status != TaskStatus::Doing {
@@ -1693,12 +1676,12 @@ async fn ensure_task_exists_tx(tx: &mut Transaction<'_, Sqlite>, uri: &str) -> R
 async fn ensure_mutation_allowed_tx(
     tx: &mut Transaction<'_, Sqlite>,
     uri: &str,
-    session_uri: &str,
+    actor_id: &str,
 ) -> Result<TaskRecord> {
     let task = load_task_tx(tx, uri)
         .await?
         .ok_or_else(|| anyhow!("task.not_found"))?;
-    if task.assignee_session_uri != session_uri && task.reviewer_session_uri != session_uri {
+    if task.assignee_actor_id != actor_id && task.reviewer_actor_id != actor_id {
         return Err(anyhow!("auth.forbidden"));
     }
     Ok(task)
@@ -1713,9 +1696,7 @@ async fn load_task_tx(tx: &mut Transaction<'_, Sqlite>, uri: &str) -> Result<Opt
             definition_of_done,
             status,
             assignee_actor_id,
-            assignee_session_uri,
             reviewer_actor_id,
-            reviewer_session_uri,
             parent_uri,
             duplicate_of,
             review_submitted_at,
@@ -1781,9 +1762,7 @@ async fn load_task_tx(tx: &mut Transaction<'_, Sqlite>, uri: &str) -> Result<Opt
         definition_of_done: row.get("definition_of_done"),
         status: row.get("status"),
         assignee_actor_id: row.get("assignee_actor_id"),
-        assignee_session_uri: row.get("assignee_session_uri"),
         reviewer_actor_id: row.get("reviewer_actor_id"),
-        reviewer_session_uri: row.get("reviewer_session_uri"),
         labels,
         parent_uri: row.get("parent_uri"),
         blocked_by,
@@ -1802,18 +1781,18 @@ async fn load_task_tx(tx: &mut Transaction<'_, Sqlite>, uri: &str) -> Result<Opt
 async fn append_event_tx(
     tx: &mut Transaction<'_, Sqlite>,
     task_uri: &str,
-    actor_session_uri: &str,
+    actor_id: &str,
     event_type: &str,
     data: TaskEventData,
 ) -> Result<()> {
     let id = Uuid::now_v7().to_string();
     let now = now_rfc3339();
     sqlx::query(
-        "INSERT INTO taskgraph_events(id, task_uri, actor_session_uri, event_type, data_json, created_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO taskgraph_events(id, task_uri, actor_id, event_type, data_json, created_at) VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
     )
     .bind(id)
     .bind(task_uri)
-    .bind(actor_session_uri)
+    .bind(actor_id)
     .bind(event_type)
     .bind(serde_json::to_string(&data)?)
     .bind(now)
@@ -1824,7 +1803,7 @@ async fn append_event_tx(
 
 async fn load_all_task_nodes_tx(tx: &mut Transaction<'_, Sqlite>) -> Result<Vec<TaskNode>> {
     let rows = sqlx::query(
-        r#"SELECT uri, status, assignee_session_uri, parent_uri
+        r#"SELECT uri, status, assignee_actor_id, parent_uri
            FROM taskgraph_tasks"#,
     )
     .fetch_all(tx.as_mut())
@@ -1839,7 +1818,7 @@ async fn load_all_task_nodes_tx(tx: &mut Transaction<'_, Sqlite>) -> Result<Vec<
         out.push(TaskNode {
             uri: row.get("uri"),
             status,
-            assignee_session_uri: row.get("assignee_session_uri"),
+            assignee_actor_id: row.get("assignee_actor_id"),
             parent_uri: row.get("parent_uri"),
         });
     }
@@ -2019,7 +1998,7 @@ async fn collect_descendants_tx(
 async fn cascade_discard_tx(
     tx: &mut Transaction<'_, Sqlite>,
     root_uri: &str,
-    actor_session_uri: &str,
+    actor_id: &str,
     event_type: &str,
 ) -> Result<()> {
     let descendants = collect_descendants_tx(tx, root_uri).await?;
@@ -2051,7 +2030,7 @@ async fn cascade_discard_tx(
         append_event_tx(
             tx,
             &uri,
-            actor_session_uri,
+            actor_id,
             event_type,
             TaskEventData::Status {
                 status: "discarded".to_string(),

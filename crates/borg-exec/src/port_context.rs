@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TelegramSessionContext {
+pub struct TelegramContext {
     pub chat_id: i64,
     pub chat_type: String,
     pub participants: BTreeMap<String, TelegramParticipant>,
@@ -18,7 +18,7 @@ pub struct TelegramParticipant {
     pub last_name: Option<String>,
 }
 
-impl TelegramSessionContext {
+impl TelegramContext {
     pub fn set_chat(&mut self, chat_id: i64, chat_type: impl Into<String>) {
         self.chat_id = chat_id;
         self.chat_type = chat_type.into();
@@ -50,7 +50,7 @@ impl TelegramSessionContext {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct DiscordSessionContext {
+pub struct DiscordContext {
     pub channel_id: u64,
     pub guild_id: Option<u64>,
     pub message_id: u64,
@@ -59,14 +59,14 @@ pub struct DiscordSessionContext {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct HttpSessionContext {}
+pub struct HttpContext {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "port", rename_all = "snake_case")]
 pub enum PortContext {
-    Telegram(TelegramSessionContext),
-    Discord(DiscordSessionContext),
-    Http(HttpSessionContext),
+    Telegram(TelegramContext),
+    Discord(DiscordContext),
+    Http(HttpContext),
     Unknown,
 }
 
@@ -77,14 +77,14 @@ impl Default for PortContext {
 }
 
 impl PortContext {
-    pub fn as_telegram(&self) -> Option<&TelegramSessionContext> {
+    pub fn as_telegram(&self) -> Option<&TelegramContext> {
         match self {
             Self::Telegram(ctx) => Some(ctx),
             _ => None,
         }
     }
 
-    pub fn as_discord(&self) -> Option<&DiscordSessionContext> {
+    pub fn as_discord(&self) -> Option<&DiscordContext> {
         match self {
             Self::Discord(ctx) => Some(ctx),
             _ => None,

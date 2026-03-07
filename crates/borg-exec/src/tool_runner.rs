@@ -44,7 +44,6 @@ pub fn build_exec_toolchain_with_context(
     memory: MemoryStore,
     db: BorgDb,
     files: BorgFs,
-    current_session_id: Uri,
     current_actor_id: Uri,
     current_user_id: Uri,
     allow_task_creation: bool,
@@ -59,11 +58,7 @@ pub fn build_exec_toolchain_with_context(
         build_taskgraph_worker_toolchain(db.clone())?
     };
     let schedule = build_schedule_toolchain(db.clone())?;
-    let actor_admin = build_actor_admin_toolchain(
-        db.clone(),
-        current_session_id.clone(),
-        current_actor_id.clone(),
-    )?;
+    let actor_admin = build_actor_admin_toolchain(db.clone(), current_actor_id.clone())?;
     let actor_messaging =
         build_actor_messaging_toolchain(db.clone(), current_actor_id, current_user_id)?;
     let port_admin = build_port_admin_toolchain(db.clone())?;
@@ -101,14 +96,25 @@ fn default_actor_messaging_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "Actors-sendMessage".to_string(),
-            description: "Send a message from the current actor/session to another actor/session."
+            description: "Send a message from the current actor to another actor. If an inbound message contains `ACTOR_MESSAGE_META` with `reply_target_actor_id`, use this tool to reply to that actor and include `in_reply_to_submission_id` when provided."
                 .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "target_actor_id": { "type": "string", "format": "uri" },
-                    "text": { "type": "string" },
-                    "in_reply_to_submission_id": { "type": "string", "format": "uri" }
+                    "target_actor_id": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "Destination actor URI. For replies, set this to `reply_target_actor_id` from `ACTOR_MESSAGE_META`."
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Message text to send to the target actor."
+                    },
+                    "in_reply_to_submission_id": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "Submission/message URI being replied to. Use `submission_id` from `ACTOR_MESSAGE_META` when present."
+                    }
                 },
                 "required": ["target_actor_id", "text"],
                 "additionalProperties": false
@@ -117,12 +123,16 @@ fn default_actor_messaging_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "Actors-receive".to_string(),
             description:
-                "Wait for the next actor reply message in this actor/session, optionally filtered by submission id."
+                "Wait for the next actor reply message for this actor, optionally filtered by submission id. Reply messages include `source_actor_id`; when responding back, call `Actors-sendMessage`."
                     .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "expected_submission_id": { "type": "string", "format": "uri" },
+                    "expected_submission_id": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "Only return replies that reference this submission/message URI."
+                    },
                     "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 300000 }
                 },
                 "additionalProperties": false
@@ -159,7 +169,6 @@ fn build_actor_messaging_toolchain(
             let sender_user_id = sender_user_id.clone();
             async move {
                 let target_actor_id = Uri::parse(request.arguments.target_actor_id.trim())?;
-                let target_session_id = target_actor_id.clone();
                 if db.get_actor(&target_actor_id).await?.is_none() {
                     return Err(anyhow!("actor.not_found"));
                 }
@@ -184,7 +193,6 @@ fn build_actor_messaging_toolchain(
                 let envelope = ActorMailboxEnvelope {
                     actor_id: target_actor_id.to_string(),
                     user_id: sender_user_id.to_string(),
-                    session_id: target_session_id.to_string(),
                     port_context: crate::PortContext::Unknown,
                     input,
                 };
@@ -193,7 +201,6 @@ fn build_actor_messaging_toolchain(
                     .enqueue_actor_message_from_sender(
                         Some(&sender_actor_id),
                         &target_actor_id,
-                        Some(&target_session_id),
                         &payload,
                         None,
                         in_reply_to_submission_id.as_ref(),
@@ -240,7 +247,6 @@ fn build_actor_messaging_toolchain(
                     if let Some(row) = db
                         .claim_next_actor_reply_message(
                             &current_actor_id,
-                            &current_actor_id,
                             expected_submission_id.as_ref(),
                         )
                         .await?
@@ -261,7 +267,6 @@ fn build_actor_messaging_toolchain(
                             "submission_id": row.actor_message_id.to_string(),
                             "in_reply_to_submission_id": row.reply_to_message_id.map(|value| value.to_string()),
                             "source_actor_id": row.sender_actor_id.map(|value| value.to_string()),
-                            "source_session_id": serde_json::Value::Null,
                             "text": text,
                         });
                         return Ok(ToolResponse {

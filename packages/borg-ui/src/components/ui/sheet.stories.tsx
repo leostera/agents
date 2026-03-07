@@ -27,7 +27,7 @@ export const RightInspector: Story = {
       </SheetTrigger>
       <SheetContent>
         <SheetHeader>
-          <SheetTitle>Session inspector</SheetTitle>
+          <SheetTitle>Actor inspector</SheetTitle>
           <SheetDescription>
             Track token usage, model route, and active tool calls.
           </SheetDescription>
@@ -53,9 +53,9 @@ export const BottomActions: Story = {
       </SheetTrigger>
       <SheetContent side="bottom" className="max-w-2xl mx-auto rounded-t-xl">
         <SheetHeader>
-          <SheetTitle>Apply action to 14 sessions</SheetTitle>
+          <SheetTitle>Apply action to 14 actors</SheetTitle>
           <SheetDescription>
-            Choose one operation and apply it to selected sessions.
+            Choose one operation and apply it to selected actors.
           </SheetDescription>
         </SheetHeader>
         <SheetFooter className="sm:flex-row">

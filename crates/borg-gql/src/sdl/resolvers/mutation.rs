@@ -31,6 +31,18 @@ impl MutationRoot {
             .await
             .map_err(map_anyhow)?;
 
+        if let Some(model) = input
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            data.db
+                .set_actor_model(&input.id.0, model)
+                .await
+                .map_err(map_anyhow)?;
+        }
+
         let actor = data
             .db
             .get_actor(&input.id.0)
@@ -119,16 +131,16 @@ impl MutationRoot {
         Ok(PortObject::new(port))
     }
 
-    /// Creates or updates a port/session binding.
+    /// Creates or updates a port/actor binding.
     ///
     /// Example:
     /// ```graphql
-    /// mutation($session: Uri!, $key: Uri!) {
+    /// mutation($actor: Uri!, $key: Uri!) {
     ///   upsertPortBinding(input: {
     ///     portName: "telegram"
     ///     conversationKey: $key
-    ///     sessionId: $session
-    ///   }) { portName conversationKey sessionId }
+    ///     actorId: $actor
+    ///   }) { portName conversationKey actorId }
     /// }
     /// ```
     async fn upsert_port_binding(
@@ -141,7 +153,7 @@ impl MutationRoot {
             .upsert_port_binding_record(
                 &input.port_name,
                 &input.conversation_key.0,
-                &input.session_id.0,
+                &input.actor_id.0,
             )
             .await
             .map_err(map_anyhow)?;
@@ -149,7 +161,7 @@ impl MutationRoot {
         Ok(PortBindingObject {
             port_name: input.port_name,
             conversation_key: input.conversation_key.0,
-            session_id: input.session_id.0,
+            actor_id: input.actor_id.0,
         })
     }
 
@@ -446,125 +458,15 @@ impl MutationRoot {
         Ok(AppSecretObject::new(secret))
     }
 
-    /// Creates or updates a session.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($id: Uri!, $port: Uri!) {
-    ///   upsertSession(input: { sessionId: $id, port: $port }) { id portId }
-    /// }
-    /// ```
-    async fn upsert_session(
-        &self,
-        ctx: &Context<'_>,
-        input: UpsertSessionInput,
-    ) -> GqlResult<SessionObject> {
-        let data = ctx_data(ctx)?;
-        data.db
-            .upsert_session(&input.session_id.0, &input.port.0)
-            .await
-            .map_err(map_anyhow)?;
-
-        let session = data
-            .db
-            .get_session(&input.session_id.0)
-            .await
-            .map_err(map_anyhow)?
-            .ok_or_else(|| gql_error_with_code("session not found after upsert", "INTERNAL"))?;
-
-        Ok(SessionObject::new(session))
-    }
-
-    /// Appends a session message.
-    ///
-    /// Usage notes:
-    /// - Prefer typed fields (`messageType`, `role`, `text`) over raw `payload`.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($session: Uri!) {
-    ///   appendSessionMessage(input: {
-    ///     sessionId: $session
-    ///     messageType: "user"
-    ///     role: "user"
-    ///     text: "Hello"
-    ///   }) { id messageType role text }
-    /// }
-    /// ```
-    async fn append_session_message(
-        &self,
-        ctx: &Context<'_>,
-        input: AppendSessionMessageInput,
-    ) -> GqlResult<SessionMessageObject> {
-        let data = ctx_data(ctx)?;
-        let payload = build_session_message_payload(&SessionMessageInput {
-            message_type: input.message_type.clone(),
-            role: input.role.clone(),
-            text: input.text.clone(),
-            payload: input.payload.clone(),
-        })?;
-
-        let message_id = data
-            .db
-            .append_session_message(&input.session_id.0, &payload, None)
-            .await
-            .map_err(map_anyhow)?;
-
-        let message = data
-            .db
-            .get_session_message_by_id(&input.session_id.0, &message_id)
-            .await
-            .map_err(map_anyhow)?
-            .ok_or_else(|| gql_error_with_code("message not found after append", "INTERNAL"))?;
-
-        Ok(SessionMessageObject::new(message))
-    }
-
-    /// Updates an existing session message.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($session: Uri!) {
-    ///   patchSessionMessage(input: {
-    ///     sessionId: $session
-    ///     messageId: "borg:session_message:..."
-    ///     message: { messageType: "user", role: "user", text: "Updated text" }
-    ///   }) { id text }
-    /// }
-    /// ```
-    async fn patch_session_message(
-        &self,
-        ctx: &Context<'_>,
-        input: PatchSessionMessageInput,
-    ) -> GqlResult<SessionMessageObject> {
-        let data = ctx_data(ctx)?;
-        let payload = build_session_message_payload(&input.message)?;
-
-        data.db
-            .update_session_message_by_id(&input.session_id.0, &input.message_id.0, &payload)
-            .await
-            .map_err(map_anyhow)?;
-
-        let message = data
-            .db
-            .get_session_message_by_id(&input.session_id.0, &input.message_id.0)
-            .await
-            .map_err(map_anyhow)?
-            .ok_or_else(|| gql_error_with_code("session message not found", "NOT_FOUND"))?;
-
-        Ok(SessionMessageObject::new(message))
-    }
-
     /// Creates a schedule job.
     ///
     /// Example:
     /// ```graphql
-    /// mutation($actor: Uri!, $session: Uri!) {
+    /// mutation($actor: Uri!) {
     ///   createScheduleJob(input: {
     ///     jobId: "daily-standup"
     ///     kind: "cron"
     ///     actorId: $actor
-    ///     sessionId: $session
     ///     messageType: "user"
     ///     payload: { text: "Daily standup" }
     ///     scheduleSpec: { cron: "0 9 * * 1-5" }
@@ -581,7 +483,6 @@ impl MutationRoot {
             job_id: input.job_id.clone(),
             kind: input.kind,
             target_actor_id: input.actor_id.0.to_string(),
-            target_session_id: input.session_id.0.to_string(),
             message_type: input.message_type,
             payload: input.payload.0,
             headers: input
@@ -628,7 +529,6 @@ impl MutationRoot {
         let update = UpdateScheduleJobInput {
             kind: patch.kind,
             target_actor_id: patch.actor_id.map(|uri| uri.0.to_string()),
-            target_session_id: patch.session_id.map(|uri| uri.0.to_string()),
             message_type: patch.message_type,
             payload: patch.payload.map(|value| value.0),
             headers: patch.headers.map(|value| value.0),
@@ -703,9 +603,9 @@ impl MutationRoot {
     ///
     /// Example:
     /// ```graphql
-    /// mutation($session: Uri!, $creator: Uri!, $assignee: Uri!) {
+    /// mutation($actor: Uri!, $creator: Uri!, $assignee: Uri!) {
     ///   createTask(input: {
-    ///     sessionUri: $session
+    ///     actorId: $actor
     ///     creatorActorId: $creator
     ///     assigneeActorId: $assignee
     ///     title: "Ship borg-gql docs"
@@ -723,7 +623,7 @@ impl MutationRoot {
 
         let created = store
             .create_task(
-                input.session_uri.0.as_str(),
+                input.actor_id.0.as_str(),
                 input.creator_actor_id.0.as_str(),
                 CreateTaskInput {
                     title: input.title,
@@ -754,10 +654,10 @@ impl MutationRoot {
     ///
     /// Example:
     /// ```graphql
-    /// mutation($task: Uri!, $session: Uri!) {
+    /// mutation($task: Uri!, $actor: Uri!) {
     ///   updateTask(input: {
     ///     taskId: $task
-    ///     sessionUri: $session
+    ///     actorId: $actor
     ///     title: "Updated title"
     ///   }) { id title updatedAt }
     /// }
@@ -771,7 +671,7 @@ impl MutationRoot {
         let store = TaskGraphStore::new(data.db.clone());
         let task = store
             .update_task_fields(
-                input.session_uri.0.as_str(),
+                input.actor_id.0.as_str(),
                 input.task_id.0.as_str(),
                 TaskPatch {
                     title: input.title,
@@ -788,12 +688,12 @@ impl MutationRoot {
     /// Moves a task to a new allowed status.
     ///
     /// Usage notes:
-    /// - Auth/session constraints follow taskgraph rules (assignee/reviewer checks).
+    /// - Auth constraints follow taskgraph rules (assignee/reviewer checks).
     ///
     /// Example:
     /// ```graphql
-    /// mutation($task: Uri!, $session: Uri!) {
-    ///   setTaskStatus(input: { taskId: $task, sessionUri: $session, status: DOING }) {
+    /// mutation($task: Uri!, $actor: Uri!) {
+    ///   setTaskStatus(input: { taskId: $task, actorId: $actor, status: DOING }) {
     ///     id
     ///     status
     ///   }
@@ -808,7 +708,7 @@ impl MutationRoot {
         let store = TaskGraphStore::new(data.db.clone());
         let task = store
             .set_task_status(
-                input.session_uri.0.as_str(),
+                input.actor_id.0.as_str(),
                 input.task_id.0.as_str(),
                 input.status.into(),
             )
@@ -826,10 +726,9 @@ impl MutationRoot {
     ///
     /// Example:
     /// ```graphql
-    /// mutation($actor: Uri!, $session: Uri!, $user: Uri!) {
+    /// mutation($actor: Uri!, $user: Uri!) {
     ///   runActorChat(input: {
     ///     actorId: $actor
-    ///     sessionId: $session
     ///     userId: $user
     ///     text: "Summarize pending tasks"
     ///   }) { ok message }

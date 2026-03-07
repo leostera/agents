@@ -30,7 +30,7 @@ export const BottomCheckout: Story = {
         <DrawerHeader>
           <DrawerTitle>Upgrade to Pro</DrawerTitle>
           <DrawerDescription>
-            Enable long-running sessions, logs retention, and team seats.
+            Enable long-running actors, logs retention, and team seats.
           </DrawerDescription>
         </DrawerHeader>
         <div className="px-4 pb-2 text-xs/relaxed">
@@ -54,11 +54,11 @@ export const RightPanel: Story = {
   render: () => (
     <Drawer direction="right">
       <DrawerTrigger asChild>
-        <Button variant="outline">Session details</Button>
+        <Button variant="outline">Actor details</Button>
       </DrawerTrigger>
       <DrawerContent>
         <DrawerHeader>
-          <DrawerTitle>session_2db4</DrawerTitle>
+          <DrawerTitle>actor_2db4</DrawerTitle>
           <DrawerDescription>
             Started 6 minutes ago from the HTTP ingress port.
           </DrawerDescription>

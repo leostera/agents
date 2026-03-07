@@ -157,6 +157,18 @@ mod tests {
 
     #[async_trait]
     impl Provider for FakeProvider {
+        fn provider_name(&self) -> &'static str {
+            "fake"
+        }
+
+        fn supports_chat_completion(&self) -> bool {
+            true
+        }
+
+        fn supports_audio_transcription(&self) -> bool {
+            true
+        }
+
         async fn chat(&self, _req: &LlmRequest) -> Result<LlmAssistantMessage> {
             self.chat_results
                 .lock()
@@ -178,6 +190,14 @@ mod tests {
 
     #[async_trait]
     impl Provider for NoAudioProvider {
+        fn provider_name(&self) -> &'static str {
+            "no-audio"
+        }
+
+        fn supports_chat_completion(&self) -> bool {
+            true
+        }
+
         fn supports_audio_transcription(&self) -> bool {
             false
         }

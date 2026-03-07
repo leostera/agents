@@ -10,14 +10,14 @@ use crate::app::BorgCliApp;
 pub enum TaskGraphCommand {
     #[command(about = "List TaskGraph commands")]
     List,
-    #[command(about = "Create a new task and allocate assignee/reviewer sessions")]
+    #[command(about = "Create a new task and allocate assignee/reviewer actors")]
     CreateTask(CreateTaskArgs),
     #[command(about = "Get one task by URI")]
     GetTask(GetTaskArgs),
     #[command(about = "List top-level tasks")]
     ListTasks(ListTasksArgs),
     #[command(about = "Delete a task (marks status as discarded)")]
-    Delete(SessionAndUriArgs),
+    Delete(ActorAndUriArgs),
     #[command(about = "Patch title/description/definition_of_done for a task")]
     UpdateTaskFields(UpdateTaskFieldsArgs),
     #[command(about = "Reviewer-only reassignment to a new assignee actor")]
@@ -29,7 +29,7 @@ pub enum TaskGraphCommand {
     #[command(about = "Set task parent")]
     SetTaskParent(SetTaskParentArgs),
     #[command(about = "Clear task parent")]
-    ClearTaskParent(SessionAndUriArgs),
+    ClearTaskParent(ActorAndUriArgs),
     #[command(about = "List children for a parent task")]
     ListTaskChildren(ListByUriArgs),
     #[command(about = "Add blocked_by dependency edge")]
@@ -39,7 +39,7 @@ pub enum TaskGraphCommand {
     #[command(about = "Set duplicate_of relationship")]
     SetTaskDuplicateOf(TaskDuplicateOfArgs),
     #[command(about = "Clear duplicate_of relationship")]
-    ClearTaskDuplicateOf(SessionAndUriArgs),
+    ClearTaskDuplicateOf(ActorAndUriArgs),
     #[command(about = "List tasks duplicated by this task")]
     ListDuplicatedBy(ListByUriArgs),
     #[command(about = "Add reference edge")]
@@ -49,9 +49,9 @@ pub enum TaskGraphCommand {
     #[command(about = "Set task status")]
     SetTaskStatus(SetTaskStatusArgs),
     #[command(about = "Submit work for review")]
-    SubmitReview(SessionAndUriArgs),
+    SubmitReview(ActorAndUriArgs),
     #[command(about = "Approve review and mark done")]
-    ApproveReview(SessionAndUriArgs),
+    ApproveReview(ActorAndUriArgs),
     #[command(about = "Request review changes")]
     RequestReviewChanges(RequestReviewChangesArgs),
     #[command(about = "Split task into explicit subtasks")]
@@ -62,10 +62,10 @@ pub enum TaskGraphCommand {
     ListComments(ListByTaskUriArgs),
     #[command(about = "List task audit events")]
     ListEvents(ListByTaskUriArgs),
-    #[command(about = "Return next queue-eligible tasks for a session")]
-    NextTask(ListBySessionArgs),
-    #[command(about = "Return in-progress tasks eligible for a session")]
-    ReconcileInProgress(ListBySessionArgs),
+    #[command(about = "Return next queue-eligible tasks for a actor")]
+    NextTask(ListByActorArgs),
+    #[command(about = "Return in-progress tasks eligible for a actor")]
+    ReconcileInProgress(ListByActorArgs),
 }
 
 #[derive(Args, Debug)]
@@ -75,9 +75,9 @@ pub struct RawPayloadArg {
 }
 
 #[derive(Args, Debug)]
-pub struct SessionAndUriArgs {
+pub struct ActorAndUriArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub uri: Option<String>,
     #[command(flatten)]
@@ -87,7 +87,7 @@ pub struct SessionAndUriArgs {
 #[derive(Args, Debug)]
 pub struct CreateTaskArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub creator_actor_id: Option<String>,
     #[arg(long)]
@@ -131,7 +131,7 @@ pub struct ListTasksArgs {
 #[derive(Args, Debug)]
 pub struct UpdateTaskFieldsArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub uri: Option<String>,
     #[arg(long)]
@@ -147,7 +147,7 @@ pub struct UpdateTaskFieldsArgs {
 #[derive(Args, Debug)]
 pub struct ReassignAssigneeArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub uri: Option<String>,
     #[arg(long)]
@@ -159,7 +159,7 @@ pub struct ReassignAssigneeArgs {
 #[derive(Args, Debug)]
 pub struct TaskLabelsArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub uri: Option<String>,
     #[arg(long = "label")]
@@ -171,7 +171,7 @@ pub struct TaskLabelsArgs {
 #[derive(Args, Debug)]
 pub struct SetTaskParentArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub uri: Option<String>,
     #[arg(long)]
@@ -195,7 +195,7 @@ pub struct ListByUriArgs {
 #[derive(Args, Debug)]
 pub struct TaskBlockedByArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub uri: Option<String>,
     #[arg(long)]
@@ -207,7 +207,7 @@ pub struct TaskBlockedByArgs {
 #[derive(Args, Debug)]
 pub struct TaskDuplicateOfArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub uri: Option<String>,
     #[arg(long)]
@@ -219,7 +219,7 @@ pub struct TaskDuplicateOfArgs {
 #[derive(Args, Debug)]
 pub struct TaskReferenceArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub uri: Option<String>,
     #[arg(long)]
@@ -252,7 +252,7 @@ impl TaskStatusArg {
 #[derive(Args, Debug)]
 pub struct SetTaskStatusArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub uri: Option<String>,
     #[arg(long)]
@@ -279,7 +279,7 @@ impl ReturnToArg {
 #[derive(Args, Debug)]
 pub struct RequestReviewChangesArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub uri: Option<String>,
     #[arg(long)]
@@ -293,7 +293,7 @@ pub struct RequestReviewChangesArgs {
 #[derive(Args, Debug)]
 pub struct SplitTaskIntoSubtasksArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub creator_actor_id: Option<String>,
     #[arg(long)]
@@ -307,7 +307,7 @@ pub struct SplitTaskIntoSubtasksArgs {
 #[derive(Args, Debug)]
 pub struct AddCommentArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub task_uri: Option<String>,
     #[arg(long)]
@@ -329,9 +329,9 @@ pub struct ListByTaskUriArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct ListBySessionArgs {
+pub struct ListByActorArgs {
     #[arg(long)]
-    pub session_uri: Option<String>,
+    pub actor_id: Option<String>,
     #[arg(long)]
     pub limit: Option<u64>,
     #[command(flatten)]
@@ -378,7 +378,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
         }
         TaskGraphCommand::CreateTask(args) => {
             let mut map = Map::new();
-            insert_req(&mut map, "session_uri", args.session_uri);
+            insert_req(&mut map, "actor_id", args.actor_id);
             insert_req(&mut map, "creator_actor_id", args.creator_actor_id);
             insert_req(&mut map, "title", args.title);
             insert_req(&mut map, "assignee_actor_id", args.assignee_actor_id);
@@ -411,7 +411,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
         }
         TaskGraphCommand::Delete(args) => {
             let mut map = Map::new();
-            insert_req(&mut map, "session_uri", args.session_uri);
+            insert_req(&mut map, "actor_id", args.actor_id);
             insert_req(&mut map, "uri", args.uri);
             map.insert("status".to_string(), Value::String("discarded".to_string()));
             execute(
@@ -424,7 +424,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
         }
         TaskGraphCommand::UpdateTaskFields(args) => {
             let mut map = Map::new();
-            insert_req(&mut map, "session_uri", args.session_uri);
+            insert_req(&mut map, "actor_id", args.actor_id);
             insert_req(&mut map, "uri", args.uri);
             let mut patch = Map::new();
             insert_opt(&mut patch, "title", args.title);
@@ -446,7 +446,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "TaskGraph-reassignAssignee",
                 args.raw.payload_json,
                 [
-                    req("session_uri", args.session_uri),
+                    req("actor_id", args.actor_id),
                     req("uri", args.uri),
                     req("assignee_actor_id", args.assignee_actor_id),
                 ],
@@ -472,7 +472,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "TaskGraph-setTaskParent",
                 args.raw.payload_json,
                 [
-                    req("session_uri", args.session_uri),
+                    req("actor_id", args.actor_id),
                     req("uri", args.uri),
                     req("parent_uri", args.parent_uri),
                 ],
@@ -485,7 +485,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "clear-task-parent",
                 "TaskGraph-clearTaskParent",
                 args.raw.payload_json,
-                [req("session_uri", args.session_uri), req("uri", args.uri)],
+                [req("actor_id", args.actor_id), req("uri", args.uri)],
             )
             .await
         }
@@ -505,7 +505,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "TaskGraph-addTaskBlockedBy",
                 args.raw.payload_json,
                 [
-                    req("session_uri", args.session_uri),
+                    req("actor_id", args.actor_id),
                     req("uri", args.uri),
                     req("blocked_by", args.blocked_by),
                 ],
@@ -519,7 +519,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "TaskGraph-removeTaskBlockedBy",
                 args.raw.payload_json,
                 [
-                    req("session_uri", args.session_uri),
+                    req("actor_id", args.actor_id),
                     req("uri", args.uri),
                     req("blocked_by", args.blocked_by),
                 ],
@@ -533,7 +533,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "TaskGraph-setTaskDuplicateOf",
                 args.raw.payload_json,
                 [
-                    req("session_uri", args.session_uri),
+                    req("actor_id", args.actor_id),
                     req("uri", args.uri),
                     req("duplicate_of", args.duplicate_of),
                 ],
@@ -546,7 +546,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "clear-task-duplicate-of",
                 "TaskGraph-clearTaskDuplicateOf",
                 args.raw.payload_json,
-                [req("session_uri", args.session_uri), req("uri", args.uri)],
+                [req("actor_id", args.actor_id), req("uri", args.uri)],
             )
             .await
         }
@@ -566,7 +566,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "TaskGraph-addTaskReference",
                 args.raw.payload_json,
                 [
-                    req("session_uri", args.session_uri),
+                    req("actor_id", args.actor_id),
                     req("uri", args.uri),
                     req("reference", args.reference),
                 ],
@@ -580,7 +580,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "TaskGraph-removeTaskReference",
                 args.raw.payload_json,
                 [
-                    req("session_uri", args.session_uri),
+                    req("actor_id", args.actor_id),
                     req("uri", args.uri),
                     req("reference", args.reference),
                 ],
@@ -589,7 +589,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
         }
         TaskGraphCommand::SetTaskStatus(args) => {
             let mut map = Map::new();
-            insert_req(&mut map, "session_uri", args.session_uri);
+            insert_req(&mut map, "actor_id", args.actor_id);
             insert_req(&mut map, "uri", args.uri);
             if let Some(status) = args.status {
                 map.insert(
@@ -611,7 +611,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "submit-review",
                 "TaskGraph-submitReview",
                 args.raw.payload_json,
-                [req("session_uri", args.session_uri), req("uri", args.uri)],
+                [req("actor_id", args.actor_id), req("uri", args.uri)],
             )
             .await
         }
@@ -621,13 +621,13 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "approve-review",
                 "TaskGraph-approveReview",
                 args.raw.payload_json,
-                [req("session_uri", args.session_uri), req("uri", args.uri)],
+                [req("actor_id", args.actor_id), req("uri", args.uri)],
             )
             .await
         }
         TaskGraphCommand::RequestReviewChanges(args) => {
             let mut map = Map::new();
-            insert_req(&mut map, "session_uri", args.session_uri);
+            insert_req(&mut map, "actor_id", args.actor_id);
             insert_req(&mut map, "uri", args.uri);
             insert_req(&mut map, "note", args.note);
             if let Some(rt) = args.return_to {
@@ -646,7 +646,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
         }
         TaskGraphCommand::SplitTaskIntoSubtasks(args) => {
             let mut map = Map::new();
-            insert_req(&mut map, "session_uri", args.session_uri);
+            insert_req(&mut map, "actor_id", args.actor_id);
             insert_req(&mut map, "creator_actor_id", args.creator_actor_id);
             insert_req(&mut map, "uri", args.uri);
             if let Some(subtasks) = args.subtasks_json {
@@ -667,7 +667,7 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
                 "TaskGraph-addComment",
                 args.raw.payload_json,
                 [
-                    req("session_uri", args.session_uri),
+                    req("actor_id", args.actor_id),
                     req("task_uri", args.task_uri),
                     req("body", args.body),
                 ],
@@ -681,10 +681,10 @@ pub async fn run(app: &BorgCliApp, cmd: TaskGraphCommand) -> Result<Value> {
             execute_list_by_task_uri(app, "list-events", "TaskGraph-listEvents", args).await
         }
         TaskGraphCommand::NextTask(args) => {
-            execute_list_by_session(app, "next-task", "TaskGraph-nextTask", args).await
+            execute_list_by_actor(app, "next-task", "TaskGraph-nextTask", args).await
         }
         TaskGraphCommand::ReconcileInProgress(args) => {
-            execute_list_by_session(
+            execute_list_by_actor(
                 app,
                 "reconcile-in-progress",
                 "TaskGraph-reconcileInProgress",
@@ -750,7 +750,7 @@ async fn execute_labels(
     args: TaskLabelsArgs,
 ) -> Result<Value> {
     let mut map = Map::new();
-    insert_req(&mut map, "session_uri", args.session_uri);
+    insert_req(&mut map, "actor_id", args.actor_id);
     insert_req(&mut map, "uri", args.uri);
     insert_vec(&mut map, "labels", args.labels);
     execute(
@@ -804,14 +804,14 @@ async fn execute_list_by_task_uri(
     .await
 }
 
-async fn execute_list_by_session(
+async fn execute_list_by_actor(
     app: &BorgCliApp,
     command: &str,
     tool_name: &str,
-    args: ListBySessionArgs,
+    args: ListByActorArgs,
 ) -> Result<Value> {
     let mut map = Map::new();
-    insert_req(&mut map, "session_uri", args.session_uri);
+    insert_req(&mut map, "actor_id", args.actor_id);
     if let Some(limit) = args.limit {
         map.insert("limit".to_string(), Value::from(limit));
     }

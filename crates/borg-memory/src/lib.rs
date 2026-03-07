@@ -564,7 +564,7 @@ mod tests {
         value: FactValue,
     ) -> FactInput {
         FactInput {
-            source: uri!("borg", "session").unwrap(),
+            source: uri!("borg", "actor").unwrap(),
             entity,
             field: Uri::parse(field).unwrap(),
             arity,

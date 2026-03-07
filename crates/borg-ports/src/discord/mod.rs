@@ -3,9 +3,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_core::Uri;
-use borg_exec::{
-    DiscordSessionContext, PortContext, RuntimeToolCall, RuntimeToolResult, SessionOutput,
-};
+use borg_exec::{ActorOutput, DiscordContext, PortContext, RuntimeToolCall, RuntimeToolResult};
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, GatewayIntents, Message};
 use serenity::client::{Client, Context, EventHandler};
@@ -72,7 +70,7 @@ impl DiscordPort {
 
         let user_id = conversation_user_id(message)?;
         let conversation_key = conversation_routing_key(message)?;
-        let ctx = discord_session_context_from_message(message);
+        let ctx = discord_context_from_message(message);
 
         if !self.allows_guests
             && !is_allowed_external_user(
@@ -94,7 +92,7 @@ impl DiscordPort {
 
     async fn send_output(
         &self,
-        output: SessionOutput<RuntimeToolCall, RuntimeToolResult>,
+        output: ActorOutput<RuntimeToolCall, RuntimeToolResult>,
     ) -> Result<()> {
         let Some(ctx) = output.port_context.as_discord() else {
             return Ok(());
@@ -139,7 +137,7 @@ impl Port for DiscordPort {
     async fn run(
         self,
         inbound: Sender<PortMessage>,
-        mut outbound: Receiver<SessionOutput<RuntimeToolCall, RuntimeToolResult>>,
+        mut outbound: Receiver<ActorOutput<RuntimeToolCall, RuntimeToolResult>>,
     ) -> Result<()> {
         let outbound_port = self.clone();
         let outbound_task = tokio::spawn(async move {
@@ -195,8 +193,8 @@ fn conversation_routing_key(message: &Message) -> Option<Uri> {
     .ok()
 }
 
-fn discord_session_context_from_message(message: &Message) -> DiscordSessionContext {
-    DiscordSessionContext {
+fn discord_context_from_message(message: &Message) -> DiscordContext {
+    DiscordContext {
         channel_id: message.channel_id.get(),
         guild_id: message.guild_id.map(|id| id.get()),
         message_id: message.id.get(),

@@ -42,7 +42,7 @@ export const ProviderList: Story = {
             <Badge variant="secondary">Connected</Badge>
           </ItemHeader>
           <ItemDescription>
-            Primary inference provider for production sessions.
+            Primary inference provider for production actors.
           </ItemDescription>
           <ItemFooter>
             <span className="text-muted-foreground text-xs">
@@ -92,7 +92,7 @@ export const CompactRows: Story = {
           <DatabaseIcon />
         </ItemMedia>
         <ItemContent>
-          <ItemTitle>Session store ready</ItemTitle>
+          <ItemTitle>Actor store ready</ItemTitle>
           <ItemDescription>SQLite persistence enabled.</ItemDescription>
         </ItemContent>
       </Item>

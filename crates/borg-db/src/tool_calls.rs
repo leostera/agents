@@ -9,7 +9,7 @@ impl BorgDb {
     pub async fn insert_tool_call(
         &self,
         call_id: &str,
-        session_id: &str,
+        actor_id: &str,
         tool_name: &str,
         arguments_json: &Value,
         output_json: &Value,
@@ -18,7 +18,7 @@ impl BorgDb {
         duration_ms: Option<u64>,
     ) -> Result<()> {
         let call_id = call_id.to_string();
-        let session_id = session_id.to_string();
+        let actor_id = actor_id.to_string();
         let tool_name = tool_name.to_string();
         let arguments_json = arguments_json.to_string();
         let output_json = output_json.to_string();
@@ -30,7 +30,7 @@ impl BorgDb {
             r#"
                 INSERT INTO tool_calls(
                     call_id,
-                    session_id,
+                    actor_id,
                     tool_name,
                     arguments_json,
                     output_json,
@@ -42,7 +42,7 @@ impl BorgDb {
                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 "#,
             call_id,
-            session_id,
+            actor_id,
             tool_name,
             arguments_json,
             output_json,
@@ -63,7 +63,7 @@ impl BorgDb {
             r#"
                 SELECT
                     call_id as "call_id!: String",
-                    session_id as "session_id!: String",
+                    actor_id as "actor_id!: String",
                     tool_name as "tool_name!: String",
                     arguments_json as "arguments_json!: String",
                     output_json as "output_json!: String",
@@ -93,7 +93,7 @@ impl BorgDb {
             .map(|row| {
                 Ok(ToolCallRecord {
                     call_id: row.call_id,
-                    session_id: row.session_id,
+                    actor_id: row.actor_id,
                     tool_name: row.tool_name,
                     arguments_json: serde_json::from_str(&row.arguments_json)
                         .unwrap_or_else(|_| Value::Object(Default::default())),
@@ -114,7 +114,7 @@ impl BorgDb {
             r#"
                 SELECT
                     call_id as "call_id!: String",
-                    session_id as "session_id!: String",
+                    actor_id as "actor_id!: String",
                     tool_name as "tool_name!: String",
                     arguments_json as "arguments_json!: String",
                     output_json as "output_json!: String",
@@ -145,7 +145,7 @@ impl BorgDb {
         };
         Ok(Some(ToolCallRecord {
             call_id: row.call_id,
-            session_id: row.session_id,
+            actor_id: row.actor_id,
             tool_name: row.tool_name,
             arguments_json: serde_json::from_str(&row.arguments_json)
                 .unwrap_or_else(|_| Value::Object(Default::default())),

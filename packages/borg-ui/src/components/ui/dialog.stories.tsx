@@ -62,7 +62,7 @@ export const ConfirmDisconnect: Story = {
         <DialogHeader>
           <DialogTitle>Disconnect OpenAI?</DialogTitle>
           <DialogDescription>
-            Running sessions will pause until a provider is connected again.
+            Running actors will pause until a provider is connected again.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter showCloseButton>

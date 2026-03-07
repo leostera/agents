@@ -9,7 +9,7 @@
   --borg-user: #1d4ed8;
 }
 
-.borg-session {
+.borg-chat {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   min-height: 620px;
@@ -20,7 +20,7 @@
   overflow: hidden;
 }
 
-.borg-session__feed {
+.borg-chat__feed {
   display: flex;
   flex-direction: column;
   gap: 15px;
@@ -28,7 +28,7 @@
   overflow-y: auto;
 }
 
-.borg-session__composer {
+.borg-chat__composer {
   border-top: 1px solid #1f2937;
   background: rgba(2, 6, 23, 0.92);
   padding: 15px;
@@ -111,12 +111,12 @@
   text-align: right;
 }
 
-.borg-session__input {
+.borg-chat__input {
   display: grid;
   gap: 10px;
 }
 
-.borg-session__input-body {
+.borg-chat__input-body {
   margin-left: 0;
 }
 

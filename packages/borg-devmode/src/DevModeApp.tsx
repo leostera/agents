@@ -16,10 +16,10 @@ import React from "react";
 
 const borgApi = createBorgApiClient();
 
-const PLANNING_SESSION_ID = "borg:session:devmode:planning";
+const PLANNING_ACTOR_ID = "borg:actor:devmode:planning";
 const PLANNING_USER_ID = "borg:user:devmode";
 const PLANNING_PORT_ID = "borg:port:devmode";
-const DEV_MODE_PLANNER_ACTOR_ID = "devmode:actor:planner";
+const DEV_MODE_PLANNER_ACTOR_ID = "borg:actor:devmode:planning";
 const DEV_MODE_PLANNER_NAME = "DevMode Planner";
 const DEV_MODE_PLANNER_PROMPT =
   "You are DevMode's planning lead. Help the user refine implementation-ready specs, ask focused clarifying questions, and break approved specs into parallelizable task-graph work.";
@@ -69,7 +69,7 @@ function detectRole(payload: Record<string, unknown>): ChatMessage["role"] {
     if (
       type === "tool_call" ||
       type === "tool_result" ||
-      type === "session_event"
+      type === "actor_event"
     ) {
       return "system";
     }
@@ -91,7 +91,7 @@ function isChatPayload(payload: Record<string, unknown>): boolean {
     if (
       type === "tool_call" ||
       type === "tool_result" ||
-      type === "session_event"
+      type === "actor_event"
     )
       return false;
   }
@@ -208,16 +208,16 @@ export function DevModeApp() {
     setIsLoading(true);
     setError(null);
     try {
-      const [actorRows, sessionRows] = await Promise.all([
+      const [actorRows, actorMessageRows] = await Promise.all([
         borgApi.listActors(500),
-        borgApi.listSessionMessages(PLANNING_SESSION_ID, {
+        borgApi.listActorMessages(PLANNING_ACTOR_ID, {
           from: 0,
           limit: 500,
         }),
       ]);
       const withPlanner = await ensurePlannerActor(actorRows);
       setActors(withPlanner);
-      setMessages(toChatMessages(sessionRows));
+      setMessages(toChatMessages(actorMessageRows));
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -261,22 +261,21 @@ export function DevModeApp() {
       await borgApi.postHttpPort({
         userKey: PLANNING_USER_ID,
         text,
-        sessionId: PLANNING_SESSION_ID,
-        actorId: DEV_MODE_PLANNER_ACTOR_ID,
+        actorId: PLANNING_ACTOR_ID,
         metadata: {
           port: PLANNING_PORT_ID,
           channel: "planning",
         },
       });
 
-      const sessionRows = await borgApi.listSessionMessages(
-        PLANNING_SESSION_ID,
+      const actorMessageRows = await borgApi.listActorMessages(
+        PLANNING_ACTOR_ID,
         {
           from: 0,
           limit: 500,
         }
       );
-      setMessages(toChatMessages(sessionRows));
+      setMessages(toChatMessages(actorMessageRows));
     } catch (sendError) {
       setMessages((previous) => [
         ...previous.map((message) =>
@@ -364,7 +363,7 @@ export function DevModeApp() {
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <Bot className="size-4" />
-                  <p className="text-sm font-semibold">Planning Session</p>
+                  <p className="text-sm font-semibold">Planning Actor</p>
                 </div>
                 <Button
                   type="button"
@@ -421,7 +420,7 @@ export function DevModeApp() {
               <DialogTitle>Planning Settings</DialogTitle>
               <DialogDescription>
                 Configure how the `devmode:actor:planner` behaves in this
-                planning session.
+                planning actor.
               </DialogDescription>
             </DialogHeader>
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">

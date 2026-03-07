@@ -15,7 +15,7 @@ use crate::app::{BorgCliApp, DEFAULT_HTTP_BIND, DEFAULT_ONBOARD_PORT, DEFAULT_PO
 #[command(
     name = "borg",
     about = "Borg runtime CLI",
-    long_about = "Manage Borg services, sessions, memory, and configuration."
+    long_about = "Manage Borg services, actors, memory, and configuration."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -34,10 +34,10 @@ enum Command {
         #[arg(long, default_value = DEFAULT_HTTP_BIND, help = "API bind address in host:port form")]
         bind: String,
     },
-    #[command(about = "Session utilities")]
-    Session {
+    #[command(about = "Actor utilities")]
+    Actor {
         #[command(subcommand)]
-        cmd: SessionCommand,
+        cmd: ActorCommand,
     },
     #[command(about = "Memory commands")]
     Memory {
@@ -103,18 +103,18 @@ enum ConfigCommand {
 }
 
 #[derive(Subcommand, Debug)]
-enum SessionCommand {
-    #[command(about = "Stream messages for a session")]
+enum ActorCommand {
+    #[command(about = "Stream messages for an actor")]
     Stream {
-        #[arg(help = "Session URI (for example borg:session:...)")]
-        session_id: String,
+        #[arg(help = "Actor URI (for example borg:actor:...)")]
+        actor_id: String,
         #[arg(long, default_value_t = DEFAULT_POLL_INTERVAL_MS, help = "Poll interval in milliseconds")]
         poll_ms: u64,
     },
-    #[command(about = "Delete all persisted messages for a session")]
+    #[command(about = "Delete all persisted messages for an actor")]
     ClearHistory {
-        #[arg(help = "Session URI to clear")]
-        session_id: String,
+        #[arg(help = "Actor URI to clear")]
+        actor_id: String,
     },
 }
 
@@ -125,10 +125,10 @@ enum AdminCommand {
         #[command(subcommand)]
         cmd: AdminTasksCommand,
     },
-    #[command(about = "Session maintenance commands")]
-    Sessions {
+    #[command(about = "Actor maintenance commands")]
+    Actors {
         #[command(subcommand)]
-        cmd: AdminSessionsCommand,
+        cmd: AdminActorsCommand,
     },
 }
 
@@ -142,10 +142,10 @@ enum AdminTasksCommand {
 }
 
 #[derive(Subcommand, Debug)]
-enum AdminSessionsCommand {
-    #[command(about = "Delete all sessions and their persisted messages")]
-    ClearSessions {
-        #[arg(long, help = "Required safety flag: clear all sessions")]
+enum AdminActorsCommand {
+    #[command(about = "Delete all actor histories")]
+    ClearActors {
+        #[arg(long, help = "Required safety flag: clear all actor histories")]
         all: bool,
         #[arg(long, help = "Skip confirmation prompt")]
         yes: bool,
@@ -156,14 +156,9 @@ pub async fn run(app: BorgCliApp, cli: Cli) -> Result<()> {
     match cli.cmd {
         Command::Init { onboard_port } => app.init(onboard_port).await,
         Command::Start { bind } => app.start(bind).await,
-        Command::Session { cmd } => match cmd {
-            SessionCommand::Stream {
-                session_id,
-                poll_ms,
-            } => app.session(session_id, poll_ms).await,
-            SessionCommand::ClearHistory { session_id } => {
-                app.session_clear_history(session_id).await
-            }
+        Command::Actor { cmd } => match cmd {
+            ActorCommand::Stream { actor_id, poll_ms } => app.actor_stream(actor_id, poll_ms).await,
+            ActorCommand::ClearHistory { actor_id } => app.actor_clear_history(actor_id).await,
         },
         Command::Memory { cmd } => {
             match tools::memory::run(&app, cmd).await {
@@ -196,9 +191,9 @@ pub async fn run(app: BorgCliApp, cli: Cli) -> Result<()> {
             AdminCommand::Tasks { cmd } => match cmd {
                 AdminTasksCommand::ClearAllTasks { yes } => app.admin_tasks_clear_all(yes).await,
             },
-            AdminCommand::Sessions { cmd } => match cmd {
-                AdminSessionsCommand::ClearSessions { all, yes } => {
-                    app.admin_sessions_clear_all(all, yes).await
+            AdminCommand::Actors { cmd } => match cmd {
+                AdminActorsCommand::ClearActors { all, yes } => {
+                    app.admin_actors_clear_all(all, yes).await
                 }
             },
         },

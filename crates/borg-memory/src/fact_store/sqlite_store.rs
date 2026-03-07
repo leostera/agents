@@ -669,7 +669,7 @@ mod tests {
 
     fn make_fact(value: FactValue) -> FactInput {
         FactInput {
-            source: Uri::parse(format!("borg:session:{}", Uuid::now_v7())).unwrap(),
+            source: Uri::parse(format!("borg:actor:{}", Uuid::now_v7())).unwrap(),
             entity: Uri::parse(format!("plex:movies:{}", Uuid::now_v7())).unwrap(),
             field: Uri::parse("borg:fields:name").unwrap(),
             arity: FactArity::One,

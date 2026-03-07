@@ -1,12 +1,12 @@
 """
 Runtime actor definition.
 
-An actor is a named, long-lived Borg worker/persona with its own session
-participation history.
+An actor is a named, long-lived Borg worker/persona with its own message
+history.
 
 Usage notes:
 - Represents a runnable actor spec (`borg:actor:*`).
-- Use `sessions` for runtime timeline views.
+- Use `messages` for runtime timeline views.
 
 Example:
 ```graphql
@@ -20,21 +20,23 @@ type Actor implements Node {
 	id: Uri!
 	name: String!
 	systemPrompt: String!
+	model: String
+	defaultProviderId: String
 	status: ActorStatusValue!
 	createdAt: DateTime!
 	updatedAt: DateTime!
 	"""
-	Sessions this actor has participated in.
+	Actor history messages.
 	
 	Usage notes:
 	- Backed by actor mailbox activity.
 	
 	Example:
 	```graphql
-	{ actor(id: "borg:actor:planner") { sessions(first: 5) { edges { node { id updatedAt } } } } }
+	{ actor(id: "borg:actor:planner") { messages(first: 5) { edges { node { id messageType text } } } } }
 	```
 	"""
-	sessions(first: Int, after: String): SessionConnection!
+	messages(first: Int, after: String): ActorMessageConnection!
 }
 
 """
@@ -63,6 +65,131 @@ type ActorEdge {
 	Materialized node for this edge.
 	"""
 	node: Actor!
+}
+
+"""
+Persisted timeline entry inside an actor history.
+
+Actor messages represent user inputs, assistant outputs, tool activity, and
+lifecycle events as ordered records.
+
+Usage notes:
+- Prefer `messageType`, `role`, and `text` over deprecated `payload`.
+- `id` is the stable timeline message URI.
+
+Example:
+```graphql
+{ actor(id: "borg:actor:planner") { messages(first: 5) { edges { node { id messageType role text } } } } }
+```
+"""
+type ActorMessage {
+	id: Uri!
+	actorId: Uri!
+	createdAt: DateTime!
+	messageType: String!
+	role: String
+	text: String
+	payload: JsonValue! @deprecated(reason: "Legacy JSON payload. Prefer typed fields (`messageType`, `role`, `text`).")
+}
+
+"""
+Relay-style page container for cursor-based list traversal.
+"""
+type ActorMessageConnection {
+	"""
+	Returned edges for the current page.
+	"""
+	edges: [ActorMessageEdge!]!
+	"""
+	Pagination state for the current page.
+	"""
+	pageInfo: PageInfo!
+}
+
+"""
+Relay-style edge carrying one node plus cursor for forward pagination.
+"""
+type ActorMessageEdge {
+	"""
+	Opaque edge cursor to pass back into `after`.
+	"""
+	cursor: String!
+	"""
+	Materialized node for this edge.
+	"""
+	node: ActorMessage!
+}
+
+"""
+High-level classification for UI routing of actor notifications.
+"""
+enum ActorNotificationKind {
+	"""
+	Assistant-authored response message.
+	"""
+	ASSISTANT_REPLY
+	"""
+	Tool call or tool result activity.
+	"""
+	TOOL_ACTIVITY
+	"""
+	Actor lifecycle or system event message.
+	"""
+	ACTOR_EVENT
+	"""
+	Fallback generic message classification.
+	"""
+	MESSAGE
+}
+
+"""
+Notification payload projected from an actor message.
+
+Usage notes:
+- Notifications are fully typed and include the underlying `actorMessage`.
+- `kind` is derived from `messageType`/`role`.
+"""
+type ActorNotificationObject {
+	"""
+	Stable notification identifier (`actorId:messageId`).
+	"""
+	id: String!
+	"""
+	Kind classification for UI routing and badges.
+	"""
+	kind: ActorNotificationKind!
+	"""
+	Short user-facing title.
+	"""
+	title: String!
+	"""
+	Actor URI this notification belongs to.
+	"""
+	actorId: Uri!
+	"""
+	Source message URI.
+	"""
+	messageId: Uri!
+	"""
+	Source message type.
+	"""
+	messageType: String!
+	"""
+	Source role, when available.
+	"""
+	role: String
+	"""
+	Source text content, when available.
+	"""
+	text: String
+	"""
+	Source message timestamp.
+	"""
+	createdAt: DateTime!
+	"""
+	Full underlying message object.
+	"""
+	actorMessage: ActorMessage!
 }
 
 """
@@ -412,39 +539,10 @@ enum AppStatusValue {
 }
 
 """
-Appends a new timeline message to an existing session.
-
-Example:
-`{ sessionId: "borg:session:s1", messageType: "user", role: "user", text: "Hello" }`
-"""
-input AppendSessionMessageInput {
-	"""
-	Target session URI.
-	"""
-	sessionId: Uri!
-	"""
-	Message type (`user`, `assistant`, ...).
-	"""
-	messageType: String
-	"""
-	Logical role (`user`, `assistant`, ...).
-	"""
-	role: String
-	"""
-	Message text content.
-	"""
-	text: String
-	"""
-	Transitional raw payload.
-	"""
-	payload: JsonValue
-}
-
-"""
 Creates a new schedule scheduler job definition.
 
 Example:
-`{ jobId: "daily-digest", kind: "cron", actorId: "borg:actor:planner", sessionId: "borg:session:s1" }`
+`{ jobId: "daily-digest", kind: "cron", actorId: "borg:actor:planner" }`
 """
 input CreateScheduleJobInputGql {
 	"""
@@ -459,10 +557,6 @@ input CreateScheduleJobInputGql {
 	Actor URI executed by this job.
 	"""
 	actorId: Uri!
-	"""
-	Session URI used as job context.
-	"""
-	sessionId: Uri!
 	"""
 	Message envelope type.
 	"""
@@ -489,13 +583,13 @@ input CreateScheduleJobInputGql {
 Creates a new durable taskgraph task.
 
 Example:
-`{ sessionUri: "borg:session:s1", creatorAgentId: "borg:actor:creator", assigneeAgentId: "borg:actor:assignee", title: "Ship docs" }`
+`{ actorId: "borg:actor:creator", creatorActorId: "borg:actor:creator", assigneeActorId: "borg:actor:assignee", title: "Ship docs" }`
 """
 input CreateTaskInputGql {
 	"""
-	Session URI authoring the task create event.
+	Actor URI authoring the task create event.
 	"""
-	sessionUri: Uri!
+	actorId: Uri!
 	"""
 	Creator actor URI.
 	"""
@@ -775,6 +869,10 @@ type MemoryValueObject {
 	list: [MemoryValueObject!]
 }
 
+type ModelObject {
+	name: String!
+}
+
 """
 Root mutation entrypoint for control-plane and task/memory writes.
 
@@ -840,16 +938,16 @@ type MutationRoot {
 	"""
 	upsertPort(input: UpsertPortInput!): Port!
 	"""
-	Creates or updates a port/session binding.
+	Creates or updates a port/actor binding.
 	
 	Example:
 	```graphql
-	mutation($session: Uri!, $key: Uri!) {
+	mutation($actor: Uri!, $key: Uri!) {
 	upsertPortBinding(input: {
 	portName: "telegram"
 	conversationKey: $key
-	sessionId: $session
-	}) { portName conversationKey sessionId }
+	actorId: $actor
+	}) { portName conversationKey actorId }
 	}
 	```
 	"""
@@ -972,61 +1070,15 @@ type MutationRoot {
 	"""
 	upsertAppSecret(input: UpsertAppSecretInput!): AppSecret!
 	"""
-	Creates or updates a session.
-	
-	Example:
-	```graphql
-	mutation($id: Uri!, $port: Uri!) {
-	upsertSession(input: { sessionId: $id, port: $port }) { id portId }
-	}
-	```
-	"""
-	upsertSession(input: UpsertSessionInput!): Session!
-	"""
-	Appends a session message.
-	
-	Usage notes:
-	- Prefer typed fields (`messageType`, `role`, `text`) over raw `payload`.
-	
-	Example:
-	```graphql
-	mutation($session: Uri!) {
-	appendSessionMessage(input: {
-	sessionId: $session
-	messageType: "user"
-	role: "user"
-	text: "Hello"
-	}) { id messageType role text }
-	}
-	```
-	"""
-	appendSessionMessage(input: AppendSessionMessageInput!): SessionMessage!
-	"""
-	Updates an existing session message.
-	
-	Example:
-	```graphql
-	mutation($session: Uri!) {
-	patchSessionMessage(input: {
-	sessionId: $session
-	messageId: "borg:session_message:..."
-	message: { messageType: "user", role: "user", text: "Updated text" }
-	}) { id text }
-	}
-	```
-	"""
-	patchSessionMessage(input: PatchSessionMessageInput!): SessionMessage!
-	"""
 	Creates a schedule job.
 	
 	Example:
 	```graphql
-	mutation($actor: Uri!, $session: Uri!) {
+	mutation($actor: Uri!) {
 	createScheduleJob(input: {
 	jobId: "daily-standup"
 	kind: "cron"
 	actorId: $actor
-	sessionId: $session
 	messageType: "user"
 	payload: { text: "Daily standup" }
 	scheduleSpec: { cron: "0 9 * * 1-5" }
@@ -1081,9 +1133,9 @@ type MutationRoot {
 	
 	Example:
 	```graphql
-	mutation($session: Uri!, $creator: Uri!, $assignee: Uri!) {
+	mutation($actor: Uri!, $creator: Uri!, $assignee: Uri!) {
 	createTask(input: {
-	sessionUri: $session
+	actorId: $actor
 	creatorActorId: $creator
 	assigneeActorId: $assignee
 	title: "Ship borg-gql docs"
@@ -1098,10 +1150,10 @@ type MutationRoot {
 	
 	Example:
 	```graphql
-	mutation($task: Uri!, $session: Uri!) {
+	mutation($task: Uri!, $actor: Uri!) {
 	updateTask(input: {
 	taskId: $task
-	sessionUri: $session
+	actorId: $actor
 	title: "Updated title"
 	}) { id title updatedAt }
 	}
@@ -1112,12 +1164,12 @@ type MutationRoot {
 	Moves a task to a new allowed status.
 	
 	Usage notes:
-	- Auth/session constraints follow taskgraph rules (assignee/reviewer checks).
+	- Auth constraints follow taskgraph rules (assignee/reviewer checks).
 	
 	Example:
 	```graphql
-	mutation($task: Uri!, $session: Uri!) {
-	setTaskStatus(input: { taskId: $task, sessionUri: $session, status: DOING }) {
+	mutation($task: Uri!, $actor: Uri!) {
+	setTaskStatus(input: { taskId: $task, actorId: $actor, status: DOING }) {
 	id
 	status
 	}
@@ -1134,10 +1186,9 @@ type MutationRoot {
 	
 	Example:
 	```graphql
-	mutation($actor: Uri!, $session: Uri!, $user: Uri!) {
+	mutation($actor: Uri!, $user: Uri!) {
 	runActorChat(input: {
 	actorId: $actor
-	sessionId: $session
 	userId: $user
 	text: "Summarize pending tasks"
 	}) { ok message }
@@ -1170,7 +1221,7 @@ Example:
 query($id: Uri!) {
 node(id: $id) {
 id
-... on Session { updatedAt }
+... on Actor { name status }
 }
 }
 ```
@@ -1207,39 +1258,18 @@ type PageInfo {
 }
 
 """
-Replaces one timeline message inside a session by message id.
-
-Example:
-`{ sessionId: "borg:session:s1", messageId: "borg:session_message:...", message: { text: "Updated" } }`
-"""
-input PatchSessionMessageInput {
-	"""
-	Target session URI.
-	"""
-	sessionId: Uri!
-	"""
-	Stable message URI.
-	"""
-	messageId: Uri!
-	"""
-	Replacement message payload.
-	"""
-	message: SessionMessageInput!
-}
-
-"""
 External transport adapter configuration.
 
 Ports model how Borg receives/sends traffic (for example HTTP, Telegram) and
-how incoming conversations map into long-lived sessions.
+how incoming conversations map into actors.
 
 Usage notes:
-- Ports bind external channels (`http`, `telegram`, ...) to session routing.
+- Ports bind external channels (`http`, `telegram`, ...) to actor routing.
 - `bindings` and `actorBindings` expose live routing maps.
 
 Example:
 ```graphql
-{ port(name: "telegram") { id provider enabled bindings(first: 5) { edges { node { conversationKey sessionId } } } } }
+{ port(name: "telegram") { id provider enabled bindings(first: 5) { edges { node { conversationKey actorId } } } } }
 ```
 """
 type Port implements Node {
@@ -1249,7 +1279,7 @@ type Port implements Node {
 	enabled: Boolean!
 	allowsGuests: Boolean!
 	assignedActorId: Uri
-	activeSessions: Int!
+	activeBindings: Int!
 	updatedAt: DateTime
 	settings: JsonValue! @deprecated(reason: "Legacy JSON settings. Prefer typed fields over time.")
 	"""
@@ -1262,11 +1292,11 @@ type Port implements Node {
 	"""
 	assignedActor: Actor
 	"""
-	Session binding rows for this port.
+	Actor binding rows for this port.
 	
 	Example:
 	```graphql
-	{ port(name: "telegram") { bindings(first: 10) { edges { node { conversationKey sessionId } } } } }
+	{ port(name: "telegram") { bindings(first: 10) { edges { node { conversationKey actorId } } } } }
 	```
 	"""
 	bindings(first: Int, after: String): PortBindingConnection!
@@ -1285,11 +1315,10 @@ type Port implements Node {
 Conversation-specific actor override edge.
 
 This row pins a conversation to a specific actor independently from the
-session binding.
+default port actor.
 
 Usage notes:
-- Stores actor override independent of session binding.
-- `actorId = null` means no override exists.
+- Stores explicit actor overrides for a conversation key.
 
 Example:
 ```graphql
@@ -1336,34 +1365,22 @@ type PortActorBindingEdge {
 }
 
 """
-Conversation routing edge from a port to a session.
-
-This row preserves session continuity for repeated messages in the same
-external conversation.
+Conversation routing edge from a port to an actor.
 
 Usage notes:
-- Canonical ingress-session routing row.
-- `actor` resolves optional per-conversation actor override.
+- Canonical ingress-actor routing row.
+- `actor` resolves the bound actor object.
 
 Example:
 ```graphql
-{ port(name: "telegram") { bindings(first: 5) { edges { node { conversationKey sessionId actor { id } } } } } }
+{ port(name: "telegram") { bindings(first: 5) { edges { node { conversationKey actorId actor { id } } } } } }
 ```
 """
 type PortBinding {
 	id: String!
 	portName: String!
 	conversationKey: Uri!
-	sessionId: Uri!
-	"""
-	Resolved session object for this binding.
-	
-	Example:
-	```graphql
-	{ port(name: "telegram") { bindings(first: 1) { edges { node { session { id updatedAt } } } } } }
-	```
-	"""
-	session: Session
+	actorId: Uri!
 	"""
 	Actor bound to this conversation key, if any.
 	
@@ -1443,7 +1460,7 @@ Usage notes:
 
 Example:
 ```graphql
-{ provider(provider: "openai") { provider providerKind enabled defaultTextModel } }
+{ provider(provider: "openai") { provider providerKind enabled defaultTextModel models { name } defaultModel { name } } }
 ```
 """
 type Provider implements Node {
@@ -1459,6 +1476,8 @@ type Provider implements Node {
 	defaultAudioModel: String
 	createdAt: DateTime!
 	updatedAt: DateTime!
+	defaultModel: ModelObject!
+	models: [ModelObject!]!
 }
 
 """
@@ -1512,7 +1531,7 @@ type QueryRoot {
 	Fetches a single graph node by URI and resolves the concrete runtime type.
 	
 	Usage notes:
-	- Works for actor/session/port/provider/app/task/memory entities.
+	- Works for actor/port/provider/app/task/memory entities.
 	- Use inline fragments to read type-specific fields.
 	
 	Example:
@@ -1554,32 +1573,6 @@ type QueryRoot {
 	"""
 	actors(first: Int, after: String): ActorConnection!
 	"""
-	Fetches one session by URI.
-	
-	Example:
-	```graphql
-	query($id: Uri!) { session(id: $id) { id portId updatedAt } }
-	```
-	"""
-	session(id: Uri!): Session
-	"""
-	Lists sessions ordered by most-recent update.
-	
-	Usage notes:
-	- Optional filter: `portId`.
-	- Use nested `messages` for chat timeline reads.
-	
-	Example:
-	```graphql
-	query($port: Uri!) {
-	sessions(first: 10, portId: $port) {
-	edges { node { id updatedAt } }
-	}
-	}
-	```
-	"""
-	sessions(first: Int, after: String, portId: Uri): SessionConnection!
-	"""
 	Fetches one port by canonical port name (for example `http`, `telegram`).
 	
 	Example:
@@ -1601,13 +1594,13 @@ type QueryRoot {
 	Lists ports ordered by activity.
 	
 	Usage notes:
-	- Includes `activeSessions` and binding relations for routing debugging.
+	- Includes `activeBindings` and binding relations for routing debugging.
 	
 	Example:
 	```graphql
 	query {
 	ports(first: 20) {
-	edges { node { name provider activeSessions } }
+	edges { node { name provider activeBindings } }
 	}
 	}
 	```
@@ -1801,10 +1794,6 @@ input RunActorChatInput {
 	"""
 	actorId: Uri!
 	"""
-	Session URI context.
-	"""
-	sessionId: Uri!
-	"""
 	User URI authoring the request.
 	"""
 	userId: Uri!
@@ -1844,10 +1833,6 @@ input RunPortHttpInput {
 	"""
 	text: String!
 	"""
-	Optional existing session URI.
-	"""
-	sessionId: Uri
-	"""
 	Optional explicit actor URI override.
 	"""
 	actorId: Uri
@@ -1884,7 +1869,6 @@ type ScheduleJob {
 	kind: String!
 	status: ScheduleJobStatusValue!
 	targetActorId: Uri
-	targetSessionId: Uri
 	messageType: String!
 	nextRunAt: DateTime
 	lastRunAt: DateTime
@@ -1949,7 +1933,6 @@ type ScheduleJobRun {
 	scheduledFor: DateTime!
 	firedAt: DateTime!
 	targetActorId: Uri
-	targetSessionId: Uri
 	messageId: String!
 	createdAt: DateTime!
 }
@@ -2009,231 +1992,10 @@ enum ScheduleJobStatusValue {
 }
 
 """
-Conversation and execution timeline container.
-
-A session is Borg's primary runtime context: messages append here, ports
-resolve into this identity, and actors operate within this thread.
-
-Usage notes:
-- Session is the primary unit for chat/task execution context.
-- Traverse into `messages` for timeline rows and `port` for ingress metadata.
-
-Example:
-```graphql
-{ session(id: "borg:session:s1") { id portId messages(first: 5) { edges { node { id text } } } } }
-```
-"""
-type Session implements Node {
-	id: Uri!
-	portId: Uri!
-	updatedAt: DateTime!
-	"""
-	Port metadata associated with this session.
-	
-	Example:
-	```graphql
-	{ session(id: "borg:session:s1") { port { id name provider } } }
-	```
-	"""
-	port: Port
-	"""
-	Messages ordered by creation time ascending.
-	
-	Usage notes:
-	- Use `after` with connection cursor for incremental timeline sync.
-	
-	Example:
-	```graphql
-	{ session(id: "borg:session:s1") { messages(first: 20) { edges { node { id role text } } } } }
-	```
-	"""
-	messages(first: Int, after: String): SessionMessageConnection!
-}
-
-"""
-Relay-style page container for cursor-based list traversal.
-"""
-type SessionConnection {
-	"""
-	Returned edges for the current page.
-	"""
-	edges: [SessionEdge!]!
-	"""
-	Pagination state for the current page.
-	"""
-	pageInfo: PageInfo!
-}
-
-"""
-Relay-style edge carrying one node plus cursor for forward pagination.
-"""
-type SessionEdge {
-	"""
-	Opaque edge cursor to pass back into `after`.
-	"""
-	cursor: String!
-	"""
-	Materialized node for this edge.
-	"""
-	node: Session!
-}
-
-"""
-Persisted timeline entry inside a session.
-
-Session messages represent user inputs, assistant outputs, tool activity, and
-lifecycle events as ordered records.
-
-Usage notes:
-- Prefer `messageType`, `role`, and `text` over deprecated `payload`.
-- `id` is the stable timeline message URI.
-
-Example:
-```graphql
-{ session(id: "borg:session:s1") { messages(first: 5) { edges { node { id messageType role text } } } } }
-```
-"""
-type SessionMessage {
-	id: Uri!
-	sessionId: Uri!
-	createdAt: DateTime!
-	messageType: String!
-	role: String
-	text: String
-	payload: JsonValue! @deprecated(reason: "Legacy JSON payload. Prefer typed fields (`messageType`, `role`, `text`).")
-}
-
-"""
-Relay-style page container for cursor-based list traversal.
-"""
-type SessionMessageConnection {
-	"""
-	Returned edges for the current page.
-	"""
-	edges: [SessionMessageEdge!]!
-	"""
-	Pagination state for the current page.
-	"""
-	pageInfo: PageInfo!
-}
-
-"""
-Relay-style edge carrying one node plus cursor for forward pagination.
-"""
-type SessionMessageEdge {
-	"""
-	Opaque edge cursor to pass back into `after`.
-	"""
-	cursor: String!
-	"""
-	Materialized node for this edge.
-	"""
-	node: SessionMessage!
-}
-
-"""
-Typed session message shape used by append/patch mutations.
-
-Usage notes:
-- Prefer typed fields over `payload` for new clients.
-- At least one field should be set.
-"""
-input SessionMessageInput {
-	"""
-	Message type (`user`, `assistant`, `tool_call`, ...).
-	"""
-	messageType: String
-	"""
-	Logical role (`user`, `assistant`, `tool`, ...).
-	"""
-	role: String
-	"""
-	Primary human-readable content.
-	"""
-	text: String
-	"""
-	Transitional raw payload.
-	"""
-	payload: JsonValue
-}
-
-"""
-High-level classification for UI routing of session notifications.
-"""
-enum SessionNotificationKind {
-	"""
-	Assistant-authored response message.
-	"""
-	ASSISTANT_REPLY
-	"""
-	Tool call or tool result activity.
-	"""
-	TOOL_ACTIVITY
-	"""
-	Session lifecycle or system event message.
-	"""
-	SESSION_EVENT
-	"""
-	Fallback generic message classification.
-	"""
-	MESSAGE
-}
-
-"""
-Notification payload projected from a session message.
-
-Usage notes:
-- Notifications are fully typed and include the underlying `sessionMessage`.
-- `kind` is derived from `messageType`/`role`.
-"""
-type SessionNotificationObject {
-	"""
-	Stable notification identifier (`sessionId:messageId`).
-	"""
-	id: String!
-	"""
-	Kind classification for UI routing and badges.
-	"""
-	kind: SessionNotificationKind!
-	"""
-	Short user-facing title.
-	"""
-	title: String!
-	"""
-	Session URI this notification belongs to.
-	"""
-	sessionId: Uri!
-	"""
-	Source message URI.
-	"""
-	messageId: Uri!
-	"""
-	Source message type.
-	"""
-	messageType: String!
-	"""
-	Source role, when available.
-	"""
-	role: String
-	"""
-	Source text content, when available.
-	"""
-	text: String
-	"""
-	Source message timestamp.
-	"""
-	createdAt: DateTime!
-	"""
-	Full underlying message object.
-	"""
-	sessionMessage: SessionMessage!
-}
-
-"""
 Requests a task status transition under taskgraph rules.
 
 Example:
-`{ taskId: "borg:task:t1", sessionUri: "borg:session:s-assignee", status: DOING }`
+`{ taskId: "borg:task:t1", actorId: "borg:actor:assignee", status: DOING }`
 """
 input SetTaskStatusInput {
 	"""
@@ -2241,9 +2003,9 @@ input SetTaskStatusInput {
 	"""
 	taskId: Uri!
 	"""
-	Session URI authoring the status transition.
+	Actor URI authoring the status transition.
 	"""
-	sessionUri: Uri!
+	actorId: Uri!
 	"""
 	Target status value.
 	"""
@@ -2255,13 +2017,13 @@ Root subscription entrypoint for real-time Borg streams.
 
 Usage notes:
 - Subscription transport is expected to run over WebSockets (`graphql-transport-ws`).
-- Use `sessionChat` for full timeline streaming.
-- Use `sessionNotifications` for notification-friendly filtered events.
+- Use `actorChat` for actor timeline streaming.
+- Use `actorNotifications` for notification-friendly filtered events.
 
 Example:
 ```graphql
-subscription($session: Uri!) {
-sessionChat(sessionId: $session) {
+subscription($actor: Uri!) {
+actorChat(actorId: $actor) {
 id
 messageType
 role
@@ -2272,7 +2034,7 @@ text
 """
 type SubscriptionRoot {
 	"""
-	Streams new messages from a session timeline as they are appended.
+	Streams new messages from an actor timeline as they are appended.
 	
 	Usage notes:
 	- When `afterMessageId` is omitted, the stream starts from the first message.
@@ -2281,8 +2043,8 @@ type SubscriptionRoot {
 	
 	Example:
 	```graphql
-	subscription($session: Uri!, $after: Uri) {
-	sessionChat(sessionId: $session, afterMessageId: $after, pollIntervalMs: 500) {
+	subscription($actor: Uri!, $after: Uri) {
+	actorChat(actorId: $actor, afterMessageId: $after, pollIntervalMs: 500) {
 	id
 	messageType
 	role
@@ -2291,9 +2053,9 @@ type SubscriptionRoot {
 	}
 	```
 	"""
-	sessionChat(sessionId: Uri!, afterMessageId: Uri, pollIntervalMs: Int): SessionMessage!
+	actorChat(actorId: Uri!, afterMessageId: Uri, pollIntervalMs: Int): ActorMessage!
 	"""
-	Streams session notifications derived from new timeline messages.
+	Streams actor notifications derived from new timeline messages.
 	
 	Usage notes:
 	- By default, user-authored messages are filtered out.
@@ -2301,18 +2063,18 @@ type SubscriptionRoot {
 	
 	Example:
 	```graphql
-	subscription($session: Uri!) {
-	sessionNotifications(sessionId: $session) {
+	subscription($actor: Uri!) {
+	actorNotifications(actorId: $actor) {
 	id
 	kind
 	title
 	text
-	sessionMessage { id messageType role }
+	actorMessage { id messageType role }
 	}
 	}
 	```
 	"""
-	sessionNotifications(sessionId: Uri!, afterMessageId: Uri, pollIntervalMs: Int, includeUserMessages: Boolean): SessionNotificationObject!
+	actorNotifications(actorId: Uri!, afterMessageId: Uri, pollIntervalMs: Int, includeUserMessages: Boolean): ActorNotificationObject!
 }
 
 """
@@ -2337,9 +2099,7 @@ type Task implements Node {
 	definitionOfDone: String!
 	status: TaskStatusValue!
 	assigneeActorId: String!
-	assigneeSessionId: Uri
 	reviewerActorId: String!
-	reviewerSessionId: Uri
 	labels: [String!]!
 	parentUri: Uri
 	blockedBy: [Uri!]!
@@ -2379,7 +2139,7 @@ type Task implements Node {
 	
 	Example:
 	```graphql
-	{ task(id: "borg:task:t1") { comments(first: 20) { edges { node { id body authorSessionUri } } } } }
+	{ task(id: "borg:task:t1") { comments(first: 20) { edges { node { id body authorActorId } } } } }
 	```
 	"""
 	comments(first: Int, after: String): TaskCommentConnection!
@@ -2415,9 +2175,9 @@ type TaskComment {
 	"""
 	taskUri: Uri
 	"""
-	Session URI that authored this comment.
+	Actor URI that authored this comment.
 	"""
-	authorSessionUri: Uri
+	authorActorId: Uri
 	"""
 	Comment body text.
 	"""
@@ -2505,9 +2265,9 @@ type TaskEvent {
 	"""
 	taskUri: Uri
 	"""
-	Session URI that triggered the event.
+	Actor URI that triggered the event.
 	"""
-	actorSessionUri: Uri
+	actorId: Uri
 	type: String!
 	"""
 	Event payload projected into typed optional fields.
@@ -2558,17 +2318,9 @@ type TaskEventDataObject {
 	"""
 	assigneeActorId: String
 	"""
-	New assignee session URI when relevant.
-	"""
-	assigneeSessionUri: String
-	"""
 	Reviewer actor ID when relevant.
 	"""
 	reviewerActorId: String
-	"""
-	Reviewer session URI when relevant.
-	"""
-	reviewerSessionUri: String
 	"""
 	Parent task URI when relevant.
 	"""
@@ -2590,17 +2342,9 @@ type TaskEventDataObject {
 	"""
 	oldAssigneeActorId: String
 	"""
-	Previous assignee session URI when relevant.
-	"""
-	oldAssigneeSessionUri: String
-	"""
 	Replacement assignee actor ID when relevant.
 	"""
 	newAssigneeActorId: String
-	"""
-	Replacement assignee session URI when relevant.
-	"""
-	newAssigneeSessionUri: String
 	"""
 	Label list payload when relevant.
 	"""
@@ -2708,10 +2452,6 @@ input UpdateScheduleJobInputGql {
 	"""
 	actorId: Uri
 	"""
-	New target session URI.
-	"""
-	sessionId: Uri
-	"""
 	New message type.
 	"""
 	messageType: String
@@ -2746,9 +2486,9 @@ input UpdateTaskInputGql {
 	"""
 	taskId: Uri!
 	"""
-	Session URI authoring the update event.
+	Actor URI authoring the update event.
 	"""
-	sessionUri: Uri!
+	actorId: Uri!
 	"""
 	Optional new title.
 	"""
@@ -2778,6 +2518,10 @@ input UpsertActorInput {
 	Human-readable actor name.
 	"""
 	name: String!
+	"""
+	Optional runtime model id (for example `gpt-4.1`).
+	"""
+	model: String
 	"""
 	System prompt used when running this actor.
 	"""
@@ -2966,10 +2710,10 @@ input UpsertPortActorBindingInput {
 }
 
 """
-Creates or updates the conversation-to-session routing row for a port.
+Creates or updates the conversation-to-actor routing row for a port.
 
 Example:
-`{ portName: "telegram", conversationKey: "borg:conversation:123", sessionId: "borg:session:s1" }`
+`{ portName: "telegram", conversationKey: "borg:conversation:123", actorId: "borg:actor:planner" }`
 """
 input UpsertPortBindingInput {
 	"""
@@ -2981,9 +2725,9 @@ input UpsertPortBindingInput {
 	"""
 	conversationKey: Uri!
 	"""
-	Target long-lived session URI.
+	Target actor URI.
 	"""
-	sessionId: Uri!
+	actorId: Uri!
 }
 
 """
@@ -3054,23 +2798,6 @@ input UpsertProviderInput {
 	Preferred default model for audio/transcription.
 	"""
 	defaultAudioModel: String
-}
-
-"""
-Creates or updates a long-lived session in the Borg runtime graph.
-
-Example:
-`{ sessionId: "borg:session:s1", port: "borg:port:http" }`
-"""
-input UpsertSessionInput {
-	"""
-	Session URI (`borg:session:*`).
-	"""
-	sessionId: Uri!
-	"""
-	Owning ingress port URI.
-	"""
-	port: Uri!
 }
 
 scalar Uri

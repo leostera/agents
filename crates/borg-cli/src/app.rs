@@ -25,9 +25,6 @@ const OPENROUTER_PROVIDER: &str = "openrouter";
 const RUNTIME_SETTINGS_PORT: &str = "runtime";
 const RUNTIME_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 const RUNTIME_PREFERRED_PROVIDER_ID_KEY: &str = "preferred_provider_id";
-const DEVMODE_PLANNER_ACTOR_ID: &str = "devmode:actor:planner";
-const DEVMODE_PLANNER_NAME: &str = "DevMode Planner";
-const DEVMODE_PLANNER_PROMPT: &str = "You are DevMode's planning lead. Help the user refine implementation-ready specs, ask focused clarifying questions, and break approved specs into parallelizable task-graph work.";
 
 #[derive(Clone)]
 pub(crate) struct BorgCliApp {
@@ -59,7 +56,6 @@ impl BorgCliApp {
             capabilities_created = app_seed_summary.capabilities_created,
             "default apps reconciled"
         );
-        ensure_devmode_planner(&db).await?;
         memory.migrate().await?;
 
         let memory_for_state_facts = memory.clone();
@@ -75,21 +71,16 @@ impl BorgCliApp {
         let files = BorgFs::local(db.clone(), self.borg_dir.files().to_path_buf());
         let runtime = BorgRuntime::new(db.clone(), memory.clone(), runtime, shell_runtime, files);
         let runtime = std::sync::Arc::new(runtime);
-        let supervisor = BorgSupervisor::new(runtime.clone());
+
+        let supervisor = std::sync::Arc::new(BorgSupervisor::new(runtime.clone()));
+        let supervisor_for_http = supervisor.clone();
         let (task_dispatch_tx, mut task_dispatch_rx) =
             tokio::sync::mpsc::channel::<TaskDispatch>(128);
+
         let supervisor_for_tasks = supervisor.clone();
-        tokio::spawn(async move {
+        let _task_dispatch_worker = tokio::spawn(async move {
             while let Some(task) = task_dispatch_rx.recv().await {
-                let Ok(session_id) = Uri::parse(&task.assignee_session_uri) else {
-                    tracing::warn!(
-                        target: "borg_cli",
-                        session_uri = %task.assignee_session_uri,
-                        task_uri = %task.task_uri,
-                        "invalid assignee session uri for task dispatch"
-                    );
-                    continue;
-                };
+                let actor_id = task.assignee_actor_id.clone();
                 let user_id = Uri::from_parts("borg", "user", Some("taskgraph"))
                     .expect("valid synthetic taskgraph user uri");
                 let text = format!(
@@ -106,14 +97,22 @@ impl BorgCliApp {
                 );
                 if let Err(err) = supervisor_for_tasks
                     .cast(BorgMessage {
-                        actor_id: session_id.clone(),
+                        actor_id,
                         user_id,
-                        session_id,
                         input: BorgInput::Chat { text },
                         port_context: PortContext::Unknown,
                     })
                     .await
                 {
+                    let err_message = err.to_string();
+                    if err_message.contains("actor spec not found") {
+                        tracing::debug!(
+                            target: "borg_cli",
+                            task_uri = %task.task_uri,
+                            "skipping task dispatch because assignee actor no longer exists"
+                        );
+                        continue;
+                    }
                     tracing::warn!(
                         target: "borg_cli",
                         error = %err,
@@ -123,13 +122,15 @@ impl BorgCliApp {
                 }
             }
         });
+
         let taskgraph_supervisor =
             TaskGraphSupervisor::new(db.clone()).with_dispatch(task_dispatch_tx);
-        taskgraph_supervisor.start().await;
-        info!(target: "borg_cli", "taskgraph supervisor started");
 
-        self.start_schedule_supervisor(db.clone());
-        info!(target: "borg_cli", "schedule supervisor started");
+        let _schedule_handle = self.spawn_schedule_supervisor(db.clone());
+
+        info!(target: "borg_cli", "starting all supervisors concurrently");
+        let _supervisor_handle = supervisor.start().await?;
+        let _taskgraph_handle = taskgraph_supervisor.start().await;
 
         let dashboard_url = format!("http://{bind}/");
         info!(
@@ -137,11 +138,12 @@ impl BorgCliApp {
             dashboard_url = %dashboard_url,
             "open admin dashboard"
         );
-        let http_server = BorgHttpServer::new(bind, runtime, supervisor);
+
+        let http_server = BorgHttpServer::new(bind, runtime, supervisor_for_http);
         http_server.run().await
     }
 
-    fn start_schedule_supervisor(&self, db: BorgDb) {
+    fn spawn_schedule_supervisor(&self, db: BorgDb) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(1));
             loop {
@@ -166,7 +168,7 @@ impl BorgCliApp {
                     }
                 }
             }
-        });
+        })
     }
 
     async fn initialize_storage(&self) -> Result<()> {
@@ -182,7 +184,6 @@ impl BorgCliApp {
             capabilities_created = app_seed_summary.capabilities_created,
             "default apps reconciled"
         );
-        ensure_devmode_planner(&db).await?;
         memory.migrate().await?;
         Ok(())
     }
@@ -286,11 +287,11 @@ impl BorgCliApp {
         }
     }
 
-    pub(crate) async fn session(&self, session_id: String, poll_ms: u64) -> Result<()> {
-        let session_id = Uri::parse(&session_id).map_err(|_| {
+    pub(crate) async fn actor_stream(&self, actor_id: String, poll_ms: u64) -> Result<()> {
+        let actor_id = Uri::parse(&actor_id).map_err(|_| {
             anyhow::anyhow!(
-                "invalid session id `{}` (expected URI like borg:session:<id>)",
-                session_id
+                "invalid actor id `{}` (expected URI like borg:actor:<id>)",
+                actor_id
             )
         })?;
         let db = self.open_config_db().await?;
@@ -300,11 +301,11 @@ impl BorgCliApp {
             tokio::select! {
                 ctrl = tokio::signal::ctrl_c() => {
                     ctrl?;
-                    info!(target: "borg_cli", session_id = %session_id, "session stream interrupted by ctrl-c");
+                    info!(target: "borg_cli", actor_id = %actor_id, "actor stream interrupted by ctrl-c");
                     return Ok(());
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(poll_ms)) => {
-                    let messages = db.list_session_messages(&session_id, next_index, 512).await?;
+                    let messages = db.list_actor_messages(&actor_id, next_index, 512).await?;
                     for message in messages {
                         println!("{}", serde_json::to_string(&message)?);
                         next_index += 1;
@@ -314,23 +315,23 @@ impl BorgCliApp {
         }
     }
 
-    pub(crate) async fn session_clear_history(&self, session_id: String) -> Result<()> {
-        let session_id = Uri::parse(&session_id).map_err(|_| {
+    pub(crate) async fn actor_clear_history(&self, actor_id: String) -> Result<()> {
+        let actor_id = Uri::parse(&actor_id).map_err(|_| {
             anyhow::anyhow!(
-                "invalid session id `{}` (expected URI like borg:session:<id>)",
-                session_id
+                "invalid actor id `{}` (expected URI like borg:actor:<id>)",
+                actor_id
             )
         })?;
         let db = self.open_config_db().await?;
         db.migrate().await?;
-        let deleted = db.clear_session_history(&session_id).await?;
+        let deleted = db.clear_actor_history(&actor_id).await?;
         info!(
             target: "borg_cli",
-            session_id = %session_id,
+            actor_id = %actor_id,
             deleted,
-            "cleared session history"
+            "cleared actor history"
         );
-        println!("cleared {} message(s) for {}", deleted, session_id);
+        println!("cleared {} message(s) for {}", deleted, actor_id);
         Ok(())
     }
 
@@ -370,11 +371,11 @@ impl BorgCliApp {
         Ok(())
     }
 
-    pub(crate) async fn admin_sessions_clear_all(&self, all: bool, yes: bool) -> Result<()> {
+    pub(crate) async fn admin_actors_clear_all(&self, all: bool, yes: bool) -> Result<()> {
         if !all {
-            anyhow::bail!("refusing to clear sessions without --all");
+            anyhow::bail!("refusing to clear actor histories without --all");
         }
-        if !yes && !confirm_sessions_clear_all()? {
+        if !yes && !confirm_actors_clear_all()? {
             println!("aborted");
             return Ok(());
         }
@@ -382,51 +383,26 @@ impl BorgCliApp {
         let db = self.open_config_db().await?;
         db.migrate().await?;
 
-        let mut deleted_sessions = 0_u64;
+        let mut deleted_actors = 0_u64;
         let mut deleted_messages = 0_u64;
-        loop {
-            let sessions = db.list_sessions(500, None, None).await?;
-            if sessions.is_empty() {
-                break;
-            }
-            for session in sessions {
-                deleted_messages += db.clear_session_history(&session.session_id).await?;
-                deleted_sessions += db.delete_session(&session.session_id).await?;
-            }
+        let actors = db.list_actors(50_000).await?;
+        for actor in actors {
+            deleted_messages += db.clear_actor_history(&actor.actor_id).await?;
+            deleted_actors += 1;
         }
 
         info!(
             target: "borg_cli",
-            deleted_sessions,
+            deleted_actors,
             deleted_messages,
-            "cleared all sessions and session history"
+            "cleared actor histories"
         );
         println!(
-            "cleared {} session(s) and {} message(s)",
-            deleted_sessions, deleted_messages
+            "cleared history for {} actor(s) and {} message(s)",
+            deleted_actors, deleted_messages
         );
         Ok(())
     }
-}
-
-async fn ensure_devmode_planner(db: &BorgDb) -> Result<()> {
-    let planner_actor_id = Uri::parse(DEVMODE_PLANNER_ACTOR_ID)?;
-    if db.get_actor(&planner_actor_id).await?.is_none() {
-        db.upsert_actor(
-            &planner_actor_id,
-            DEVMODE_PLANNER_NAME,
-            DEVMODE_PLANNER_PROMPT,
-            "RUNNING",
-        )
-        .await?;
-        info!(
-            target: "borg_cli",
-            actor_id = DEVMODE_PLANNER_ACTOR_ID,
-            "seeded devmode planner actor"
-        );
-    }
-
-    Ok(())
 }
 
 fn parse_single_arg<T: DeserializeOwned>(args: Vec<Value>, op_name: &str) -> Result<T> {
@@ -486,8 +462,8 @@ fn confirm_taskgraph_clear_all() -> Result<bool> {
     Ok(normalized == "y" || normalized == "yes")
 }
 
-fn confirm_sessions_clear_all() -> Result<bool> {
-    print!("This will permanently delete all sessions and session messages. Continue? [y/N]: ");
+fn confirm_actors_clear_all() -> Result<bool> {
+    print!("This will permanently delete all actor histories. Continue? [y/N]: ");
     io::stdout().flush()?;
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;

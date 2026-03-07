@@ -15,7 +15,7 @@ Scope: keeping `ARCHITECTURE.md` aligned with implementation and direction.
   - single binary (`borg-cli`)
   - root SPA build
   - fail-loud dist loading in onboarding backend
-- session-first ingress (`port -> session turn`), with tasks as separate explicit subsystem
+- actor-first ingress (`port -> actor turn`), with tasks as separate explicit subsystem
 - taskgraph MCP contract (`borg.taskgraph`) for durable agent task DAGs and queue semantics
 
 ## Diagram Expectations
@@ -34,7 +34,7 @@ Update `ARCHITECTURE.md` when any of these change:
 - taskgraph MCP resources/tools, invariants, or queue/review semantics
 - onboarding flow semantics
 - scheduler or runtime lifecycle behavior
-- session/task ownership model (especially `port_bindings` and task-session semantics)
+- actor/task ownership model (especially `port_bindings` actor routing semantics)
 
 ## Quality Bar
 

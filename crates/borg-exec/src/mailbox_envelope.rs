@@ -9,7 +9,6 @@ use crate::port_context::PortContext;
 pub struct ActorMailboxEnvelope {
     pub actor_id: String,
     pub user_id: String,
-    pub session_id: String,
     pub port_context: PortContext,
     pub input: ActorMailboxInput,
 }
@@ -36,7 +35,6 @@ impl ActorMailboxEnvelope {
         Self {
             actor_id: msg.actor_id.to_string(),
             user_id: msg.user_id.to_string(),
-            session_id: msg.session_id.to_string(),
             port_context: msg.port_context.clone(),
             input: match &msg.input {
                 BorgInput::Chat { text } => ActorMailboxInput::Chat { text: text.clone() },
@@ -61,7 +59,6 @@ impl ActorMailboxEnvelope {
     pub fn to_borg_message(&self) -> Result<BorgMessage> {
         let actor_id = Uri::parse(&self.actor_id)?;
         let user_id = Uri::parse(&self.user_id)?;
-        let session_id = Uri::parse(&self.session_id)?;
         let input = match &self.input {
             ActorMailboxInput::Chat { text } => BorgInput::Chat { text: text.clone() },
             ActorMailboxInput::Audio {
@@ -80,7 +77,6 @@ impl ActorMailboxEnvelope {
         Ok(BorgMessage {
             actor_id,
             user_id,
-            session_id,
             input,
             port_context: self.port_context.clone(),
         })
@@ -98,7 +94,6 @@ mod tests {
         let msg = BorgMessage {
             actor_id: uri!("devmode", "actor", "a1"),
             user_id: uri!("borg", "user", "u1"),
-            session_id: uri!("borg", "session", "s1"),
             input: BorgInput::Chat {
                 text: "hello".to_string(),
             },
@@ -114,7 +109,6 @@ mod tests {
 
         assert_eq!(decoded.actor_id, msg.actor_id);
         assert_eq!(decoded.user_id, msg.user_id);
-        assert_eq!(decoded.session_id, msg.session_id);
         assert_eq!(
             serde_json::to_value(&decoded.port_context).expect("ctx"),
             port_ctx
@@ -130,7 +124,6 @@ mod tests {
         let msg = BorgMessage {
             actor_id: uri!("devmode", "actor", "a2"),
             user_id: uri!("borg", "user", "u2"),
-            session_id: uri!("borg", "session", "s2"),
             input: BorgInput::Command(BorgCommand::ModelSet {
                 model: "gpt-5-mini".to_string(),
             }),
@@ -176,7 +169,6 @@ mod tests {
         let msg = BorgMessage {
             actor_id: uri!("devmode", "actor", "a3"),
             user_id: uri!("borg", "user", "u3"),
-            session_id: uri!("borg", "session", "s3"),
             input: BorgInput::Audio {
                 file_id: uri!("borg", "audio", "abc123"),
                 mime_type: Some("audio/wav".to_string()),

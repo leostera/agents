@@ -11,8 +11,8 @@ use tracing::{Instrument, error, info_span, warn};
 use uuid::Uuid;
 
 use crate::{
-    Session, SessionOutput, SessionResult, ToolCallRecord, ToolRequest, ToolResultData, ToolSpec,
-    Toolchain, to_provider_messages, to_provider_tool_specs,
+    ActorRunOutput, ActorRunResult, ActorThread, ToolCallRecord, ToolRequest, ToolResultData,
+    ToolSpec, Toolchain, to_provider_messages, to_provider_tool_specs,
 };
 
 pub const DEFAULT_MAX_TURNS: usize = 50;
@@ -107,79 +107,83 @@ where
 {
     pub async fn run<P: Provider>(
         &self,
-        session: &mut Session<TToolCall, TToolResult>,
+        actor_thread: &mut ActorThread<TToolCall, TToolResult>,
         provider: &P,
         tools: &Toolchain<TToolCall, TToolResult>,
-    ) -> SessionResult<SessionOutput<TToolCall, TToolResult>> {
-        self.run_with_tool_events(session, provider, tools, None)
+    ) -> ActorRunResult<ActorRunOutput<TToolCall, TToolResult>> {
+        self.run_with_tool_events(actor_thread, provider, tools, None)
             .await
     }
 
     pub async fn run_with_tool_events<P: Provider>(
         &self,
-        session: &mut Session<TToolCall, TToolResult>,
+        actor_thread: &mut ActorThread<TToolCall, TToolResult>,
         provider: &P,
         tools: &Toolchain<TToolCall, TToolResult>,
         tool_event_tx: Option<&UnboundedSender<ToolCallRecord<TToolCall, TToolResult>>>,
-    ) -> SessionResult<SessionOutput<TToolCall, TToolResult>> {
-        if let Err(err) = session.agent_started().await {
-            return SessionResult::SessionError(err.to_string());
+    ) -> ActorRunResult<ActorRunOutput<TToolCall, TToolResult>> {
+        if let Err(err) = actor_thread.agent_started().await {
+            return ActorRunResult::ActorError(err.to_string());
         }
 
-        let mut pending = session.pop_steering_messages();
-        let user_key = match session.user_key().await {
+        let mut pending = actor_thread.pop_steering_messages();
+        let user_key = match actor_thread.user_key().await {
             Ok(value) => Some(value),
             Err(err) => {
                 warn!(
                     target: "borg_agent",
-                    session_id = %session.session_id,
+                    actor_id = %actor_thread.actor_id,
                     error = %err,
                     "failed to resolve user_key for provider call context"
                 );
                 None
             }
         };
-        let mut has_tool_calls = match session.has_unprocessed_messages().await {
+        let mut has_tool_calls = match actor_thread.has_unprocessed_messages().await {
             Ok(value) => value,
             Err(err) => {
-                return finish_session(session, SessionResult::SessionError(err.to_string())).await;
+                return finish_turn(actor_thread, ActorRunResult::ActorError(err.to_string()))
+                    .await;
             }
         };
-        let has_unprocessed_user_messages = match session.has_unprocessed_user_messages().await {
+        let has_unprocessed_user_messages = match actor_thread.has_unprocessed_user_messages().await
+        {
             Ok(value) => value,
             Err(err) => {
-                return finish_session(session, SessionResult::SessionError(err.to_string())).await;
+                return finish_turn(actor_thread, ActorRunResult::ActorError(err.to_string()))
+                    .await;
             }
         };
         if has_tool_calls && pending.is_empty() && !has_unprocessed_user_messages {
-            if let Err(err) = session.mark_processed().await {
-                return finish_session(session, SessionResult::SessionError(err.to_string())).await;
+            if let Err(err) = actor_thread.mark_processed().await {
+                return finish_turn(actor_thread, ActorRunResult::ActorError(err.to_string()))
+                    .await;
             }
-            return finish_session(session, SessionResult::Idle).await;
+            return finish_turn(actor_thread, ActorRunResult::Idle).await;
         }
         let mut last_reply = String::new();
         let mut records: Vec<ToolCallRecord<TToolCall, TToolResult>> = Vec::new();
 
         while has_tool_calls || !pending.is_empty() {
             while has_tool_calls || !pending.is_empty() {
-                info!(target: "borg_agent", session_id = %session.session_id, "turn_start");
+                info!(target: "borg_agent", actor_id = %actor_thread.actor_id, "turn_start");
 
                 for message in pending.drain(..) {
-                    if let Err(err) = session.add_message(message).await {
-                        return finish_session(
-                            session,
-                            SessionResult::SessionError(err.to_string()),
+                    if let Err(err) = actor_thread.add_message(message).await {
+                        return finish_turn(
+                            actor_thread,
+                            ActorRunResult::ActorError(err.to_string()),
                         )
                         .await;
                     }
                 }
 
-                let context = match session.build_context().await {
+                let context = match actor_thread.build_context().await {
                     Ok(context) => context,
                     Err(err) => {
-                        return finish_session(
-                            session,
-                            SessionResult::SessionError(err.to_string()),
+                        return finish_turn(
+                            actor_thread,
+                            ActorRunResult::ActorError(err.to_string()),
                         )
                         .await;
                     }
@@ -188,9 +192,9 @@ where
                 let provider_messages = match to_provider_messages(&provider_input_messages) {
                     Ok(messages) => messages,
                     Err(err) => {
-                        return finish_session(
-                            session,
-                            SessionResult::SessionError(err.to_string()),
+                        return finish_turn(
+                            actor_thread,
+                            ActorRunResult::ActorError(err.to_string()),
                         )
                         .await;
                     }
@@ -208,21 +212,21 @@ where
                 let llm_call_span = info_span!(
                     "llm_provider_call",
                     call_id = %call_id,
-                    session_id = %session.session_id,
+                    actor_id = %actor_thread.actor_id,
                     user_id = ?user_key.as_ref().map(Uri::to_string),
                     model = req.model.as_str()
                 );
                 let assistant_message = match provider.chat(&req).instrument(llm_call_span).await {
                     Ok(message) => message,
                     Err(err) => {
-                        return finish_session(
-                            session,
-                            SessionResult::SessionError(err.to_string()),
+                        return finish_turn(
+                            actor_thread,
+                            ActorRunResult::ActorError(err.to_string()),
                         )
                         .await;
                     }
                 };
-                if let Err(err) = session
+                if let Err(err) = actor_thread
                     .record_provider_usage(
                         provider.provider_name(),
                         assistant_message.usage_tokens.unwrap_or(0),
@@ -231,13 +235,13 @@ where
                 {
                     warn!(
                         target: "borg_agent",
-                        session_id = %session.session_id,
+                        actor_id = %actor_thread.actor_id,
                         provider = provider.provider_name(),
                         error = %err,
                         "failed to update provider usage summary"
                     );
                 }
-                info!(target: "borg_agent", session_id = %session.session_id, "turn_end");
+                info!(target: "borg_agent", actor_id = %actor_thread.actor_id, "turn_end");
 
                 let mut tool_calls: Vec<(String, String, TToolCall)> = Vec::new();
                 for block in &assistant_message.content {
@@ -254,9 +258,9 @@ where
                         match serde_json::from_value::<TToolCall>(arguments_json.clone()) {
                             Ok(value) => value,
                             Err(err) => {
-                                return finish_session(
-                                    session,
-                                    SessionResult::SessionError(format!(
+                                return finish_turn(
+                                    actor_thread,
+                                    ActorRunResult::ActorError(format!(
                                         "invalid tool call arguments for `{name}`: {err}"
                                     )),
                                 )
@@ -271,21 +275,21 @@ where
                         assistant_message.stop_reason,
                         StopReason::Aborted | StopReason::Error
                     ) {
-                        let session_error_message = assistant_message
+                        let actor_error_message = assistant_message
                             .error_message
                             .clone()
                             .unwrap_or_else(|| "assistant aborted or errored".to_string());
                         error!(
                             target: "borg_agent",
-                            session_id = %session.session_id,
+                            actor_id = %actor_thread.actor_id,
                             stop_reason = ?assistant_message.stop_reason,
                             block_count = assistant_message.content.len(),
-                            error = session_error_message.as_str(),
+                            error = actor_error_message.as_str(),
                             "assistant turn ended with error stop reason"
                         );
-                        return finish_session(
-                            session,
-                            SessionResult::SessionError(session_error_message),
+                        return finish_turn(
+                            actor_thread,
+                            ActorRunResult::ActorError(actor_error_message),
                         )
                         .await;
                     }
@@ -302,26 +306,26 @@ where
                         .join("\n")
                         .trim()
                         .to_string();
-                    if let Err(err) = session
+                    if let Err(err) = actor_thread
                         .add_message(crate::Message::Assistant {
                             content: last_reply.clone(),
                         })
                         .await
                     {
-                        return finish_session(
-                            session,
-                            SessionResult::SessionError(err.to_string()),
+                        return finish_turn(
+                            actor_thread,
+                            ActorRunResult::ActorError(err.to_string()),
                         )
                         .await;
                     }
                     has_tool_calls = false;
-                    pending = session.pop_steering_messages();
+                    pending = actor_thread.pop_steering_messages();
                     continue;
                 }
 
                 let mut interrupted = false;
                 for (tool_call_id, tool_name, arguments) in tool_calls {
-                    if let Err(err) = session
+                    if let Err(err) = actor_thread
                         .add_message(crate::Message::ToolCall {
                             tool_call_id: tool_call_id.clone(),
                             name: tool_name.clone(),
@@ -329,14 +333,14 @@ where
                         })
                         .await
                     {
-                        return finish_session(
-                            session,
-                            SessionResult::SessionError(err.to_string()),
+                        return finish_turn(
+                            actor_thread,
+                            ActorRunResult::ActorError(err.to_string()),
                         )
                         .await;
                     }
 
-                    info!(target: "borg_agent", session_id = %session.session_id, tool_name, "tool_execution_start");
+                    info!(target: "borg_agent", actor_id = %actor_thread.actor_id, tool_name, "tool_execution_start");
                     let output = match tools
                         .run(ToolRequest {
                             tool_call_id: tool_call_id.clone(),
@@ -350,9 +354,9 @@ where
                             message: err.to_string(),
                         },
                     };
-                    info!(target: "borg_agent", session_id = %session.session_id, tool_name, "tool_execution_end");
+                    info!(target: "borg_agent", actor_id = %actor_thread.actor_id, tool_name, "tool_execution_end");
 
-                    if let Err(err) = session
+                    if let Err(err) = actor_thread
                         .add_message(crate::Message::ToolResult {
                             tool_call_id: tool_call_id.clone(),
                             name: tool_name.clone(),
@@ -360,9 +364,9 @@ where
                         })
                         .await
                     {
-                        return finish_session(
-                            session,
-                            SessionResult::SessionError(err.to_string()),
+                        return finish_turn(
+                            actor_thread,
+                            ActorRunResult::ActorError(err.to_string()),
                         )
                         .await;
                     }
@@ -378,13 +382,13 @@ where
                     records.push(record);
 
                     let persisted_call_id = format!("{tool_call_id}:{}", Uuid::now_v7());
-                    if let Err(err) = session
+                    if let Err(err) = actor_thread
                         .record_tool_call(&persisted_call_id, &tool_name, &arguments, &output)
                         .await
                     {
                         warn!(
                             target: "borg_agent",
-                            session_id = %session.session_id,
+                            actor_id = %actor_thread.actor_id,
                             call_id = %persisted_call_id,
                             tool_name = %tool_name,
                             error = %err,
@@ -392,7 +396,7 @@ where
                         );
                     }
 
-                    let steering = session.pop_steering_messages();
+                    let steering = actor_thread.pop_steering_messages();
                     if !steering.is_empty() {
                         pending = steering;
                         interrupted = true;
@@ -402,11 +406,11 @@ where
 
                 has_tool_calls = !interrupted;
                 if !interrupted {
-                    pending = session.pop_steering_messages();
+                    pending = actor_thread.pop_steering_messages();
                 }
             }
 
-            let follow_ups = session.pop_follow_up_messages();
+            let follow_ups = actor_thread.pop_follow_up_messages();
             if !follow_ups.is_empty() {
                 pending = follow_ups;
                 has_tool_calls = true;
@@ -416,16 +420,16 @@ where
             break;
         }
 
-        if let Err(err) = session.mark_processed().await {
-            return finish_session(session, SessionResult::SessionError(err.to_string())).await;
+        if let Err(err) = actor_thread.mark_processed().await {
+            return finish_turn(actor_thread, ActorRunResult::ActorError(err.to_string())).await;
         }
 
         if last_reply.is_empty() {
-            finish_session(session, SessionResult::Idle).await
+            finish_turn(actor_thread, ActorRunResult::Idle).await
         } else {
-            finish_session(
-                session,
-                SessionResult::Completed(Ok(SessionOutput {
+            finish_turn(
+                actor_thread,
+                ActorRunResult::Completed(Ok(ActorRunOutput {
                     reply: last_reply,
                     tool_calls: records,
                 })),
@@ -435,16 +439,16 @@ where
     }
 }
 
-async fn finish_session<TToolCall, TToolResult>(
-    session: &mut Session<TToolCall, TToolResult>,
-    result: SessionResult<SessionOutput<TToolCall, TToolResult>>,
-) -> SessionResult<SessionOutput<TToolCall, TToolResult>>
+async fn finish_turn<TToolCall, TToolResult>(
+    actor_thread: &mut ActorThread<TToolCall, TToolResult>,
+    result: ActorRunResult<ActorRunOutput<TToolCall, TToolResult>>,
+) -> ActorRunResult<ActorRunOutput<TToolCall, TToolResult>>
 where
     TToolCall: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
     TToolResult: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
-    if let Err(err) = session.agent_finished(&result).await {
-        return SessionResult::SessionError(err.to_string());
+    if let Err(err) = actor_thread.agent_finished(&result).await {
+        return ActorRunResult::ActorError(err.to_string());
     }
     result
 }

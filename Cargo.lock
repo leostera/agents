@@ -858,6 +858,7 @@ dependencies = [
  "borg-core",
  "borg-db",
  "borg-exec",
+ "borg-llm",
  "borg-memory",
  "borg-ports",
  "borg-taskgraph",

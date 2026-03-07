@@ -8,8 +8,8 @@ use std::hash::Hasher;
 use std::time::{Duration, Instant};
 
 use crate::{
-    Agent, ContextManager, ContextWindow, Message, SessionEndStatus, SessionEventPayload,
-    SessionOutput, SessionResult,
+    ActorEventPayload, ActorRunOutput, ActorRunResult, ActorRunStatus, Agent, ContextManager,
+    ContextWindow, Message,
 };
 
 const AGENT_STARTED_EVENT: &str = "agent_started";
@@ -25,8 +25,8 @@ struct CachedContext<TToolCall, TToolResult> {
 }
 
 #[derive(Clone)]
-pub struct Session<TToolCall, TToolResult> {
-    pub session_id: Uri,
+pub struct ActorThread<TToolCall, TToolResult> {
+    pub actor_id: Uri,
     pub agent: Agent<TToolCall, TToolResult>,
     db: BorgDb,
     context_manager: ContextManager<TToolCall, TToolResult>,
@@ -38,25 +38,25 @@ pub struct Session<TToolCall, TToolResult> {
     follow_up_messages: Vec<Message<TToolCall, TToolResult>>,
 }
 
-impl<TToolCall, TToolResult> Session<TToolCall, TToolResult>
+impl<TToolCall, TToolResult> ActorThread<TToolCall, TToolResult>
 where
     TToolCall: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
     TToolResult: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
     pub async fn new(
-        session_id: Uri,
+        actor_id: Uri,
         agent: Agent<TToolCall, TToolResult>,
         db: BorgDb,
     ) -> Result<Self> {
-        let payloads = db.list_session_messages(&session_id, 0, usize::MAX).await?;
+        let payloads = db.list_actor_messages(&actor_id, 0, usize::MAX).await?;
         let messages = payloads
             .into_iter()
             .map(serde_json::from_value::<Message<TToolCall, TToolResult>>)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| anyhow!(err))?;
         let messages_hash = Self::compute_messages_hash(&messages)?;
-        let mut session = Self {
-            session_id,
+        let mut thread = Self {
+            actor_id,
             agent,
             db,
             context_manager: ContextManager::default(),
@@ -68,15 +68,15 @@ where
             follow_up_messages: Vec::new(),
         };
 
-        session.last_processed_len = session.messages.len();
-        Ok(session)
+        thread.last_processed_len = thread.messages.len();
+        Ok(thread)
     }
 
     pub async fn add_message(&mut self, message: Message<TToolCall, TToolResult>) -> Result<()> {
         let payload = serde_json::to_value(message)?;
         let reasoning_effort = self.agent.reasoning_effort.map(|effort| effort.to_string());
         self.db
-            .append_session_message(&self.session_id, &payload, reasoning_effort.as_deref())
+            .append_actor_history_message(&self.actor_id, &payload, reasoning_effort.as_deref())
             .await?;
         let appended = serde_json::from_value::<Message<TToolCall, TToolResult>>(payload)
             .map_err(|err| anyhow!(err))?;
@@ -122,9 +122,9 @@ where
     }
 
     pub async fn agent_started(&mut self) -> Result<()> {
-        self.add_message(Message::SessionEvent {
+        self.add_message(Message::ActorEvent {
             name: AGENT_STARTED_EVENT.to_string(),
-            payload: SessionEventPayload::Started {
+            payload: ActorEventPayload::Started {
                 actor_id: self.agent.actor_id.clone(),
             },
         })
@@ -133,31 +133,31 @@ where
 
     pub async fn agent_finished(
         &mut self,
-        result: &SessionResult<SessionOutput<TToolCall, TToolResult>>,
+        result: &ActorRunResult<ActorRunOutput<TToolCall, TToolResult>>,
     ) -> Result<()> {
         let payload = match result {
-            SessionResult::Completed(Ok(output)) => SessionEventPayload::Finished {
-                status: SessionEndStatus::Completed,
+            ActorRunResult::Completed(Ok(output)) => ActorEventPayload::Finished {
+                status: ActorRunStatus::Completed,
                 reply: Some(output.reply.clone()),
                 error: None,
             },
-            SessionResult::Completed(Err(err)) => SessionEventPayload::Finished {
-                status: SessionEndStatus::CompletedError,
+            ActorRunResult::Completed(Err(err)) => ActorEventPayload::Finished {
+                status: ActorRunStatus::CompletedError,
                 reply: None,
                 error: Some(err.clone()),
             },
-            SessionResult::SessionError(err) => SessionEventPayload::Finished {
-                status: SessionEndStatus::SessionError,
+            ActorRunResult::ActorError(err) => ActorEventPayload::Finished {
+                status: ActorRunStatus::ActorError,
                 reply: None,
                 error: Some(err.clone()),
             },
-            SessionResult::Idle => SessionEventPayload::Finished {
-                status: SessionEndStatus::Idle,
+            ActorRunResult::Idle => ActorEventPayload::Finished {
+                status: ActorRunStatus::Idle,
                 reply: None,
                 error: None,
             },
         };
-        self.add_message(Message::SessionEvent {
+        self.add_message(Message::ActorEvent {
             name: AGENT_FINISHED_EVENT.to_string(),
             payload,
         })
@@ -231,7 +231,7 @@ where
         self.db
             .insert_tool_call(
                 call_id,
-                self.session_id.as_str(),
+                self.actor_id.as_str(),
                 tool_name,
                 &arguments_json,
                 &output_json,

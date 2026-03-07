@@ -47,9 +47,9 @@ export const LineVariant: Story = {
         <TabsTrigger value="open">Open</TabsTrigger>
         <TabsTrigger value="closed">Closed</TabsTrigger>
       </TabsList>
-      <TabsContent value="all">14 sessions total.</TabsContent>
-      <TabsContent value="open">5 sessions currently active.</TabsContent>
-      <TabsContent value="closed">9 sessions completed.</TabsContent>
+      <TabsContent value="all">14 actors total.</TabsContent>
+      <TabsContent value="open">5 actors currently active.</TabsContent>
+      <TabsContent value="closed">9 actors completed.</TabsContent>
     </Tabs>
   ),
 };

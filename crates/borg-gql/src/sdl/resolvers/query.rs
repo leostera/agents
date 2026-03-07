@@ -5,7 +5,7 @@ impl QueryRoot {
     /// Fetches a single graph node by URI and resolves the concrete runtime type.
     ///
     /// Usage notes:
-    /// - Works for actor/session/port/provider/app/task/memory entities.
+    /// - Works for actor/port/provider/app/task/memory entities.
     /// - Use inline fragments to read type-specific fields.
     ///
     /// Example:
@@ -27,13 +27,6 @@ impl QueryRoot {
                 .await
                 .map_err(map_anyhow)?
                 .map(ActorObject::new)
-                .map(Node::from)),
-            Some("session") => Ok(data
-                .db
-                .get_session(&id.0)
-                .await
-                .map_err(map_anyhow)?
-                .map(SessionObject::new)
                 .map(Node::from)),
             Some("port") => Ok(data
                 .db
@@ -145,73 +138,6 @@ impl QueryRoot {
         })
     }
 
-    /// Fetches one session by URI.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($id: Uri!) { session(id: $id) { id portId updatedAt } }
-    /// ```
-    async fn session(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<Option<SessionObject>> {
-        let data = ctx_data(ctx)?;
-        Ok(data
-            .db
-            .get_session(&id.0)
-            .await
-            .map_err(map_anyhow)?
-            .map(SessionObject::new))
-    }
-
-    /// Lists sessions ordered by most-recent update.
-    ///
-    /// Usage notes:
-    /// - Optional filter: `portId`.
-    /// - Use nested `messages` for chat timeline reads.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($port: Uri!) {
-    ///   sessions(first: 10, portId: $port) {
-    ///     edges { node { id updatedAt } }
-    ///   }
-    /// }
-    /// ```
-    async fn sessions(
-        &self,
-        ctx: &Context<'_>,
-        first: Option<i32>,
-        after: Option<String>,
-        port_id: Option<UriScalar>,
-    ) -> GqlResult<SessionConnection> {
-        let data = ctx_data(ctx)?;
-        let first = data.normalize_first(first)?;
-        let start = decode_offset_cursor(after.as_deref())?;
-        let fetch_limit = start + first + 1;
-
-        let sessions = data
-            .db
-            .list_sessions(fetch_limit, port_id.as_ref().map(|uri| &uri.0), None)
-            .await
-            .map_err(map_anyhow)?;
-
-        let (page, has_next_page) = apply_offset_pagination(sessions, start, first);
-
-        let edges = page
-            .into_iter()
-            .map(|(index, record)| SessionEdge {
-                cursor: encode_offset_cursor(index),
-                node: SessionObject::new(record),
-            })
-            .collect::<Vec<_>>();
-
-        Ok(SessionConnection {
-            page_info: PageInfo {
-                has_next_page,
-                end_cursor: edges.last().map(|edge| edge.cursor.clone()),
-            },
-            edges,
-        })
-    }
-
     /// Fetches one port by canonical port name (for example `http`, `telegram`).
     ///
     /// Example:
@@ -247,13 +173,13 @@ impl QueryRoot {
     /// Lists ports ordered by activity.
     ///
     /// Usage notes:
-    /// - Includes `activeSessions` and binding relations for routing debugging.
+    /// - Includes `activeBindings` and binding relations for routing debugging.
     ///
     /// Example:
     /// ```graphql
     /// query {
     ///   ports(first: 20) {
-    ///     edges { node { name provider activeSessions } }
+    ///     edges { node { name provider activeBindings } }
     ///   }
     /// }
     /// ```
