@@ -30,6 +30,6 @@ pub async fn run(memory: crate::MemoryStore, command: &str, payload: Value) -> R
         "namespace": "memory",
         "command": command,
         "tool": mapping.tool_name,
-        "content": response.content
+        "output": response.output
     }))
 }

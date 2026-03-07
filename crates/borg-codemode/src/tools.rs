@@ -111,8 +111,8 @@ pub fn build_code_mode_toolchain_with_context(
                 if query.is_empty() {
                     return Err(anyhow!("CodeMode-searchApis tool requires query"));
                 }
-                Ok(ToolResponse::<()> {
-                    content: ToolResultData::Text(sdk_types().to_string()),
+                Ok(ToolResponse {
+                    output: ToolResultData::Ok(sdk_types().to_string()),
                 })
             },
         ))?
@@ -121,25 +121,10 @@ pub fn build_code_mode_toolchain_with_context(
             Some(json!({
                 "type": "object",
                 "properties": {
-                    "Execution": {
-                        "type": "object",
-                        "properties": {
-                            "result": {},
-                            "duration": {
-                                "type": "object",
-                                "properties": {
-                                    "secs": { "type": "number" },
-                                    "nanos": { "type": "number" }
-                                },
-                                "required": ["secs", "nanos"],
-                                "additionalProperties": false
-                            }
-                        },
-                        "required": ["result", "duration"],
-                        "additionalProperties": false
-                    }
+                    "result": {},
+                    "duration_ms": { "type": "integer", "minimum": 0 }
                 },
-                "required": ["Execution"],
+                "required": ["result", "duration_ms"],
                 "additionalProperties": false
             })),
             move |request: borg_agent::ToolRequest<ExecuteCodeArgs>| {
@@ -158,10 +143,10 @@ pub fn build_code_mode_toolchain_with_context(
                     .map_err(|err| anyhow!("CodeMode-executeCode tool worker join error: {}", err))?
                     .map_err(|_| anyhow!("CodeMode-executeCode tool panicked"))??;
                     Ok(ToolResponse {
-                        content: ToolResultData::Execution {
-                            result: result.result,
-                            duration: result.duration,
-                        },
+                        output: ToolResultData::Ok(json!({
+                            "result": result.result,
+                            "duration_ms": result.duration.as_millis(),
+                        })),
                     })
                 }
             },

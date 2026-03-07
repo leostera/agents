@@ -30,6 +30,6 @@ pub async fn run(db: borg_db::BorgDb, command: &str, payload: Value) -> Result<V
         "namespace": "taskgraph",
         "command": command,
         "tool": mapping.tool_name,
-        "content": response.content
+        "output": response.output
     }))
 }

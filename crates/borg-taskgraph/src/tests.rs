@@ -184,8 +184,8 @@ async fn toolchain_smoke_create_get() -> Result<()> {
         })
         .await?;
 
-    let payload = match create.content {
-        borg_agent::ToolResultData::Text(raw) => raw,
+    let payload = match create.output {
+        borg_agent::ToolResultData::Ok(value) => value.to_value()?,
         _ => panic!("unexpected output variant"),
     };
     #[derive(serde::Deserialize)]
@@ -196,7 +196,7 @@ async fn toolchain_smoke_create_get() -> Result<()> {
     struct CreatedPayload {
         task: CreatedTask,
     }
-    let created: CreatedPayload = serde_json::from_str(&payload)?;
+    let created: CreatedPayload = serde_json::from_value(payload)?;
     let uri = created.task.uri;
 
     let get = toolchain
@@ -207,8 +207,8 @@ async fn toolchain_smoke_create_get() -> Result<()> {
         })
         .await?;
 
-    match get.content {
-        borg_agent::ToolResultData::Text(raw) => {
+    match get.output {
+        borg_agent::ToolResultData::Ok(value) => {
             #[derive(serde::Deserialize)]
             struct TaskTitle {
                 title: String,
@@ -217,8 +217,8 @@ async fn toolchain_smoke_create_get() -> Result<()> {
             struct TaskPayload {
                 task: TaskTitle,
             }
-            let value: TaskPayload = serde_json::from_str(&raw)?;
-            assert_eq!(value.task.title, "hello");
+            let payload: TaskPayload = serde_json::from_value(value.to_value()?)?;
+            assert_eq!(payload.task.title, "hello");
         }
         _ => panic!("unexpected output variant"),
     }
@@ -255,8 +255,8 @@ async fn toolchain_smoke_list_tasks() -> Result<()> {
         })
         .await?;
 
-    match list.content {
-        borg_agent::ToolResultData::Text(raw) => {
+    match list.output {
+        borg_agent::ToolResultData::Ok(value) => {
             #[derive(serde::Deserialize)]
             struct Task {
                 title: String,
@@ -267,7 +267,7 @@ async fn toolchain_smoke_list_tasks() -> Result<()> {
                 next_cursor: Option<String>,
             }
 
-            let payload: Payload = serde_json::from_str(&raw)?;
+            let payload: Payload = serde_json::from_value(value.to_value()?)?;
             assert_eq!(payload.tasks.len(), 2);
             let titles: Vec<String> = payload.tasks.into_iter().map(|task| task.title).collect();
             assert!(titles.contains(&"alpha".to_string()));

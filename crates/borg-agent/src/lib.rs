@@ -13,12 +13,12 @@ pub use context::{
     ContextChunk, ContextChunkMode, ContextManager, ContextManagerBuilder, ContextManagerStrategy,
     ContextProvider, ContextWindow, StaticContextProvider,
 };
-pub use llm_adapter::{to_provider_messages, tool_result_to_text};
+pub use llm_adapter::to_provider_messages;
 pub use message::{
     ActorEventPayload, ActorRunOutput, ActorRunResult, ActorRunStatus, Message, ToolCallRecord,
 };
 pub use tools::{
-    BorgToolCall, BorgToolResult, BorgToolchain, CapabilitySummary, Tool, ToolRequest,
+    BorgToolCall, BorgToolResult, BorgToolchain, Tool, ToolOutputEnvelope, ToolRequest,
     ToolResponse, ToolResultData, ToolSpec, Toolchain, ToolchainBuilder, to_provider_tool_specs,
 };
 

@@ -108,10 +108,10 @@ impl BorgApps {
                 move |_request: borg_agent::ToolRequest<ListAppsArgs>| {
                     let items = app_items.clone();
                     async move {
-                        Ok(ToolResponse::<()> {
-                            content: ToolResultData::Text(serde_json::to_string(&json!({
+                        Ok(ToolResponse {
+                            output: ToolResultData::Ok(json!({
                                 "apps": items
-                            }))?),
+                            })),
                         })
                     }
                 },
@@ -130,10 +130,10 @@ impl BorgApps {
                             .iter()
                             .find(|entry| entry.app_id == id)
                             .ok_or_else(|| anyhow::anyhow!("app not found: {id}"))?;
-                        Ok(ToolResponse::<()> {
-                            content: ToolResultData::Text(serde_json::to_string(&json!({
+                        Ok(ToolResponse {
+                            output: ToolResultData::Ok(json!({
                                 "app": app
-                            }))?),
+                            })),
                         })
                     }
                 },

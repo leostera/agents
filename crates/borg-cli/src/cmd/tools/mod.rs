@@ -56,16 +56,8 @@ fn catalog() -> Value {
 }
 
 pub(super) fn decode_tool_response(response: ToolResponse<BorgToolResult>) -> Result<Value> {
-    match response.content {
-        ToolResultData::Text(text) => match serde_json::from_str::<Value>(&text) {
-            Ok(value) => Ok(value),
-            Err(_) => Ok(json!({ "text": text })),
-        },
-        ToolResultData::Capabilities(capabilities) => Ok(json!({ "capabilities": capabilities })),
-        ToolResultData::Execution { result, duration } => Ok(json!({
-            "result": result.to_value()?,
-            "duration_ms": duration.as_millis(),
-        })),
-        ToolResultData::Error { message } => Ok(json!({ "error": message })),
+    match response.output {
+        ToolResultData::Ok(result) | ToolResultData::ByDesign(result) => result.to_value(),
+        ToolResultData::Error(message) => Ok(json!({ "error": message })),
     }
 }

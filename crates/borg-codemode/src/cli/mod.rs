@@ -30,6 +30,6 @@ pub async fn run(command: &str, payload: Value) -> Result<Value> {
         "namespace": "codemode",
         "command": command,
         "tool": mapping.tool_name,
-        "content": response.content
+        "output": response.output
     }))
 }

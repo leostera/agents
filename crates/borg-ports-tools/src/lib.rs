@@ -221,9 +221,9 @@ fn required_spec(name: &str) -> Result<ToolSpec> {
         .ok_or_else(|| anyhow!("missing port admin tool spec {}", name))
 }
 
-fn json_text<T: Serialize>(value: &T) -> Result<ToolResponse<()>> {
+fn json_text<T: Serialize>(value: &T) -> Result<ToolResponse<Value>> {
     Ok(ToolResponse {
-        content: ToolResultData::Text(serde_json::to_string(value)?),
+        output: ToolResultData::Ok(serde_json::to_value(value)?),
     })
 }
 

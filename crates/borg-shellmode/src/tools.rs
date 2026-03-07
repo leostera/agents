@@ -62,25 +62,10 @@ pub fn build_shell_mode_toolchain(
         Some(json!({
             "type": "object",
             "properties": {
-                "Execution": {
-                    "type": "object",
-                    "properties": {
-                        "result": {},
-                        "duration": {
-                            "type": "object",
-                            "properties": {
-                                "secs": { "type": "number" },
-                                "nanos": { "type": "number" }
-                            },
-                            "required": ["secs", "nanos"],
-                            "additionalProperties": false
-                        }
-                    },
-                    "required": ["result", "duration"],
-                    "additionalProperties": false
-                }
+                "result": {},
+                "duration_ms": { "type": "integer", "minimum": 0 }
             },
-            "required": ["Execution"],
+            "required": ["result", "duration_ms"],
             "additionalProperties": false
         })),
         move |request: borg_agent::ToolRequest<ExecuteCommandArgs>| {
@@ -105,10 +90,10 @@ pub fn build_shell_mode_toolchain(
                 let result = runtime.execute(&command, context)?;
 
                 Ok(ToolResponse {
-                    content: ToolResultData::Execution {
-                        result: result.result,
-                        duration: result.duration,
-                    },
+                    output: ToolResultData::Ok(json!({
+                        "result": result.result,
+                        "duration_ms": result.duration.as_millis(),
+                    })),
                 })
             }
         },

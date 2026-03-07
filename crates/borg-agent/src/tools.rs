@@ -8,7 +8,6 @@ use borg_llm::ToolDescriptor;
 use serde::de::{DeserializeOwned, Deserializer};
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
-use std::time::Duration;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BorgToolCall {
@@ -103,49 +102,18 @@ pub struct ToolRequest<TToolCall> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResponse<TToolResult> {
-    pub content: ToolResultData<TToolResult>,
+    pub output: ToolOutputEnvelope<TToolResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CapabilitySummary {
-    pub name: String,
-    pub signature: String,
-    pub description: String,
+#[serde(tag = "status", content = "data", rename_all = "snake_case")]
+pub enum ToolOutputEnvelope<TToolResult> {
+    Ok(TToolResult),
+    ByDesign(TToolResult),
+    Error(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ToolResultData<TToolResult> {
-    Text(String),
-    Capabilities(Vec<CapabilitySummary>),
-    Execution {
-        result: TToolResult,
-        #[serde(
-            alias = "duration_ms",
-            deserialize_with = "deserialize_duration_compat"
-        )]
-        duration: Duration,
-    },
-    Error {
-        message: String,
-    },
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum DurationCompat {
-    Structured { secs: u64, nanos: u32 },
-    Millis(u64),
-}
-
-fn deserialize_duration_compat<'de, D>(deserializer: D) -> Result<Duration, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    match DurationCompat::deserialize(deserializer)? {
-        DurationCompat::Structured { secs, nanos } => Ok(Duration::new(secs, nanos)),
-        DurationCompat::Millis(ms) => Ok(Duration::from_millis(ms)),
-    }
-}
+pub type ToolResultData<TToolResult> = ToolOutputEnvelope<TToolResult>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
@@ -198,16 +166,14 @@ impl Tool<BorgToolCall, BorgToolResult> {
                 })
                 .await?;
                 Ok(ToolResponse {
-                    content: match response.content {
-                        ToolResultData::Text(text) => ToolResultData::Text(text),
-                        ToolResultData::Capabilities(items) => ToolResultData::Capabilities(items),
-                        ToolResultData::Execution { result, duration } => {
-                            ToolResultData::Execution {
-                                result: BorgToolResult::from(result),
-                                duration,
-                            }
+                    output: match response.output {
+                        ToolOutputEnvelope::Ok(result) => {
+                            ToolOutputEnvelope::Ok(BorgToolResult::from(result))
                         }
-                        ToolResultData::Error { message } => ToolResultData::Error { message },
+                        ToolOutputEnvelope::ByDesign(result) => {
+                            ToolOutputEnvelope::ByDesign(BorgToolResult::from(result))
+                        }
+                        ToolOutputEnvelope::Error(message) => ToolOutputEnvelope::Error(message),
                     },
                 })
             }
@@ -238,16 +204,14 @@ impl Tool<BorgToolCall, BorgToolResult> {
                 })
                 .await?;
                 Ok(ToolResponse {
-                    content: match response.content {
-                        ToolResultData::Text(text) => ToolResultData::Text(text),
-                        ToolResultData::Capabilities(items) => ToolResultData::Capabilities(items),
-                        ToolResultData::Execution { result, duration } => {
-                            ToolResultData::Execution {
-                                result: BorgToolResult::from(serde_json::to_value(result)?),
-                                duration,
-                            }
-                        }
-                        ToolResultData::Error { message } => ToolResultData::Error { message },
+                    output: match response.output {
+                        ToolOutputEnvelope::Ok(result) => ToolOutputEnvelope::Ok(
+                            BorgToolResult::from(serde_json::to_value(result)?),
+                        ),
+                        ToolOutputEnvelope::ByDesign(result) => ToolOutputEnvelope::ByDesign(
+                            BorgToolResult::from(serde_json::to_value(result)?),
+                        ),
+                        ToolOutputEnvelope::Error(message) => ToolOutputEnvelope::Error(message),
                     },
                 })
             }

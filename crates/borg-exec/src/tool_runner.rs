@@ -214,7 +214,7 @@ fn build_actor_messaging_toolchain(
                     "target_actor_id": target_actor_id.to_string(),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::<()>::Text(serde_json::to_string(&response)?),
+                    output: ToolResultData::Ok(response),
                 })
             }
         },
@@ -270,7 +270,7 @@ fn build_actor_messaging_toolchain(
                             "text": text,
                         });
                         return Ok(ToolResponse {
-                            content: ToolResultData::<()>::Text(serde_json::to_string(&response)?),
+                             output: ToolResultData::Ok(response),
                         });
                     }
 
@@ -306,7 +306,7 @@ fn build_provider_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                     let arguments = request.arguments.to_value()?;
                     let value = run_provider_admin_tool(&db, &name, &arguments).await?;
                     Ok(ToolResponse {
-                        content: ToolResultData::<()>::Text(serde_json::to_string(&value)?),
+                        output: ToolResultData::Ok(value),
                     })
                 }
             },

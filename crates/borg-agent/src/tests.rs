@@ -16,7 +16,6 @@ use borg_llm::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Once;
-use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, trace};
 use tracing_subscriber::EnvFilter;
@@ -246,7 +245,7 @@ async fn a2_single_tool_then_answer() {
         Ok(assistant_text("done")),
     ]);
     let (tools, mut calls_rx) = scripted_toolchain(vec![Ok(ToolResponse {
-        content: ToolResultData::Text("hits: []".to_string()),
+        output: ToolResultData::Ok(json!("hits: []")),
     })])
     .unwrap();
 
@@ -276,10 +275,10 @@ async fn a3_multiple_tools_keep_order() {
     ]);
     let (tools, mut calls_rx) = scripted_toolchain(vec![
         Ok(ToolResponse {
-            content: ToolResultData::Text("a=1".to_string()),
+            output: ToolResultData::Ok(json!("a=1")),
         }),
         Ok(ToolResponse {
-            content: ToolResultData::Text("b=2".to_string()),
+            output: ToolResultData::Ok(json!("b=2")),
         }),
     ])
     .unwrap();
@@ -344,12 +343,9 @@ async fn a17_typed_toolchain_decodes_provider_arguments() {
                 async move {
                     calls_tx.send(request.clone()).unwrap();
                     Ok(ToolResponse {
-                        content: ToolResultData::Execution {
-                            result: EchoResult {
-                                echoed: request.arguments.text,
-                            },
-                            duration: Duration::from_millis(1),
-                        },
+                        output: ToolResultData::Ok(EchoResult {
+                            echoed: request.arguments.text,
+                        }),
                     })
                 }
             },
@@ -427,7 +423,7 @@ async fn a6_tool_error_is_returned_as_tool_result() {
         matches!(
             m,
             Message::ToolResult {
-                content: ToolResultData::Error { .. },
+                content: ToolResultData::Error(_),
                 ..
             }
         )
@@ -518,7 +514,7 @@ async fn injected_toolchain_helper_still_works() {
             None,
             |_request| async move {
                 Ok(ToolResponse {
-                    content: ToolResultData::Text("ok".to_string()),
+                    output: ToolResultData::Ok(json!("ok")),
                 })
             },
         ))
@@ -533,8 +529,8 @@ async fn injected_toolchain_helper_still_works() {
         })
         .await
         .unwrap()
-        .content;
-    assert!(matches!(out, ToolResultData::Text(text) if text == "ok"));
+        .output;
+    assert!(matches!(out, ToolResultData::Ok(value) if value == json!("ok")));
     info!(target: "borg_agent_test", test = "injected_toolchain_helper_still_works", "test passed");
 }
 
@@ -555,7 +551,7 @@ async fn toolchain_delegates_input_validation_to_tool_callback() {
             None,
             |_request| async move {
                 Ok(ToolResponse {
-                    content: ToolResultData::Text("ok".to_string()),
+                    output: ToolResultData::Ok(json!("ok")),
                 })
             },
         ))
@@ -570,8 +566,8 @@ async fn toolchain_delegates_input_validation_to_tool_callback() {
         })
         .await
         .unwrap()
-        .content;
-    assert!(matches!(out, ToolResultData::Text(text) if text == "ok"));
+        .output;
+    assert!(matches!(out, ToolResultData::Ok(value) if value == json!("ok")));
 }
 
 #[tokio::test]
@@ -596,9 +592,7 @@ async fn toolchain_does_not_validate_output_schema() {
             })),
             |_request| async move {
                 Ok(ToolResponse {
-                    content: ToolResultData::Error {
-                        message: "mismatch".to_string(),
-                    },
+                    output: ToolResultData::Error("mismatch".to_string()),
                 })
             },
         ))
@@ -613,10 +607,10 @@ async fn toolchain_does_not_validate_output_schema() {
         })
         .await
         .unwrap()
-        .content;
+        .output;
     assert!(matches!(
         out,
-        ToolResultData::Error { message } if message == "mismatch"
+        ToolResultData::Error(message) if message == "mismatch"
     ));
 }
 
@@ -629,7 +623,7 @@ fn llm_adapter_rejects_orphan_tool_results() {
         Message::ToolResult {
             tool_call_id: "call_orphan".to_string(),
             name: "execute".to_string(),
-            content: ToolResultData::Text("orphan".to_string()),
+            content: ToolResultData::Ok(json!("orphan")),
         },
         Message::ToolCall {
             tool_call_id: "call_ok".to_string(),
@@ -639,7 +633,7 @@ fn llm_adapter_rejects_orphan_tool_results() {
         Message::ToolResult {
             tool_call_id: "call_ok".to_string(),
             name: "search".to_string(),
-            content: ToolResultData::Text("ok".to_string()),
+            content: ToolResultData::Ok(json!("ok")),
         },
     ];
 
@@ -664,7 +658,7 @@ fn llm_adapter_rejects_non_adjacent_tool_result() {
         Message::ToolResult {
             tool_call_id: "call_1".to_string(),
             name: "search".to_string(),
-            content: ToolResultData::Text("ok".to_string()),
+            content: ToolResultData::Ok(json!("ok")),
         },
     ];
 
@@ -737,7 +731,7 @@ async fn context_window_splits_messages_into_typed_sections() {
         Message::ToolResult {
             tool_call_id: "call_1".to_string(),
             name: "Apps-getApp".to_string(),
-            content: ToolResultData::Text("{\"app\":{}}".to_string()),
+            content: ToolResultData::Ok(json!({"app": {}})),
         },
     ];
 

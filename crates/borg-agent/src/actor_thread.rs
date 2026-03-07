@@ -235,11 +235,7 @@ where
         for message in &kept_messages {
             let payload = serde_json::to_value(message)?;
             self.db
-                .append_actor_history_message(
-                    &self.actor_id,
-                    &payload,
-                    reasoning_effort.as_deref(),
-                )
+                .append_actor_history_message(&self.actor_id, &payload, reasoning_effort.as_deref())
                 .await?;
         }
 
@@ -264,13 +260,8 @@ where
         let arguments_json = serde_json::to_value(arguments)?;
         let output_json = serde_json::to_value(output)?;
         let (success, error, duration_ms) = match output {
-            crate::ToolResultData::Execution { duration, .. } => {
-                let millis = duration.as_millis();
-                let duration_ms = u64::try_from(millis).ok();
-                (true, None, duration_ms)
-            }
-            crate::ToolResultData::Error { message } => (false, Some(message.clone()), None),
-            _ => (true, None, None),
+            crate::ToolResultData::Ok(_) | crate::ToolResultData::ByDesign(_) => (true, None, None),
+            crate::ToolResultData::Error(message) => (false, Some(message.clone()), None),
         };
 
         self.db

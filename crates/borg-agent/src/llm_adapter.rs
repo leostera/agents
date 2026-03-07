@@ -108,7 +108,7 @@ where
                 provider_messages.push(ProviderMessage::ToolResult {
                     tool_call_id: tool_call_id.clone(),
                     name: name.clone(),
-                    content: vec![ProviderBlock::Text(tool_result_to_text(content))],
+                    content: vec![ProviderBlock::Text(serialize_tool_output(content))],
                 });
             }
             Message::ActorEvent { .. } => {}
@@ -124,24 +124,17 @@ where
     Ok(provider_messages)
 }
 
-pub fn tool_result_to_text<TToolResult>(content: &ToolResultData<TToolResult>) -> String
+fn serialize_tool_output<TToolResult>(content: &ToolResultData<TToolResult>) -> String
 where
     TToolResult: Serialize,
 {
-    match content {
-        ToolResultData::Text(text) => text.clone(),
-        ToolResultData::Capabilities(items) => format!("capabilities: {}", items.len()),
-        ToolResultData::Execution { result, duration } => {
-            let serialized =
-                serde_json::to_string(result).unwrap_or_else(|_| "<invalid_result>".to_string());
-            format!(
-                "execution result in {}ms: {}",
-                duration.as_millis(),
-                serialized
-            )
-        }
-        ToolResultData::Error { message } => format!("tool error: {}", message),
-    }
+    serde_json::to_string(content).unwrap_or_else(|_| {
+        serde_json::json!({
+            "status": "error",
+            "data": "tool_result.serialization_failed"
+        })
+        .to_string()
+    })
 }
 
 fn flush_interrupted_tool_call(
@@ -160,8 +153,10 @@ fn flush_interrupted_tool_call(
     provider_messages.push(ProviderMessage::ToolResult {
         tool_call_id,
         name,
-        content: vec![ProviderBlock::Text(
-            INTERRUPTED_TOOL_RESULT_MESSAGE.to_string(),
-        )],
+        content: vec![ProviderBlock::Text(serialize_tool_output(
+            &ToolResultData::<serde_json::Value>::Error(
+                INTERRUPTED_TOOL_RESULT_MESSAGE.to_string(),
+            ),
+        ))],
     });
 }

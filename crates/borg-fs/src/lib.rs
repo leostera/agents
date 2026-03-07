@@ -277,8 +277,8 @@ pub fn build_borg_fs_toolchain(fs: BorgFs) -> Result<Toolchain<BorgToolCall, Bor
                 let tool_name = tool_name.clone();
                 async move {
                     let output = run_borg_fs_tool(&fs, &tool_name, &request.arguments).await?;
-                    Ok(ToolResponse::<()> {
-                        content: ToolResultData::Text(serde_json::to_string(&output)?),
+                    Ok(ToolResponse {
+                        output: ToolResultData::Ok(output),
                     })
                 }
             },

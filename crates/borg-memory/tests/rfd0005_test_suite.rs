@@ -207,7 +207,9 @@ fn request(tool_name: &str, arguments: Value) -> ToolRequest<BorgToolCall> {
 
 fn unwrap_text_json(content: ToolResultData<BorgToolResult>) -> Value {
     match content {
-        ToolResultData::Text(text) => serde_json::from_str(&text).expect("json text payload"),
+        ToolResultData::Ok(value) | ToolResultData::ByDesign(value) => {
+            value.to_value().expect("json payload")
+        }
         other => panic!("expected text payload, got {:?}", other),
     }
 }
@@ -265,7 +267,7 @@ async fn rfd0005_current_toolchain_search_memory_returns_json() {
         ))
         .await
         .expect("searchMemory call");
-    let body = unwrap_text_json(response.content);
+    let body = unwrap_text_json(response.output);
     assert!(
         body.get("entities").is_some(),
         "search tool payload should include entities array"
@@ -295,7 +297,7 @@ async fn rfd0005_retraction_semantics() {
         ))
         .await
         .expect("stateFacts call");
-    let write_body = unwrap_text_json(write.content);
+    let write_body = unwrap_text_json(write.output);
     let fact_uri = write_body["factUris"][0].as_str().expect("fact uri");
 
     let retract = tools
@@ -308,7 +310,7 @@ async fn rfd0005_retraction_semantics() {
         ))
         .await
         .expect("retractFacts call");
-    let retract_body = unwrap_text_json(retract.content);
+    let retract_body = unwrap_text_json(retract.output);
     assert!(
         retract_body["retractionFactUris"].as_array().is_some(),
         "retraction output must include retraction fact URIs"
@@ -325,7 +327,7 @@ async fn rfd0005_warnings_contract() {
         .run(request("Memory-getEntity", json!({ "entityUri": entity })))
         .await
         .expect("getEntity call");
-    let body = unwrap_text_json(response.content);
+    let body = unwrap_text_json(response.output);
     let warnings = body["warnings"].as_array().expect("warnings array");
     for warning in warnings {
         assert!(warning.get("code").is_some(), "warning.code");
@@ -392,7 +394,7 @@ async fn rfd0005_same_as_prefers_borg_canonical_uri() {
         ))
         .await
         .expect("getEntity call");
-    let body = unwrap_text_json(response.content);
+    let body = unwrap_text_json(response.output);
     let resolved = body["entityUri"].as_str().expect("canonical entityUri");
     assert!(
         resolved.starts_with("borg:"),
@@ -508,7 +510,7 @@ async fn rfd0005_state_facts_accepts_array_typed_values() {
         ))
         .await
         .expect("listFacts");
-    let body = unwrap_text_json(listed.content);
+    let body = unwrap_text_json(listed.output);
     let first_value = &body["facts"][0]["value"];
     assert!(
         first_value.is_array(),
@@ -561,7 +563,7 @@ async fn rfd0005_list_facts_contract() {
         ))
         .await
         .expect("listFacts");
-    let body = unwrap_text_json(response.content);
+    let body = unwrap_text_json(response.output);
     assert!(body.get("facts").is_some(), "facts");
     assert!(body.get("warnings").is_some(), "warnings");
 }
@@ -581,6 +583,6 @@ async fn rfd0005_search_contract() {
         ))
         .await
         .expect("search");
-    let body = unwrap_text_json(response.content);
+    let body = unwrap_text_json(response.output);
     assert!(body.get("results").is_some(), "results");
 }

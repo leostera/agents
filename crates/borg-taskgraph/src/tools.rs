@@ -1258,7 +1258,7 @@ fn required_str(value: String, key: &str) -> Result<String> {
 
 fn json_text(value: Value) -> Result<ToolResponse<Value>> {
     Ok(ToolResponse {
-        content: ToolResultData::Text(serde_json::to_string(&value)?),
+        output: ToolResultData::Ok(value),
     })
 }
 

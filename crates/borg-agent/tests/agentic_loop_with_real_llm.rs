@@ -72,16 +72,13 @@ impl RecordingToolRunner {
         let tool_name = request.tool_name.as_str();
         match self.mode {
             RunnerMode::SingleSuccess => Ok(ToolResponse {
-                content: ToolResultData::Text(
-                    json!({
-                        "status": "ok",
-                        "kind": "catalog_lookup",
-                        "value": "solar-battery",
-                        "marker": REQUIRED_MARKER,
-                        "args": request.arguments
-                    })
-                    .to_string(),
-                ),
+                output: ToolResultData::Ok(json!({
+                    "status": "ok",
+                    "kind": "catalog_lookup",
+                    "value": "solar-battery",
+                    "marker": REQUIRED_MARKER,
+                    "args": request.arguments
+                })),
             }),
             RunnerMode::MultiChain => {
                 let payload = match tool_name {
@@ -97,22 +94,19 @@ impl RecordingToolRunner {
                     _ => json!({"kind":"unknown","value":"unknown","marker":REQUIRED_MARKER}),
                 };
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(payload.to_string()),
+                    output: ToolResultData::Ok(payload),
                 })
             }
             RunnerMode::DependentChain => {
                 if tool_name == "discover_key" {
                     Ok(ToolResponse {
-                        content: ToolResultData::Text(
-                            json!({"kind":"discover_key","key":"K-7734"}).to_string(),
-                        ),
+                        output: ToolResultData::Ok(json!({"kind":"discover_key","key":"K-7734"})),
                     })
                 } else if tool_name == "fetch_by_key" {
                     if request.arguments.to_string().contains("K-7734") {
                         Ok(ToolResponse {
-                            content: ToolResultData::Text(
-                                json!({"kind":"fetch_by_key","record":"record-for-K-7734"})
-                                    .to_string(),
+                            output: ToolResultData::Ok(
+                                json!({"kind":"fetch_by_key","record":"record-for-K-7734"}),
                             ),
                         })
                     } else {
@@ -130,8 +124,8 @@ impl RecordingToolRunner {
             }
             RunnerMode::PartialFailureThenRecovery => match tool_name {
                 "stage_one" => Ok(ToolResponse {
-                    content: ToolResultData::Text(
-                        json!({"stage":"one","status":"ok","value":"STAGE_ONE_OK"}).to_string(),
+                    output: ToolResultData::Ok(
+                        json!({"stage":"one","status":"ok","value":"STAGE_ONE_OK"}),
                     ),
                 }),
                 "stage_two" => {
@@ -144,16 +138,15 @@ impl RecordingToolRunner {
                         Err(anyhow!("TRANSIENT_STAGE_TWO_FAILURE"))
                     } else {
                         Ok(ToolResponse {
-                            content: ToolResultData::Text(
-                                json!({"stage":"two","status":"ok","value":"STAGE_TWO_OK"})
-                                    .to_string(),
+                            output: ToolResultData::Ok(
+                                json!({"stage":"two","status":"ok","value":"STAGE_TWO_OK"}),
                             ),
                         })
                     }
                 }
                 "stage_three" => Ok(ToolResponse {
-                    content: ToolResultData::Text(
-                        json!({"stage":"three","status":"ok","value":"STAGE_THREE_OK"}).to_string(),
+                    output: ToolResultData::Ok(
+                        json!({"stage":"three","status":"ok","value":"STAGE_THREE_OK"}),
                     ),
                 }),
                 _ => Err(anyhow!("unsupported staged tool: {}", tool_name)),
@@ -166,9 +159,8 @@ impl RecordingToolRunner {
                     .expect("follow_up_turn lock poisoned");
                 *turn += 1;
                 Ok(ToolResponse {
-                    content: ToolResultData::Text(
-                        json!({"kind":"catalog_lookup","turn":*turn,"args":request.arguments})
-                            .to_string(),
+                    output: ToolResultData::Ok(
+                        json!({"kind":"catalog_lookup","turn":*turn,"args":request.arguments}),
                     ),
                 })
             }
@@ -478,8 +470,8 @@ After receiving the tool result, return a concise assistant answer.",
         let has_tool_result = messages.iter().any(|message| {
             matches!(
                 message,
-                Message::ToolResult { content: ToolResultData::Text(text), .. }
-                if text.contains("\"kind\":\"catalog_lookup\"")
+                Message::ToolResult { content: ToolResultData::Ok(value), .. }
+                if value.get("kind").and_then(Value::as_str) == Some("catalog_lookup")
             )
         });
 
@@ -586,10 +578,11 @@ Then provide one final answer that references the three result labels.",
         let has_matching_tool_result = messages.iter().any(|message| {
             matches!(
                 message,
-                Message::ToolResult { content: ToolResultData::Text(text), .. }
-                if text.contains("\"kind\":\"profile\"")
-                    || text.contains("\"kind\":\"subscription\"")
-                    || text.contains("\"kind\":\"resolution\"")
+                Message::ToolResult { content: ToolResultData::Ok(value), .. }
+                if matches!(
+                    value.get("kind").and_then(Value::as_str),
+                    Some("profile" | "subscription" | "resolution")
+                )
             )
         });
 
@@ -804,14 +797,14 @@ Return a final answer after stage_three."
         let has_error = messages.iter().any(|message| {
             matches!(
                 message,
-                Message::ToolResult { content: ToolResultData::Error { message }, .. } if message.contains("TRANSIENT_STAGE_TWO_FAILURE")
+                Message::ToolResult { content: ToolResultData::Error(message), .. } if message.contains("TRANSIENT_STAGE_TWO_FAILURE")
             )
         });
         let has_stage_three_ok = messages.iter().any(|message| {
             matches!(
                 message,
-                Message::ToolResult { content: ToolResultData::Text(text), .. }
-                if text.contains("\"stage\":\"three\"")
+                Message::ToolResult { content: ToolResultData::Ok(value), .. }
+                if value.get("stage").and_then(Value::as_str) == Some("three")
             )
         });
         let has_any_stage_call = messages.iter().any(|message| {
@@ -888,7 +881,7 @@ then continue and summarize that error briefly in your final response."
         let has_error_result = messages.iter().any(|message| {
             matches!(
                 message,
-                Message::ToolResult { content: ToolResultData::Error { message }, .. } if message.contains("INTENTIONAL_TOOL_FAILURE")
+                Message::ToolResult { content: ToolResultData::Error(message), .. } if message.contains("INTENTIONAL_TOOL_FAILURE")
             )
         });
         if !has_error_result {
@@ -975,9 +968,9 @@ Do not skip tool calls on any turn."
             .iter()
             .filter_map(|message| match message {
                 Message::ToolResult {
-                    content: ToolResultData::Text(text),
+                    content: ToolResultData::Ok(value),
                     ..
-                } => Some(text.clone()),
+                } => Some(value.to_string()),
                 _ => None,
             })
             .collect();

@@ -471,8 +471,12 @@ fn telegram_candidates(ctx: &TelegramContext) -> Vec<TelegramUserId> {
 
 fn tool_call_elapsed(output: &ToolResultData<RuntimeToolResult>) -> Option<std::time::Duration> {
     match output {
-        ToolResultData::Execution { duration, .. } => Some(*duration),
-        _ => None,
+        ToolResultData::Ok(result) | ToolResultData::ByDesign(result) => result
+            .to_value()
+            .ok()
+            .and_then(|value| value.get("duration_ms").and_then(|value| value.as_u64()))
+            .map(std::time::Duration::from_millis),
+        ToolResultData::Error(_) => None,
     }
 }
 

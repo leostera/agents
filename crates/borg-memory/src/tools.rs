@@ -837,7 +837,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
+                     output: ToolResultData::Ok(out),
                 })
             }
         }))?
@@ -855,7 +855,7 @@ pub fn build_memory_toolchain(
                 if !result_types.iter().any(|kind| kind == "entity") {
                     let out = json!({ "results": [] });
                     return Ok(ToolResponse {
-                        content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
+                         output: ToolResultData::Ok(out),
                     });
                 }
                 let ns = request
@@ -897,7 +897,7 @@ pub fn build_memory_toolchain(
                         json!({ "results": [] })
                     };
                     return Ok(ToolResponse {
-                        content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
+                         output: ToolResultData::Ok(out),
                     });
                 }
 
@@ -943,7 +943,7 @@ pub fn build_memory_toolchain(
                     "results": items
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
+                     output: ToolResultData::Ok(out),
                 })
             }
         }))?
@@ -1015,7 +1015,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
+                     output: ToolResultData::Ok(out),
                 })
             }
         }))?
@@ -1055,7 +1055,7 @@ pub fn build_memory_toolchain(
                     "sameAs": same_as_group.iter().map(ToString::to_string).collect::<Vec<_>>(),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
+                     output: ToolResultData::Ok(out),
                 })
             }
         }))?
@@ -1118,7 +1118,7 @@ pub fn build_memory_toolchain(
                         "statedAt": Option::<String>::None,
                     });
                     return Ok(ToolResponse {
-                        content: ToolResultData::Text(serde_json::to_string(&out)?),
+                         output: ToolResultData::Ok(out),
                     });
                 }
 
@@ -1155,7 +1155,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
+                     output: ToolResultData::Ok(out),
                 })
             }
         }))?
@@ -1219,7 +1219,7 @@ pub fn build_memory_toolchain(
                     "warnings": warnings
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
+                     output: ToolResultData::Ok(out),
                 })
             }
         }))?
@@ -1292,7 +1292,7 @@ pub fn build_memory_toolchain(
                         "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                     });
                     Ok(ToolResponse {
-                        content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
+                         output: ToolResultData::Ok(out),
                     })
                 }
             },
@@ -1351,7 +1351,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
+                     output: ToolResultData::Ok(out),
                 })
             }
         }))?
@@ -1478,7 +1478,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                    content: ToolResultData::<Value>::Text(serde_json::to_string(&out)?),
+                     output: ToolResultData::Ok(out),
                 })
             }
         }))?
@@ -1487,7 +1487,9 @@ pub fn build_memory_toolchain(
             None,
             move |_request: borg_agent::ToolRequest<EmptyArgs>| async move {
             Ok(ToolResponse {
-                content: ToolResultData::<Value>::Text(memory_get_schema_context().to_string()),
+                output: ToolResultData::<Value>::Ok(Value::String(
+                    memory_get_schema_context().to_string(),
+                )),
             })
             },
         ))?
@@ -1524,7 +1526,7 @@ pub fn build_memory_toolchain(
                         }])
                         .await?;
                     Ok(ToolResponse {
-                        content: ToolResultData::<Value>::Text(entity.to_string()),
+                        output: ToolResultData::<Value>::Ok(Value::String(entity.to_string())),
                     })
                 }
             },
@@ -1556,7 +1558,7 @@ pub fn build_memory_toolchain(
 
                 let result = memory.state_facts(facts).await?;
                 Ok(ToolResponse {
-                    content: ToolResultData::<Value>::Text(serde_json::to_string(&result)?),
+                     output: ToolResultData::Ok(result),
                 })
             }
         }))?
@@ -1565,7 +1567,7 @@ pub fn build_memory_toolchain(
             async move {
                 let results = memory.search_query(request.arguments.query).await?;
                 Ok(ToolResponse {
-                    content: ToolResultData::<Value>::Text(serde_json::to_string(&results)?),
+                     output: ToolResultData::Ok(results),
                 })
             }
         }))?

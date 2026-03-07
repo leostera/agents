@@ -349,10 +349,8 @@ where
                         })
                         .await
                     {
-                        Ok(response) => response.content,
-                        Err(err) => ToolResultData::Error {
-                            message: err.to_string(),
-                        },
+                        Ok(response) => response.output,
+                        Err(err) => ToolResultData::Error(err.to_string()),
                     };
                     info!(target: "borg_agent", actor_id = %actor_thread.actor_id, tool_name, "tool_execution_end");
 

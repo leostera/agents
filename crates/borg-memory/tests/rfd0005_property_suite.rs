@@ -110,7 +110,9 @@ fn request(tool_name: &str, arguments: Value) -> ToolRequest<BorgToolCall> {
 
 fn unwrap_text_json(content: ToolResultData<BorgToolResult>) -> Value {
     match content {
-        ToolResultData::Text(text) => serde_json::from_str(&text).expect("json text payload"),
+        ToolResultData::Ok(value) | ToolResultData::ByDesign(value) => {
+            value.to_value().expect("json payload")
+        }
         other => panic!("expected text payload, got {:?}", other),
     }
 }
@@ -147,7 +149,7 @@ proptest! {
                 ))
                 .await
                 .expect("stateFacts");
-            let write_body = unwrap_text_json(write.content);
+            let write_body = unwrap_text_json(write.output);
             prop_assert!(write_body["txId"].as_str().unwrap_or_default().starts_with("borg:tx:"));
 
             let mut found = false;
@@ -159,7 +161,7 @@ proptest! {
                     ))
                     .await
                     .expect("search");
-                let body = unwrap_text_json(search.content);
+                let body = unwrap_text_json(search.output);
                 found = body["results"].as_array().map(|items| items.iter()).into_iter().flatten()
                     .any(|item| item.get("uri").and_then(Value::as_str) == Some(entity.as_str()));
                 if found {
@@ -206,7 +208,7 @@ proptest! {
                 ))
                 .await
                 .expect("getEntity");
-            let body = unwrap_text_json(response.content);
+            let body = unwrap_text_json(response.output);
             let has_field = body["facts"].as_array().map(|items| items.iter()).into_iter().flatten()
                 .any(|fact| {
                     fact.get("entity").and_then(Value::as_str) == Some(entity.as_str())
@@ -278,7 +280,7 @@ proptest! {
                 ))
                 .await
                 .expect("listFacts");
-            let body = unwrap_text_json(listed.content);
+            let body = unwrap_text_json(listed.output);
             let facts = body["facts"].as_array().expect("facts array");
 
             let all_a_retracted = facts.iter().filter(|fact| fact.get("value") == Some(&value_a)).all(|fact| {
@@ -339,7 +341,7 @@ proptest! {
                 ))
                 .await
                 .expect("getEntity");
-            let body = unwrap_text_json(response.content);
+            let body = unwrap_text_json(response.output);
             let resolved = body["entityUri"].as_str().unwrap_or_default();
             prop_assert!(resolved.starts_with("borg:"), "canonical sameAs URI should prefer borg:*");
             let closure = body["sameAs"].as_array().expect("sameAs closure");
