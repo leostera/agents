@@ -205,10 +205,12 @@ impl Provider for OpenRouterProvider {
                 response_body = body.as_str(),
                 "openrouter chat completion request failed"
             );
-            return Err(LlmError::ProviderHttp {
+            let reason = provider_error_reason_from_body(&body)
+                .unwrap_or_else(|| format!("request failed with status {}", status));
+            return Err(LlmError::ProviderResponse {
                 provider,
                 capability: "chat_completion",
-                status: status.as_u16(),
+                reason: format!("status {}: {}", status, reason),
             });
         }
 
@@ -310,10 +312,12 @@ impl Provider for OpenRouterProvider {
                 response_body = body.as_str(),
                 "openrouter transcription request failed"
             );
-            return Err(LlmError::ProviderHttp {
+            let reason = provider_error_reason_from_body(&body)
+                .unwrap_or_else(|| format!("request failed with status {}", status));
+            return Err(LlmError::ProviderResponse {
                 provider,
                 capability: "audio_transcription",
-                status: status.as_u16(),
+                reason: format!("status {}: {}", status, reason),
             });
         }
 
@@ -335,6 +339,36 @@ fn mime_to_input_audio_format(mime: &str) -> Result<&'static str> {
             mime
         ))),
     }
+}
+
+fn provider_error_reason_from_body(body: &str) -> Option<String> {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Ok(payload) = serde_json::from_str::<Value>(trimmed) {
+        if let Some(reason) = payload
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(reason.to_string());
+        }
+
+        if let Some(reason) = payload
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(reason.to_string());
+        }
+    }
+
+    Some(trimmed.to_string())
 }
 
 fn extract_text_from_chat_payload(payload: &Value) -> Option<String> {
@@ -599,7 +633,7 @@ fn payload_usage_tokens(payload: &Value) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{OpenRouterProvider, mime_to_input_audio_format};
+    use super::{OpenRouterProvider, mime_to_input_audio_format, provider_error_reason_from_body};
     use crate::{LlmRequest, Provider, TranscriptionRequest};
 
     #[test]
@@ -671,5 +705,12 @@ mod tests {
             "mp3"
         );
         assert!(mime_to_input_audio_format("application/octet-stream").is_err());
+    }
+
+    #[test]
+    fn provider_error_reason_prefers_nested_error_message() {
+        let body = r#"{"error":{"message":"maximum context length exceeded"}}"#;
+        let reason = provider_error_reason_from_body(body).expect("reason");
+        assert_eq!(reason, "maximum context length exceeded");
     }
 }

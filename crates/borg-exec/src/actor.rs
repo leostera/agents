@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::mailbox::ActorCommand;
 use crate::message::{ActorOutput, BorgCommand, BorgInput, BorgMessage, ToolCallSummary};
@@ -19,6 +19,9 @@ use crate::port_context::TelegramContext;
 use crate::runtime::BorgRuntime;
 
 const TOOLCHAIN_CACHE_TTL: Duration = Duration::from_secs(60);
+const CONTEXT_COMPACTION_KEEP_MESSAGES: usize = 24;
+const CONTEXT_OVERFLOW_PROGRESS_MESSAGE: &str =
+    "Context window exceeded provider limits. Compacting context and retrying...";
 
 struct CachedToolchain {
     user_id: Uri,
@@ -403,7 +406,7 @@ impl Actor {
             }));
         }
 
-        let run_result = state
+        let mut run_result = state
             .actor_thread
             .agent
             .clone()
@@ -414,6 +417,52 @@ impl Actor {
                 tool_event_tx.as_ref(),
             )
             .await;
+
+        if let ActorRunResult::ActorError(err) = &run_result
+            && is_context_window_overflow_error(err)
+        {
+            warn!(
+                target: "borg_exec",
+                actor_id = %state.actor_thread.actor_id,
+                error = %err,
+                "actor turn exceeded context window; compacting and retrying once"
+            );
+
+            if let Some(progress_tx) = progress_tx {
+                let _ = progress_tx
+                    .send(ActorOutput {
+                        actor_id: state.actor_thread.actor_id.clone(),
+                        reply: Some(CONTEXT_OVERFLOW_PROGRESS_MESSAGE.to_string()),
+                        tool_calls: Vec::new(),
+                        port_context: msg.port_context.clone(),
+                    })
+                    .await;
+            }
+
+            let kept_messages = state
+                .actor_thread
+                .compact_history_keep_recent(CONTEXT_COMPACTION_KEEP_MESSAGES)
+                .await?;
+            info!(
+                target: "borg_exec",
+                actor_id = %state.actor_thread.actor_id,
+                kept_messages,
+                "context compaction completed; retrying provider call"
+            );
+
+            run_result = state
+                .actor_thread
+                .agent
+                .clone()
+                .run_with_tool_events(
+                    &mut state.actor_thread,
+                    &llm,
+                    toolchain.as_ref(),
+                    tool_event_tx.as_ref(),
+                )
+                .await;
+        }
+
         drop(tool_event_tx);
         if let Some(task) = tool_event_task {
             let _ = task.await;
@@ -546,7 +595,10 @@ impl Actor {
                 })
             }
             BorgCommand::CompactContext => {
-                let kept = self.compact_context(&state.actor_thread.actor_id).await?;
+                let kept = state
+                    .actor_thread
+                    .compact_history_keep_recent(CONTEXT_COMPACTION_KEEP_MESSAGES)
+                    .await?;
                 Ok(ActorOutput {
                     actor_id: state.actor_thread.actor_id.clone(),
                     reply: Some(format!(
@@ -557,11 +609,7 @@ impl Actor {
                 })
             }
             BorgCommand::ResetContext => {
-                let deleted = self
-                    .runtime
-                    .db
-                    .clear_actor_history(&state.actor_thread.actor_id)
-                    .await?;
+                let deleted = state.actor_thread.clear_history().await?;
                 if let Some((port_name, _)) = self
                     .runtime
                     .db
@@ -690,30 +738,6 @@ impl Actor {
         Ok(serde_json::to_string_pretty(&messages)?)
     }
 
-    async fn compact_context(&self, actor_id: &Uri) -> Result<usize> {
-        const KEEP_MESSAGES: usize = 24;
-
-        let total = self.runtime.db.count_actor_messages(actor_id).await?;
-        if total <= KEEP_MESSAGES {
-            return Ok(total);
-        }
-
-        let from = total.saturating_sub(KEEP_MESSAGES);
-        let tail = self
-            .runtime
-            .db
-            .list_actor_messages(actor_id, from, KEEP_MESSAGES)
-            .await?;
-        self.runtime.db.clear_actor_history(actor_id).await?;
-        for payload in &tail {
-            self.runtime
-                .db
-                .append_actor_history_message(actor_id, payload, None)
-                .await?;
-        }
-        Ok(tail.len())
-    }
-
     async fn load_actor_reasoning_effort(&self, actor_id: &Uri) -> Result<Option<ReasoningEffort>> {
         Ok(self
             .runtime
@@ -722,5 +746,31 @@ impl Actor {
             .await?
             .as_deref()
             .and_then(|value| ReasoningEffort::from_str(value).ok()))
+    }
+}
+
+fn is_context_window_overflow_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("maximum context length")
+        || normalized.contains("context length")
+        || normalized.contains("too many tokens")
+        || normalized.contains("reduce the length")
+        || normalized.contains("context window")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_context_window_overflow_error;
+
+    #[test]
+    fn context_overflow_detection_matches_provider_message() {
+        let err = "provider `openrouter` chat_completion response error: status 400 Bad Request: This endpoint's maximum context length is 1048576 tokens.";
+        assert!(is_context_window_overflow_error(err));
+    }
+
+    #[test]
+    fn context_overflow_detection_ignores_unrelated_errors() {
+        let err = "provider `openrouter` chat_completion response error: status 401 Unauthorized";
+        assert!(!is_context_window_overflow_error(err));
     }
 }
