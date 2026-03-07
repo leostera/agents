@@ -310,7 +310,12 @@ impl BorgHttpServer {
         let body = match input {
             HttpPortInput::LocalReply(reply) => json!({
                 "actor_id": serde_json::Value::Null,
-                "reply": reply,
+                "outbound_messages": [{
+                    "kind": "port_reply",
+                    "text": reply,
+                    "port_context": {"port":"http"},
+                    "metadata": {}
+                }],
                 "tool_calls": [],
             }),
             HttpPortInput::Forward(forward_input) => {
@@ -356,7 +361,7 @@ impl BorgHttpServer {
 
                 json!({
                     "actor_id": output.actor_id,
-                    "reply": output.reply,
+                    "outbound_messages": output.outbound_messages,
                     "tool_calls": output
                         .tool_calls
                         .into_iter()

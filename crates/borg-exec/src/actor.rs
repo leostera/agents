@@ -6,6 +6,7 @@ use borg_agent::{
 use borg_core::Uri;
 use borg_llm::{ReasoningEffort, TranscriptionRequest};
 use chrono::Utc;
+use serde_json::json;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,8 +15,10 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use crate::mailbox::ActorCommand;
-use crate::message::{ActorOutput, BorgCommand, BorgInput, BorgMessage, ToolCallSummary};
-use crate::port_context::TelegramContext;
+use crate::message::{
+    ActorOutboundMessage, ActorOutput, BorgCommand, BorgInput, BorgMessage, ToolCallSummary,
+};
+use crate::port_context::{PortContext, TelegramContext};
 use crate::runtime::BorgRuntime;
 
 const TOOLCHAIN_CACHE_TTL: Duration = Duration::from_secs(60);
@@ -239,6 +242,7 @@ impl Actor {
                 self.process_audio_message(
                     &mut state,
                     &msg,
+                    actor_message_id,
                     file_id,
                     mime_type.as_deref(),
                     *duration_ms,
@@ -310,13 +314,14 @@ impl Actor {
             .add_message(Message::User { content })
             .await?;
 
-        self.process_text_turn(state, msg, progress_tx).await
+        self.process_text_turn(state, msg, actor_message_id, progress_tx).await
     }
 
     async fn process_audio_message(
         &self,
         state: &mut ActorState,
         msg: &BorgMessage,
+        actor_message_id: Option<&Uri>,
         file_id: &Uri,
         mime_type_hint: Option<&str>,
         _duration_ms: Option<u64>,
@@ -354,13 +359,14 @@ impl Actor {
             })
             .await?;
 
-        self.process_text_turn(state, msg, progress_tx).await
+        self.process_text_turn(state, msg, actor_message_id, progress_tx).await
     }
 
     async fn process_text_turn(
         &self,
         state: &mut ActorState,
         msg: &BorgMessage,
+        actor_message_id: Option<&Uri>,
         progress_tx: Option<&mpsc::Sender<ActorOutput<BorgToolCall, BorgToolResult>>>,
     ) -> Result<ActorOutput<BorgToolCall, BorgToolResult>> {
         state.actor_id = self.resolve_execution_actor_id().await?;
@@ -378,6 +384,7 @@ impl Actor {
             mpsc::UnboundedSender<ToolCallRecord<BorgToolCall, BorgToolResult>>,
         > = None;
         let mut tool_event_task = None;
+        let actor_message_id_for_task = actor_message_id.cloned();
         if let Some(progress_tx) = progress_tx {
             let (tx, mut rx) = mpsc::unbounded_channel();
             tool_event_tx = Some(tx);
@@ -388,8 +395,9 @@ impl Actor {
                 while let Some(call) = rx.recv().await {
                     if progress_tx
                         .send(ActorOutput {
+                            actor_message_id: actor_message_id_for_task.clone(),
                             actor_id: actor_id.clone(),
-                            reply: None,
+                            outbound_messages: Vec::new(),
                             tool_calls: vec![ToolCallSummary {
                                 tool_name: call.tool_name,
                                 arguments: call.arguments,
@@ -431,8 +439,12 @@ impl Actor {
             if let Some(progress_tx) = progress_tx {
                 let _ = progress_tx
                     .send(ActorOutput {
+                        actor_message_id: actor_message_id.cloned(),
                         actor_id: state.actor_thread.actor_id.clone(),
-                        reply: Some(CONTEXT_OVERFLOW_PROGRESS_MESSAGE.to_string()),
+                        outbound_messages: make_port_reply_messages(
+                            &msg.port_context,
+                            Some(CONTEXT_OVERFLOW_PROGRESS_MESSAGE.to_string()),
+                        ),
                         tool_calls: Vec::new(),
                         port_context: msg.port_context.clone(),
                     })
@@ -469,24 +481,29 @@ impl Actor {
         }
 
         match run_result {
-            ActorRunResult::Completed(Ok(output)) => Ok(ActorOutput {
-                actor_id: state.actor_thread.actor_id.clone(),
-                reply: Some(output.reply),
-                tool_calls: if progress_tx.is_some() {
-                    Vec::new()
-                } else {
-                    output
-                        .tool_calls
-                        .iter()
-                        .map(|call| ToolCallSummary {
-                            tool_name: call.tool_name.clone(),
-                            arguments: call.arguments.clone(),
-                            output: call.output.clone(),
-                        })
-                        .collect()
-                },
-                port_context: msg.port_context.clone(),
-            }),
+            ActorRunResult::Completed(Ok(output)) => {
+                let outbound_messages =
+                    parse_outbound_messages_from_llm_reply(&msg.port_context, &output.reply)?;
+                Ok(ActorOutput {
+                    actor_message_id: actor_message_id.cloned(),
+                    actor_id: state.actor_thread.actor_id.clone(),
+                    outbound_messages,
+                    tool_calls: if progress_tx.is_some() {
+                        Vec::new()
+                    } else {
+                        output
+                            .tool_calls
+                            .iter()
+                            .map(|call| ToolCallSummary {
+                                tool_name: call.tool_name.clone(),
+                                arguments: call.arguments.clone(),
+                                output: call.output.clone(),
+                            })
+                            .collect()
+                    },
+                    port_context: msg.port_context.clone(),
+                })
+            }
             ActorRunResult::Completed(Err(err)) => {
                 error!("Actor turn completed with error: {}", err);
                 Err(anyhow!(err.to_string()))
@@ -496,8 +513,9 @@ impl Actor {
                 Err(anyhow!(err.to_string()))
             }
             ActorRunResult::Idle => Ok(ActorOutput {
+                actor_message_id: actor_message_id.cloned(),
                 actor_id: state.actor_thread.actor_id.clone(),
-                reply: None,
+                outbound_messages: Vec::new(),
                 tool_calls: Vec::new(),
                 port_context: msg.port_context.clone(),
             }),
@@ -514,11 +532,15 @@ impl Actor {
             BorgCommand::ModelShowCurrent => {
                 let model = self.current_model(&state.actor_id).await?;
                 Ok(ActorOutput {
+                    actor_message_id: None,
                     actor_id: state.actor_thread.actor_id.clone(),
-                    reply: Some(format!(
-                        "Actor: {}\nModel: {}\nMailbox: {}",
-                        self.actor_id, model, state.actor_thread.actor_id
-                    )),
+                    outbound_messages: make_port_reply_messages(
+                        &msg.port_context,
+                        Some(format!(
+                            "Actor: {}\nModel: {}\nMailbox: {}",
+                            self.actor_id, model, state.actor_thread.actor_id
+                        )),
+                    ),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
@@ -530,11 +552,15 @@ impl Actor {
                 }
                 self.set_model(&state.actor_id, model).await?;
                 Ok(ActorOutput {
+                    actor_message_id: None,
                     actor_id: state.actor_thread.actor_id.clone(),
-                    reply: Some(format!(
-                        "Updated model to {} for actor {}.\nMailbox: {}",
-                        model, self.actor_id, state.actor_thread.actor_id
-                    )),
+                    outbound_messages: make_port_reply_messages(
+                        &msg.port_context,
+                        Some(format!(
+                            "Updated model to {} for actor {}.\nMailbox: {}",
+                            model, self.actor_id, state.actor_thread.actor_id
+                        )),
+                    ),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
@@ -545,11 +571,15 @@ impl Actor {
                     .map(|effort| effort.to_string())
                     .unwrap_or_else(|| "default".to_string());
                 Ok(ActorOutput {
+                    actor_message_id: None,
                     actor_id: state.actor_thread.actor_id.clone(),
-                    reply: Some(format!(
-                        "Current reasoning effort for actor {}: {}",
-                        state.actor_thread.actor_id, current
-                    )),
+                    outbound_messages: make_port_reply_messages(
+                        &msg.port_context,
+                        Some(format!(
+                            "Current reasoning effort for actor {}: {}",
+                            state.actor_thread.actor_id, current
+                        )),
+                    ),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
@@ -565,11 +595,15 @@ impl Actor {
                     )
                     .await?;
                 Ok(ActorOutput {
+                    actor_message_id: None,
                     actor_id: state.actor_thread.actor_id.clone(),
-                    reply: Some(format!(
-                        "Updated reasoning effort to {} for actor {}.",
-                        reasoning_effort, state.actor_thread.actor_id
-                    )),
+                    outbound_messages: make_port_reply_messages(
+                        &msg.port_context,
+                        Some(format!(
+                            "Updated reasoning effort to {} for actor {}.",
+                            reasoning_effort, state.actor_thread.actor_id
+                        )),
+                    ),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
@@ -579,8 +613,9 @@ impl Actor {
                     .telegram_participants(&state.actor_thread.actor_id)
                     .await?;
                 Ok(ActorOutput {
+                    actor_message_id: None,
                     actor_id: state.actor_thread.actor_id.clone(),
-                    reply: Some(participants),
+                    outbound_messages: make_port_reply_messages(&msg.port_context, Some(participants)),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
@@ -588,8 +623,9 @@ impl Actor {
             BorgCommand::ContextDump => {
                 let dump = self.context_dump(&state.actor_thread.actor_id).await?;
                 Ok(ActorOutput {
+                    actor_message_id: None,
                     actor_id: state.actor_thread.actor_id.clone(),
-                    reply: Some(dump),
+                    outbound_messages: make_port_reply_messages(&msg.port_context, Some(dump)),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
@@ -600,10 +636,14 @@ impl Actor {
                     .compact_history_keep_recent(CONTEXT_COMPACTION_KEEP_MESSAGES)
                     .await?;
                 Ok(ActorOutput {
+                    actor_message_id: None,
                     actor_id: state.actor_thread.actor_id.clone(),
-                    reply: Some(format!(
-                        "Compacted mailbox context. Kept {kept} context message(s)."
-                    )),
+                    outbound_messages: make_port_reply_messages(
+                        &msg.port_context,
+                        Some(format!(
+                            "Compacted mailbox context. Kept {kept} context message(s)."
+                        )),
+                    ),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
@@ -623,11 +663,15 @@ impl Actor {
                         .await?;
                 }
                 Ok(ActorOutput {
+                    actor_message_id: None,
                     actor_id: state.actor_thread.actor_id.clone(),
-                    reply: Some(format!(
-                        "Reset complete. Cleared {} message(s) and port actor context.",
-                        deleted
-                    )),
+                    outbound_messages: make_port_reply_messages(
+                        &msg.port_context,
+                        Some(format!(
+                            "Reset complete. Cleared {} message(s) and port actor context.",
+                            deleted
+                        )),
+                    ),
                     tool_calls: Vec::new(),
                     port_context: msg.port_context.clone(),
                 })
@@ -756,6 +800,124 @@ fn is_context_window_overflow_error(error: &str) -> bool {
         || normalized.contains("too many tokens")
         || normalized.contains("reduce the length")
         || normalized.contains("context window")
+}
+
+#[derive(serde::Deserialize)]
+struct NdjsonPortReply {
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    reply_to: Option<String>,
+    #[serde(default, rename = "replyTo")]
+    reply_to_camel: Option<String>,
+    #[serde(default)]
+    port_context: Option<PortContext>,
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
+}
+
+fn parse_outbound_messages_from_llm_reply(
+    default_port_context: &PortContext,
+    reply: &str,
+) -> Result<Vec<ActorOutboundMessage>> {
+    if matches!(default_port_context, PortContext::Unknown) {
+        return Ok(Vec::new());
+    }
+
+    let trimmed = reply.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Try single JSON object first (e.g. {"kind":"port_reply","text":"hello"})
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        let action: NdjsonPortReply = serde_json::from_str(trimmed).map_err(|err| {
+            anyhow!("invalid JSON reply (expected port_reply object): {err}")
+        })?;
+
+        if let Some(kind) = &action.kind {
+            if kind.trim().to_ascii_lowercase() != "port_reply" {
+                return Err(anyhow!("unsupported outbound action kind `{kind}`"));
+            }
+        }
+
+        let text = action
+            .text
+            .or(action.content)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| anyhow!("port_reply requires non-empty `text` or `content`"))?;
+
+        return Ok(vec![ActorOutboundMessage::PortReply {
+            text,
+            port_context: action.port_context.unwrap_or_else(|| default_port_context.clone()),
+            metadata: action.metadata.unwrap_or_else(|| json!({})),
+        }]);
+    }
+
+    // Try NDJSON (multiple lines, each is a JSON object)
+    let mut outbound_messages = Vec::new();
+    for line in trimmed.lines() {
+        let row = line.trim();
+        if row.is_empty() {
+            continue;
+        }
+        if !row.starts_with('{') || !row.ends_with('}') {
+            return Err(anyhow!("invalid NDJSON reply line (expected JSON object): {row}"));
+        }
+
+        let action: NdjsonPortReply = serde_json::from_str(row).map_err(|err| {
+            anyhow!("invalid NDJSON reply line (expected JSON object): {err}")
+        })?;
+
+        if let Some(kind) = &action.kind {
+            if kind.trim().to_ascii_lowercase() != "port_reply" {
+                return Err(anyhow!("unsupported outbound action kind `{kind}`"));
+            }
+        }
+
+        let text = action
+            .text
+            .or(action.content)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| anyhow!("port_reply requires non-empty text or content"))?;
+
+        outbound_messages.push(ActorOutboundMessage::PortReply {
+            text,
+            port_context: action.port_context.unwrap_or_else(|| default_port_context.clone()),
+            metadata: action.metadata.unwrap_or_else(|| json!({})),
+        });
+    }
+
+    if outbound_messages.is_empty() {
+        return Err(anyhow!("no valid port_reply objects found in response"));
+    }
+
+    Ok(outbound_messages)
+}
+
+fn make_port_reply_messages(
+    port_context: &PortContext,
+    reply: Option<String>,
+) -> Vec<ActorOutboundMessage> {
+    let text = reply
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    match text {
+        Some(text) => vec![ActorOutboundMessage::PortReply {
+            text,
+            port_context: port_context.clone(),
+            metadata: json!({}),
+        }],
+        None => Vec::new(),
+    }
 }
 
 #[cfg(test)]

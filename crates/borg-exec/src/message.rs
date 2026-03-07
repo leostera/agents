@@ -2,6 +2,7 @@ use borg_agent::ToolResultData;
 use borg_core::Uri;
 use borg_llm::ReasoningEffort;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::port_context::PortContext;
 
@@ -42,10 +43,31 @@ pub struct BorgMessage {
     pub port_context: PortContext,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortInboundActorMessage {
+    pub kind: String,
+    pub actor_id: String,
+    pub user_id: String,
+    pub text: String,
+    pub port_context: PortContext,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ActorOutboundMessage {
+    PortReply {
+        text: String,
+        port_context: PortContext,
+        #[serde(default)]
+        metadata: Value,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub struct ActorOutput<TToolCall, TToolResult> {
+    pub actor_message_id: Option<Uri>,
     pub actor_id: Uri,
-    pub reply: Option<String>,
+    pub outbound_messages: Vec<ActorOutboundMessage>,
     pub tool_calls: Vec<ToolCallSummary<TToolCall, TToolResult>>,
     pub port_context: PortContext,
 }

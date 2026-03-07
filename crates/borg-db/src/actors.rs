@@ -174,6 +174,51 @@ impl BorgDb {
         .await
     }
 
+    pub async fn enqueue_actor_message_in_progress(
+        &self,
+        actor_id: &Uri,
+        payload: &Value,
+        reply_to_actor_id: Option<&Uri>,
+        reply_to_message_id: Option<&Uri>,
+    ) -> Result<Uri> {
+        let actor_message_id = uri!("borg", "actor_message");
+        let actor_message_id_raw = actor_message_id.to_string();
+        let actor_id = actor_id.to_string();
+        let payload_json = payload.to_string();
+        let reply_to_actor_id = reply_to_actor_id.map(ToString::to_string);
+        let reply_to_message_id = reply_to_message_id.map(ToString::to_string);
+        let now = Utc::now().to_rfc3339();
+        sqlx::query!(
+            r#"
+            INSERT INTO messages(
+                message_id,
+                sender_id,
+                receiver_id,
+                payload_json,
+                status,
+                reply_to_sender_id,
+                reply_to_message_id,
+                error,
+                created_at,
+                started_at,
+                finished_at
+            )
+            VALUES(?1, NULL, ?2, ?3, 'IN_PROGRESS', ?4, ?5, NULL, ?6, ?6, NULL)
+            "#,
+            actor_message_id_raw,
+            actor_id,
+            payload_json,
+            reply_to_actor_id,
+            reply_to_message_id,
+            now,
+        )
+        .execute(self.conn.pool())
+        .await
+        .context("failed to enqueue actor mailbox message as in-progress")?;
+
+        Ok(actor_message_id)
+    }
+
     pub async fn enqueue_actor_message_from_sender(
         &self,
         sender_actor_id: Option<&Uri>,
@@ -414,6 +459,42 @@ impl BorgDb {
         .context("failed to ack actor mailbox message")?
         .rows_affected();
         Ok(updated)
+    }
+
+    pub async fn store_outbound_message(
+        &self,
+        actor_message_id: &Uri,
+        outbound_json: &Value,
+    ) -> Result<()> {
+        let actor_message_id = actor_message_id.to_string();
+        let outbound_json = outbound_json.to_string();
+        let now = Utc::now().to_rfc3339();
+        sqlx::query!(
+            r#"
+            INSERT INTO messages(
+                message_id,
+                sender_id,
+                receiver_id,
+                payload_json,
+                status,
+                reply_to_sender_id,
+                reply_to_message_id,
+                error,
+                created_at,
+                started_at,
+                finished_at
+            )
+            VALUES(?1, ?2, NULL, ?3, 'ACKED', NULL, NULL, NULL, ?4, ?4, ?4)
+            "#,
+            actor_message_id,
+            "outbound",
+            outbound_json,
+            now,
+        )
+        .execute(self.conn.pool())
+        .await
+        .context("failed to store outbound message")?;
+        Ok(())
     }
 
     pub async fn fail_actor_message(&self, actor_message_id: &Uri, error: &str) -> Result<u64> {

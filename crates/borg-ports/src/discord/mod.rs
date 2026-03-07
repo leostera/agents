@@ -3,7 +3,10 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_core::Uri;
-use borg_exec::{ActorOutput, DiscordContext, PortContext, RuntimeToolCall, RuntimeToolResult};
+use borg_exec::{
+    ActorOutboundMessage, ActorOutput, DiscordContext, PortContext, RuntimeToolCall,
+    RuntimeToolResult,
+};
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, GatewayIntents, Message};
 use serenity::client::{Client, Context, EventHandler};
@@ -106,8 +109,21 @@ impl DiscordPort {
             let body = format_tool_action_message(&call.tool_name, &call.arguments);
             self.send_text(channel, body).await?;
         }
-        if let Some(reply) = output.reply {
-            self.send_text(channel, reply).await?;
+        for outbound in output.outbound_messages {
+            match outbound {
+                ActorOutboundMessage::PortReply {
+                    text, port_context, ..
+                } => {
+                    let Some(target_ctx) = port_context.as_discord() else {
+                        continue;
+                    };
+                    if target_ctx.channel_id == 0 {
+                        continue;
+                    }
+                    self.send_text(ChannelId::new(target_ctx.channel_id), text)
+                        .await?;
+                }
+            }
         }
         Ok(())
     }

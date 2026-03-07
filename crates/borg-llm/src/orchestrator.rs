@@ -11,7 +11,7 @@ pub struct BorgLLM {
 }
 
 impl BorgLLM {
-    pub fn build() -> BorgLLMBuilder {
+    pub fn builder() -> BorgLLMBuilder {
         BorgLLMBuilder::new()
     }
 

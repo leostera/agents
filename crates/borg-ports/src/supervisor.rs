@@ -325,6 +325,21 @@ async fn bridge_loop(
             }
         };
 
+        // Store outbound messages in DB before sending to port
+        if let Some(actor_message_id) = &output.actor_message_id {
+            for outbound in &output.outbound_messages {
+                let outbound_json = serde_json::to_value(outbound).unwrap_or_default();
+                if let Err(err) = db.store_outbound_message(actor_message_id, &outbound_json).await {
+                    warn!(
+                        target: "borg_ports",
+                        error = %err,
+                        actor_message_id = %actor_message_id,
+                        "failed to store outbound message"
+                    );
+                }
+            }
+        }
+
         if outbound_tx.send(output).await.is_err() {
             break;
         }

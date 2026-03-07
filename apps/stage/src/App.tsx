@@ -387,6 +387,7 @@ type ActorDetailsDraft = {
 };
 
 type PortDetailsDraft = {
+  name: string;
   provider: string;
   enabled: boolean;
   allowsGuests: boolean;
@@ -1592,6 +1593,7 @@ export function App() {
     }
 
     setPortDetailsDraft({
+      name: selectedPort.name,
       provider: selectedPort.provider,
       enabled: selectedPort.enabled,
       allowsGuests: selectedPort.allowsGuests,
@@ -1851,6 +1853,7 @@ export function App() {
       return false;
     }
     return (
+      portDetailsDraft.name.trim() !== selectedPort.name.trim() ||
       portDetailsDraft.provider.trim() !== selectedPort.provider.trim() ||
       portDetailsDraft.enabled !== selectedPort.enabled ||
       portDetailsDraft.allowsGuests !== selectedPort.allowsGuests ||
@@ -1949,6 +1952,12 @@ export function App() {
       return;
     }
 
+    const name = portDetailsDraft.name.trim();
+    if (!name) {
+      setError("Port name cannot be empty.");
+      return;
+    }
+
     setIsSavingPortDetails(true);
     setError(null);
     try {
@@ -1968,7 +1977,7 @@ export function App() {
         query: STAGE_MUTATION_UPSERT_PORT,
         variables: {
           input: {
-            name: selectedPort.name,
+            name: name,
             provider,
             enabled: portDetailsDraft.enabled,
             allowsGuests: portDetailsDraft.allowsGuests,
@@ -3243,6 +3252,27 @@ export function App() {
 
                       {portDetailsDraft ? (
                         <div className="mt-2 grid gap-3">
+                          <div className="space-y-1.5">
+                            <Label htmlFor="stage-port-name">Name</Label>
+                            <input
+                              id="stage-port-name"
+                              type="text"
+                              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 placeholder:text-slate-400"
+                              placeholder="Enter port name"
+                              value={portDetailsDraft.name}
+                              onChange={(event) => {
+                                setPortDetailsDraft((current) =>
+                                  current
+                                    ? {
+                                        ...current,
+                                        name: event.currentTarget.value,
+                                      }
+                                    : current
+                                );
+                              }}
+                            />
+                          </div>
+
                           <div className="space-y-1.5">
                             <Label htmlFor="stage-port-provider">
                               Provider

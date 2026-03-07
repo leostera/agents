@@ -1,4 +1,5 @@
 use crate::mailbox_envelope::{ActorMailboxEnvelope, ActorMailboxInput};
+use crate::patch_apply::apply_patch_payload;
 use anyhow::{Result, anyhow};
 use borg_agent::{
     BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
@@ -20,6 +21,7 @@ use tokio::time::{Duration, Instant, sleep};
 
 const ACTOR_RECEIVE_DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const ACTOR_RECEIVE_POLL_INTERVAL_MS: u64 = 100;
+const PATCH_APPLY_TOOL_NAME: &str = "Patch-apply";
 
 #[derive(Debug, Clone, Deserialize)]
 struct ActorsSendMessageArgs {
@@ -35,6 +37,11 @@ struct ActorsReceiveArgs {
     expected_submission_id: Option<String>,
     #[serde(default)]
     timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PatchApplyArgs {
+    patch: String,
 }
 
 pub fn build_exec_toolchain_with_context(
@@ -61,6 +68,7 @@ pub fn build_exec_toolchain_with_context(
     let actor_admin = build_actor_admin_toolchain(db.clone(), current_actor_id.clone())?;
     let actor_messaging =
         build_actor_messaging_toolchain(db.clone(), current_actor_id, current_user_id)?;
+    let patch_tools = build_patch_toolchain()?;
     let port_admin = build_port_admin_toolchain(db.clone())?;
     let provider_admin = build_provider_admin_toolchain(db)?;
     code.merge(shell)?
@@ -70,6 +78,7 @@ pub fn build_exec_toolchain_with_context(
         .merge(schedule)?
         .merge(actor_admin)?
         .merge(actor_messaging)?
+        .merge(patch_tools)?
         .merge(port_admin)?
         .merge(provider_admin)
 }
@@ -78,6 +87,7 @@ pub fn default_exec_admin_tool_specs() -> Vec<ToolSpec> {
     let mut out = Vec::new();
     out.extend(default_actor_admin_tool_specs());
     out.extend(default_actor_messaging_tool_specs());
+    out.push(patch_apply_tool_spec());
     out.extend(default_port_admin_tool_specs());
     out.extend(default_borg_fs_tool_specs());
     out.extend(
@@ -92,11 +102,46 @@ pub fn default_exec_admin_tool_specs() -> Vec<ToolSpec> {
     out
 }
 
+fn patch_apply_tool_spec() -> ToolSpec {
+    ToolSpec {
+        name: PATCH_APPLY_TOOL_NAME.to_string(),
+        description:
+            "Apply a stripped patch to workspace files using Add/Delete/Update/Move directives."
+                .to_string(),
+        parameters: json!({
+            "type": "object",
+            "required": ["patch"],
+            "properties": {
+                "patch": {
+                    "type": "string",
+                    "description": "Patch payload using *** Begin Patch / *** End Patch format."
+                }
+            },
+            "additionalProperties": false
+        }),
+    }
+}
+
+fn build_patch_toolchain() -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+    ToolchainBuilder::new()
+        .add_tool(Tool::new_transcoded(
+            patch_apply_tool_spec(),
+            None,
+            move |request: borg_agent::ToolRequest<PatchApplyArgs>| async move {
+                let result = apply_patch_payload(&request.arguments.patch)?;
+                Ok(ToolResponse {
+                    output: ToolResultData::Ok(serde_json::to_value(result)?),
+                })
+            },
+        ))?
+        .build()
+}
+
 fn default_actor_messaging_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "Actors-sendMessage".to_string(),
-            description: "Send a message from the current actor to another actor. If an inbound message contains `ACTOR_MESSAGE_META` with `reply_target_actor_id`, use this tool to reply to that actor and include `in_reply_to_submission_id` when provided."
+            description: "Send a message from the current actor to another actor. If an inbound actor JSON payload includes `reply_target_actor_id`, use this tool to reply and include `in_reply_to_submission_id` when provided."
                 .to_string(),
             parameters: json!({
                 "type": "object",
@@ -104,7 +149,7 @@ fn default_actor_messaging_tool_specs() -> Vec<ToolSpec> {
                     "target_actor_id": {
                         "type": "string",
                         "format": "uri",
-                        "description": "Destination actor URI. For replies, set this to `reply_target_actor_id` from `ACTOR_MESSAGE_META`."
+                        "description": "Destination actor URI. For replies, set this to `reply_target_actor_id` from the inbound actor JSON payload."
                     },
                     "text": {
                         "type": "string",
@@ -113,7 +158,7 @@ fn default_actor_messaging_tool_specs() -> Vec<ToolSpec> {
                     "in_reply_to_submission_id": {
                         "type": "string",
                         "format": "uri",
-                        "description": "Submission/message URI being replied to. Use `submission_id` from `ACTOR_MESSAGE_META` when present."
+                        "description": "Submission/message URI being replied to. Use `submission_id` from inbound actor JSON payload when present."
                     }
                 },
                 "required": ["target_actor_id", "text"],

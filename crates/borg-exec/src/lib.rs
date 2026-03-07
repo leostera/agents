@@ -8,13 +8,15 @@ mod runtime;
 mod supervisor;
 
 pub use message::{
-    ActorOutput, BorgCommand, BorgInput, BorgMessage, RuntimeToolCall, RuntimeToolResult,
+    ActorOutboundMessage, ActorOutput, BorgCommand, BorgInput, BorgMessage,
+    PortInboundActorMessage, RuntimeToolCall, RuntimeToolResult,
 };
 pub use port_context::{DiscordContext, HttpContext, PortContext, TelegramContext};
 pub use runtime::BorgRuntime;
 pub use supervisor::BorgSupervisor;
 
 mod port_context;
+mod patch_apply;
 mod provider_config;
 mod provider_supervisor;
 mod tool_runner;

@@ -17,11 +17,30 @@ use crate::tool_runner::default_exec_admin_tool_specs;
 
 const TELEGRAM_CONTEXT_PREFIX: &str = "TELEGRAM_CONTEXT_JSON: ";
 const DEFAULT_ACTOR_BEHAVIOR_PROMPT: &str = r#"Actor messaging protocol:
-- Inbound actor messages may start with `ACTOR_MESSAGE_META {...}`.
-- If that metadata includes `reply_target_actor_id`, you MUST reply using `Actors-sendMessage` with:
+- Port-originated user messages arrive as JSON:
+  `{"kind":"port_message","actor_id":"...","user_id":"...","text":"...","port_context":{...}}`
+- Use the `text` field as the user message content; `port_context` provides transport context.
+- Inbound actor messages may arrive as a JSON object:
+  `{"type":"actor_message","sender_actor_id":"...","reply_target_actor_id":"...","submission_id":"...","text":"..."}`
+- If the payload includes `reply_target_actor_id`, you MUST reply using `Actors-sendMessage` with:
   - `target_actor_id = reply_target_actor_id`
   - `in_reply_to_submission_id = submission_id` when present.
 - Do not answer actor-originated requests only as plain assistant text; send the actor reply through `Actors-sendMessage`.
+
+Tool calling protocol (NDJSON):
+- When you want to call tools, output NDJSON only (one JSON object per line), no prose.
+- Each line MUST look like:
+  `{"tool_name":"<ToolName>","arguments":{...}}`
+- Optional fields allowed:
+  `tool_call_id` (or `call_id`) for stable IDs.
+- You may emit multiple lines to call multiple tools in one turn.
+
+Port reply protocol (NDJSON):
+- For replies back to a port conversation, output NDJSON lines with:
+  `{"kind":"port_reply","text":"..."}`
+- Optional routing override:
+  `reply_to` (or `replyTo`) with values like `borg:port:telegram/conversation:<chat_id>`.
+- Do not output plain prose for port replies; use NDJSON `port_reply` objects only.
 "#;
 
 #[derive(Clone)]

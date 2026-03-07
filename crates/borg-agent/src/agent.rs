@@ -4,6 +4,7 @@ use borg_db::BorgDb;
 use borg_llm::{LlmRequest, Provider, ProviderBlock, ReasoningEffort, StopReason};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::marker::PhantomData;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::info;
@@ -266,8 +267,37 @@ where
                                 )
                                 .await;
                             }
-                        };
+                    };
                     tool_calls.push((id.clone(), name.clone(), arguments));
+                }
+                if tool_calls.is_empty() {
+                    let assistant_text = assistant_message
+                        .content
+                        .iter()
+                        .filter_map(|block| match block {
+                            ProviderBlock::Text(text) => Some(text.clone()),
+                            ProviderBlock::Thinking(text) => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                        .trim()
+                        .to_string();
+                    if !assistant_text.is_empty() {
+                        match parse_ndjson_tool_calls::<TToolCall>(&assistant_text) {
+                            Ok(Some(ndjson_calls)) => {
+                                tool_calls = ndjson_calls;
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
+                                return finish_turn(
+                                    actor_thread,
+                                    ActorRunResult::ActorError(err.to_string()),
+                                )
+                                .await;
+                            }
+                        }
+                    }
                 }
 
                 if tool_calls.is_empty() {
@@ -449,4 +479,58 @@ where
         return ActorRunResult::ActorError(err.to_string());
     }
     result
+}
+
+#[derive(Debug, Deserialize)]
+struct NdjsonToolCall {
+    #[serde(default)]
+    tool_call_id: Option<String>,
+    #[serde(default)]
+    call_id: Option<String>,
+    #[serde(default)]
+    tool_name: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    tool: Option<String>,
+    arguments: Value,
+}
+
+fn parse_ndjson_tool_calls<TToolCall>(text: &str) -> Result<Option<Vec<(String, String, TToolCall)>>>
+where
+    TToolCall: DeserializeOwned,
+{
+    let mut out: Vec<(String, String, TToolCall)> = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !(trimmed.starts_with('{') && trimmed.ends_with('}')) {
+            return Ok(None);
+        }
+        let row: NdjsonToolCall = match serde_json::from_str(trimmed) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+        let tool_name = row
+            .tool_name
+            .or(row.name)
+            .or(row.tool)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("ndjson tool call is missing tool_name"))?;
+        let tool_call_id = row
+            .tool_call_id
+            .or(row.call_id)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| format!("ndjson_{}", Uuid::now_v7()));
+        let arguments = serde_json::from_value::<TToolCall>(row.arguments)?;
+        out.push((tool_call_id, tool_name, arguments));
+    }
+    if out.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(out))
 }

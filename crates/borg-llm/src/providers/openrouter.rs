@@ -350,6 +350,16 @@ fn provider_error_reason_from_body(body: &str) -> Option<String> {
     if let Ok(payload) = serde_json::from_str::<Value>(trimmed) {
         if let Some(reason) = payload
             .get("error")
+            .and_then(|error| error.get("metadata"))
+            .and_then(|metadata| metadata.get("raw"))
+            .and_then(Value::as_str)
+            .and_then(extract_nested_error_message)
+        {
+            return Some(reason);
+        }
+
+        if let Some(reason) = payload
+            .get("error")
             .and_then(|error| error.get("message"))
             .and_then(Value::as_str)
             .map(str::trim)
@@ -369,6 +379,17 @@ fn provider_error_reason_from_body(body: &str) -> Option<String> {
     }
 
     Some(trimmed.to_string())
+}
+
+fn extract_nested_error_message(raw: &str) -> Option<String> {
+    let nested: Value = serde_json::from_str(raw).ok()?;
+    nested
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 fn extract_text_from_chat_payload(payload: &Value) -> Option<String> {
@@ -712,5 +733,22 @@ mod tests {
         let body = r#"{"error":{"message":"maximum context length exceeded"}}"#;
         let reason = provider_error_reason_from_body(body).expect("reason");
         assert_eq!(reason, "maximum context length exceeded");
+    }
+
+    #[test]
+    fn provider_error_reason_uses_metadata_raw_when_present() {
+        let body = r#"{
+          "error":{
+            "message":"Provider returned error",
+            "metadata":{
+              "raw":"{\"error\":{\"code\":400,\"message\":\"The input token count exceeds the maximum number of tokens allowed 1048576.\",\"status\":\"INVALID_ARGUMENT\"}}"
+            }
+          }
+        }"#;
+        let reason = provider_error_reason_from_body(body).expect("reason");
+        assert_eq!(
+            reason,
+            "The input token count exceeds the maximum number of tokens allowed 1048576."
+        );
     }
 }

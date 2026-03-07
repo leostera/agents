@@ -20,7 +20,7 @@ impl BorgLLMResolver {
     pub async fn llm(&self) -> Result<BorgLLM> {
         let settings = self.load_provider_settings().await?;
 
-        let mut builder = BorgLLM::build();
+        let mut builder = BorgLLM::builder();
         for provider in ordered_providers(&settings) {
             match provider.provider_kind.as_str() {
                 "openai" => {

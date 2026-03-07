@@ -226,6 +226,34 @@ async fn a1_no_tool_completion() {
 }
 
 #[tokio::test]
+async fn ndjson_tool_call_text_is_executed() {
+    let (agent, mut thread) = make_thread().await.unwrap();
+    thread
+        .add_message(Message::User {
+            content: "run search".to_string(),
+        })
+        .await
+        .unwrap();
+
+    let ndjson = r#"{"tool_name":"search","arguments":{"query":"rust"}}"#;
+    let (provider, _requests_rx) = scripted_provider(vec![
+        Ok(assistant_text(ndjson)),
+        Ok(assistant_text("done")),
+    ]);
+    let (toolchain, mut calls_rx) = scripted_toolchain(vec![Ok(ToolResponse {
+        output: ToolResultData::Ok(json!({"hits":[{"id":"1"}]})),
+    })])
+    .unwrap();
+
+    let out = agent.run(&mut thread, &provider, &toolchain).await;
+
+    assert!(matches!(out, ActorRunResult::Completed(Ok(_))));
+    let tool_call = calls_rx.try_recv().expect("expected ndjson tool call");
+    assert_eq!(tool_call.tool_name, "search");
+    assert_eq!(tool_call.arguments, json!({"query":"rust"}));
+}
+
+#[tokio::test]
 async fn a2_single_tool_then_answer() {
     info!(target: "borg_agent_test", test = "a2_single_tool_then_answer", "starting test");
     let (agent, mut thread) = make_thread().await.unwrap();

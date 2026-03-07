@@ -4,8 +4,8 @@ use borg_agent::ToolResultData;
 use borg_cmd::CommandRegistry;
 use borg_core::{TelegramUserId, Uri};
 use borg_exec::{
-    ActorOutput, BorgCommand, PortContext, ReasoningEffort, RuntimeToolCall, RuntimeToolResult,
-    TelegramContext,
+    ActorOutboundMessage, ActorOutput, BorgCommand, PortContext, ReasoningEffort, RuntimeToolCall,
+    RuntimeToolResult, TelegramContext,
 };
 use serde::{Deserialize, Serialize};
 use teloxide::prelude::*;
@@ -94,8 +94,17 @@ impl TelegramPort {
             self.send_html(chat_id, body).await?;
         }
 
-        if let Some(reply) = output.reply {
-            self.send_text(chat_id, reply).await?;
+        for outbound in output.outbound_messages {
+            match outbound {
+                ActorOutboundMessage::PortReply {
+                    text, port_context, ..
+                } => {
+                    let Some(target_ctx) = port_context.as_telegram() else {
+                        continue;
+                    };
+                    self.send_text(ChatId(target_ctx.chat_id), text).await?;
+                }
+            }
         }
 
         Ok(())

@@ -84,7 +84,7 @@ impl BorgSupervisor {
         let actor_message_id = self
             .runtime
             .db
-            .enqueue_actor_message(
+            .enqueue_actor_message_in_progress(
                 &msg.actor_id,
                 &serde_json::to_value(ActorMailboxEnvelope::from_borg_message(&msg))?,
                 None,
@@ -120,7 +120,7 @@ impl BorgSupervisor {
         let actor_message_id = self
             .runtime
             .db
-            .enqueue_actor_message(
+            .enqueue_actor_message_in_progress(
                 &msg.actor_id,
                 &serde_json::to_value(ActorMailboxEnvelope::from_borg_message(&msg))?,
                 None,
@@ -252,6 +252,7 @@ impl BorgSupervisor {
             let Some(row) = self.runtime.db.claim_next_actor_message(actor_id).await? else {
                 return Ok(());
             };
+            self.runtime.db.ack_actor_message(&row.actor_message_id).await?;
 
             let env = match serde_json::from_value::<ActorMailboxEnvelope>(row.payload.clone()) {
                 Ok(env) => env,
