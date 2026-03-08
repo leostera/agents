@@ -753,3 +753,389 @@ An implementation of this RFD should be considered compliant only if all of the 
 - All delivered messages share one canonical `messages` table regardless of whether they are port->actor, actor->actor, or actor->port.
 - Ports can route replies back out without relying on a global runtime routing key.
 - The runtime builds LLM context in the canonical stable ordering defined above.
+
+## Implementation Notes
+
+This section is intentionally opinionated.
+
+The previous sections describe what Borg is. This section describes how Borg should be implemented so the codebase naturally preserves those properties instead of slowly drifting away from them.
+
+These notes are based both on the target runtime described in this RFD and on the current repository shape. Some of these patterns already exist in the codebase today, and some are explicit course-corrections for places where JSON, generic payloads, or transitional abstractions are still leaking too far into the runtime.
+
+### JSON lives at the edges
+
+JSON is a boundary format.
+
+Inside Borg, runtime logic should operate on typed structs and enums. JSON should be used only when:
+
+- reading or writing explicit JSON columns such as `payload_json`, `request_json`, and `response_json`
+- speaking to external systems such as GraphQL, HTTP, ports, and provider APIs
+- exporting traces or debugging artifacts
+
+The implementation rule is simple:
+
+- deserialize as early as possible when data enters Borg
+- operate on typed values while the data is inside Borg
+- serialize as late as possible when data leaves Borg
+
+This means `serde_json::Value` should not become the default currency of the runtime.
+
+It is acceptable at adapters and storage boundaries. It is not acceptable as the default internal representation for actor messages, provider actions, tool requests, tool results, or context assembly.
+
+### Prefer typed runtime messages over generic JSON payloads
+
+The `messages` table stores `payload_json`, but the runtime should not treat message payloads as arbitrary JSON maps.
+
+Message payloads should be modeled as typed enums and structs.
+
+A good implementation shape is:
+
+```rust
+pub enum MessagePayload {
+    UserText(UserTextMessage),
+    UserAudio(UserAudioMessage),
+    ToolCall(ToolCallMessage),
+    ToolResult(ToolResultMessage),
+    ActorMessage(ActorMessagePayload),
+    PortMessage(PortMessagePayload),
+    FinalAssistant(FinalAssistantMessage),
+    ActorLifecycle(ActorLifecycleEvent),
+}
+```
+
+The exact variants may differ, but the core idea should hold: runtime code pattern-matches on typed payloads, not string keys inside JSON objects.
+
+This is especially important for actor-to-actor communication. If actors are going to collaborate by sending structured work to each other, those messages must be first-class runtime values.
+
+### Prefer enums for protocols and structs for records
+
+Borg should bias toward:
+
+- `struct` for stored records and concrete data
+- `enum` for protocols, actions, statuses, and variant-bearing runtime concepts
+
+Examples:
+
+- `MessageRow`, `ToolCallRow`, and `LlmCallRow` are structs
+- `ProcessingState`, `Action`, `ToolCallStatus`, and `ProviderStopReason` are enums
+- `MessagePayload` and `Action` are enums
+- `Actor`, `PortBinding`, `CompiledContext`, and `ProviderSelection` are structs
+
+This keeps the code easy to read and makes illegal states harder to represent.
+
+### Use strong ID types and endpoint types
+
+The database stores identifiers as `TEXT`, but the Rust side should not pass raw `String` values around for everything.
+
+Borg should use dedicated newtypes for important identifiers and endpoint types.
+
+For example:
+
+```rust
+pub struct ActorId(pub Uri);
+pub struct PortId(pub Uri);
+pub struct MessageId(pub String);
+pub struct ToolCallId(pub String);
+pub struct LlmCallId(pub String);
+pub struct ProviderId(pub String);
+pub struct EndpointUri(pub Uri);
+```
+
+The exact wrappers may differ, but the code should make it impossible to accidentally pass a `message_id` where an `actor_id` was expected.
+
+Message endpoints are already URI-shaped in the current codebase. That direction should stay. The next step is to stop letting all other IDs collapse back into plain strings.
+
+### Prefer domain methods over loose free functions
+
+The runtime should read like a system of collaborating objects with clear ownership boundaries.
+
+That means core behavior should generally live on domain structs as methods:
+
+- `actor.process_next_message(...)`
+- `port.resolve_or_spawn_actor(...)`
+- `context_compiler.compile(...)`
+- `message_store.insert(...)`
+- `provider.chat(...)`
+- `turn_executor.run(...)`
+
+Free functions are still fine for:
+
+- pure conversions
+- parsing
+- formatting
+- small stateless helpers
+
+But the main runtime should not turn into a flat field of unrelated helper functions. If an operation belongs clearly to one domain object, prefer a method.
+
+### Use builder patterns for complex construction
+
+Any constructor with more than a handful of arguments, optional knobs, or ordering constraints should use a builder.
+
+This is especially important for:
+
+- actor creation with defaults
+- provider request construction
+- context assembly
+- outbound message construction
+- tool call persistence records
+- llm call persistence records
+
+The codebase already has good examples of this style in some places. We should lean into it harder.
+
+Good candidates for explicit builders include:
+
+- `ActorBuilder`
+- `CompiledContextBuilder`
+- `LlmRequestBuilder`
+- `MessageBuilder`
+- `ToolCallRecordBuilder`
+- `LlmCallRecordBuilder`
+
+When ordering matters, the builder should enforce that order instead of leaving it implicit in ad-hoc call sites.
+
+### Keep storage rows separate from runtime domain types
+
+Storage rows are not domain models.
+
+This is a hard rule.
+
+For example:
+
+- `MessageRow` is the exact database shape
+- `MessageRecord` may be a richer persistence-layer representation
+- `InboundMessage` and `OutboundMessage` are runtime views
+- `ToolCallRow` is not the same thing as `ToolCallRequest`
+- `LlmCallRow` is not the same thing as `LlmRequest`
+
+That separation matters because the database is optimized for durability and queries, while the runtime is optimized for clarity and correctness.
+
+The current codebase already has pieces of this separation, but there are still places where raw JSON values cross straight from storage into runtime code. Those boundaries should become explicit.
+
+### Keep actor turn execution as an explicit staged process
+
+The actor turn loop is central enough that it should have a clear typed structure in code.
+
+Avoid implementing it as one large async function with ad-hoc booleans and nested branching.
+
+Prefer a small explicit staged process, for example:
+
+- load next pending message
+- compile context
+- call provider
+- parse ordered actions
+- execute actions in order
+- persist traces
+- finish turn
+
+This does not need a giant framework. It just needs enough structure that the lifecycle is visible in the types, in traces, and in tests.
+
+A `TurnExecutor` struct with a few narrow methods is better than one sprawling function doing everything inline.
+
+### Ordered action lists must stay ordered
+
+Provider output should be represented internally as a single ordered action list.
+
+Do not normalize a provider response into separate buckets such as:
+
+- outbound messages
+- tool calls
+- final response
+
+That would quietly reintroduce batch-by-type behavior and violate the runtime semantics in this RFD.
+
+A better shape is:
+
+```rust
+pub struct ActionList(pub Vec<Action>);
+```
+
+where execution always processes actions in sequence.
+
+If the model emits:
+
+1. a tool call
+2. an actor message
+3. a port message
+4. a final assistant message
+
+then the runtime must observe and execute them in that order.
+
+### Treat provider adapters as translation layers
+
+External providers and embedded inference are two implementations of the same higher-level provider contract.
+
+That means provider adapters should own wire-format translation.
+
+They may convert between:
+
+- provider-specific JSON
+- provider-specific tool call formats
+- provider-specific response blocks
+- Borg's typed internal action model
+
+But the rest of the runtime should not know or care about those wire shapes.
+
+This keeps provider churn localized and preserves the rule that Borg is structured internally even when external providers are not.
+
+### Ports are adapters, not mini-runtimes
+
+A port should do four things well:
+
+1. normalize inbound external input into typed Borg input
+2. resolve or spawn the actor for that external conversation
+3. persist the inbound message
+4. translate outbound actor messages back into the external protocol
+
+A port should not become a parallel runtime with its own private execution model.
+
+If a port needs provider-specific formatting, reply markup, or transport metadata, that should stay in the adapter layer.
+
+The actor runtime should remain the same regardless of whether the message came from Telegram, Discord, WhatsApp, HTTP, or somewhere else.
+
+### Persistence APIs should be append-first and lifecycle-specific
+
+The database layer should prefer explicit lifecycle-shaped methods over generic `save` helpers.
+
+For example:
+
+- `insert_message(...)`
+- `mark_message_started(...)`
+- `mark_message_processed(...)`
+- `mark_message_failed(...)`
+- `insert_tool_call(...)`
+- `finish_tool_call(...)`
+- `insert_llm_call(...)`
+- `finish_llm_call(...)`
+
+This matches the runtime model much better than vague APIs like `save_message` or `update_record`.
+
+If a runtime event matters for replay, observability, or causality, it should be appended first and then used by downstream execution.
+
+### Message processing state should live in the database, not only in memory
+
+Actor restarts depend on replaying delivered-but-not-processed messages.
+
+That means message processing state is part of the durable runtime contract, not just an in-memory optimization.
+
+The actor may still maintain an in-memory queue, cache, or compiled-context window, but the source of truth for whether a message is pending, processed, or failed must live in the database.
+
+This is one of the biggest implementation differences between a toy chat loop and a real durable runtime.
+
+### Persist tool calls and llm calls as first-class traces
+
+Tool calls and provider calls should not be inferred later from logs.
+
+They are first-class runtime records and should be written explicitly.
+
+The implementation should persist:
+
+- the inbound `message_id` currently being processed
+- the `actor_id` performing the work
+- the tool or provider name
+- the request payload
+- the response payload
+- start and finish timestamps
+- status or error details
+
+These records exist both for debugging and for making the runtime explainable after the fact.
+
+### Derive serde broadly, validate intentionally
+
+Boundary-facing types should derive serde aggressively.
+
+That includes IDs, wire payloads, database row helpers, GraphQL boundary types, provider request/response shapes, and port payloads.
+
+But successful deserialization is not the same thing as semantic validity.
+
+Anything important should validate its invariants after deserialization.
+
+Examples:
+
+- IDs must be well-formed
+- endpoint URIs must parse
+- provider action lists must be valid and ordered
+- patch requests must satisfy shape constraints
+- tool results must match the tool that produced them
+
+### Centralize conversions at the boundaries
+
+Conversions between runtime values and wire/storage values should be explicit and centralized.
+
+That includes:
+
+- database row <-> runtime domain value
+- provider wire format <-> `ActionList`
+- port payload <-> `MessagePayload`
+- GraphQL input <-> domain command
+
+Do not scatter these conversions inline throughout the runtime.
+
+A small set of mapper modules or `TryFrom` implementations is much easier to audit.
+
+### Prefer small modules with one dominant type
+
+Borg will stay easier to reason about if modules tend to have one obvious center of gravity.
+
+For example:
+
+- `actor.rs` for `Actor`
+- `turn_executor.rs` for `TurnExecutor`
+- `message.rs` for `MessagePayload`, `MessageRow`, and message-related types
+- `port.rs` for `Port`
+- `provider.rs` for the provider trait and request/response types
+- `context.rs` for `CompiledContext` and `CompiledContextBuilder`
+- `tool_call.rs` for tool call records and execution glue
+
+A file should not be a random kitchen sink just because the code happens to compile that way.
+
+### Cheap built-ins should stay cheap
+
+ShellMode and CodeMode are first-class tools, but they should behave like cheap built-ins, not like heavyweight remote protocol clients.
+
+That means:
+
+- typed request/response structs
+- direct execution paths
+- explicit persistence of tool call traces
+- small adapters at the boundary
+
+In particular, routine file mutation should still prefer `Patch-apply` first and only fall back to shell execution when patch semantics are not enough.
+
+### Implementation deltas from the current repository
+
+The current repository already contains a few strong implementation signals we should preserve:
+
+- `Uri` already exists as a real type instead of leaving endpoints as raw strings
+- some builders already exist, especially around llm orchestration and context construction
+- provider access already goes through a provider trait
+- ports already exist as explicit adapters
+
+There are also a few places where the current code should move closer to the design in this RFD:
+
+- transitional naming such as `Agent` should converge on `Actor` terminology in the core runtime
+- `behavior_prompt` should disappear from the hot path
+- `serde_json::Value` should stop leaking through actor, database, and codemode execution paths except at true boundaries
+- actor mailbox replay should rely on durable processing state from `messages`, not just in-memory length bookkeeping
+- the exact persistence contract for `messages`, `tool_calls`, and `llm_calls` should become the primary source of truth for runtime replay and observability
+- provider outputs should converge on one typed ordered action list instead of mixed parsing strategies
+
+These are not abstract style preferences. They are implementation choices that make the runtime easier to evolve without violating the system model.
+
+## Functional Requirements — Implementation Notes
+
+- JSON must be treated as a boundary format, not the default internal runtime model.
+- Internal runtime logic must operate primarily on typed structs and enums.
+- Runtime message payloads must be represented as typed values, not generic JSON maps.
+- Storage rows and runtime domain values must be distinct types.
+- The implementation should use dedicated ID and endpoint wrapper types instead of raw strings wherever practical.
+- Core runtime behavior should prefer methods on domain structs over unrelated free functions.
+- Complex constructors should prefer builder patterns.
+- Actor turn execution should be implemented as an explicit staged process.
+- Provider output must be represented as a single ordered action list and processed sequentially.
+- Provider adapters must own translation between provider-specific wire formats and Borg's typed runtime model.
+- Ports must remain adapters and must not implement a parallel execution model.
+- Persistence APIs must be append-first and lifecycle-specific.
+- Message processing state must be durable and replayable from the database.
+- Tool calls and llm calls must be persisted as first-class traces.
+- Boundary conversions must be explicit and centralized.
+- ShellMode and CodeMode must remain cheap built-ins with typed request/response handling.
