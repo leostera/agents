@@ -19,7 +19,7 @@ The goal here is not to describe where Borg came from. The goal is to clearly st
 
 We need one document that explains the actual runtime we are building.
 
-Right now, many separate RFDs define parts of Borg: actors, ports, tool calls, providers, patches, GraphQL, typed data, and so on. That is useful, but it still leaves a gap: if someone asks “what happens when a Telegram message hits Borg?”, the answer should not require opening ten documents and mentally stitching them together.
+Right now, many separate RFDs define parts of Borg: actors, ports, tool calls, providers, patches, GraphQL, typed data, and so on. That is useful, but it still leaves a gap: if someone asks "what happens when a Telegram message hits Borg?", the answer should not require opening ten documents and mentally stitching them together.
 
 This RFD is that stitched-together document.
 
@@ -50,6 +50,20 @@ This document does not define:
 
 Those can all exist, but they are outside the scope of this snapshot.
 
+## Runtime Invariants
+
+These are the invariants this document depends on:
+
+1. Borg is actor-only.
+2. Delivery means a message row has been written to `messages`.
+3. Ports own the routing state needed to map external conversations to actors and route replies back out.
+4. The durable source of truth for actor context is the actor record plus its messages.
+5. LLM execution is structured by default.
+6. Tool calls and LLM calls are persisted separately from messages, but always linked back to the message currently being processed.
+7. Actors process mailbox messages one at a time.
+
+If an implementation violates any of those, it is not implementing this RFD.
+
 ## Core Model
 
 Borg is a workspace runtime.
@@ -72,11 +86,11 @@ The runtime is actor-only.
 
 An actor is the only execution identity in the system. External conversations map to actors. Internal collaboration happens via actor-to-actor messages. Replies back to the outside world are actor-to-port messages. There is no second execution identity.
 
-## Canonical IDs
+## Message Endpoints
 
-Borg IDs are URIs.
+Message endpoints are URIs.
 
-The system treats sender and receiver identities opaquely. A message sender or receiver is not split into kind-specific columns. Instead, all message endpoints are represented as URIs, and the rest of the system treats them as opaque identifiers.
+The system treats `sender_id` and `receiver_id` opaquely. A message sender or receiver is not split into kind-specific columns. Instead, all message endpoints are represented as URIs, and the rest of the system treats them as opaque identifiers.
 
 Examples:
 
@@ -88,6 +102,8 @@ Examples:
 - `discord://guild/123/channel/456/thread/789`
 
 This gives us a clean routing model and avoids forcing the database into brittle enum-based endpoint modeling too early.
+
+This section is intentionally about message endpoints, not every ID in the whole system. For example, `message_id`, `tool_call_id`, and `llm_call_id` only need to be stable unique identifiers. They do not need to be endpoint URIs.
 
 ## Actors
 
@@ -180,52 +196,56 @@ A delivered message may still fail to be processed later due to crashes or runti
 flowchart LR
     EXT[External System<br/>Telegram / Discord / WhatsApp / HTTP] --> PORT[Port]
     PORT --> BIND[Find or Spawn Actor]
-    BIND --> MSGIN[Persist inbound message]
+    BIND --> MSGIN[Insert messages row<br/>processing_state = pending]
     MSGIN --> ACTOR[Actor mailbox]
     ACTOR --> CTX[Build current context]
     CTX --> LLM[Call provider]
-    LLM --> DECIDE{Structured output}
-    DECIDE -->|tool call| TOOL[Execute tool]
-    TOOL --> TOOLMSG[Persist tool result]
-    TOOLMSG --> ACTOR
-    DECIDE -->|actor message| AMSG[Persist actor->actor message]
-    AMSG --> ACTOR2[Other actor mailbox]
-    DECIDE -->|port message| OUTMSG[Persist actor->port message]
-    OUTMSG --> PORTOUT[Port routes reply]
+    LLM --> ACTIONS[Ordered action list]
+    ACTIONS --> STEP[Process next action in order]
+    STEP -->|tool call| TOOL[Execute tool]
+    TOOL --> TOOLREC[Persist tool_calls row]
+    TOOLREC --> LLM
+    STEP -->|actor message| AMSG[Insert actor->actor message]
+    AMSG --> STEP
+    STEP -->|port message| OUTMSG[Insert actor->port message]
+    OUTMSG --> STEP
+    STEP -->|final assistant message| FINAL[Insert final outbound message and mark inbound processed]
+    FINAL --> PORTOUT[Port routes reply]
     PORTOUT --> EXT2[External destination]
-    DECIDE -->|final assistant reply| FINAL[Persist actor->port or actor->actor final message]
-    FINAL --> PORTOUT
 ```
 
-Context Model
+## Context Model
 
 The durable source of truth for actor context is:
-	•	the actor record
-	•	the actor’s message history
+
+- the actor record
+- the actor's message history
 
 That is the real source of context.
 
 However, the current context used for an LLM request does not need to be the full raw history. It may be a compressed, summarized, windowed, or otherwise precompiled representation derived from that source of truth.
 
 The important distinction is:
-	•	durable truth = actor + messages
-	•	execution context = current compiled view used for the next model call
 
-Context assembly order
+- durable truth = actor + messages
+- execution context = current compiled view used for the next model call
+
+### Context assembly order
 
 Context should be assembled in a stable order from least likely to change to most likely to change.
 
 The canonical ordering is:
-	1.	system prompt
-	2.	core tools
-	3.	immutable actor and port metadata
-	4.	actor prompt
-	5.	other tool schemas
-	6.	recent messages
+
+1. system prompt
+2. core tools
+3. immutable actor and port metadata
+4. actor prompt
+5. other tool schemas
+6. recent messages
 
 This ordering is intentional. It keeps the most stable content first and makes it friendlier to context precompilation and reuse.
 
-Context assembly diagram
+### Context assembly diagram
 
 ```mermaid
 flowchart TD
@@ -237,7 +257,7 @@ flowchart TD
     MSGS[Recent Messages] --> CTX
 ```
 
-Actor Mailbox and Turn Processing
+## Actor Mailbox and Turn Processing
 
 Each actor owns a mailbox.
 
@@ -249,43 +269,73 @@ Messages that have already been processed are not reprocessed.
 Messages marked failed are not reprocessed.
 Messages that were delivered but not processed due to crash or shutdown are eligible for processing when the actor starts back up.
 
-Turn loop
+### Message lifecycle
+
+The messages table uses a small explicit state machine:
+
+| State | Meaning | Replay on actor startup? |
+|---|---|---|
+| `pending` | Delivered and durable, but not yet marked complete | Yes |
+| `processed` | Turn completed successfully | No |
+| `failed` | Turn reached a terminal failure | No |
+
+Valid transitions are:
+
+- `pending -> processed`
+- `pending -> failed`
+
+No other state transitions are valid in v0.1.
+
+### Message lifecycle diagram
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: insert into messages
+    pending --> processed: actor finishes turn
+    pending --> failed: terminal runtime failure
+```
+
+### Turn loop
 
 For each mailbox message, the actor performs a turn.
 
 A turn is a loop:
-	1.	load next pending mailbox message
-	2.	build current context
-	3.	call provider
-	4.	inspect structured output
-	5.	persist any emitted messages
-	6.	execute any requested tools
-	7.	persist tool and LLM traces
-	8.	feed tool results back into the loop
-	9.	continue until a final assistant message is produced
+
+1. load next pending mailbox message
+2. build current context
+3. call provider
+4. inspect structured output
+5. process returned actions in order
+6. persist messages immediately when encountered
+7. execute tools immediately when encountered
+8. persist tool and LLM traces
+9. if a tool result was produced, feed it back into the loop
+10. continue until a final assistant message is produced
 
 The termination condition for a turn is a final assistant message.
 
-Actor turn loop diagram
+A `final_assistant_message` is special. It is not just another generic outbound message. It is the action that closes the current turn for the inbound message being processed.
+
+### Actor turn loop diagram
 
 ```mermaid
 flowchart TD
     START[Load next pending message] --> BUILD[Build current context]
     BUILD --> LLM[Call provider]
-    LLM --> OUT[Parse structured output list]
-    OUT --> CHECK{Any actions left?}
-    CHECK -->|tool call| TOOL[Execute tool]
-    TOOL --> TOOLREC[Persist tool_call + result]
+    LLM --> ACTIONS[Parse ordered action list]
+    ACTIONS --> NEXT[Take next action]
+    NEXT -->|tool_call| TOOL[Execute tool]
+    TOOL --> TOOLREC[Persist tool_calls row]
     TOOLREC --> FEED[Append tool result into turn state]
     FEED --> LLM
-    CHECK -->|actor message| ACTMSG[Persist actor->actor message]
-    ACTMSG --> CHECK
-    CHECK -->|port message| PORTMSG[Persist actor->port message]
-    PORTMSG --> CHECK
-    CHECK -->|final assistant message| DONE[Mark inbound message processed]
+    NEXT -->|actor message| ACTMSG[Insert actor->actor message]
+    ACTMSG --> ACTIONS
+    NEXT -->|port message| PORTMSG[Insert actor->port message]
+    PORTMSG --> ACTIONS
+    NEXT -->|final assistant message| DONE[Insert final outbound message and mark inbound processed]
 ```
 
-Structured Output Model
+## Structured Output Model
 
 Borg does not use human-readable freeform text as its primary execution protocol.
 
@@ -294,10 +344,11 @@ Communication with the LLM should be structured by default. The model receives s
 The runtime processes model output as a single ordered list of actions.
 
 Those actions may include:
-	•	tool calls
-	•	actor-to-actor messages
-	•	actor-to-port messages
-	•	final assistant message
+
+- tool calls
+- actor-to-actor messages
+- actor-to-port messages
+- final assistant message
 
 Because the output is processed in order, a single model response can express multiple side effects in a single turn.
 
@@ -330,26 +381,28 @@ Example shape:
 
 Provider adapters may need to translate this to and from provider-specific formats. That translation is a boundary concern. The source of truth inside Borg remains structured.
 
-Tools
+## Tools
 
 Tools are first-class execution primitives inside actor turns.
 
 Borg supports three tool families:
-	•	built-in tools
-	•	shellmode commands
-	•	codemode commands
+
+- built-in tools
+- shellmode commands
+- codemode commands
 
 Shellmode and codemode should behave like cheap built-ins, not like remote MCP calls with heavy protocol overhead.
 
-Patch-apply
+### Patch-apply
 
-Patch-apply is the default mutating primitive for writing to files.
+`Patch-apply` is the default mutating primitive for writing to files.
 
 When an actor needs to modify files, it should prefer:
-	1.	Patch-apply
-	2.	ShellMode
 
-Codemode is for running JavaScript inside V8. It is not the general-purpose file mutation path.
+1. `Patch-apply`
+2. `ShellMode`
+
+Codemode is for running JavaScript inside V8. It is not the general-purpose file mutation path. Codemode may compute, transform, or orchestrate, but routine workspace file mutation should still prefer `Patch-apply`.
 
 This keeps ordinary file edits deterministic, auditable, and bounded.
 
@@ -358,17 +411,25 @@ This keeps ordinary file edits deterministic, auditable, and bounded.
 The database is the durable source of runtime truth.
 
 The runtime must persist:
-	•	all delivered messages
-	•	all tool calls
-	•	all LLM calls
 
-The messages table is the canonical log of communication between Borg entities.
-The tool_calls table is the canonical log of tool invocation details.
-The llm_calls table is the canonical log of provider invocation details.
+- all delivered messages
+- all tool calls
+- all LLM calls
 
-### Exact Database Schema
+The `messages` table is the canonical log of communication between Borg entities.
+The `tool_calls` table is the canonical log of tool invocation details.
+The `llm_calls` table is the canonical log of provider invocation details.
 
-messages
+The cross-linking rule is simple:
+
+- `tool_calls.message_id` points to the inbound message currently being processed
+- `llm_calls.message_id` points to the inbound message currently being processed
+
+Those foreign keys do not point to emitted outbound rows. They point to the mailbox message whose turn caused the tool call or LLM call to happen.
+
+## Exact Database Schema
+
+### `messages`
 
 This table stores every delivered message in the system.
 
@@ -383,34 +444,41 @@ CREATE TABLE messages (
   in_reply_to_message_id TEXT NULL,
   correlation_id TEXT NULL,
   delivered_at TEXT NOT NULL,
-  processing_state TEXT NOT NULL,
+  processing_state TEXT NOT NULL CHECK (processing_state IN ('pending', 'processed', 'failed')),
   processed_at TEXT NULL,
   failed_at TEXT NULL,
   failure_code TEXT NULL,
-  failure_message TEXT NULL
+  failure_message TEXT NULL,
+  CHECK (
+    (processing_state = 'pending' AND processed_at IS NULL AND failed_at IS NULL) OR
+    (processing_state = 'processed' AND processed_at IS NOT NULL AND failed_at IS NULL) OR
+    (processing_state = 'failed' AND processed_at IS NULL AND failed_at IS NOT NULL)
+  )
 );
 ```
 
-Column meanings
+### Column meanings
 
-Column	Type	Meaning
-message_id	TEXT	Stable unique message identifier
-workspace_id	TEXT	Owning workspace
-sender_id	TEXT	Opaque sender URI
-receiver_id	TEXT	Opaque receiver URI
-payload_json	TEXT	Structured serialized message payload
-conversation_id	TEXT NULL	Optional logical conversation identifier for tracing/debugging
-in_reply_to_message_id	TEXT NULL	Optional causal parent
-correlation_id	TEXT NULL	Optional correlation identifier spanning related operations
-delivered_at	TEXT	Delivery timestamp; message is durable from this point onward
-processing_state	TEXT	One of pending, processed, failed
-processed_at	TEXT NULL	When processing completed successfully
-failed_at	TEXT NULL	When processing permanently failed
-failure_code	TEXT NULL	Stable machine-readable failure code
-failure_message	TEXT NULL	Human-readable failure detail
+| Column | Type | Meaning |
+|---|---|---|
+| `message_id` | `TEXT` | Stable unique message identifier |
+| `workspace_id` | `TEXT` | Owning workspace |
+| `sender_id` | `TEXT` | Opaque sender URI |
+| `receiver_id` | `TEXT` | Opaque receiver URI |
+| `payload_json` | `TEXT` | Structured serialized message payload |
+| `conversation_id` | `TEXT NULL` | Optional logical conversation identifier for tracing and debugging only; not a canonical routing key |
+| `in_reply_to_message_id` | `TEXT NULL` | Optional causal parent |
+| `correlation_id` | `TEXT NULL` | Optional identifier spanning all messages, tool calls, and LLM calls caused by processing one inbound message |
+| `delivered_at` | `TEXT` | Delivery timestamp; message is durable from this point onward |
+| `processing_state` | `TEXT` | One of `pending`, `processed`, `failed` |
+| `processed_at` | `TEXT NULL` | When processing completed successfully |
+| `failed_at` | `TEXT NULL` | When processing permanently failed |
+| `failure_code` | `TEXT NULL` | Stable machine-readable failure code |
+| `failure_message` | `TEXT NULL` | Human-readable failure detail |
 
-Recommended indices
+### Recommended indices
 
+```sql
 CREATE INDEX idx_messages_receiver_state_delivered
   ON messages (receiver_id, processing_state, delivered_at);
 
@@ -425,12 +493,13 @@ CREATE INDEX idx_messages_correlation
 
 CREATE INDEX idx_messages_in_reply_to
   ON messages (in_reply_to_message_id);
+```
 
-Notes
+### Notes
 
-payload_json is allowed to contain structured payloads, but the table itself is not meant to become a JSON dumpster. The top-level message contract is still relational and explicit: sender, receiver, timestamps, processing state, and causal metadata all live in first-class columns.
+`payload_json` is allowed to contain structured payloads, but the table itself is not meant to become a JSON dumpster. The top-level message contract is still relational and explicit: sender, receiver, timestamps, processing state, and causal metadata all live in first-class columns.
 
-tool_calls
+### `tool_calls`
 
 This table stores every tool call performed during actor execution.
 
@@ -451,8 +520,9 @@ CREATE TABLE tool_calls (
 );
 ```
 
-Recommended indices
+### Recommended indices
 
+```sql
 CREATE INDEX idx_tool_calls_actor_started
   ON tool_calls (actor_id, started_at);
 
@@ -461,8 +531,9 @@ CREATE INDEX idx_tool_calls_message
 
 CREATE INDEX idx_tool_calls_status_started
   ON tool_calls (status, started_at);
+```
 
-llm_calls
+### `llm_calls`
 
 This table stores every provider call performed during actor execution.
 
@@ -483,8 +554,9 @@ CREATE TABLE llm_calls (
 );
 ```
 
-Recommended indices
+### Recommended indices
 
+```sql
 CREATE INDEX idx_llm_calls_actor_started
   ON llm_calls (actor_id, started_at);
 
@@ -493,23 +565,26 @@ CREATE INDEX idx_llm_calls_message
 
 CREATE INDEX idx_llm_calls_provider_model_started
   ON llm_calls (provider_id, model, started_at);
+```
 
 ## GraphQL vs REST
 
 Borg is GraphQL-first.
 
 GraphQL is the main control-plane API for managing runtime entities such as:
-	•	actors
-	•	ports
-	•	providers
-	•	workspace settings
+
+- actors
+- ports
+- providers
+- workspace settings
 
 REST should remain minimal and operational.
 
 Examples of acceptable REST surfaces:
-	•	/health
-	•	/metrics
-	•	/ports/http
+
+- `/health`
+- `/metrics`
+- `/ports/http`
 
 Runtime execution itself should be understood primarily through port ingress and actor execution, not through GraphQL chat mutations.
 
@@ -520,14 +595,15 @@ A port owns the routing information needed to map external conversations back to
 That mapping is port-specific.
 
 Conceptually, the port manages something like:
-	•	external conversation identity -> actor_id
-	•	actor_id -> external reply destination
 
-The runtime should not assume that all ports implement this the same way. Some may use a conversation_key. Some may use a chat URI. Some may use a thread ID. Some may not need a separate key at all.
+- external conversation identity -> actor_id
+- actor_id -> external reply destination
+
+The runtime should not assume that all ports implement this the same way. Some may use a `conversation_key`. Some may use a chat URI. Some may use a thread ID. Some may not need a separate key at all.
 
 The important part is simple: replies must be routable, and only the port can know how.
 
-## Routing diagram
+### Routing diagram
 
 ```mermaid
 flowchart LR
@@ -544,7 +620,7 @@ If a port receives a message for an external conversation that is not yet bound 
 
 That actor may be initialized with a default personal assistant prompt if no explicit actor template or configuration is provided.
 
-This keeps the “message a thing and it responds” path simple and makes ports useful by default.
+This keeps the "message a thing and it responds" path simple and makes ports useful by default.
 
 ## Processing Semantics
 
@@ -554,96 +630,126 @@ Messages are delivered before they are processed.
 Actors only process delivered messages.
 Actors process mailbox messages one at a time.
 Messages that were delivered but not processed survive crashes.
-Messages marked processed or failed are not retried automatically by default.
+Messages marked `processed` or `failed` are not retried automatically by default.
 
 This gives the runtime a very simple durability boundary:
-	1.	persist first
-	2.	execute second
+
+1. persist first
+2. execute second
 
 ## Functional Requirements
 
-Core runtime
-	•	Borg must be actor-only.
-	•	An actor must be the only execution identity in the runtime.
-	•	A workspace must be the namespace that owns runtime entities.
-	•	Every actor must belong to exactly one workspace.
-	•	Every port must belong to exactly one workspace.
-	•	Every provider must belong to exactly one workspace.
+### Core runtime
 
-Ports
-	•	A port must receive external input and normalize it into a structured Borg message.
-	•	A port must either find or spawn an actor for an inbound external conversation.
-	•	Every inbound external conversation must map to exactly one actor.
-	•	A port must own the routing state required to send replies back to the correct external destination.
-	•	A port must support routing outbound actor messages back to the correct external conversation it owns.
+- Borg must be actor-only.
+- An actor must be the only execution identity in the runtime.
+- A workspace must be the namespace that owns runtime entities.
+- Every actor must belong to exactly one workspace.
+- Every port must belong to exactly one workspace.
+- Every provider must belong to exactly one workspace.
 
-Messages
-	•	Every delivered message must be persisted in the messages table before any processing begins.
-	•	Delivery must mean “written to the messages table”.
-	•	The runtime must persist port->actor, actor->actor, and actor->port messages in the same messages table.
-	•	Every message must have exactly one sender_id and one receiver_id.
-	•	sender_id and receiver_id must be opaque URI values.
-	•	The runtime must not split sender or receiver identity into kind-specific columns.
-	•	The runtime must store explicit processing state for every message.
-	•	The runtime must not reprocess messages marked processed.
-	•	The runtime must not reprocess messages marked failed.
-	•	The runtime must reload delivered-but-not-processed messages when an actor starts.
+### Ports
 
-Actors
-	•	An actor must process mailbox messages sequentially.
-	•	An actor must load pending delivered messages into its in-memory queue when it starts.
-	•	An actor must be able to emit outbound messages even without receiving a new inbound message.
-	•	An actor must be able to send messages to other actors.
-	•	An actor must be able to send messages to ports.
-	•	The durable source of truth for actor context must be the actor record plus its messages.
+- A port must receive external input and normalize it into a structured Borg message.
+- A port must either find or spawn an actor for an inbound external conversation.
+- Every inbound external conversation must map to exactly one actor.
+- A port must own the routing state required to send replies back to the correct external destination.
+- A port must support routing outbound actor messages back to the correct external conversation it owns.
 
-Context assembly
-	•	The runtime must build current LLM context from durable actor state and message history.
-	•	The runtime may use a compressed or summarized current context instead of raw full history.
-	•	Context assembly must follow this canonical order:
-	1.	system prompt
-	2.	core tools
-	3.	immutable actor and port metadata
-	4.	actor prompt
-	5.	other tool schemas
-	6.	recent messages
+### Messages
 
-Providers
-	•	Borg must support external providers and embedded inference providers.
-	•	External and embedded inference providers must implement the same provider contract.
-	•	Actor-level provider/model selection must take precedence over workspace defaults.
+- Every delivered message must be persisted in the `messages` table before any processing begins.
+- Delivery must mean "written to the messages table".
+- The runtime must persist port->actor, actor->actor, and actor->port messages in the same `messages` table.
+- Every message must have exactly one `sender_id` and one `receiver_id`.
+- `sender_id` and `receiver_id` must be opaque URI values.
+- The runtime must not split sender or receiver identity into kind-specific columns.
+- The runtime must store explicit processing state for every message.
+- The runtime must only allow these message state transitions: `pending -> processed` and `pending -> failed`.
+- The runtime must not reprocess messages marked `processed`.
+- The runtime must not reprocess messages marked `failed`.
+- The runtime must reload delivered-but-not-processed messages when an actor starts.
+- `conversation_id` must not be treated as the canonical routing key.
+- `correlation_id` should be shared across messages, tool calls, and LLM calls that originate from processing one inbound message.
 
-Structured LLM execution
-	•	Communication with the LLM must be structured by default.
-	•	The runtime must not use human-readable freeform text as its primary execution protocol.
-	•	The runtime must process provider output as a single ordered list of actions.
-	•	That ordered list must support tool calls, actor messages, port messages, and final assistant message output.
-	•	Provider adapters may translate structured internal data to provider-specific wire formats, but structured data must remain the internal source of truth.
+### Actors
 
-Turn loop
-	•	For each inbound mailbox message, the actor must execute a turn loop.
-	•	A turn loop must continue executing until a final assistant message is produced.
-	•	If the provider output includes tool calls, the runtime must execute them and feed their results back into the turn loop.
-	•	If the provider output includes actor or port messages, the runtime must persist them immediately in the messages table.
-	•	A single provider response may emit multiple ordered side effects in one turn.
+- An actor must process mailbox messages sequentially.
+- An actor must load pending delivered messages into its in-memory queue when it starts.
+- An actor must be able to emit outbound messages even without receiving a new inbound message.
+- An actor must be able to send messages to other actors.
+- An actor must be able to send messages to ports.
+- The durable source of truth for actor context must be the actor record plus its messages.
 
-Tools
-	•	Borg must support built-in tools, shellmode commands, and codemode commands.
-	•	Shellmode and codemode must behave like cheap built-ins.
-	•	Patch-apply must be the default mutating primitive for writing files.
-	•	The runtime should prefer Patch-apply over ShellMode for ordinary file mutation.
-	•	Codemode must be treated as JavaScript execution inside V8, not as the default file mutation mechanism.
+### Context assembly
 
-Persistence and tracing
-	•	The runtime must persist every tool call in the tool_calls table.
-	•	The runtime must persist every LLM call in the llm_calls table.
-	•	tool_calls must store both request_json and result_json.
-	•	llm_calls must store both request_json and response_json.
-	•	Tool call records must be linked to the message being processed.
-	•	LLM call records must be linked to the message being processed.
+- The runtime must build current LLM context from durable actor state and message history.
+- The runtime may use a compressed or summarized current context instead of raw full history.
+- Context assembly must follow this canonical order:
+  1. system prompt
+  2. core tools
+  3. immutable actor and port metadata
+  4. actor prompt
+  5. other tool schemas
+  6. recent messages
 
-API surface
-	•	Borg must be GraphQL-first for control-plane APIs.
-	•	REST endpoints must remain minimal and operational.
-	•	GraphQL should manage runtime entities such as actors, ports, providers, and workspace settings.
-	•	Runtime chat execution should flow primarily through ports and actor execution, not through GraphQL-first chat mutations.
+### Providers
+
+- Borg must support external providers and embedded inference providers.
+- External and embedded inference providers must implement the same provider contract.
+- Actor-level provider/model selection must take precedence over workspace defaults.
+
+### Structured LLM execution
+
+- Communication with the LLM must be structured by default.
+- The runtime must not use human-readable freeform text as its primary execution protocol.
+- The runtime must process provider output as a single ordered list of actions.
+- That ordered list must support tool calls, actor messages, port messages, and final assistant message output.
+- A `final_assistant_message` must terminate the current turn.
+- Provider adapters may translate structured internal data to provider-specific wire formats, but structured data must remain the internal source of truth.
+
+### Turn loop
+
+- For each inbound mailbox message, the actor must execute a turn loop.
+- A turn loop must continue executing until a final assistant message is produced.
+- The runtime must execute returned actions in order.
+- If the provider output includes tool calls, the runtime must execute them and feed their results back into the turn loop.
+- If the provider output includes actor or port messages, the runtime must persist them immediately in the `messages` table.
+- A single provider response may emit multiple ordered side effects in one turn.
+
+### Tools
+
+- Borg must support built-in tools, shellmode commands, and codemode commands.
+- Shellmode and codemode must behave like cheap built-ins.
+- `Patch-apply` must be the default mutating primitive for writing files.
+- The runtime should prefer `Patch-apply` over `ShellMode` for ordinary file mutation.
+- Codemode must be treated as JavaScript execution inside V8, not as the default file mutation mechanism.
+
+### Persistence and tracing
+
+- The runtime must persist every tool call in the `tool_calls` table.
+- The runtime must persist every LLM call in the `llm_calls` table.
+- `tool_calls` must store both `request_json` and `result_json`.
+- `llm_calls` must store both `request_json` and `response_json`.
+- Tool call records must be linked to the inbound message being processed.
+- LLM call records must be linked to the inbound message being processed.
+
+### API surface
+
+- Borg must be GraphQL-first for control-plane APIs.
+- REST endpoints must remain minimal and operational.
+- GraphQL should manage runtime entities such as actors, ports, providers, and workspace settings.
+- Runtime chat execution should flow primarily through ports and actor execution, not through GraphQL-first chat mutations.
+
+## Acceptance Checklist
+
+An implementation of this RFD should be considered compliant only if all of the following are true:
+
+- Restarting an actor replays only `pending` delivered messages.
+- A single inbound port message can produce multiple outbound messages plus tool calls in one turn.
+- A final assistant message closes the current turn.
+- All provider calls are persisted with `request_json` and `response_json`.
+- All tool calls are persisted with `request_json` and `result_json`.
+- All delivered messages share one canonical `messages` table regardless of whether they are port->actor, actor->actor, or actor->port.
+- Ports can route replies back out without relying on a global runtime routing key.
+- The runtime builds LLM context in the canonical stable ordering defined above.
