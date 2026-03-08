@@ -427,6 +427,127 @@ The cross-linking rule is simple:
 
 Those foreign keys do not point to emitted outbound rows. They point to the mailbox message whose turn caused the tool call or LLM call to happen.
 
+## Exact Record Contracts
+
+This section defines the canonical durable record shapes for the core Borg runtime.
+
+These contracts are normative. The current codebase may still contain transitional fields or compatibility layers; new implementation work should converge on the contracts defined here rather than extending legacy shapes further.
+
+### Actor record
+
+An actor is the canonical durable execution entity in Borg.
+
+The actor record stores stable identity, prompt configuration, provider/model defaults, and actor status. It does not store ephemeral turn state, mailbox state, or compiled context. Those belong elsewhere.
+
+Canonical actor fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `actor_id` | `TEXT` | Stable actor endpoint URI |
+| `workspace_id` | `TEXT` | Owning workspace |
+| `name` | `TEXT` | Human-readable actor name |
+| `system_prompt` | `TEXT` | Stable system prompt |
+| `actor_prompt` | `TEXT` | Mutable actor-specific prompt |
+| `default_provider_id` | `TEXT NULL` | Preferred provider for this actor |
+| `model` | `TEXT NULL` | Preferred model for this actor |
+| `status` | `TEXT` | Durable actor status |
+| `created_at` | `TEXT` | Creation timestamp |
+| `updated_at` | `TEXT` | Last update timestamp |
+
+Notes:
+
+- `actor_id` is the canonical execution identity.
+- `system_prompt` and `actor_prompt` are distinct. The system prompt is the stable base contract; the actor prompt is the mutable actor-specific layer.
+- The actor record must not store transient mailbox execution state.
+- Legacy concepts such as `behavior_prompt` are not part of the end-state actor contract.
+
+### Port record
+
+A port is a durable ingress/egress adapter for an external system.
+
+The port record stores stable port identity, provider kind, runtime flags, default routing configuration, and durable port settings.
+
+Canonical port fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `port_id` | `TEXT` | Stable port endpoint URI |
+| `workspace_id` | `TEXT` | Owning workspace |
+| `provider` | `TEXT` | Port provider kind (for example `telegram`, `discord`, `http`) |
+| `port_name` | `TEXT` | Human-readable and operator-facing port name |
+| `enabled` | `INTEGER` | Whether the port is active |
+| `allows_guests` | `INTEGER` | Whether the port accepts traffic from unknown/external senders |
+| `assigned_actor_id` | `TEXT NULL` | Optional fixed actor target for ports that do not require per-conversation binding |
+| `settings_json` | `TEXT NOT NULL` | Port-specific durable configuration |
+| `created_at` | `TEXT` | Creation timestamp |
+| `updated_at` | `TEXT` | Last update timestamp |
+
+Notes:
+
+- `port_id` is the canonical stable port identity.
+- `port_name` exists for operators and display; runtime references should prefer `port_id` where stable identity is required.
+- `assigned_actor_id` is optional and only applies to ports or flows that always target the same actor.
+- `settings_json` exists because port settings are provider-specific and vary meaningfully by port kind. Runtime code must deserialize it into typed port config structs at the boundary.
+- Fields such as active binding counts are derived operational views, not canonical durable port fields.
+- Legacy compatibility fields such as `default_actor_id` are not part of the end-state contract.
+
+### Port binding record
+
+A port binding is a durable routing record owned by a port.
+
+A port binding maps a port-owned external conversation identity to a target actor. This mapping survives restarts and is required for routing replies back to the correct external destination.
+
+Canonical port binding fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `workspace_id` | `TEXT` | Owning workspace |
+| `port_id` | `TEXT` | Owning port |
+| `conversation_key` | `TEXT` | Port-defined conversation identity |
+| `actor_id` | `TEXT` | Bound actor |
+| `created_at` | `TEXT` | Creation timestamp |
+| `updated_at` | `TEXT` | Last update timestamp |
+
+Primary key:
+
+- (`port_id`, `conversation_key`)
+
+Notes:
+
+- `conversation_key` is a port implementation detail. The runtime does not interpret it.
+- Every inbound external conversation must resolve to exactly one actor.
+- Advisory optimization fields may exist elsewhere, but they must not become the source of truth for routing.
+
+### Message payload envelope
+
+Every message payload stored in `payload_json` must use a stable typed envelope.
+
+Canonical envelope shape:
+
+```json
+{
+  "kind": "<message kind>",
+  "body": { ... }
+}
+```
+
+Rules:
+
+- `kind` is required and must be a stable discriminator.
+- `body` is required and must match the typed schema for that `kind`.
+- Runtime code must deserialize `payload_json` into typed message payload structs and enums before processing.
+- Runtime code must not inspect payloads by reaching into arbitrary JSON keys without first decoding the typed envelope.
+
+Examples of message kinds may include:
+
+- `text`
+- `tool_result`
+- `actor_instruction`
+- `port_envelope`
+- `final_assistant_message`
+
+This RFD does not freeze the full set of payload variants, but it does freeze the existence of a top-level typed envelope.
+
 ## Exact Database Schema
 
 ### `messages`
@@ -637,6 +758,110 @@ This gives the runtime a very simple durability boundary:
 1. persist first
 2. execute second
 
+## Tool Failure Semantics
+
+A tool failure does not automatically fail the actor turn.
+
+If a tool invocation completes with an expected execution error, the runtime must persist the tool call with failure metadata and feed a structured tool result back into the turn loop. The actor may then choose what to do next.
+
+A turn fails only when the runtime can no longer continue execution for the current inbound message.
+
+Examples of turn-failing conditions:
+
+- provider call cannot be completed and no further execution is possible
+- tool execution cannot be represented as a structured result
+- durable persistence required for the turn fails
+- internal runtime invariants are violated
+
+This preserves the distinction between:
+
+- tool-level failure
+- runtime-level turn failure
+
+## Provider Failure Semantics
+
+If a provider call fails before the actor produces a final assistant message, the runtime must persist the `llm_calls` failure and mark the inbound message `failed` unless the runtime has an explicit provider retry policy for that call site.
+
+Retry behavior is out of scope for v0.1 unless explicitly defined elsewhere.
+
+This means the default v0.1 behavior is:
+
+- persist failed provider call
+- fail the turn
+- mark the inbound message failed
+
+## Atomicity Boundaries
+
+Borg uses durable append boundaries to define execution progress.
+
+The following writes are independent durable lifecycle steps:
+
+- inserting an inbound message
+- inserting an outbound message
+- inserting a tool call
+- finishing a tool call
+- inserting an llm call
+- finishing an llm call
+- marking an inbound message `processed`
+- marking an inbound message `failed`
+
+The runtime must not mark an inbound message `processed` until:
+
+1. the final assistant message has been produced
+2. all ordered actions before termination have been durably persisted
+3. any required outbound messages for that turn have been durably inserted into `messages`
+
+## Actor Turn Completion vs External Delivery
+
+Completion of an actor turn does not imply successful delivery to an external system.
+
+When an actor emits an actor->port message, the actor turn is concerned only with durable insertion of that outbound message into the Borg message log. Actual delivery by the port to the external system is a later port concern.
+
+In v0.1:
+
+- actor turn success means the runtime completed the turn and durably emitted the required messages
+- actor turn success does not guarantee that Telegram, Discord, HTTP, or another external destination has accepted the outbound message
+
+## Core Tools
+
+Core tools are the stable built-in tools that are always available to actor execution regardless of actor-specific capability configuration.
+
+Core tools are:
+
+- runtime-provided
+- provider-independent
+- expected to change rarely
+- ordered before actor-specific tool schemas during context assembly
+
+Examples may include:
+
+- actor-to-actor messaging
+- actor-to-port messaging
+- patch application
+- shellmode
+- codemode
+
+The exact set of core tools may evolve, but the distinction remains: core tools are the stable base tool surface, while other tool schemas are actor- or environment-specific.
+
+## Schema Evolution
+
+The record contracts and column meanings defined in this RFD are normative for v0.1.
+
+Future migrations may add columns or indexes, but existing column meanings and lifecycle semantics must remain stable unless superseded by a later RFD.
+
+Additive change is allowed.
+Silent semantic drift is not.
+
+## Glossary
+
+- **Actor**: the durable execution entity that processes messages.
+- **Port**: the ingress/egress adapter for an external system.
+- **Message**: a durable communication record between two Borg endpoints.
+- **Endpoint**: a URI-addressable message sender or receiver.
+- **Action**: one ordered item emitted by provider output during a turn.
+- **Payload**: the structured typed body stored inside a message envelope.
+- **Final assistant message**: the action that terminates the current actor turn.
+
 ## Functional Requirements
 
 ### Core runtime
@@ -741,6 +966,40 @@ This gives the runtime a very simple durability boundary:
 - GraphQL should manage runtime entities such as actors, ports, providers, and workspace settings.
 - Runtime chat execution should flow primarily through ports and actor execution, not through GraphQL-first chat mutations.
 
+### Record contracts
+
+- The runtime must converge on the canonical actor, port, and port binding record contracts defined in this RFD.
+- The actor record must not store ephemeral turn state, mailbox state, or compiled context.
+- The port binding record must be the durable source of truth for per-conversation actor routing.
+- Legacy compatibility fields such as `default_actor_id` and `behavior_prompt` must not be extended further.
+
+### Message payload envelope
+
+- Every stored message payload must use a typed top-level envelope with `kind` and `body`.
+- Runtime code must deserialize message payloads into typed values before processing.
+- Runtime code must not treat `payload_json` as an unstructured map in the hot path.
+
+### Failure semantics
+
+- A tool failure must not automatically fail the turn if it can be represented as a structured tool result.
+- Provider call failure must persist an `llm_calls` failure row.
+- In v0.1, provider retry behavior is out of scope unless explicitly defined elsewhere.
+- If no final assistant message can be produced, the inbound message must transition to `failed`.
+
+### Atomicity and delivery
+
+- The runtime must treat message insertion, tool call insertion/completion, llm call insertion/completion, and message completion/failure as independent durable lifecycle writes.
+- The runtime must not mark an inbound message `processed` before the final assistant message and all earlier ordered actions have been durably persisted.
+- Actor turn success must not be interpreted as guaranteed external delivery.
+
+### Core tools
+
+- Core tools must be runtime-provided, provider-independent, and stable enough to appear before actor-specific tool schemas during context assembly.
+
+### Schema evolution
+
+- Future migrations may add columns or indexes, but they must not silently change the meaning of existing columns or lifecycle semantics defined by this RFD.
+
 ## Acceptance Checklist
 
 An implementation of this RFD should be considered compliant only if all of the following are true:
@@ -763,6 +1022,17 @@ The previous sections describe what Borg is. This section describes how Borg sho
 These notes are based both on the target runtime described in this RFD and on the current repository shape. Some of these patterns already exist in the codebase today, and some are explicit course-corrections for places where JSON, generic payloads, or transitional abstractions are still leaking too far into the runtime.
 
 ### JSON lives at the edges
+
+JSON columns should exist only where they are genuinely boundary-shaped or provider-specific.
+
+That means:
+
+- `payload_json` exists because message payload variants are open-ended and structured
+- `request_json` and `response_json` / `result_json` exist because LLM and tool traces are boundary payloads
+- `settings_json` exists for ports because port configuration is provider-specific
+
+By contrast, canonical actor, port, message, tool call, and llm call records should continue to pull stable fields out into explicit columns whenever those fields are important for routing, filtering, replay, lifecycle management, or indexing.
+
 
 JSON is a boundary format.
 
