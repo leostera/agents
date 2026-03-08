@@ -1409,3 +1409,367 @@ These are not abstract style preferences. They are implementation choices that m
 - Tool calls and llm calls must be persisted as first-class traces.
 - Boundary conversions must be explicit and centralized.
 - ShellMode and CodeMode must remain cheap built-ins with typed request/response handling.
+
+## Implementation Notes — Crate Boundaries
+
+The current repository already has a crate layout that is close enough to the target shape that we should lean into it instead of inventing a second architecture on top of it.
+
+The important move here is not to preserve every current responsibility exactly as-is. The important move is to make each crate converge toward one clear center of gravity.
+
+Suggested crate responsibilities:
+
+| Crate | Center of gravity |
+|---|---|
+| `borg-core` | shared domain types, IDs, URIs, message/action enums, common traits |
+| `borg-db` | exact row structs, migrations, repositories, persistence lifecycle APIs |
+| `borg-agent` | actor runtime, mailbox replay, turn execution, context assembly orchestration |
+| `borg-llm` | provider trait, provider selection, provider adapters, typed provider I/O |
+| `borg-infer` | embedded inference implementation of the provider trait |
+| `borg-ports` | concrete ports, port binding resolution, inbound normalization, outbound translation |
+| `borg-ports-tools` | built-in tools for actor-to-port interaction and port-specific tool helpers |
+| `borg-shellmode` | shell execution as a cheap built-in tool |
+| `borg-codemode` | V8 / JavaScript execution as a cheap built-in tool |
+| `borg-fs` | workspace filesystem access, file reads, patch application support |
+| `borg-gql` | GraphQL control-plane schema, resolvers, boundary translation |
+| `borg-cli` | operator-facing CLI entrypoints and runtime startup |
+| `borg-cmd` | shared command plumbing used by CLI or runtime entrypoints |
+| `borg-exec` | lower-level execution glue shared by runtime/tool execution paths if still needed |
+| `borg-apps` | app/capability packaging and higher-level product-facing built-ins |
+
+These boundaries are intentionally biased toward the runtime shape in this RFD.
+
+The most important crate-level rule is this:
+
+- `borg-core` should own the canonical typed runtime language
+- `borg-db` should own storage rows and lifecycle persistence
+- `borg-agent` should own turn execution
+- `borg-llm` should own provider translation
+- `borg-ports` should own external transport translation
+
+If those five boundaries stay clean, the rest of the system gets much easier to evolve.
+
+### What should move out of hot paths
+
+The following patterns should be treated as debt when they appear in core runtime paths:
+
+- `Agent` naming in actor runtime code
+- `behavior_prompt` participating in context assembly
+- `serde_json::Value` crossing from storage directly into runtime execution
+- provider-specific wire blocks leaking past `borg-llm`
+- port-specific payloads leaking past `borg-ports`
+- generic `save_*` helpers replacing lifecycle-specific persistence APIs
+
+## Implementation Notes — Canonical Rust Shapes
+
+The exact names may differ, but the runtime should converge on shapes roughly like these.
+
+### Shared identifiers and endpoints
+
+```rust
+pub struct WorkspaceId(pub String);
+pub struct ActorId(pub Uri);
+pub struct PortId(pub Uri);
+pub struct MessageId(pub String);
+pub struct ToolCallId(pub String);
+pub struct LlmCallId(pub String);
+pub struct ProviderId(pub String);
+pub struct EndpointUri(pub Uri);
+```
+
+### Message payload envelope
+
+```rust
+pub struct MessageEnvelope {
+    pub kind: MessageKind,
+    pub body: MessageBody,
+}
+
+pub enum MessageKind {
+    UserText,
+    UserAudio,
+    ToolResult,
+    ActorInstruction,
+    PortEnvelope,
+    FinalAssistantMessage,
+}
+
+pub enum MessageBody {
+    UserText(UserTextMessage),
+    UserAudio(UserAudioMessage),
+    ToolResult(ToolResultMessage),
+    ActorInstruction(ActorInstructionMessage),
+    PortEnvelope(PortEnvelopeMessage),
+    FinalAssistantMessage(FinalAssistantMessage),
+}
+```
+
+### Ordered provider output
+
+```rust
+pub struct ActionList(pub Vec<Action>);
+
+pub enum Action {
+    ToolCall(ToolCallAction),
+    Message(OutboundMessageAction),
+    FinalAssistantMessage(FinalAssistantMessageAction),
+}
+```
+
+### Storage rows vs runtime values
+
+```rust
+pub struct MessageRow {
+    pub message_id: String,
+    pub workspace_id: String,
+    pub sender_id: String,
+    pub receiver_id: String,
+    pub payload_json: String,
+    pub conversation_id: Option<String>,
+    pub in_reply_to_message_id: Option<String>,
+    pub correlation_id: Option<String>,
+    pub delivered_at: String,
+    pub processing_state: String,
+    pub processed_at: Option<String>,
+    pub failed_at: Option<String>,
+    pub failure_code: Option<String>,
+    pub failure_message: Option<String>,
+}
+
+pub struct InboundMessage {
+    pub message_id: MessageId,
+    pub sender_id: EndpointUri,
+    pub receiver_id: EndpointUri,
+    pub payload: MessageEnvelope,
+    pub correlation_id: Option<String>,
+}
+```
+
+The exact fields can evolve, but the direction should not: storage rows stay storage-shaped, runtime values stay runtime-shaped.
+
+## Implementation Notes — Persistence API Shape
+
+The storage layer should expose lifecycle-specific operations instead of generic save helpers.
+
+A good baseline API shape looks roughly like this:
+
+```rust
+pub trait MessageStore {
+    async fn insert_message(&self, row: MessageRow) -> Result<()>;
+    async fn load_pending_for_receiver(&self, receiver: &EndpointUri) -> Result<Vec<MessageRow>>;
+    async fn mark_message_processed(&self, message_id: &MessageId, processed_at: DateTime<Utc>) -> Result<()>;
+    async fn mark_message_failed(&self, message_id: &MessageId, failed_at: DateTime<Utc>, code: &str, message: &str) -> Result<()>;
+}
+
+pub trait ToolCallStore {
+    async fn insert_tool_call(&self, row: ToolCallRow) -> Result<()>;
+    async fn finish_tool_call(&self, tool_call_id: &ToolCallId, result_json: String, status: ToolCallStatus) -> Result<()>;
+}
+
+pub trait LlmCallStore {
+    async fn insert_llm_call(&self, row: LlmCallRow) -> Result<()>;
+    async fn finish_llm_call(&self, llm_call_id: &LlmCallId, response_json: String) -> Result<()>;
+    async fn fail_llm_call(&self, llm_call_id: &LlmCallId, code: &str, message: &str) -> Result<()>;
+}
+```
+
+These do not need to be the exact traits, but the style matters:
+
+- lifecycle verbs
+- append-first inserts
+- explicit finish/fail operations
+- typed IDs
+- no generic `save()` escape hatches in hot paths
+
+## Implementation Notes — Actor Runtime Skeleton
+
+A minimal target runtime shape should look roughly like this:
+
+```rust
+pub struct Actor {
+    pub record: ActorRecord,
+    pub mailbox: Mailbox,
+}
+
+impl Actor {
+    pub async fn replay_pending_messages(&mut self, deps: &RuntimeDeps) -> Result<()> { ... }
+    pub async fn process_next_message(&mut self, deps: &RuntimeDeps) -> Result<()> { ... }
+}
+
+pub struct TurnExecutor<'a> {
+    pub actor: &'a Actor,
+    pub deps: &'a RuntimeDeps,
+}
+
+impl<'a> TurnExecutor<'a> {
+    pub async fn run(&self, inbound: InboundMessage) -> Result<TurnOutcome> { ... }
+    async fn compile_context(&self, inbound: &InboundMessage) -> Result<CompiledContext> { ... }
+    async fn call_provider(&self, ctx: &CompiledContext) -> Result<ActionList> { ... }
+    async fn process_actions(&self, inbound: &InboundMessage, actions: ActionList) -> Result<TurnStep> { ... }
+}
+```
+
+The point is not the exact syntax. The point is that the runtime should have an obvious skeletal shape that matches the RFD.
+
+## Implementation Notes — Turn Outcome and Failure Types
+
+The runtime should make turn outcomes explicit in types.
+
+A good baseline is:
+
+```rust
+pub enum TurnOutcome {
+    Completed { final_message_id: MessageId },
+    Failed { code: TurnFailureCode, message: String },
+}
+
+pub enum TurnFailureCode {
+    ProviderFailure,
+    PersistenceFailure,
+    InvalidProviderOutput,
+    InvalidToolResult,
+    RuntimeInvariantViolation,
+}
+```
+
+This is preferable to stringly-typed ad-hoc failures spread across the runtime.
+
+Tool failure should remain distinct from turn failure.
+
+A tool can fail and still produce a valid structured tool result. That is not the same thing as the actor turn failing.
+
+## Implementation Notes — Builder Targets
+
+The following values should prefer builders instead of telescoping constructors:
+
+- actor creation from defaults
+- inbound message normalization
+- outbound message construction
+- compiled context construction
+- provider request construction
+- tool call row construction
+- llm call row construction
+
+A good baseline set of builders would be:
+
+- `ActorBuilder`
+- `MessageBuilder`
+- `CompiledContextBuilder`
+- `LlmRequestBuilder`
+- `ToolCallRowBuilder`
+- `LlmCallRowBuilder`
+
+Builders should enforce canonical ordering when ordering matters.
+
+## Implementation Notes — Testing Strategy
+
+This RFD is specific enough that the runtime should be testable in layers.
+
+### Unit tests
+
+Write unit tests for:
+
+- message payload envelope parsing
+- provider output parsing into ordered `ActionList`
+- message state transitions
+- port binding resolution
+- context assembly ordering
+- patch-apply request validation
+- typed ID parsing and validation
+
+### Integration tests
+
+Write integration tests for:
+
+- port receives inbound message, finds existing binding, writes `messages`
+- port receives inbound message, spawns actor, creates binding, writes `messages`
+- actor restart replays only `pending` messages
+- actor processes one inbound message and emits multiple ordered actions
+- tool failure produces a structured tool result without failing the turn
+- provider failure marks inbound message `failed`
+- actor->port outbound message is inserted before inbound message is marked `processed`
+
+### End-to-end tests
+
+Write end-to-end tests for at least:
+
+- Telegram-like port -> actor -> final reply
+- actor -> actor collaboration in one turn
+- patch-based file edit from inbound request to persisted traces
+- shellmode fallback when patch semantics are insufficient
+
+## Implementation Checklist
+
+This checklist is intentionally written to be actionable for implementation work and code generation.
+
+### Phase 1 — Runtime language and record contracts
+
+- [ ] Introduce or normalize strong ID types for workspace, actor, port, message, tool call, llm call, provider, and endpoint URIs.
+- [ ] Define one canonical typed `MessageEnvelope` with `kind` and `body`.
+- [ ] Define one canonical ordered `ActionList` and `Action` enum for provider output.
+- [ ] Remove raw `serde_json::Value` from core runtime paths except at true boundaries.
+- [ ] Normalize actor terminology in core runtime code so `Actor` is the dominant term.
+- [ ] Remove `behavior_prompt` from actor hot-path context assembly.
+
+### Phase 2 — Database and persistence lifecycle
+
+- [ ] Align `messages` schema with the contract in this RFD.
+- [ ] Align `tool_calls` schema with the contract in this RFD.
+- [ ] Align `llm_calls` schema with the contract in this RFD.
+- [ ] Add or normalize explicit message `processing_state` persistence.
+- [ ] Ensure `tool_calls.message_id` points to the inbound message being processed.
+- [ ] Ensure `llm_calls.message_id` points to the inbound message being processed.
+- [ ] Replace generic save/update helpers with lifecycle-specific persistence methods.
+- [ ] Ensure inbound message rows are written before actor processing begins.
+- [ ] Ensure inbound messages are marked `processed` only after final assistant message and prior ordered actions are durably written.
+
+### Phase 3 — Actor runtime and replay
+
+- [ ] Make actor startup replay load only delivered-but-not-processed inbound messages.
+- [ ] Make actor mailbox execution strictly sequential per actor.
+- [ ] Introduce a `TurnExecutor` or equivalent explicit staged turn runtime.
+- [ ] Make turn execution consume ordered actions in sequence.
+- [ ] Make tool results re-enter the turn loop as structured runtime values.
+- [ ] Make provider failures persist `llm_calls` failure rows and fail the inbound message by default.
+- [ ] Make structured tool failure distinct from terminal turn failure.
+
+### Phase 4 — Ports and routing
+
+- [ ] Align port record contract with this RFD.
+- [ ] Align port binding record contract with this RFD.
+- [ ] Make per-conversation actor routing durable through port bindings.
+- [ ] Remove reliance on any global routing key outside port-owned binding state.
+- [ ] Make ports either resolve an existing actor or spawn a new one for new external conversations.
+- [ ] Ensure actor->port message insertion is distinct from external delivery confirmation.
+
+### Phase 5 — Provider and tool boundaries
+
+- [ ] Keep provider-specific wire translation inside `borg-llm`.
+- [ ] Keep port-specific wire translation inside `borg-ports`.
+- [ ] Keep shellmode and codemode on cheap built-in execution paths.
+- [ ] Prefer `Patch-apply` over shellmode for routine file mutation.
+- [ ] Keep codemode focused on JavaScript execution, not as the default file mutation path.
+
+### Phase 6 — Context assembly and builders
+
+- [ ] Introduce explicit builders for compiled context, provider request, and outbound message construction.
+- [ ] Enforce canonical context ordering in one obvious place.
+- [ ] Keep system prompt and actor prompt distinct in context assembly.
+- [ ] Keep core tools stable and ordered before actor-specific tool schemas.
+
+### Phase 7 — Tests and compliance
+
+- [ ] Add unit tests for message envelope parsing and action ordering.
+- [ ] Add integration tests for replay, tool failure, provider failure, and ordered action execution.
+- [ ] Add end-to-end tests for at least one real port path.
+- [ ] Verify all Acceptance Checklist items in this RFD against automated tests.
+
+## Functional Requirements — Implementation Checklist
+
+- The implementation must converge on one canonical typed runtime language for message payloads and provider output.
+- The implementation must expose lifecycle-specific persistence APIs for messages, tool calls, and llm calls.
+- The implementation must make actor replay depend on durable message state from the database.
+- The implementation must keep provider translation isolated inside the provider layer.
+- The implementation must keep port translation isolated inside the port layer.
+- The implementation must provide an explicit staged actor turn executor or equivalent structure.
+- The implementation must preserve ordered action execution end to end.
+- The implementation must make the checklist phases above mechanically implementable and testable.
