@@ -77,10 +77,10 @@ pub fn default_exec_admin_tool_specs() -> Vec<ToolSpec> {
 
 #[derive(Debug, Clone, Deserialize)]
 struct SendMessageArgs {
-    target_actor_id: String,
+    target_actor_id: serde_json::Value,
     text: String,
     #[serde(default)]
-    reply_target_actor_id: Option<String>,
+    reply_target_actor_id: Option<serde_json::Value>,
     #[serde(default)]
     submission_id: Option<String>,
     #[serde(default)]
@@ -105,14 +105,33 @@ fn build_actor_messaging_toolchain(
             let rt = rt.clone();
             let sender_id = current_actor_id.clone();
             async move {
-                let target_id = ActorId::parse(&request.arguments.target_actor_id)?;
+                let target_id_str = match &request.arguments.target_actor_id {
+                    serde_json::Value::String(s) => s.clone(),
+                    val => val
+                        .get("uri")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .ok_or_else(|| {
+                            anyhow!("invalid target_actor_id: expected string or object with 'uri'")
+                        })?,
+                };
+                let target_id = ActorId::parse(&target_id_str)?;
+
+                let reply_target_actor_id = match &request.arguments.reply_target_actor_id {
+                    Some(serde_json::Value::String(s)) => Some(s.clone()),
+                    Some(val) => val
+                        .get("uri")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    None => None,
+                };
 
                 // Construct the structured actor message as per protocol
                 let payload_json = json!({
                     "type": "actor_message",
                     "sender_actor_id": sender_id.as_str(),
                     "text": request.arguments.text,
-                    "reply_target_actor_id": request.arguments.reply_target_actor_id,
+                    "reply_target_actor_id": reply_target_actor_id,
                     "submission_id": request.arguments.submission_id,
                     "in_reply_to_submission_id": request.arguments.in_reply_to_submission_id,
                 });

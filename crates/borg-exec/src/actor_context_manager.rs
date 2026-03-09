@@ -1,14 +1,12 @@
-use std::sync::Arc;
-
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_agent::{
-    ActorThread, Agent, BorgToolCall, BorgToolResult, ContextChunk, ContextManager,
-    ContextProvider, ContextWindow, Message, StaticContextProvider, ToolOutputEnvelope, ToolSpec,
+    Agent, BorgToolCall, BorgToolResult, ContextChunk, ContextManager, ContextProvider,
+    ContextWindow, Message, StaticContextProvider, ToolOutputEnvelope, ToolSpec,
 };
 use borg_apps::{BorgApps, default_tool_specs as default_apps_tool_specs};
 use borg_codemode::default_tool_specs as default_codemode_tool_specs;
-use borg_core::{ActorId, EndpointUri, MessagePayload, WorkspaceId};
+use borg_core::{ActorId, EndpointUri, MessagePayload};
 use borg_db::BorgDb;
 use borg_fs::default_borg_fs_tool_specs;
 use borg_memory::default_memory_tool_specs;

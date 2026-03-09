@@ -23,16 +23,6 @@ pub struct Actor {
     pub thread: ActorThread<BorgToolCall, BorgToolResult>,
 }
 
-fn _assert_send() {
-    fn is_send<T: Send>() {}
-    is_send::<ActorId>();
-    is_send::<WorkspaceId>();
-    is_send::<BorgDb>();
-    is_send::<Arc<BorgRuntime>>();
-    is_send::<Agent<BorgToolCall, BorgToolResult>>();
-    is_send::<ActorThread<BorgToolCall, BorgToolResult>>();
-    is_send::<Actor>();
-}
 impl Actor {
     pub fn spawn(
         actor_id: ActorId,

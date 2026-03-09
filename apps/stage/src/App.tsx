@@ -410,6 +410,7 @@ type PortDetailsDraft = {
   enabled: boolean;
   allowsGuests: boolean;
   assignedActorId: string;
+  settings: string;
 };
 
 type ToolField = {
@@ -1700,6 +1701,14 @@ export function App() {
   }, [createProviderDraft, loadProviders]);
 
   const createPort = React.useCallback(async () => {
+    let settingsValue: any = {};
+    try {
+      settingsValue = JSON.parse(createPortDraft.settings);
+    } catch (err) {
+      setError("Invalid JSON in settings.");
+      return;
+    }
+
     try {
       setIsCreatingPort(true);
       await requestGraphQL<any, any>({
@@ -1713,7 +1722,7 @@ export function App() {
             assignedActorId: normalizeComboboxValue(
               createPortDraft.assignedActorId
             ),
-            settings: createPortDraft.settings,
+            settings: settingsValue,
           },
         },
       });
@@ -1940,6 +1949,7 @@ export function App() {
       enabled: selectedPort.enabled,
       allowsGuests: selectedPort.allowsGuests,
       assignedActorId: selectedPort.assignedActorId ?? "",
+      settings: JSON.stringify(selectedPort.settings ?? {}, null, 2),
     });
 
     const nextBindingDrafts: Record<string, string> = {};
@@ -1948,6 +1958,23 @@ export function App() {
     }
     setPortBindingDrafts(nextBindingDrafts);
   }, [selectedPort]);
+
+  React.useEffect(() => {
+    const provider = providers.find((p) => p.provider === selectedProviderId);
+    if (!selectedProviderId || !provider) {
+      setProviderDetailsDraft(null);
+      return;
+    }
+
+    setProviderDetailsDraft({
+      provider: provider.provider,
+      providerKind: provider.providerKind,
+      apiKey: "", // Sensitive
+      baseUrl: provider.baseUrl ?? "",
+      enabled: provider.enabled,
+      defaultTextModel: provider.defaultTextModel ?? "",
+    });
+  }, [providers, selectedProviderId]);
 
   React.useEffect(() => {
     if (providers.length === 0) {
@@ -2200,7 +2227,9 @@ export function App() {
       portDetailsDraft.enabled !== selectedPort.enabled ||
       portDetailsDraft.allowsGuests !== selectedPort.allowsGuests ||
       portDetailsDraft.assignedActorId.trim() !==
-        (selectedPort.assignedActorId ?? "").trim()
+        (selectedPort.assignedActorId ?? "").trim() ||
+      portDetailsDraft.settings.trim() !==
+        JSON.stringify(selectedPort.settings ?? {}, null, 2).trim()
     );
   }, [portDetailsDraft, selectedPort]);
 
@@ -2300,13 +2329,22 @@ export function App() {
       return;
     }
 
-    setIsSavingPortDetails(true);
+    let settingsValue: any = {};
+    try {
+      settingsValue = JSON.parse(portDetailsDraft.settings);
+    } catch (err) {
+      setError("Invalid JSON in settings.");
+      return;
+    }
+
+    setIsSavingPort(true);
     setError(null);
     try {
       await requestGraphQL<
         StageUpsertPortResponse,
         {
           input: {
+            id: string;
             name: string;
             provider: string;
             enabled: boolean;
@@ -2319,12 +2357,14 @@ export function App() {
         query: STAGE_MUTATION_UPSERT_PORT,
         variables: {
           input: {
+            id: selectedPort.id,
             name: name,
             provider,
             enabled: portDetailsDraft.enabled,
             allowsGuests: portDetailsDraft.allowsGuests,
-            assignedActorId: portDetailsDraft.assignedActorId || null,
-            settings: selectedPort.settings ?? {},
+            assignedActorId:
+              normalizeComboboxValue(portDetailsDraft.assignedActorId) || null,
+            settings: settingsValue,
           },
         },
       });
@@ -2332,9 +2372,69 @@ export function App() {
     } catch (saveError) {
       setError(errorMessage(saveError));
     } finally {
-      setIsSavingPortDetails(false);
+      setIsSavingPort(false);
     }
   }, [loadPorts, portDetailsDraft, selectedPort]);
+
+  const saveProviderDetails = React.useCallback(async () => {
+    if (!selectedProviderId || !providerDetailsDraft) {
+      return;
+    }
+
+    setIsSavingProvider(true);
+    setError(null);
+
+    try {
+      await requestGraphQL<any, any>({
+        query: `
+          mutation($input: UpsertProviderInput!) {
+            upsertProvider(input: $input) {
+              id
+              provider
+            }
+          }
+        `,
+        variables: {
+          input: {
+            provider: providerDetailsDraft.provider,
+            providerKind: providerDetailsDraft.providerKind,
+            apiKey: providerDetailsDraft.apiKey || undefined,
+            baseUrl: providerDetailsDraft.baseUrl || undefined,
+            enabled: providerDetailsDraft.enabled,
+            defaultTextModel:
+              providerDetailsDraft.defaultTextModel || undefined,
+          },
+        },
+      });
+
+      await loadProviders();
+    } catch (saveError) {
+      setError(errorMessage(saveError));
+    } finally {
+      setIsSavingProvider(false);
+    }
+  }, [providerDetailsDraft, loadProviders, selectedProviderId]);
+
+  const deletePort = React.useCallback(async () => {
+    if (!selectedPortId) {
+      return;
+    }
+    if (!confirm(`Are you sure you want to delete port ${selectedPortId}?`)) {
+      return;
+    }
+
+    setError(null);
+    try {
+      await requestGraphQL<any, any>({
+        query: `mutation($id: Uri!) { deletePort(id: $id) }`,
+        variables: { id: selectedPortId },
+      });
+      await loadPorts();
+      setSelectedPortId(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }, [loadPorts, selectedPortId]);
 
   const savePortBinding = React.useCallback(
     async (bindingId: string) => {
@@ -3386,7 +3486,7 @@ export function App() {
                                 />
                               </div>
 
-                              <div className="flex justify-end">
+                              <div className="flex items-center gap-2 justify-end">
                                 <Button
                                   type="button"
                                   onClick={() => void saveActorDetails()}
@@ -3397,6 +3497,24 @@ export function App() {
                                   {isSavingActorDetails
                                     ? "Saving..."
                                     : "Save details"}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  onClick={() => {
+                                    if (
+                                      confirm(
+                                        `Are you sure you want to delete actor ${selectedActor.id}?`
+                                      )
+                                    ) {
+                                      void deleteActor();
+                                    }
+                                  }}
+                                  disabled={isDeletingActor}
+                                >
+                                  {isDeletingActor
+                                    ? "Deleting..."
+                                    : "Delete Actor"}
                                 </Button>
                               </div>
                             </div>
@@ -3753,6 +3871,31 @@ export function App() {
                         </Combobox>
                       </div>
 
+                      <div className="space-y-1">
+                        <Label
+                          htmlFor="stage-port-details-settings"
+                          className="text-[11px] uppercase text-slate-500"
+                        >
+                          Settings (JSON)
+                        </Label>
+                        <Textarea
+                          id="stage-port-details-settings"
+                          value={portDetailsDraft?.settings ?? ""}
+                          onChange={(event) => {
+                            const nextValue = event.currentTarget.value;
+                            setPortDetailsDraft((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    settings: nextValue,
+                                  }
+                                : current
+                            );
+                          }}
+                          className="min-h-32 font-mono text-[11px]"
+                        />
+                      </div>
+
                       <div className="flex items-center gap-2 pt-2">
                         <Button
                           type="button"
@@ -3761,6 +3904,13 @@ export function App() {
                           disabled={isSavingPort || !portDetailsDirty}
                         >
                           {isSavingPort ? "Saving..." : "Save Changes"}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          onClick={() => void deletePort()}
+                        >
+                          Delete Port
                         </Button>
                       </div>
                     </article>
@@ -3867,55 +4017,173 @@ export function App() {
                           <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
                             Configuration
                           </h3>
-                          <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-                            <div className="grid grid-cols-2 gap-4">
-                              <div>
-                                <p className="text-[10px] text-slate-500 uppercase">
-                                  Status
-                                </p>
-                                <Badge
-                                  className={
-                                    provider.enabled
-                                      ? "bg-emerald-500/15 text-emerald-700"
-                                      : "bg-rose-500/15 text-rose-700"
-                                  }
-                                >
-                                  {provider.enabled ? "Enabled" : "Disabled"}
-                                </Badge>
-                              </div>
-                              <div>
-                                <p className="text-[10px] text-slate-500 uppercase">
-                                  Usage
-                                </p>
-                                <p className="text-xs font-medium">
-                                  {provider.tokensUsed.toLocaleString()} tokens
-                                </p>
-                              </div>
-                            </div>
-                          </div>
 
                           <div className="space-y-1">
-                            <Label className="text-[11px] uppercase text-slate-500">
-                              Default Text Model
+                            <Label
+                              htmlFor="stage-provider-details-kind"
+                              className="text-[11px] uppercase text-slate-500"
+                            >
+                              Kind
                             </Label>
-                            <p className="font-mono text-xs text-slate-700">
-                              {provider.defaultTextModel || "(Not set)"}
-                            </p>
+                            <Combobox
+                              value={providerDetailsDraft?.providerKind ?? ""}
+                              onValueChange={(value) =>
+                                setProviderDetailsDraft((current) =>
+                                  current
+                                    ? {
+                                        ...current,
+                                        providerKind: normalizeComboboxValue(
+                                          value as string
+                                        ),
+                                      }
+                                    : current
+                                )
+                              }
+                            >
+                              <ComboboxTrigger className="w-full h-9">
+                                <ComboboxValue placeholder="Select kind" />
+                              </ComboboxTrigger>
+                              <ComboboxContent>
+                                <ComboboxList>
+                                  <ComboboxItem value="OpenRouter">
+                                    OpenRouter
+                                  </ComboboxItem>
+                                  <ComboboxItem value="OpenAI">
+                                    OpenAI
+                                  </ComboboxItem>
+                                  <ComboboxItem value="Anthropic">
+                                    Anthropic
+                                  </ComboboxItem>
+                                  <ComboboxItem value="Groq">Groq</ComboboxItem>
+                                  <ComboboxItem value="Mistral">
+                                    Mistral
+                                  </ComboboxItem>
+                                </ComboboxList>
+                              </ComboboxContent>
+                            </Combobox>
                           </div>
 
                           <div className="space-y-1">
-                            <Label className="text-[11px] uppercase text-slate-500">
+                            <Label
+                              htmlFor="stage-provider-details-key"
+                              className="text-[11px] uppercase text-slate-500"
+                            >
+                              API Key
+                            </Label>
+                            <Input
+                              id="stage-provider-details-key"
+                              type="password"
+                              value={providerDetailsDraft?.apiKey ?? ""}
+                              placeholder="Leave blank to keep current"
+                              onChange={(event) => {
+                                const nextValue = event.currentTarget.value;
+                                setProviderDetailsDraft((current) =>
+                                  current
+                                    ? {
+                                        ...current,
+                                        apiKey: nextValue,
+                                      }
+                                    : current
+                                );
+                              }}
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label
+                              htmlFor="stage-provider-details-url"
+                              className="text-[11px] uppercase text-slate-500"
+                            >
                               Base URL
                             </Label>
-                            <p className="font-mono text-xs text-slate-700 truncate">
-                              {provider.baseUrl || "(Default)"}
-                            </p>
+                            <Input
+                              id="stage-provider-details-url"
+                              value={providerDetailsDraft?.baseUrl ?? ""}
+                              onChange={(event) => {
+                                const nextValue = event.currentTarget.value;
+                                setProviderDetailsDraft((current) =>
+                                  current
+                                    ? {
+                                        ...current,
+                                        baseUrl: nextValue,
+                                      }
+                                    : current
+                                );
+                              }}
+                            />
                           </div>
 
-                          <div className="pt-4">
+                          <div className="space-y-1">
+                            <Label
+                              htmlFor="stage-provider-details-model"
+                              className="text-[11px] uppercase text-slate-500"
+                            >
+                              Default Model
+                            </Label>
+                            <Combobox
+                              value={
+                                providerDetailsDraft?.defaultTextModel ?? ""
+                              }
+                              onValueChange={(value) =>
+                                setProviderDetailsDraft((current) =>
+                                  current
+                                    ? {
+                                        ...current,
+                                        defaultTextModel:
+                                          normalizeComboboxValue(
+                                            value as string
+                                          ),
+                                      }
+                                    : current
+                                )
+                              }
+                            >
+                              <ComboboxTrigger className="w-full h-9">
+                                <ComboboxValue placeholder="Select model" />
+                              </ComboboxTrigger>
+                              <ComboboxContent>
+                                <ComboboxList>
+                                  {provider.models.map((m) => (
+                                    <ComboboxItem key={m} value={m}>
+                                      {m}
+                                    </ComboboxItem>
+                                  ))}
+                                </ComboboxList>
+                              </ComboboxContent>
+                            </Combobox>
+                          </div>
+
+                          <div className="flex items-center space-x-2 py-1">
+                            <Switch
+                              id="stage-provider-details-enabled"
+                              checked={providerDetailsDraft?.enabled ?? false}
+                              onCheckedChange={(checked) => {
+                                setProviderDetailsDraft((current) =>
+                                  current
+                                    ? {
+                                        ...current,
+                                        enabled: checked,
+                                      }
+                                    : current
+                                );
+                              }}
+                            />
+                            <Label htmlFor="stage-provider-details-enabled">
+                              Enabled
+                            </Label>
+                          </div>
+
+                          <div className="flex items-center gap-2 pt-2">
+                            <Button
+                              type="button"
+                              className="flex-1"
+                              onClick={() => void saveProviderDetails()}
+                              disabled={isSavingProvider}
+                            >
+                              {isSavingProvider ? "Saving..." : "Save Changes"}
+                            </Button>
                             <Button
                               variant="destructive"
-                              className="w-full"
                               onClick={async () => {
                                 if (
                                   confirm(
