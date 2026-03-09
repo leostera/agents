@@ -112,8 +112,8 @@ where
 
 impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult>
 where
-    TToolCall: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
-    TToolResult: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    TToolCall: Clone + Serialize + DeserializeOwned + From<Value> + Send + Sync + 'static,
+    TToolResult: Clone + Serialize + DeserializeOwned + From<Value> + Send + Sync + 'static,
 {
     pub async fn run<P: Provider>(
         &self,
@@ -267,27 +267,58 @@ where
                         continue;
                     };
 
-                    let arguments =
-                        match serde_json::from_value::<TToolCall>(arguments_json.clone()) {
-                            Ok(value) => value,
-                            Err(err) => {
-                                error!(
-                                    target: "borg_agent",
-                                    actor_id = %actor_thread.actor_id,
-                                    tool_name = %name,
-                                    arguments = %arguments_json,
-                                    error = %err,
-                                    "failed to deserialize tool call arguments"
-                                );
+                    let arguments_result =
+                        serde_json::from_value::<TToolCall>(arguments_json.clone());
+                    let arguments = match arguments_result {
+                        Ok(value) => value,
+                        Err(err) => {
+                            error!(
+                                target: "borg_agent",
+                                actor_id = %actor_thread.actor_id,
+                                tool_name = %name,
+                                arguments = %arguments_json,
+                                error = %err,
+                                "failed to deserialize tool call arguments from LLM"
+                            );
+
+                            // Feedback loop: feed the error back to the LLM as a tool result
+                            let error_message =
+                                format!("invalid tool call arguments for `{name}`: {err}");
+                            if let Err(add_err) = actor_thread
+                                .add_message(crate::Message::ToolCall {
+                                    tool_call_id: id.clone(),
+                                    name: name.clone(),
+                                    arguments: TToolCall::from(arguments_json.clone()),
+                                })
+                                .await
+                            {
                                 return finish_turn(
                                     actor_thread,
-                                    ActorRunResult::ActorError(format!(
-                                        "invalid tool call arguments for `{name}`: {err}"
-                                    )),
+                                    ActorRunResult::ActorError(add_err.to_string()),
                                 )
                                 .await;
                             }
-                        };
+
+                            if let Err(add_err) = actor_thread
+                                .add_message(crate::Message::ToolResult {
+                                    tool_call_id: id.clone(),
+                                    name: name.clone(),
+                                    content: ToolResultData::Error(error_message),
+                                })
+                                .await
+                            {
+                                return finish_turn(
+                                    actor_thread,
+                                    ActorRunResult::ActorError(add_err.to_string()),
+                                )
+                                .await;
+                            }
+
+                            // Continue the while loop to let the LLM try again in the next iteration
+                            has_tool_calls = true;
+                            continue;
+                        }
+                    };
                     tool_calls.push((id.clone(), name.clone(), arguments));
                 }
                 if tool_calls.is_empty() {
@@ -492,8 +523,8 @@ async fn finish_turn<TToolCall, TToolResult>(
     result: ActorRunResult<ActorRunOutput<TToolCall, TToolResult>>,
 ) -> ActorRunResult<ActorRunOutput<TToolCall, TToolResult>>
 where
-    TToolCall: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
-    TToolResult: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    TToolCall: Clone + Serialize + DeserializeOwned + From<Value> + Send + Sync + 'static,
+    TToolResult: Clone + Serialize + DeserializeOwned + From<Value> + Send + Sync + 'static,
 {
     if let Err(err) = actor_thread.agent_finished(&result).await {
         return ActorRunResult::ActorError(err.to_string());

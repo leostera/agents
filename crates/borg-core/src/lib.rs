@@ -11,6 +11,7 @@ pub mod action;
 pub mod ids;
 pub mod message_payload;
 pub mod processing_state;
+pub mod tool_contract;
 pub mod turn;
 
 pub use config::Config;

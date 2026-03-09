@@ -8,8 +8,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use base64::Engine;
 use borg_agent::{
-    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
-    ToolchainBuilder,
+    Tool, ToolCall, ToolResponse, ToolResult, ToolResultData, ToolSpec, Toolchain, ToolchainBuilder,
 };
 use borg_core::Uri;
 use borg_db::{BorgDb, FileRecord};
@@ -264,7 +263,13 @@ pub fn default_borg_fs_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_borg_fs_toolchain(fs: BorgFs) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+pub fn build_borg_fs_toolchain<TToolCall, TToolResult>(
+    fs: BorgFs,
+) -> Result<Toolchain<TToolCall, TToolResult>>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
     let mut builder = ToolchainBuilder::new();
     for spec in default_borg_fs_tool_specs() {
         let tool_name = spec.name.clone();
@@ -278,7 +283,9 @@ pub fn build_borg_fs_toolchain(fs: BorgFs) -> Result<Toolchain<BorgToolCall, Bor
                 async move {
                     let output = run_borg_fs_tool(&fs, &tool_name, &request.arguments).await?;
                     Ok(ToolResponse {
-                        output: ToolResultData::Ok(output),
+                        output: ToolResultData::Ok(TToolResult::from(serde_json::to_value(
+                            output,
+                        )?)),
                     })
                 }
             },

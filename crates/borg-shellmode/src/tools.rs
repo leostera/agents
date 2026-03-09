@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
-use borg_agent::{
-    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
-};
+use borg_agent::{Tool, ToolCall, ToolResponse, ToolResult, ToolResultData, ToolSpec, Toolchain};
 use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
@@ -49,9 +47,13 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     }]
 }
 
-pub fn build_shell_mode_toolchain(
+pub fn build_shell_mode_toolchain<TToolCall, TToolResult>(
     runtime: ShellModeRuntime,
-) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+) -> Result<Toolchain<TToolCall, TToolResult>>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
     let execute_spec = default_tool_specs()
         .into_iter()
         .find(|tool| tool.name == "ShellMode-executeCommand")
@@ -90,10 +92,10 @@ pub fn build_shell_mode_toolchain(
                 let result = runtime.execute(&command, context)?;
 
                 Ok(ToolResponse {
-                    output: ToolResultData::Ok(json!({
+                    output: ToolResultData::Ok(TToolResult::from(json!({
                         "result": result.result,
                         "duration_ms": result.duration.as_millis(),
-                    })),
+                    }))),
                 })
             }
         },

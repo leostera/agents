@@ -1,22 +1,26 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{
-    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
-};
-use serde::Deserialize;
+use borg_agent::{Tool, ToolCall, ToolResponse, ToolResult, ToolResultData, ToolSpec, Toolchain};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::{CodeModeContext, CodeModeRuntime, sdk_types};
 
-#[derive(Debug, Clone, Deserialize)]
-struct SearchApisArgs {
-    query: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchApisArgs {
+    pub query: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct ExecuteCodeArgs {
-    hint: serde_json::Value,
-    code: serde_json::Value,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecuteCodeArgs {
+    pub hint: String,
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecuteCodeResult {
+    pub result: serde_json::Value,
+    pub duration_ms: u128,
 }
 
 pub fn default_tool_specs() -> Vec<ToolSpec> {
@@ -89,16 +93,24 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_code_mode_toolchain(
+pub fn build_code_mode_toolchain<TToolCall, TToolResult>(
     runtime: CodeModeRuntime,
-) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+) -> Result<Toolchain<TToolCall, TToolResult>>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
     build_code_mode_toolchain_with_context(runtime, CodeModeContext::default())
 }
 
-pub fn build_code_mode_toolchain_with_context(
+pub fn build_code_mode_toolchain_with_context<TToolCall, TToolResult>(
     runtime: CodeModeRuntime,
     context: CodeModeContext,
-) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+) -> Result<Toolchain<TToolCall, TToolResult>>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
     let search_spec = required_default_tool_spec("CodeMode-searchApis")?;
     let execute_spec = required_default_tool_spec("CodeMode-executeCode")?;
 
@@ -131,20 +143,7 @@ pub fn build_code_mode_toolchain_with_context(
                 let runtime = runtime.clone();
                 let context = context.clone();
                 async move {
-                    let _hint = match request.arguments.hint {
-                        serde_json::Value::String(s) => s,
-                        val => val.to_string(),
-                    };
-                    let code = match request.arguments.code {
-                        serde_json::Value::String(s) => s,
-                        val => val
-                            .get("code")
-                            .or_else(|| val.get("source"))
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| val.to_string()),
-                    };
-                    let code = code.trim().to_string();
+                    let code = request.arguments.code.trim().to_string();
                     if code.is_empty() {
                         return Err(anyhow!("CodeMode-executeCode tool requires code"));
                     }
@@ -155,10 +154,10 @@ pub fn build_code_mode_toolchain_with_context(
                     .map_err(|err| anyhow!("CodeMode-executeCode tool worker join error: {}", err))?
                     .map_err(|_| anyhow!("CodeMode-executeCode tool panicked"))??;
                     Ok(ToolResponse {
-                        output: ToolResultData::Ok(json!({
-                            "result": result.result,
-                            "duration_ms": result.duration.as_millis(),
-                        })),
+                        output: ToolResultData::Ok(ExecuteCodeResult {
+                            result: result.result,
+                            duration_ms: result.duration.as_millis(),
+                        }),
                     })
                 }
             },

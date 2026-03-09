@@ -16,7 +16,7 @@ pub async fn run(memory: crate::MemoryStore, command: &str, payload: Value) -> R
         .find(|item| item.cli_name == command)
         .ok_or_else(|| anyhow!("unknown memory command: {}", command))?;
 
-    let toolchain = crate::build_memory_toolchain(memory)?;
+    let toolchain = crate::build_memory_toolchain::<Value, Value>(memory)?;
     let response = toolchain
         .run(borg_agent::ToolRequest {
             tool_call_id: format!("cli-memory-{}", command.replace(' ', "-")),

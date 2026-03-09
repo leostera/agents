@@ -16,7 +16,8 @@ pub async fn run(command: &str, payload: Value) -> Result<Value> {
         .find(|item| item.cli_name == command)
         .ok_or_else(|| anyhow!("unknown codemode command: {}", command))?;
 
-    let toolchain = crate::build_code_mode_toolchain(crate::CodeModeRuntime::default())?;
+    let toolchain =
+        crate::build_code_mode_toolchain::<Value, Value>(crate::CodeModeRuntime::default())?;
     let response = toolchain
         .run(borg_agent::ToolRequest {
             tool_call_id: format!("cli-codemode-{}", command),

@@ -5,9 +5,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::port_context::PortContext;
+use crate::tool_contract::{BorgToolCall, BorgToolResult};
 
-pub type RuntimeToolCall = borg_agent::BorgToolCall;
-pub type RuntimeToolResult = borg_agent::BorgToolResult;
+pub type RuntimeToolCall = BorgToolCall;
+pub type RuntimeToolResult = BorgToolResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BorgCommand {

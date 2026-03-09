@@ -1,5 +1,5 @@
 mod actor_thread;
-mod admin_tools;
+pub mod admin_tools;
 mod agent;
 mod context;
 mod llm_adapter;
@@ -18,8 +18,8 @@ pub use message::{
     ActorEventPayload, ActorRunOutput, ActorRunResult, ActorRunStatus, Message, ToolCallRecord,
 };
 pub use tools::{
-    BorgToolCall, BorgToolResult, BorgToolchain, Tool, ToolOutputEnvelope, ToolRequest,
-    ToolResponse, ToolResultData, ToolSpec, Toolchain, ToolchainBuilder, to_provider_tool_specs,
+    Tool, ToolCall, ToolOutputEnvelope, ToolRequest, ToolResponse, ToolResult, ToolResultData,
+    ToolSpec, Toolchain, ToolchainBuilder, to_provider_tool_specs,
 };
 
 #[cfg(test)]

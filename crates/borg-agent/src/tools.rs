@@ -9,41 +9,18 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct BorgToolCall {
-    value: Value,
+pub trait ToolCall:
+    Clone + Serialize + for<'de> Deserialize<'de> + From<Value> + Send + Sync + 'static
+{
 }
 
-impl BorgToolCall {
-    pub fn to_value(&self) -> Result<Value> {
-        Ok(self.value.clone())
-    }
+pub trait ToolResult:
+    Clone + Serialize + for<'de> Deserialize<'de> + From<Value> + Send + Sync + 'static
+{
 }
 
-impl From<Value> for BorgToolCall {
-    fn from(value: Value) -> Self {
-        Self { value }
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct BorgToolResult {
-    value: Value,
-}
-
-impl BorgToolResult {
-    pub fn to_value(&self) -> Result<Value> {
-        Ok(self.value.clone())
-    }
-}
-
-impl From<Value> for BorgToolResult {
-    fn from(value: Value) -> Self {
-        Self { value }
-    }
-}
+impl ToolCall for Value {}
+impl ToolResult for Value {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolRequest<TToolCall> {
@@ -100,7 +77,11 @@ pub struct Tool<TToolCall, TToolResult> {
     callback: TypedToolCallback<TToolCall, TToolResult>,
 }
 
-impl Tool<BorgToolCall, BorgToolResult> {
+impl<TToolCall, TToolResult> Tool<TToolCall, TToolResult>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
     pub fn new<F, Fut>(spec: ToolSpec, output_schema: Option<Value>, callback: F) -> Self
     where
         F: Fn(ToolRequest<Value>) -> Fut + Send + Sync + 'static,
@@ -110,7 +91,7 @@ impl Tool<BorgToolCall, BorgToolResult> {
         Self::new_typed(spec, output_schema, move |request| {
             let callback = Arc::clone(&callback);
             async move {
-                let arguments = request.arguments.to_value()?;
+                let arguments = serde_json::to_value(&request.arguments)?;
                 let response = callback(ToolRequest {
                     tool_call_id: request.tool_call_id,
                     tool_name: request.tool_name,
@@ -120,10 +101,10 @@ impl Tool<BorgToolCall, BorgToolResult> {
                 Ok(ToolResponse {
                     output: match response.output {
                         ToolOutputEnvelope::Ok(result) => {
-                            ToolOutputEnvelope::Ok(BorgToolResult::from(result))
+                            ToolOutputEnvelope::Ok(TToolResult::from(result))
                         }
                         ToolOutputEnvelope::ByDesign(result) => {
-                            ToolOutputEnvelope::ByDesign(BorgToolResult::from(result))
+                            ToolOutputEnvelope::ByDesign(TToolResult::from(result))
                         }
                         ToolOutputEnvelope::Error(message) => ToolOutputEnvelope::Error(message),
                     },
@@ -147,7 +128,7 @@ impl Tool<BorgToolCall, BorgToolResult> {
         Self::new_typed(spec, output_schema, move |request| {
             let callback = Arc::clone(&callback);
             async move {
-                let value = request.arguments.to_value()?;
+                let value = serde_json::to_value(&request.arguments)?;
                 let arguments: TCall = match serde_json::from_value(value.clone()) {
                     Ok(args) => args,
                     Err(err) => {
@@ -167,11 +148,11 @@ impl Tool<BorgToolCall, BorgToolResult> {
                 .await?;
                 Ok(ToolResponse {
                     output: match response.output {
-                        ToolOutputEnvelope::Ok(result) => ToolOutputEnvelope::Ok(
-                            BorgToolResult::from(serde_json::to_value(result)?),
-                        ),
+                        ToolOutputEnvelope::Ok(result) => {
+                            ToolOutputEnvelope::Ok(TToolResult::from(serde_json::to_value(result)?))
+                        }
                         ToolOutputEnvelope::ByDesign(result) => ToolOutputEnvelope::ByDesign(
-                            BorgToolResult::from(serde_json::to_value(result)?),
+                            TToolResult::from(serde_json::to_value(result)?),
                         ),
                         ToolOutputEnvelope::Error(message) => ToolOutputEnvelope::Error(message),
                     },
@@ -256,8 +237,6 @@ impl<TToolCall, TToolResult> Toolchain<TToolCall, TToolResult> {
 pub struct ToolchainBuilder<TToolCall, TToolResult> {
     toolchain: Toolchain<TToolCall, TToolResult>,
 }
-
-pub type BorgToolchain = Toolchain<BorgToolCall, BorgToolResult>;
 
 impl<TToolCall, TToolResult> Default for ToolchainBuilder<TToolCall, TToolResult> {
     fn default() -> Self {

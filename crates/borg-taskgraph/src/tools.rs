@@ -1,7 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{
-    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
-};
+use borg_agent::{Tool, ToolCall, ToolResponse, ToolResult, ToolResultData, ToolSpec, Toolchain};
 use borg_db::BorgDb;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -582,7 +580,13 @@ pub fn default_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_taskgraph_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+pub fn build_taskgraph_toolchain<TToolCall, TToolResult>(
+    db: BorgDb,
+) -> Result<Toolchain<TToolCall, TToolResult>>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
     let store = TaskGraphStore::new(db);
 
     Toolchain::builder()
@@ -616,9 +620,13 @@ pub fn build_taskgraph_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, B
         .build()
 }
 
-pub fn build_taskgraph_worker_toolchain(
+pub fn build_taskgraph_worker_toolchain<TToolCall, TToolResult>(
     db: BorgDb,
-) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+) -> Result<Toolchain<TToolCall, TToolResult>>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
     let store = TaskGraphStore::new(db);
 
     Toolchain::builder()
@@ -653,7 +661,13 @@ pub fn build_taskgraph_worker_toolchain(
 struct TaskGraphTools;
 
 impl TaskGraphTools {
-    fn create_task(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn create_task<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-createTask")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -702,7 +716,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn get_task(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn get_task<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-getTask")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -721,7 +741,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn list_tasks(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn list_tasks<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-listTasks")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -737,7 +763,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn update_task_fields(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn update_task_fields<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-updateTaskFields")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -764,7 +796,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn reassign_assignee(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn reassign_assignee<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-reassignAssignee")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -785,7 +823,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn add_task_labels(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn add_task_labels<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-addTaskLabels")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -803,7 +847,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn remove_task_labels(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn remove_task_labels<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-removeTaskLabels")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -821,7 +871,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn set_task_parent(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn set_task_parent<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-setTaskParent")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -840,7 +896,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn clear_task_parent(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn clear_task_parent<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-clearTaskParent")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -857,7 +919,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn list_task_children(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn list_task_children<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-listTaskChildren")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -874,7 +942,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn add_task_blocked_by(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn add_task_blocked_by<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-addTaskBlockedBy")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -894,7 +968,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn remove_task_blocked_by(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn remove_task_blocked_by<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-removeTaskBlockedBy")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -914,7 +994,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn set_task_duplicate_of(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn set_task_duplicate_of<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-setTaskDuplicateOf")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -935,9 +1021,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn clear_task_duplicate_of(
+    fn clear_task_duplicate_of<TToolCall, TToolResult>(
         store: TaskGraphStore,
-    ) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-clearTaskDuplicateOf")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -954,7 +1044,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn list_duplicated_by(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn list_duplicated_by<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-listDuplicatedBy")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -971,7 +1067,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn add_task_reference(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn add_task_reference<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-addTaskReference")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -991,7 +1093,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn remove_task_reference(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn remove_task_reference<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-removeTaskReference")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -1011,7 +1119,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn set_task_status(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn set_task_status<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-setTaskStatus")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -1029,7 +1143,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn submit_review(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn submit_review<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-submitReview")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -1046,7 +1166,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn approve_review(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn approve_review<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-approveReview")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -1063,7 +1189,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn request_review_changes(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn request_review_changes<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-requestReviewChanges")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -1085,9 +1217,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn split_task_into_subtasks(
+    fn split_task_into_subtasks<TToolCall, TToolResult>(
         store: TaskGraphStore,
-    ) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-splitTaskIntoSubtasks")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -1133,7 +1269,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn add_comment(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn add_comment<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-addComment")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -1151,7 +1293,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn list_comments(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn list_comments<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-listComments")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -1168,7 +1316,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn list_events(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn list_events<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-listEvents")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -1185,7 +1339,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn next_task(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn next_task<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-nextTask")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -1202,7 +1362,13 @@ impl TaskGraphTools {
         ))
     }
 
-    fn reconcile_in_progress(store: TaskGraphStore) -> Result<Tool<BorgToolCall, BorgToolResult>> {
+    fn reconcile_in_progress<TToolCall, TToolResult>(
+        store: TaskGraphStore,
+    ) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
         let spec = required_spec("TaskGraph-reconcileInProgress")?;
         Ok(Tool::new_transcoded(
             spec,
@@ -1256,9 +1422,12 @@ fn required_str(value: String, key: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-fn json_text(value: Value) -> Result<ToolResponse<Value>> {
+fn json_text<TToolResult>(value: Value) -> Result<ToolResponse<TToolResult>>
+where
+    TToolResult: ToolResult,
+{
     Ok(ToolResponse {
-        output: ToolResultData::Ok(value),
+        output: ToolResultData::Ok(TToolResult::from(value)),
     })
 }
 

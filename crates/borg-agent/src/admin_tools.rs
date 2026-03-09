@@ -5,42 +5,50 @@ use serde_json::{Value, json};
 use borg_core::{ActorId, WorkspaceId};
 use borg_db::BorgDb;
 
-use crate::{
-    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
-};
+use crate::{Tool, ToolCall, ToolResponse, ToolResult, ToolResultData, ToolSpec, Toolchain};
 
-#[derive(Debug, Clone, Deserialize)]
-struct ListAgentsArgs {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WhoAmIArgs {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateActorArgs {
     #[serde(default)]
-    limit: Option<usize>,
+    pub actor_id: Option<ActorId>,
+    pub name: String,
+    pub model: String,
+    pub system_prompt: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct WhoAmIArgs {}
-
-#[derive(Debug, Clone, Deserialize)]
-struct CreateAgentArgs {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateActorArgs {
+    pub actor_id: ActorId,
     #[serde(default)]
-    actor_id: Option<String>,
-    name: String,
-    model: String,
-    system_prompt: String,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct UpdateAgentArgs {
-    actor_id: String,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    system_prompt: Option<String>,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisableActorArgs {
+    pub actor_id: ActorId,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct DisableAgentArgs {
-    actor_id: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListActorsArgs {
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActorAdminResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor: Option<borg_db::ActorRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actors: Option<Vec<borg_db::ActorRecord>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_id: Option<ActorId>,
 }
 
 pub fn default_actor_admin_tool_specs() -> Vec<ToolSpec> {
@@ -110,10 +118,14 @@ pub fn default_actor_admin_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_actor_admin_toolchain(
+pub fn build_actor_admin_toolchain<TToolCall, TToolResult>(
     db: BorgDb,
     current_actor_id: ActorId,
-) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+) -> Result<Toolchain<TToolCall, TToolResult>>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
     let whoami_actor_id = current_actor_id.clone();
     let workspace_id = WorkspaceId::from_id("default");
 
@@ -126,12 +138,18 @@ pub fn build_actor_admin_toolchain(
         .add_tool(Tool::new_transcoded(
             required_spec("Actors-listActors")?,
             None,
-            move |request: crate::ToolRequest<ListAgentsArgs>| {
+            move |request: crate::ToolRequest<ListActorsArgs>| {
                 let db = db_list.clone();
                 async move {
                     let limit = request.arguments.limit.unwrap_or(100);
                     let agents = db.list_actors(limit).await?;
-                    json_text(&json!({ "actors": agents }))
+                    Ok(ToolResponse {
+                        output: ToolResultData::Ok(ActorAdminResult {
+                            actor: None,
+                            actors: Some(agents),
+                            actor_id: None,
+                        }),
+                    })
                 }
             },
         ))?
@@ -141,9 +159,13 @@ pub fn build_actor_admin_toolchain(
             move |_request: crate::ToolRequest<WhoAmIArgs>| {
                 let actor_id = whoami_actor_id.clone();
                 async move {
-                    json_text(&json!({
-                        "actor_id": actor_id
-                    }))
+                    Ok(ToolResponse {
+                        output: ToolResultData::Ok(ActorAdminResult {
+                            actor: None,
+                            actors: None,
+                            actor_id: Some(actor_id),
+                        }),
+                    })
                 }
             },
         ))?
@@ -153,18 +175,14 @@ pub fn build_actor_admin_toolchain(
             Tool::new_transcoded(
                 required_spec("Actors-createActor").unwrap(),
                 None,
-                move |request: crate::ToolRequest<CreateAgentArgs>| {
+                move |request: crate::ToolRequest<CreateActorArgs>| {
                     let db = db.clone();
                     let workspace_id = workspace_id.clone();
                     async move {
                         let actor_id = request
                             .arguments
                             .actor_id
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .map(ActorId::parse)
-                            .transpose()?
+                            .clone()
                             .unwrap_or_else(|| ActorId::new());
                         let name = require_non_empty(&request.arguments.name, "name")?;
                         let model = require_non_empty(&request.arguments.model, "model")?;
@@ -185,7 +203,13 @@ pub fn build_actor_admin_toolchain(
                             .get_actor(&actor_id)
                             .await?
                             .ok_or_else(|| anyhow!("actor.not_found"))?;
-                        json_text(&json!({ "actor": agent }))
+                        Ok(ToolResponse {
+                            output: ToolResultData::Ok(ActorAdminResult {
+                                actor: Some(agent),
+                                actors: None,
+                                actor_id: None,
+                            }),
+                        })
                     }
                 },
             )
@@ -196,14 +220,11 @@ pub fn build_actor_admin_toolchain(
             Tool::new_transcoded(
                 required_spec("Actors-updateActor").unwrap(),
                 None,
-                move |request: crate::ToolRequest<UpdateAgentArgs>| {
+                move |request: crate::ToolRequest<UpdateActorArgs>| {
                     let db = db.clone();
                     let workspace_id = workspace_id.clone();
                     async move {
-                        let actor_id = ActorId::parse(&require_non_empty(
-                            &request.arguments.actor_id,
-                            "actor_id",
-                        )?)?;
+                        let actor_id = request.arguments.actor_id.clone();
                         let existing = db
                             .get_actor(&actor_id)
                             .await?
@@ -231,7 +252,13 @@ pub fn build_actor_admin_toolchain(
                             .get_actor(&actor_id)
                             .await?
                             .ok_or_else(|| anyhow!("actor.not_found"))?;
-                        json_text(&json!({ "actor": agent }))
+                        Ok(ToolResponse {
+                            output: ToolResultData::Ok(ActorAdminResult {
+                                actor: Some(agent),
+                                actors: None,
+                                actor_id: None,
+                            }),
+                        })
                     }
                 },
             )
@@ -242,14 +269,11 @@ pub fn build_actor_admin_toolchain(
             Tool::new_transcoded(
                 required_spec("Actors-disableActor").unwrap(),
                 None,
-                move |request: crate::ToolRequest<DisableAgentArgs>| {
+                move |request: crate::ToolRequest<DisableActorArgs>| {
                     let db = db.clone();
                     let workspace_id = workspace_id.clone();
                     async move {
-                        let actor_id = ActorId::parse(&require_non_empty(
-                            &request.arguments.actor_id,
-                            "actor_id",
-                        )?)?;
+                        let actor_id = request.arguments.actor_id.clone();
                         let existing = db
                             .get_actor(&actor_id)
                             .await?
@@ -270,7 +294,13 @@ pub fn build_actor_admin_toolchain(
                             .get_actor(&actor_id)
                             .await?
                             .ok_or_else(|| anyhow!("actor.not_found"))?;
-                        json_text(&json!({ "actor": agent }))
+                        Ok(ToolResponse {
+                            output: ToolResultData::Ok(ActorAdminResult {
+                                actor: Some(agent),
+                                actors: None,
+                                actor_id: None,
+                            }),
+                        })
                     }
                 },
             )
@@ -291,12 +321,6 @@ fn required_spec(name: &str) -> Result<ToolSpec> {
         .into_iter()
         .find(|spec| spec.name == name)
         .ok_or_else(|| anyhow!("missing actor admin tool spec {}", name))
-}
-
-fn json_text<T: Serialize>(value: &T) -> Result<ToolResponse<Value>> {
-    Ok(ToolResponse {
-        output: ToolResultData::Ok(serde_json::to_value(value)?),
-    })
 }
 
 fn require_non_empty(value: &str, key: &str) -> Result<String> {

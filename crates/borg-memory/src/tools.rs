@@ -1,7 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{
-    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
-};
+use borg_agent::{Tool, ToolCall, ToolResponse, ToolResult, ToolResultData, ToolSpec, Toolchain};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -770,9 +768,13 @@ Examples:
     ]
 }
 
-pub fn build_memory_toolchain(
+pub fn build_memory_toolchain<TToolCall, TToolResult>(
     memory: MemoryStore,
-) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+) -> Result<Toolchain<TToolCall, TToolResult>>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
     let state_facts_spec = required_default_tool_spec("Memory-stateFacts")?;
     let search_spec = required_default_tool_spec("Memory-search")?;
     let create_entity_spec = required_default_tool_spec("Memory-createEntity")?;
@@ -837,7 +839,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                     output: ToolResultData::Ok(out),
+                     output: ToolResultData::Ok(TToolResult::from(out)),
                 })
             }
         }))?
@@ -943,7 +945,7 @@ pub fn build_memory_toolchain(
                     "results": items
                 });
                 Ok(ToolResponse {
-                     output: ToolResultData::Ok(out),
+                     output: ToolResultData::Ok(TToolResult::from(out)),
                 })
             }
         }))?
@@ -1015,7 +1017,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                     output: ToolResultData::Ok(out),
+                     output: ToolResultData::Ok(TToolResult::from(out)),
                 })
             }
         }))?
@@ -1055,7 +1057,7 @@ pub fn build_memory_toolchain(
                     "sameAs": same_as_group.iter().map(ToString::to_string).collect::<Vec<_>>(),
                 });
                 Ok(ToolResponse {
-                     output: ToolResultData::Ok(out),
+                     output: ToolResultData::Ok(TToolResult::from(out)),
                 })
             }
         }))?
@@ -1155,7 +1157,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                     output: ToolResultData::Ok(out),
+                     output: ToolResultData::Ok(TToolResult::from(out)),
                 })
             }
         }))?
@@ -1219,7 +1221,7 @@ pub fn build_memory_toolchain(
                     "warnings": warnings
                 });
                 Ok(ToolResponse {
-                     output: ToolResultData::Ok(out),
+                     output: ToolResultData::Ok(TToolResult::from(out)),
                 })
             }
         }))?
@@ -1351,7 +1353,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                     output: ToolResultData::Ok(out),
+                     output: ToolResultData::Ok(TToolResult::from(out)),
                 })
             }
         }))?
@@ -1478,7 +1480,7 @@ pub fn build_memory_toolchain(
                     "statedAt": result.facts.first().map(|fact| fact.stated_at.to_rfc3339()),
                 });
                 Ok(ToolResponse {
-                     output: ToolResultData::Ok(out),
+                     output: ToolResultData::Ok(TToolResult::from(out)),
                 })
             }
         }))?

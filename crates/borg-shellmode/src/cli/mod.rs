@@ -16,7 +16,8 @@ pub async fn run(command: &str, payload: Value) -> Result<Value> {
         .find(|item| item.cli_name == command)
         .ok_or_else(|| anyhow!("unknown shell command: {}", command))?;
 
-    let toolchain = crate::build_shell_mode_toolchain(crate::ShellModeRuntime::new())?;
+    let toolchain =
+        crate::build_shell_mode_toolchain::<Value, Value>(crate::ShellModeRuntime::new())?;
     let response = toolchain
         .run(borg_agent::ToolRequest {
             tool_call_id: format!("cli-shell-{}", command),

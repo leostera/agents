@@ -31,7 +31,7 @@ impl AppCatalogEntry {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppCatalogItem {
     pub app_id: String,
     pub name: String,
@@ -53,7 +53,7 @@ pub struct CapabilityCatalogItem {
     pub capability_status: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppCapabilityDetail {
     pub capability_id: String,
     pub name: String,
@@ -62,7 +62,7 @@ pub struct AppCapabilityDetail {
     pub status: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppDetailsResult {
     pub app_id: String,
     pub name: String,
@@ -79,12 +79,22 @@ pub struct AppDetailsResult {
     pub capabilities: Vec<AppCapabilityDetail>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct ListAppsArgs {}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListAppsArgs {}
 
-#[derive(Debug, Clone, Deserialize)]
-struct GetAppArgs {
-    id: serde_json::Value,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetAppArgs {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListAppsResult {
+    pub apps: Vec<AppCatalogItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetAppResult {
+    pub app: AppDetailsResult,
 }
 
 impl BorgApps {
@@ -109,9 +119,7 @@ impl BorgApps {
                     let items = app_items.clone();
                     async move {
                         Ok(ToolResponse {
-                            output: ToolResultData::Ok(json!({
-                                "apps": items
-                            })),
+                            output: ToolResultData::Ok(ListAppsResult { apps: items }),
                         })
                     }
                 },
@@ -122,11 +130,7 @@ impl BorgApps {
                 move |request: borg_agent::ToolRequest<GetAppArgs>| {
                     let entries = app_details.clone();
                     async move {
-                        let id = match request.arguments.id {
-                            serde_json::Value::String(s) => s,
-                            val => val.to_string(),
-                        };
-                        let id = id.trim();
+                        let id = request.arguments.id.trim();
                         if id.is_empty() {
                             return Err(anyhow::anyhow!("missing required field: id"));
                         }
@@ -135,7 +139,7 @@ impl BorgApps {
                             .find(|entry| entry.app_id == id)
                             .ok_or_else(|| anyhow::anyhow!("app not found: {id}"))?;
                         Ok(ToolResponse {
-                            output: ToolResultData::Ok(json!({ "app": app })),
+                            output: ToolResultData::Ok(GetAppResult { app: app.clone() }),
                         })
                     }
                 },

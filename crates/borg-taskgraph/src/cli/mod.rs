@@ -16,7 +16,7 @@ pub async fn run(db: borg_db::BorgDb, command: &str, payload: Value) -> Result<V
         .find(|item| item.cli_name == command)
         .ok_or_else(|| anyhow!("unknown taskgraph command: {}", command))?;
 
-    let toolchain = crate::build_taskgraph_toolchain(db)?;
+    let toolchain = crate::build_taskgraph_toolchain::<Value, Value>(db)?;
     let response = toolchain
         .run(borg_agent::ToolRequest {
             tool_call_id: format!("cli-taskgraph-{}", command.replace(' ', "-")),

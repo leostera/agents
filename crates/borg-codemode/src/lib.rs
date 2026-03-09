@@ -5,7 +5,7 @@ mod ffi;
 mod module_loader;
 mod ops;
 mod sdk;
-mod tools;
+pub mod tools;
 mod types;
 
 pub use engine::{CodeModeContext, CodeModeRuntime};

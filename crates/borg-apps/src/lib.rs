@@ -1,5 +1,5 @@
 mod catalog;
-mod discovery;
+pub mod discovery;
 mod oauth;
 
 pub use catalog::{DefaultAppsCatalog, InstallSummary};

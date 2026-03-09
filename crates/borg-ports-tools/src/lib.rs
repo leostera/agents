@@ -1,7 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_agent::{
-    BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
-};
+use borg_agent::{Tool, ToolCall, ToolResponse, ToolResult, ToolResultData, ToolSpec, Toolchain};
 use borg_core::{ActorId, PortId, Uri, WorkspaceId};
 use borg_db::BorgDb;
 use serde::{Deserialize, Serialize};
@@ -92,7 +90,13 @@ pub fn default_port_admin_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+pub fn build_port_admin_toolchain<TToolCall, TToolResult>(
+    db: BorgDb,
+) -> Result<Toolchain<TToolCall, TToolResult>>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
     let db_list = db.clone();
     let db_create = db.clone();
     let db_update = db;
@@ -106,7 +110,7 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                 async move {
                     let limit = request.arguments.limit.unwrap_or(200);
                     let ports = db.list_ports(limit).await?;
-                    json_text(&json!({ "ports": ports }))
+                    json_text::<_, TToolResult>(&json!({ "ports": ports }))
                 }
             },
         ))?
@@ -152,7 +156,7 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                         .get_port(&port_name)
                         .await?
                         .ok_or_else(|| anyhow!("port.not_found"))?;
-                    json_text(&json!({ "port": port }))
+                    json_text::<_, TToolResult>(&json!({ "port": port }))
                 }
             },
         ))?
@@ -205,7 +209,7 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                         .get_port(&port_name)
                         .await?
                         .ok_or_else(|| anyhow!("port.not_found"))?;
-                    json_text(&json!({ "port": port }))
+                    json_text::<_, TToolResult>(&json!({ "port": port }))
                 }
             },
         ))?
@@ -227,9 +231,12 @@ fn required_spec(name: &str) -> Result<ToolSpec> {
         .ok_or_else(|| anyhow!("missing port admin tool spec {}", name))
 }
 
-fn json_text<T: Serialize>(value: &T) -> Result<ToolResponse<Value>> {
+fn json_text<T: Serialize, TToolResult>(value: &T) -> Result<ToolResponse<TToolResult>>
+where
+    TToolResult: ToolResult,
+{
     Ok(ToolResponse {
-        output: ToolResultData::Ok(serde_json::to_value(value)?),
+        output: ToolResultData::Ok(TToolResult::from(serde_json::to_value(value)?)),
     })
 }
 

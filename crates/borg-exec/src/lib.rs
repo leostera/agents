@@ -19,6 +19,7 @@ mod patch_apply;
 mod port_context;
 mod provider_config;
 mod provider_supervisor;
+pub mod tool_contract;
 mod tool_runner;
 mod types;
 

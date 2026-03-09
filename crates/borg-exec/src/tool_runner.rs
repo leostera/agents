@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -76,16 +76,16 @@ pub fn default_exec_admin_tool_specs() -> Vec<ToolSpec> {
     specs
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct SendMessageArgs {
-    target_actor_id: serde_json::Value,
-    text: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendMessageArgs {
+    pub target_actor_id: serde_json::Value,
+    pub text: String,
     #[serde(default)]
-    reply_target_actor_id: Option<serde_json::Value>,
+    pub reply_target_actor_id: Option<serde_json::Value>,
     #[serde(default)]
-    submission_id: Option<String>,
+    pub submission_id: Option<String>,
     #[serde(default)]
-    in_reply_to_submission_id: Option<String>,
+    pub in_reply_to_submission_id: Option<String>,
 }
 
 fn build_actor_messaging_toolchain(
