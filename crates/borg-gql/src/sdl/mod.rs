@@ -56,6 +56,11 @@ connection_types!(ActorEdge, ActorConnection, ActorObject);
 connection_types!(ActorMessageEdge, ActorMessageConnection, ActorMessageObject);
 connection_types!(PortEdge, PortConnection, PortObject);
 connection_types!(PortBindingEdge, PortBindingConnection, PortBindingObject);
+connection_types!(
+    PortActorBindingEdge,
+    PortActorBindingConnection,
+    PortActorBindingObject
+);
 connection_types!(ProviderEdge, ProviderConnection, ProviderObject);
 connection_types!(AppEdge, AppListConnection, AppObject);
 connection_types!(
@@ -946,6 +951,45 @@ impl PortObject {
             .collect::<Vec<_>>();
 
         Ok(PortBindingConnection {
+            page_info: PageInfo {
+                has_next_page,
+                end_cursor: edges.last().map(|edge| edge.cursor.clone()),
+            },
+            edges,
+        })
+    }
+
+    async fn actor_bindings(
+        &self,
+        ctx: &Context<'_>,
+        first: Option<i32>,
+        after: Option<String>,
+    ) -> GqlResult<PortActorBindingConnection> {
+        let data = ctx_data(ctx)?;
+        let first = data.normalize_first(first)?;
+        let start = decode_offset_cursor(after.as_deref())?;
+
+        let bindings = data
+            .db
+            .list_port_bindings(&self.record.port_id, first + 1)
+            .await
+            .map_err(map_anyhow)?;
+
+        let (page, has_next_page) = apply_offset_pagination(bindings, start, first);
+
+        let edges = page
+            .into_iter()
+            .map(|(index, record)| PortActorBindingEdge {
+                cursor: encode_offset_cursor(index),
+                node: PortActorBindingObject {
+                    port_name: self.record.port_name.clone(),
+                    conversation_key: record.conversation_key,
+                    actor_id: Some(record.actor_id.into_uri()),
+                },
+            })
+            .collect::<Vec<_>>();
+
+        Ok(PortActorBindingConnection {
             page_info: PageInfo {
                 has_next_page,
                 end_cursor: edges.last().map(|edge| edge.cursor.clone()),

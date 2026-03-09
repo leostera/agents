@@ -148,7 +148,17 @@ impl Tool<BorgToolCall, BorgToolResult> {
             let callback = Arc::clone(&callback);
             async move {
                 let value = request.arguments.to_value()?;
-                let arguments: TCall = serde_json::from_value(value)?;
+                let arguments: TCall = match serde_json::from_value(value.clone()) {
+                    Ok(args) => args,
+                    Err(err) => {
+                        return Err(anyhow!(
+                            "failed to transcode tool call `{}`: {} (input: {})",
+                            request.tool_name,
+                            err,
+                            value
+                        ));
+                    }
+                };
                 let response = callback(ToolRequest {
                     tool_call_id: request.tool_call_id,
                     tool_name: request.tool_name,

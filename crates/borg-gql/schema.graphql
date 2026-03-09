@@ -403,6 +403,7 @@ type Port implements Node {
 	settings: JsonValue!
 	assignedActor: Actor
 	bindings(first: Int, after: String): PortBindingConnection!
+	actorBindings(first: Int, after: String): PortActorBindingConnection!
 }
 
 type PortActorBinding {
@@ -411,6 +412,16 @@ type PortActorBinding {
 	conversationKey: String!
 	actorId: Uri
 	actor: Actor
+}
+
+type PortActorBindingConnection {
+	edges: [PortActorBindingEdge!]!
+	pageInfo: PageInfo!
+}
+
+type PortActorBindingEdge {
+	cursor: String!
+	node: PortActorBinding!
 }
 
 type PortBinding {

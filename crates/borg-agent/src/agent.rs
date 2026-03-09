@@ -271,6 +271,14 @@ where
                         match serde_json::from_value::<TToolCall>(arguments_json.clone()) {
                             Ok(value) => value,
                             Err(err) => {
+                                error!(
+                                    target: "borg_agent",
+                                    actor_id = %actor_thread.actor_id,
+                                    tool_name = %name,
+                                    arguments = %arguments_json,
+                                    error = %err,
+                                    "failed to deserialize tool call arguments"
+                                );
                                 return finish_turn(
                                     actor_thread,
                                     ActorRunResult::ActorError(format!(

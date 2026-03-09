@@ -84,7 +84,7 @@ struct ListAppsArgs {}
 
 #[derive(Debug, Clone, Deserialize)]
 struct GetAppArgs {
-    id: String,
+    id: serde_json::Value,
 }
 
 impl BorgApps {
@@ -122,7 +122,11 @@ impl BorgApps {
                 move |request: borg_agent::ToolRequest<GetAppArgs>| {
                     let entries = app_details.clone();
                     async move {
-                        let id = request.arguments.id.trim();
+                        let id = match request.arguments.id {
+                            serde_json::Value::String(s) => s,
+                            val => val.to_string(),
+                        };
+                        let id = id.trim();
                         if id.is_empty() {
                             return Err(anyhow::anyhow!("missing required field: id"));
                         }
@@ -131,9 +135,7 @@ impl BorgApps {
                             .find(|entry| entry.app_id == id)
                             .ok_or_else(|| anyhow::anyhow!("app not found: {id}"))?;
                         Ok(ToolResponse {
-                            output: ToolResultData::Ok(json!({
-                                "app": app
-                            })),
+                            output: ToolResultData::Ok(json!({ "app": app })),
                         })
                     }
                 },
