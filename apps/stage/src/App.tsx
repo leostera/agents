@@ -6,12 +6,17 @@ import {
 import {
   Badge,
   Button,
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
   Combobox,
   ComboboxContent,
   ComboboxEmpty,
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
+  ComboboxTrigger,
+  ComboboxValue,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -22,12 +27,21 @@ import {
   JsonTreeViewer,
   Label,
   ScrollArea,
+  Switch,
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
   Textarea,
 } from "@borg/ui";
+import {
+  ChevronDown,
+  History as HistoryIcon,
+  Plus,
+  Shield,
+  Terminal,
+  User2,
+} from "lucide-react";
 import React from "react";
 import ReactFlow, {
   applyNodeChanges,
@@ -132,6 +146,8 @@ const STAGE_QUERY_PROVIDERS = `
           provider
           providerKind
           enabled
+          tokensUsed
+          baseUrl
           defaultTextModel
           defaultModel {
             name
@@ -312,6 +328,8 @@ type ProviderInfo = {
   provider: string;
   providerKind: string;
   enabled: boolean;
+  tokensUsed: number;
+  baseUrl: string | null;
   defaultTextModel: string | null;
   defaultModel: string | null;
   models: string[];
@@ -377,7 +395,7 @@ type ActorNodeData = {
   onToggleStatus: (actorId: string, newStatus: string) => void;
 };
 
-type ActorTab = "details" | "mailbox";
+type ActorTab = "details" | "mailbox" | "context";
 type ActorDetailsDraft = {
   name: string;
   provider: string;
@@ -408,12 +426,33 @@ type MailboxEntry =
   | {
       kind: "tool";
       key: string;
-      role: string | null;
+      role: string;
       createdAt: string;
       toolName: string;
-      fields: ToolField[];
+      fields: Array<{ key: string; value: string }>;
       sourceType: "tool_call" | "tool_result";
     };
+
+type ActorContextWindow = {
+  systemPrompt: string;
+  behaviorPrompt: string;
+  availableTools: Array<{
+    name: string;
+    description: string;
+    parameters: any;
+  }>;
+  availableCapabilities: Array<{
+    name: string;
+    description: string;
+  }>;
+  orderedMessages: Array<{
+    type: string;
+    content: string;
+    role?: string | null;
+    toolCalls?: any[] | null;
+  }>;
+};
+
 type ToolMailboxEntry = Extract<MailboxEntry, { kind: "tool" }>;
 
 const DEFAULT_CREATE_ACTOR_DRAFT: CreateActorDraft = {
@@ -1010,6 +1049,136 @@ function summarizeToolEntry(entry: ToolMailboxEntry): string {
   return `${first} (+${entry.fields.length - 1} fields)`;
 }
 
+function ContextView({ window }: { window: ActorContextWindow }) {
+  return (
+    <div className="flex h-full flex-col overflow-hidden bg-slate-50/50">
+      <ScrollArea className="flex-1">
+        <div className="space-y-3 p-3">
+          <Collapsible className="group overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-50">
+              <div className="flex items-center gap-2">
+                <Shield className="h-3.5 w-3.5 text-slate-400" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                  System Prompt
+                </span>
+              </div>
+              <ChevronDown className="h-3.5 w-3.5 text-slate-400 transition-transform group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="border-t border-slate-100 bg-slate-50/30 p-3">
+                <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-slate-700">
+                  {window.systemPrompt || "(empty)"}
+                </pre>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+
+          <Collapsible className="group overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-50">
+              <div className="flex items-center gap-2">
+                <User2 className="h-3.5 w-3.5 text-slate-400" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                  Actor Prompt
+                </span>
+              </div>
+              <ChevronDown className="h-3.5 w-3.5 text-slate-400 transition-transform group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="border-t border-slate-100 bg-slate-50/30 p-3">
+                <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-slate-700">
+                  {window.behaviorPrompt || "(empty)"}
+                </pre>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+
+          <Collapsible className="group overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-slate-50">
+              <div className="flex items-center gap-2">
+                <Terminal className="h-3.5 w-3.5 text-amber-500" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                  Available Tools ({window.availableTools.length})
+                </span>
+              </div>
+              <ChevronDown className="h-3.5 w-3.5 text-slate-400 transition-transform group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="divide-y divide-slate-100 border-t border-slate-100">
+                {window.availableTools.map((tool) => (
+                  <Collapsible
+                    key={tool.name}
+                    className="group/tool overflow-hidden"
+                  >
+                    <CollapsibleTrigger className="flex w-full items-center justify-between bg-white px-3 py-2 text-left hover:bg-amber-50/30">
+                      <span className="font-mono text-[11px] font-semibold text-amber-700">
+                        {tool.name}
+                      </span>
+                      <Plus className="h-3 w-3 text-slate-300 transition-transform group-data-[state=open]/tool:rotate-45" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="bg-amber-50/10 px-3 py-2">
+                      <p className="mb-2 text-[11px] text-slate-600">
+                        {tool.description}
+                      </p>
+                      <div className="rounded border border-amber-100 bg-white p-2">
+                        <pre className="font-mono text-[10px] text-slate-500">
+                          {JSON.stringify(tool.parameters, null, 2)}
+                        </pre>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                ))}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 px-1">
+              <HistoryIcon className="h-3.5 w-3.5 text-slate-400" />
+              <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Message History ({window.orderedMessages.length} turns)
+              </span>
+            </div>
+            <div className="space-y-2">
+              {window.orderedMessages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`rounded-xl border p-2.5 shadow-sm ${
+                    msg.type === "user"
+                      ? "border-sky-100 bg-sky-50/30"
+                      : msg.type === "assistant"
+                        ? "border-slate-200 bg-white"
+                        : "border-slate-100 bg-slate-100/50"
+                  }`}
+                >
+                  <div className="mb-1 flex items-center justify-between gap-2 text-[9px] font-bold uppercase tracking-tight text-slate-400">
+                    <span>{msg.role || msg.type}</span>
+                  </div>
+                  <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-slate-700">
+                    {msg.content}
+                  </p>
+                  {msg.toolCalls?.map((call: any) => (
+                    <div
+                      key={call.id}
+                      className="mt-2 rounded-lg border border-amber-100 bg-amber-50/50 p-2 font-mono text-[10px]"
+                    >
+                      <span className="font-bold text-amber-700">
+                        CALL: {call.name}
+                      </span>
+                      <pre className="mt-1 text-slate-600">
+                        {JSON.stringify(call.arguments, null, 2)}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
 function ActorNodeCard({ data, selected }: NodeProps<ActorNodeData>) {
   const actor = data.actor;
   const onToggleStatus = data.onToggleStatus;
@@ -1076,6 +1245,8 @@ const actorNodeTypes: NodeTypes = {
 
 export function App() {
   const [actors, setActors] = React.useState<ActorSummary[]>([]);
+  const [ports, setPorts] = React.useState<PortSummary[]>([]);
+  const [providers, setProviders] = React.useState<ProviderInfo[]>([]);
   const [runtimeStatus, setRuntimeStatus] =
     React.useState<RuntimeStatus>("checking");
   const [isLoadingActors, setIsLoadingActors] = React.useState(true);
@@ -1083,12 +1254,38 @@ export function App() {
   const [isSending, setIsSending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  const [createActorDraft, setCreateActorDraft] = React.useState(
+    DEFAULT_CREATE_ACTOR_DRAFT
+  );
+  const [createProviderDraft, setCreateProviderDraft] = React.useState({
+    provider: "",
+    providerKind: "",
+    apiKey: "",
+    baseUrl: "",
+    enabled: true,
+    defaultTextModel: "",
+  });
+  const [createPortDraft, setCreatePortDraft] = React.useState({
+    name: "",
+    provider: "",
+    enabled: true,
+    allowsGuests: true,
+    assignedActorId: "",
+    settings: "{}",
+  });
+
   const [selectedActorId, setSelectedActorId] = React.useState<string | null>(
     null
   );
   const [selectedPortId, setSelectedPortId] = React.useState<string | null>(
     null
   );
+  const [selectedProviderId, setSelectedProviderId] = React.useState<
+    string | null
+  >(null);
+  const [actorContextWindow, setActorContextWindow] =
+    React.useState<ActorContextWindow | null>(null);
+
   const [mailbox, setMailbox] = React.useState<ActorMailbox | null>(null);
   const [actorGraphMessages, setActorGraphMessages] = React.useState<
     Record<string, MailboxMessage[]>
@@ -1100,25 +1297,39 @@ export function App() {
   const [activeTab, setActiveTab] = React.useState<ActorTab>("mailbox");
 
   const [isCreateActorOpen, setIsCreateActorOpen] = React.useState(false);
+  const [isCreateProviderOpen, setIsCreateProviderOpen] = React.useState(false);
+  const [isCreatePortOpen, setIsCreatePortOpen] = React.useState(false);
+
   const [isCreatingActor, setIsCreatingActor] = React.useState(false);
+  const [isCreatingProvider, setIsCreatingProvider] = React.useState(false);
+  const [isCreatingPort, setIsCreatingPort] = React.useState(false);
+
+  const [isSavingActorDetails, setIsSavingActorDetails] = React.useState(false);
+  const [isSavingProvider, setIsSavingProvider] = React.useState(false);
+  const [isSavingPort, setIsSavingPort] = React.useState(false);
+
   const [isDeletingActor, setIsDeletingActor] = React.useState(false);
-  const [ports, setPorts] = React.useState<PortSummary[]>([]);
-  const [providers, setProviders] = React.useState<ProviderInfo[]>([]);
-  const [availableModels, setAvailableModels] = React.useState<string[]>([]);
-  const [createActorDraft, setCreateActorDraft] = React.useState(
-    DEFAULT_CREATE_ACTOR_DRAFT
-  );
-  const [pinnedActorPositions, setPinnedActorPositions] = React.useState<
-    Record<string, { x: number; y: number }>
-  >({});
   const [expandedToolEntries, setExpandedToolEntries] = React.useState<
     Record<string, boolean>
   >({});
+  const [availableModels, setAvailableModels] = React.useState<string[]>([]);
+  const [pinnedActorPositions, setPinnedActorPositions] = React.useState<
+    Record<string, { x: number; y: number }>
+  >({});
+
   const [actorDetailsDraft, setActorDetailsDraft] =
     React.useState<ActorDetailsDraft | null>(null);
-  const [isSavingActorDetails, setIsSavingActorDetails] = React.useState(false);
   const [portDetailsDraft, setPortDetailsDraft] =
     React.useState<PortDetailsDraft | null>(null);
+  const [providerDetailsDraft, setProviderDetailsDraft] = React.useState<{
+    provider: string;
+    providerKind: string;
+    apiKey: string;
+    baseUrl: string;
+    enabled: boolean;
+    defaultTextModel: string;
+  } | null>(null);
+
   const [portBindingDrafts, setPortBindingDrafts] = React.useState<
     Record<string, string>
   >({});
@@ -1246,6 +1457,50 @@ export function App() {
     }
   }, [loadActorGraphMessages, selectedPortId]);
 
+  const loadActorContext = React.useCallback(async (actorId: string) => {
+    try {
+      const data = await requestGraphQL<
+        {
+          actor: {
+            contextWindow: ActorContextWindow;
+          };
+        },
+        { id: string }
+      >({
+        query: `
+          query($id: Uri!) {
+            actor(id: $id) {
+              contextWindow {
+                systemPrompt
+                behaviorPrompt
+                availableTools {
+                  name
+                  description
+                  parameters
+                }
+                availableCapabilities {
+                  name
+                  description
+                }
+                orderedMessages {
+                  type
+                  content
+                  role
+                }
+              }
+            }
+          }
+        `,
+        variables: { id: actorId },
+      });
+      if (data.actor?.contextWindow) {
+        setActorContextWindow(data.actor.contextWindow);
+      }
+    } catch (err) {
+      console.error("Failed to load actor context:", err);
+    }
+  }, []);
+
   const loadMailbox = React.useCallback(async (actorId: string) => {
     setIsLoadingMailbox(true);
     setError(null);
@@ -1311,32 +1566,33 @@ export function App() {
         variables: { first: 50 },
       });
 
-      const providerList: ProviderInfo[] = data.providers.edges
-        .map((edge) => edge.node)
-        .filter((p) => p.enabled)
-        .map((p) => {
+      const providerList: ProviderInfo[] = data.providers.edges.map(
+        ({ node }: any) => {
           const modelSet = new Set<string>();
-          for (const model of p.models ?? []) {
+          for (const model of node.models ?? []) {
             if (model.name.trim().length > 0) {
               modelSet.add(model.name.trim());
             }
           }
-          if (p.defaultModel?.name?.trim()) {
-            modelSet.add(p.defaultModel.name.trim());
+          if (node.defaultModel?.name?.trim()) {
+            modelSet.add(node.defaultModel.name.trim());
           }
-          if (p.defaultTextModel?.trim()) {
-            modelSet.add(p.defaultTextModel.trim());
+          if (node.defaultTextModel?.trim()) {
+            modelSet.add(node.defaultTextModel.trim());
           }
           return {
-            id: p.id,
-            provider: p.provider,
-            providerKind: p.providerKind,
-            enabled: p.enabled,
-            defaultTextModel: p.defaultTextModel,
-            defaultModel: p.defaultModel?.name ?? null,
+            id: node.id,
+            provider: node.provider,
+            providerKind: node.providerKind,
+            enabled: node.enabled,
+            tokensUsed: node.tokensUsed,
+            baseUrl: node.baseUrl,
+            defaultTextModel: node.defaultTextModel,
+            defaultModel: node.defaultModel?.name ?? null,
             models: Array.from(modelSet).sort(),
           };
-        });
+        }
+      );
 
       setProviders(providerList);
     } catch (err) {
@@ -1399,6 +1655,81 @@ export function App() {
       console.error("Failed to load ports:", err);
     }
   }, []);
+
+  const createProvider = React.useCallback(async () => {
+    try {
+      setIsCreatingProvider(true);
+      await requestGraphQL<any, any>({
+        query: `
+          mutation($input: UpsertProviderInput!) {
+            upsertProvider(input: $input) {
+              id
+              provider
+            }
+          }
+        `,
+        variables: {
+          input: {
+            provider: createProviderDraft.provider,
+            providerKind: createProviderDraft.providerKind,
+            apiKey: createProviderDraft.apiKey,
+            baseUrl: createProviderDraft.baseUrl,
+            enabled: createProviderDraft.enabled,
+            defaultTextModel: createProviderDraft.defaultTextModel,
+          },
+        },
+      });
+      await loadProviders();
+      setIsCreateProviderOpen(false);
+      setCreateProviderDraft({
+        provider: "",
+        providerKind: "",
+        apiKey: "",
+        baseUrl: "",
+        enabled: true,
+        defaultTextModel: "",
+      });
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIsCreatingProvider(false);
+    }
+  }, [createProviderDraft, loadProviders]);
+
+  const createPort = React.useCallback(async () => {
+    try {
+      setIsCreatingPort(true);
+      await requestGraphQL<any, any>({
+        query: STAGE_MUTATION_UPSERT_PORT,
+        variables: {
+          input: {
+            name: createPortDraft.name,
+            provider: createPortDraft.provider,
+            enabled: createPortDraft.enabled,
+            allowsGuests: createPortDraft.allowsGuests,
+            assignedActorId: normalizeComboboxValue(
+              createPortDraft.assignedActorId
+            ),
+            settings: createPortDraft.settings,
+          },
+        },
+      });
+      await loadPorts();
+      setIsCreatePortOpen(false);
+      setCreatePortDraft({
+        name: "",
+        provider: "",
+        enabled: true,
+        allowsGuests: true,
+        assignedActorId: "",
+        settings: "{}",
+      });
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIsCreatingPort(false);
+    }
+  }, [createPortDraft, loadPorts]);
 
   const createActor = React.useCallback(async () => {
     const actorId = normalizeActorId(
@@ -1537,6 +1868,12 @@ export function App() {
 
     return () => clearInterval(timer);
   }, [loadActors, loadPorts]);
+
+  React.useEffect(() => {
+    if (selectedActorId && activeTab === "context") {
+      void loadActorContext(selectedActorId);
+    }
+  }, [activeTab, loadActorContext, selectedActorId]);
 
   React.useEffect(() => {
     if (!selectedActorId) {
@@ -2723,6 +3060,22 @@ export function App() {
                 type="button"
                 variant="outline"
                 className="pointer-events-auto"
+                onClick={() => setIsCreateProviderOpen(true)}
+              >
+                + Provider
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="pointer-events-auto"
+                onClick={() => setIsCreatePortOpen(true)}
+              >
+                + Port
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="pointer-events-auto"
                 onClick={() => setIsCreateActorOpen(true)}
               >
                 + Actor
@@ -2749,6 +3102,14 @@ export function App() {
                     setSelectedActorId(node.id);
                     setSelectedPortId(null);
                     setActiveTab("mailbox");
+                    return;
+                  }
+
+                  if (node.id.startsWith("stage:provider:")) {
+                    const providerId = node.id.replace(/^stage:provider:/, "");
+                    setSelectedProviderId(providerId);
+                    setSelectedActorId(null);
+                    setSelectedPortId(null);
                     return;
                   }
 
@@ -2806,6 +3167,7 @@ export function App() {
                     <TabsList>
                       <TabsTrigger value="details">Details</TabsTrigger>
                       <TabsTrigger value="mailbox">Mailbox</TabsTrigger>
+                      <TabsTrigger value="context">Context</TabsTrigger>
                     </TabsList>
                   </div>
 
@@ -2925,8 +3287,9 @@ export function App() {
                                         current
                                           ? {
                                               ...current,
-                                              provider:
-                                                normalizeComboboxValue(value),
+                                              provider: normalizeComboboxValue(
+                                                value as string
+                                              ),
                                             }
                                           : current
                                       )
@@ -2965,8 +3328,9 @@ export function App() {
                                         current
                                           ? {
                                               ...current,
-                                              model:
-                                                normalizeComboboxValue(value),
+                                              model: normalizeComboboxValue(
+                                                value as string
+                                              ),
                                             }
                                           : current
                                       )
@@ -3214,6 +3578,15 @@ export function App() {
                       </footer>
                     </div>
                   </TabsContent>
+                  <TabsContent value="context" className="mt-0 min-h-0 flex-1">
+                    {actorContextWindow ? (
+                      <ContextView window={actorContextWindow} />
+                    ) : (
+                      <div className="flex h-32 items-center justify-center text-sm text-slate-400">
+                        Loading context window...
+                      </div>
+                    )}
+                  </TabsContent>
                 </Tabs>
               </div>
             ) : selectedPort ? (
@@ -3232,13 +3605,13 @@ export function App() {
                   </p>
                 </header>
 
-                <ScrollArea className="h-full px-3 py-3">
-                  <div className="grid gap-3">
-                    <article className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                <ScrollArea className="flex-1">
+                  <div className="space-y-6 p-4">
+                    <article className="space-y-3">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">
-                          Port Details
-                        </p>
+                        <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                          Configuration
+                        </h3>
                         <span
                           className={`text-[10px] ${
                             portDetailsDirty
@@ -3250,215 +3623,180 @@ export function App() {
                         </span>
                       </div>
 
-                      {portDetailsDraft ? (
-                        <div className="mt-2 grid gap-3">
-                          <div className="space-y-1.5">
-                            <Label htmlFor="stage-port-name">Name</Label>
-                            <input
-                              id="stage-port-name"
-                              type="text"
-                              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 placeholder:text-slate-400"
-                              placeholder="Enter port name"
-                              value={portDetailsDraft.name}
-                              onChange={(event) => {
-                                setPortDetailsDraft((current) =>
-                                  current
-                                    ? {
-                                        ...current,
-                                        name: event.currentTarget.value,
-                                      }
-                                    : current
-                                );
-                              }}
-                            />
-                          </div>
+                      <div className="space-y-1">
+                        <Label
+                          htmlFor="stage-port-details-name"
+                          className="text-[11px] uppercase text-slate-500"
+                        >
+                          Name
+                        </Label>
+                        <Input
+                          id="stage-port-details-name"
+                          value={portDetailsDraft?.name ?? ""}
+                          onChange={(event) => {
+                            const nextValue = event.currentTarget.value;
+                            setPortDetailsDraft((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    name: nextValue,
+                                  }
+                                : current
+                            );
+                          }}
+                        />
+                      </div>
 
-                          <div className="space-y-1.5">
-                            <Label htmlFor="stage-port-provider">
-                              Provider
-                            </Label>
-                            <Combobox
-                              value={portDetailsDraft.provider}
-                              onValueChange={(value) =>
-                                setPortDetailsDraft((current) =>
-                                  current
-                                    ? {
-                                        ...current,
-                                        provider: normalizeComboboxValue(value),
-                                      }
-                                    : current
-                                )
-                              }
-                            >
-                              <ComboboxInput
-                                id="stage-port-provider"
-                                placeholder="Select provider"
-                              />
-                              <ComboboxContent>
-                                <ComboboxEmpty>
-                                  No port providers found
-                                </ComboboxEmpty>
-                                <ComboboxList>
-                                  {availablePortProviders.map((provider) => (
-                                    <ComboboxItem
-                                      key={provider}
-                                      value={provider}
-                                    >
-                                      {provider}
-                                    </ComboboxItem>
-                                  ))}
-                                </ComboboxList>
-                              </ComboboxContent>
-                            </Combobox>
-                          </div>
+                      <div className="space-y-1">
+                        <Label
+                          htmlFor="stage-port-details-provider"
+                          className="text-[11px] uppercase text-slate-500"
+                        >
+                          Provider
+                        </Label>
+                        <Input
+                          id="stage-port-details-provider"
+                          value={portDetailsDraft?.provider ?? ""}
+                          onChange={(event) => {
+                            const nextValue = event.currentTarget.value;
+                            setPortDetailsDraft((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    provider: nextValue,
+                                  }
+                                : current
+                            );
+                          }}
+                        />
+                      </div>
 
-                          <div className="space-y-1.5">
-                            <Label htmlFor="stage-port-assigned-actor">
-                              Default Actor Binding
-                            </Label>
-                            <Combobox
-                              value={portDetailsDraft.assignedActorId}
-                              onValueChange={(value) =>
-                                setPortDetailsDraft((current) =>
-                                  current
-                                    ? {
-                                        ...current,
-                                        assignedActorId:
-                                          normalizeComboboxValue(value),
-                                      }
-                                    : current
-                                )
-                              }
-                            >
-                              <ComboboxInput
-                                id="stage-port-assigned-actor"
-                                placeholder="Select actor (optional)"
-                              />
-                              <ComboboxContent>
-                                <ComboboxEmpty>No actors found</ComboboxEmpty>
-                                <ComboboxList>
-                                  <ComboboxItem value="">(none)</ComboboxItem>
-                                  {actors.map((actor) => (
-                                    <ComboboxItem
-                                      key={actor.id}
-                                      value={actor.id}
-                                    >
-                                      {actor.name} ({actor.id})
-                                    </ComboboxItem>
-                                  ))}
-                                </ComboboxList>
-                              </ComboboxContent>
-                            </Combobox>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-3">
-                            <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                              <input
-                                type="checkbox"
-                                checked={portDetailsDraft.enabled}
-                                onChange={(event) => {
-                                  const isChecked = event.currentTarget.checked;
-                                  setPortDetailsDraft((current) =>
-                                    current
-                                      ? {
-                                          ...current,
-                                          enabled: isChecked,
-                                        }
-                                      : current
-                                  );
-                                }}
-                              />
-                              <span className="text-xs font-medium text-slate-700">
-                                Enabled
-                              </span>
-                            </label>
-                            <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                              <input
-                                type="checkbox"
-                                checked={portDetailsDraft.allowsGuests}
-                                onChange={(event) => {
-                                  const isChecked = event.currentTarget.checked;
-                                  setPortDetailsDraft((current) =>
-                                    current
-                                      ? {
-                                          ...current,
-                                          allowsGuests: isChecked,
-                                        }
-                                      : current
-                                  );
-                                }}
-                              />
-                              <span className="text-xs font-medium text-slate-700">
-                                Allows guests
-                              </span>
-                            </label>
-                          </div>
-
-                          <div className="flex justify-end">
-                            <Button
-                              type="button"
-                              onClick={() => void savePortDetails()}
-                              disabled={
-                                isSavingPortDetails || !portDetailsDirty
-                              }
-                            >
-                              {isSavingPortDetails ? "Saving..." : "Save port"}
-                            </Button>
-                          </div>
+                      <div className="flex items-center gap-4 py-1">
+                        <div className="flex items-center space-x-2">
+                          <Switch
+                            id="stage-port-details-enabled"
+                            checked={portDetailsDraft?.enabled ?? false}
+                            onCheckedChange={(checked) => {
+                              setPortDetailsDraft((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      enabled: checked,
+                                    }
+                                  : current
+                              );
+                            }}
+                          />
+                          <Label htmlFor="stage-port-details-enabled">
+                            Enabled
+                          </Label>
                         </div>
-                      ) : null}
+
+                        <div className="flex items-center space-x-2">
+                          <Switch
+                            id="stage-port-details-guests"
+                            checked={portDetailsDraft?.allowsGuests ?? false}
+                            onCheckedChange={(checked) => {
+                              setPortDetailsDraft((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      allowsGuests: checked,
+                                    }
+                                  : current
+                              );
+                            }}
+                          />
+                          <Label htmlFor="stage-port-details-guests">
+                            Guests
+                          </Label>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <Label className="text-[11px] uppercase text-slate-500">
+                          Assigned Actor
+                        </Label>
+                        <Combobox
+                          value={portDetailsDraft?.assignedActorId ?? ""}
+                          onValueChange={(value) => {
+                            setPortDetailsDraft((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    assignedActorId: normalizeComboboxValue(
+                                      value as string
+                                    ),
+                                  }
+                                : current
+                            );
+                          }}
+                        >
+                          <ComboboxTrigger className="w-full">
+                            <ComboboxValue placeholder="Select actor..." />
+                          </ComboboxTrigger>
+                          <ComboboxContent>
+                            <ComboboxList>
+                              <ComboboxItem value="">(None)</ComboboxItem>
+                              {actors.map((actor) => (
+                                <ComboboxItem key={actor.id} value={actor.id}>
+                                  {actor.name} ({actor.id})
+                                </ComboboxItem>
+                              ))}
+                            </ComboboxList>
+                          </ComboboxContent>
+                        </Combobox>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-2">
+                        <Button
+                          type="button"
+                          className="flex-1"
+                          onClick={() => void savePortDetails()}
+                          disabled={isSavingPort || !portDetailsDirty}
+                        >
+                          {isSavingPort ? "Saving..." : "Save Changes"}
+                        </Button>
+                      </div>
                     </article>
 
-                    <article className="rounded-xl border border-slate-200 bg-white px-3 py-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-[11px] uppercase tracking-[0.08em] text-slate-500">
-                          Conversation Actor Bindings
-                        </p>
-                        <span
-                          className={`text-[10px] ${
-                            dirtyPortBindingIds.size > 0
-                              ? "text-amber-700"
-                              : "text-emerald-700"
-                          }`}
-                        >
-                          {dirtyPortBindingIds.size > 0
-                            ? `${dirtyPortBindingIds.size} unsaved`
-                            : "Saved"}
-                        </span>
-                      </div>
-                      <div className="mt-2 space-y-2">
+                    <article className="space-y-3">
+                      <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                        Conversation Bindings
+                      </h3>
+                      <div className="space-y-3">
                         {selectedPort.actorBindings.length === 0 ? (
-                          <p className="text-xs text-slate-500">
-                            No explicit actor bindings for this port.
-                          </p>
+                          <div className="py-4 text-center text-xs text-slate-400">
+                            No active conversations yet.
+                          </div>
                         ) : (
                           selectedPort.actorBindings.map((binding) => (
                             <div
                               key={binding.id}
-                              className="rounded-lg border border-slate-200 bg-slate-50 p-2"
+                              className="rounded-xl border border-slate-100 bg-slate-50/50 p-2.5"
                             >
-                              <p className="truncate text-[11px] text-slate-500">
+                              <p className="mb-2 truncate font-mono text-[9px] font-medium text-slate-400">
                                 {binding.conversationKey}
                               </p>
-                              <div className="mt-2 flex items-center gap-2">
+                              <div className="flex items-center gap-2">
                                 <Combobox
                                   value={portBindingDrafts[binding.id] ?? ""}
-                                  onValueChange={(value) =>
+                                  onValueChange={(value) => {
                                     setPortBindingDrafts((current) => ({
                                       ...current,
-                                      [binding.id]:
-                                        normalizeComboboxValue(value),
-                                    }))
-                                  }
+                                      [binding.id]: normalizeComboboxValue(
+                                        value as string
+                                      ),
+                                    }));
+                                  }}
                                 >
-                                  <ComboboxInput placeholder="Select actor (optional)" />
+                                  <ComboboxTrigger className="h-8 flex-1">
+                                    <ComboboxValue placeholder="Select actor..." />
+                                  </ComboboxTrigger>
                                   <ComboboxContent>
-                                    <ComboboxEmpty>
-                                      No actors found
-                                    </ComboboxEmpty>
                                     <ComboboxList>
                                       <ComboboxItem value="">
-                                        (none)
+                                        (None)
                                       </ComboboxItem>
                                       {actors.map((actor) => (
                                         <ComboboxItem
@@ -3479,7 +3817,8 @@ export function App() {
                                   }
                                   disabled={
                                     savingBindingKey === binding.id ||
-                                    !dirtyPortBindingIds.has(binding.id)
+                                    portBindingDrafts[binding.id] ===
+                                      binding.actorId
                                   }
                                 >
                                   {savingBindingKey === binding.id
@@ -3495,9 +3834,119 @@ export function App() {
                   </div>
                 </ScrollArea>
               </div>
+            ) : selectedProviderId &&
+              providers.find((p) => p.provider === selectedProviderId) ? (
+              (() => {
+                const provider = providers.find(
+                  (p) => p.provider === selectedProviderId
+                )!;
+                return (
+                  <div className="flex h-full min-h-0 flex-col">
+                    <header className="space-y-2 border-b border-slate-200 px-4 py-3">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                          LLM Provider
+                        </p>
+                        <h2 className="text-sm font-semibold">
+                          {provider.provider}
+                        </h2>
+                      </div>
+                      <p className="truncate text-[11px] text-slate-500">
+                        Kind: {provider.providerKind}
+                      </p>
+                    </header>
+
+                    <ScrollArea className="flex-1">
+                      <div className="space-y-6 p-4">
+                        <article className="space-y-3">
+                          <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                            Configuration
+                          </h3>
+                          <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <p className="text-[10px] text-slate-500 uppercase">
+                                  Status
+                                </p>
+                                <Badge
+                                  className={
+                                    provider.enabled
+                                      ? "bg-emerald-500/15 text-emerald-700"
+                                      : "bg-rose-500/15 text-rose-700"
+                                  }
+                                >
+                                  {provider.enabled ? "Enabled" : "Disabled"}
+                                </Badge>
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-slate-500 uppercase">
+                                  Usage
+                                </p>
+                                <p className="text-xs font-medium">
+                                  {provider.tokensUsed.toLocaleString()} tokens
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-[11px] uppercase text-slate-500">
+                              Default Text Model
+                            </Label>
+                            <p className="font-mono text-xs text-slate-700">
+                              {provider.defaultTextModel || "(Not set)"}
+                            </p>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-[11px] uppercase text-slate-500">
+                              Base URL
+                            </Label>
+                            <p className="font-mono text-xs text-slate-700 truncate">
+                              {provider.baseUrl || "(Default)"}
+                            </p>
+                          </div>
+
+                          <div className="pt-4">
+                            <Button
+                              variant="destructive"
+                              className="w-full"
+                              onClick={async () => {
+                                if (
+                                  confirm(
+                                    `Are you sure you want to delete provider ${provider.provider}?`
+                                  )
+                                ) {
+                                  try {
+                                    await requestGraphQL<
+                                      { deleteProvider: boolean },
+                                      { provider: string }
+                                    >({
+                                      query: `mutation($provider: String!) { deleteProvider(provider: $provider) }`,
+                                      variables: {
+                                        provider: provider.provider,
+                                      },
+                                    });
+                                    await loadProviders();
+                                    setSelectedProviderId(null);
+                                  } catch (err) {
+                                    setError(errorMessage(err));
+                                  }
+                                }
+                              }}
+                            >
+                              Delete Provider
+                            </Button>
+                          </div>
+                        </article>
+                      </div>
+                    </ScrollArea>
+                  </div>
+                );
+              })()
             ) : (
               <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500">
-                Select an actor or port node to inspect details.
+                Select a node to inspect details.
               </div>
             )}
           </aside>
@@ -3522,8 +3971,7 @@ export function App() {
           <DialogHeader>
             <DialogTitle>Create Actor</DialogTitle>
             <DialogDescription>
-              Define the actor id, status, and system prompt used by the
-              runtime.
+              Define the actor name, status, and system prompt.
             </DialogDescription>
           </DialogHeader>
 
@@ -3558,7 +4006,7 @@ export function App() {
                   onValueChange={(value) =>
                     setCreateActorDraft((current) => ({
                       ...current,
-                      provider: normalizeComboboxValue(value),
+                      provider: normalizeComboboxValue(value as string),
                     }))
                   }
                 >
@@ -3586,7 +4034,7 @@ export function App() {
                   onValueChange={(value) =>
                     setCreateActorDraft((current) => ({
                       ...current,
-                      model: normalizeComboboxValue(value),
+                      model: normalizeComboboxValue(value as string),
                     }))
                   }
                 >
@@ -3636,6 +4084,226 @@ export function App() {
               </Button>
               <Button type="submit" disabled={isCreatingActor}>
                 {isCreatingActor ? "Creating..." : "Create actor"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isCreateProviderOpen}
+        onOpenChange={(open) => {
+          if (!isCreatingProvider) {
+            setIsCreateProviderOpen(open);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Add LLM Provider</DialogTitle>
+            <DialogDescription>
+              Configure a new LLM provider (OpenRouter, OpenAI, Anthropic, etc).
+            </DialogDescription>
+          </DialogHeader>
+
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createProvider();
+            }}
+          >
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="stage-create-provider-name">Provider ID</Label>
+                <Input
+                  id="stage-create-provider-name"
+                  value={createProviderDraft.provider}
+                  onChange={(event) => {
+                    const nextValue = event.currentTarget.value;
+                    setCreateProviderDraft((current) => ({
+                      ...current,
+                      provider: nextValue,
+                    }));
+                  }}
+                  placeholder="openrouter-01"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="stage-create-provider-kind">Kind</Label>
+                <Combobox
+                  value={createProviderDraft.providerKind}
+                  onValueChange={(value) =>
+                    setCreateProviderDraft((current) => ({
+                      ...current,
+                      providerKind: normalizeComboboxValue(value as string),
+                    }))
+                  }
+                >
+                  <ComboboxInput
+                    id="stage-create-provider-kind"
+                    placeholder="Select kind"
+                  />
+                  <ComboboxContent>
+                    <ComboboxList>
+                      <ComboboxItem value="OpenRouter">OpenRouter</ComboboxItem>
+                      <ComboboxItem value="OpenAI">OpenAI</ComboboxItem>
+                      <ComboboxItem value="Anthropic">Anthropic</ComboboxItem>
+                      <ComboboxItem value="Groq">Groq</ComboboxItem>
+                      <ComboboxItem value="Mistral">Mistral</ComboboxItem>
+                    </ComboboxList>
+                  </ComboboxContent>
+                </Combobox>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="stage-create-provider-key">API Key</Label>
+              <Input
+                id="stage-create-provider-key"
+                type="password"
+                value={createProviderDraft.apiKey}
+                onChange={(event) => {
+                  const nextValue = event.currentTarget.value;
+                  setCreateProviderDraft((current) => ({
+                    ...current,
+                    apiKey: nextValue,
+                  }));
+                }}
+                placeholder="sk-..."
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="stage-create-provider-url">
+                Base URL (optional)
+              </Label>
+              <Input
+                id="stage-create-provider-url"
+                value={createProviderDraft.baseUrl}
+                onChange={(event) => {
+                  const nextValue = event.currentTarget.value;
+                  setCreateProviderDraft((current) => ({
+                    ...current,
+                    baseUrl: nextValue,
+                  }));
+                }}
+                placeholder="https://openrouter.ai/api/v1"
+              />
+            </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isCreatingProvider}
+                onClick={() => setIsCreateProviderOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isCreatingProvider}>
+                {isCreatingProvider ? "Adding..." : "Add provider"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isCreatePortOpen}
+        onOpenChange={(open) => {
+          if (!isCreatingPort) {
+            setIsCreatePortOpen(open);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Configure Port</DialogTitle>
+            <DialogDescription>
+              Connect Borg to a new messaging platform or HTTP endpoint.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createPort();
+            }}
+          >
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="stage-create-port-name">Port Name</Label>
+                <Input
+                  id="stage-create-port-name"
+                  value={createPortDraft.name}
+                  onChange={(event) => {
+                    const nextValue = event.currentTarget.value;
+                    setCreatePortDraft((current) => ({
+                      ...current,
+                      name: nextValue,
+                    }));
+                  }}
+                  placeholder="My Telegram"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="stage-create-port-provider">Platform</Label>
+                <Combobox
+                  value={createPortDraft.provider}
+                  onValueChange={(value) =>
+                    setCreatePortDraft((current) => ({
+                      ...current,
+                      provider: normalizeComboboxValue(value as string),
+                    }))
+                  }
+                >
+                  <ComboboxInput
+                    id="stage-create-port-provider"
+                    placeholder="Select platform"
+                  />
+                  <ComboboxContent>
+                    <ComboboxList>
+                      <ComboboxItem value="telegram">Telegram</ComboboxItem>
+                      <ComboboxItem value="discord">Discord</ComboboxItem>
+                      <ComboboxItem value="http">HTTP / Web</ComboboxItem>
+                    </ComboboxList>
+                  </ComboboxContent>
+                </Combobox>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="stage-create-port-settings">
+                Settings (JSON)
+              </Label>
+              <Textarea
+                id="stage-create-port-settings"
+                value={createPortDraft.settings}
+                onChange={(event) => {
+                  const nextValue = event.currentTarget.value;
+                  setCreatePortDraft((current) => ({
+                    ...current,
+                    settings: nextValue,
+                  }));
+                }}
+                className="font-mono text-xs"
+                placeholder='{"token": "..."}'
+              />
+            </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isCreatingPort}
+                onClick={() => setIsCreatePortOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isCreatingPort}>
+                {isCreatingPort ? "Configuring..." : "Configure port"}
               </Button>
             </DialogFooter>
           </form>
