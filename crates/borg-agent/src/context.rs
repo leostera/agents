@@ -130,7 +130,7 @@ where
     TToolResult: Send + Sync,
 {
     strategy: ContextManagerStrategy,
-    providers: Vec<Arc<dyn ContextProvider<TToolCall, TToolResult>>>,
+    providers: Vec<Arc<dyn ContextProvider<TToolCall, TToolResult> + Send + Sync>>,
 }
 
 impl<TToolCall, TToolResult> Default for ContextManager<TToolCall, TToolResult>
@@ -218,7 +218,7 @@ where
     TToolResult: Send + Sync,
 {
     strategy: ContextManagerStrategy,
-    providers: Vec<Arc<dyn ContextProvider<TToolCall, TToolResult>>>,
+    providers: Vec<Arc<dyn ContextProvider<TToolCall, TToolResult> + Send + Sync>>,
 }
 
 impl<TToolCall, TToolResult> Default for ContextManagerBuilder<TToolCall, TToolResult>

@@ -1,12 +1,12 @@
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::{Duration, interval};
 use tracing::{error, info, warn};
 
-use crate::actor::ActorHandle;
+use crate::actor::Actor;
 use crate::mailbox::ActorCommand;
 use crate::runtime::BorgRuntime;
 use borg_core::{ActorId, EndpointUri, MessageId, MessagePayload, WorkspaceId};
@@ -18,16 +18,18 @@ const ACTOR_SYNC_LIMIT: usize = 1000;
 #[derive(Clone)]
 pub struct BorgActorManager {
     db: BorgDb,
-    actors: Arc<RwLock<HashMap<ActorId, ActorHandle>>>,
-    actor_sync_task: Arc<RwLock<Option<JoinHandle<()>>>>,
+    senders: Arc<RwLock<HashMap<ActorId, mpsc::Sender<ActorCommand>>>>,
+    tasks: Arc<RwLock<HashMap<ActorId, JoinHandle<Result<()>>>>>,
+    sync_task: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
 
 impl BorgActorManager {
     pub fn new(db: BorgDb) -> Self {
         Self {
             db,
-            actors: Arc::new(RwLock::new(HashMap::new())),
-            actor_sync_task: Arc::new(RwLock::new(None)),
+            senders: Arc::new(RwLock::new(HashMap::new())),
+            tasks: Arc::new(RwLock::new(HashMap::new())),
+            sync_task: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -84,15 +86,15 @@ impl BorgActorManager {
         Ok(message_id)
     }
 
-    /// In-memory delivery of a message record to a running actor.
+    /// Primary entry point for notifying an actor of a new message.
     pub async fn notify_running_actor(
         &self,
         actor_id: ActorId,
         record: MessageRecord,
         runtime: Arc<BorgRuntime>,
     ) -> Result<()> {
-        let actor = self.ensure_actor(&actor_id, runtime).await?;
-        let _ = actor.mailbox.send(ActorCommand::Message(record)).await;
+        let sender = self.ensure_actor(&actor_id, runtime).await?;
+        let _ = sender.send(ActorCommand::Message(record)).await;
         Ok(())
     }
 
@@ -105,19 +107,14 @@ impl BorgActorManager {
     ) -> Result<borg_agent::ContextWindow<borg_agent::BorgToolCall, borg_agent::BorgToolResult>>
     {
         // 1. Try to get live context from running actor
-        let maybe_actor = {
-            let actors = self.actors.read().await;
-            actors.get(actor_id).cloned()
+        let maybe_sender = {
+            let senders = self.senders.read().await;
+            senders.get(actor_id).cloned()
         };
 
-        if let Some(handle) = maybe_actor {
+        if let Some(sender) = maybe_sender {
             let (tx, rx) = tokio::sync::oneshot::channel();
-            if handle
-                .mailbox
-                .send(ActorCommand::InspectContext(tx))
-                .await
-                .is_ok()
-            {
+            if sender.send(ActorCommand::InspectContext(tx)).await.is_ok() {
                 // Wait for response with timeout
                 match tokio::time::timeout(Duration::from_secs(2), rx).await {
                     Ok(Ok(Ok(context))) => return Ok(context),
@@ -142,46 +139,56 @@ impl BorgActorManager {
         &self,
         actor_id: &ActorId,
         runtime: Arc<BorgRuntime>,
-    ) -> Result<ActorHandle> {
+    ) -> Result<mpsc::Sender<ActorCommand>> {
         {
-            let actors = self.actors.read().await;
-            if let Some(actor) = actors.get(actor_id) {
-                return Ok(actor.clone());
+            let senders = self.senders.read().await;
+            if let Some(sender) = senders.get(actor_id) {
+                return Ok(sender.clone());
             }
         }
 
         self.spawn(actor_id.clone(), runtime).await
     }
 
-    pub async fn spawn(&self, actor_id: ActorId, runtime: Arc<BorgRuntime>) -> Result<ActorHandle> {
+    pub async fn spawn(
+        &self,
+        actor_id: ActorId,
+        runtime: Arc<BorgRuntime>,
+    ) -> Result<mpsc::Sender<ActorCommand>> {
         let actor_record = self
             .db
             .get_actor(&actor_id)
             .await?
             .ok_or_else(|| anyhow!("actor not found: {}", actor_id))?;
 
-        let handle =
-            crate::actor::Actor::spawn(actor_id.clone(), actor_record.workspace_id, runtime)
-                .await?;
-        let mut actors = self.actors.write().await;
-        actors.insert(actor_id, handle.clone());
-        Ok(handle)
+        let (sender, task) = Actor::spawn(actor_id.clone(), actor_record.workspace_id, runtime)?;
+
+        let mut senders = self.senders.write().await;
+        let mut tasks = self.tasks.write().await;
+
+        senders.insert(actor_id.clone(), sender.clone());
+        tasks.insert(actor_id, task);
+
+        Ok(sender)
     }
 
     pub async fn shutdown(&self) {
         info!("BorgActorManager shutting down");
-        if let Some(task) = self.actor_sync_task.write().await.take() {
+        if let Some(task) = self.sync_task.write().await.take() {
             task.abort();
         }
-        let mut actors = self.actors.write().await;
-        for (_, actor) in actors.drain() {
-            let _ = actor.mailbox.send(ActorCommand::Terminate).await;
-            actor.abort().await;
+        let mut senders = self.senders.write().await;
+        for (_, sender) in senders.drain() {
+            let _ = sender.send(ActorCommand::Terminate).await;
+        }
+        let mut tasks = self.tasks.write().await;
+        for (_, task) in tasks.drain() {
+            task.abort();
         }
     }
 
     async fn start_actor_sync_loop(&self, runtime: Arc<BorgRuntime>) {
-        if self.actor_sync_task.read().await.is_some() {
+        if self.sync_task.read().await.is_some() {
             return;
         }
         let supervisor = self.clone();
@@ -194,7 +201,7 @@ impl BorgActorManager {
                 }
             }
         });
-        *self.actor_sync_task.write().await = Some(task);
+        *self.sync_task.write().await = Some(task);
     }
 
     async fn sync_running_actors_once(&self, runtime: Arc<BorgRuntime>) -> Result<()> {
@@ -203,15 +210,15 @@ impl BorgActorManager {
             .into_iter()
             .filter(|actor| actor.status.trim().eq_ignore_ascii_case("RUNNING"))
         {
-            let handle = match self.ensure_actor(&actor.actor_id, runtime.clone()).await {
-                Ok(handle) => handle,
+            let sender = match self.ensure_actor(&actor.actor_id, runtime.clone()).await {
+                Ok(sender) => sender,
                 Err(err) => {
                     warn!(actor_id = %actor.actor_id, error = %err, "failed to ensure actor in sync");
                     continue;
                 }
             };
             // Notify actor to check its mailbox
-            let _ = handle.mailbox.send(ActorCommand::Notify).await;
+            let _ = sender.send(ActorCommand::Notify).await;
         }
         Ok(())
     }

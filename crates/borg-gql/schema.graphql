@@ -194,6 +194,7 @@ type AvailableCapabilityObject {
 type ContextMessageObject {
 	type: String!
 	content: String
+	role: String
 	toolCallId: String
 	toolName: String
 	arguments: JsonValue

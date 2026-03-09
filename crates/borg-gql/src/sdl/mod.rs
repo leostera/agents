@@ -99,6 +99,7 @@ struct ContextMessageObject {
     #[graphql(name = "type")]
     message_type: String,
     content: Option<String>,
+    role: Option<String>,
     tool_call_id: Option<String>,
     tool_name: Option<String>,
     arguments: Option<JsonValue>,
@@ -658,12 +659,16 @@ impl ActorObject {
 
     async fn context_window(&self, ctx: &Context<'_>) -> GqlResult<ContextWindowObject> {
         let data = ctx_data(ctx)?;
+        let runtime = data
+            .runtime
+            .as_ref()
+            .ok_or_else(|| map_anyhow(anyhow::anyhow!("runtime unavailable")))?;
         let context: borg_agent::ContextWindow<
             borg_agent::BorgToolCall,
             borg_agent::BorgToolResult,
         > = data
             .supervisor
-            .inspect_actor_context(&self.record.actor_id)
+            .inspect_actor_context(&self.record.actor_id, runtime.clone())
             .await
             .map_err(map_anyhow)?;
 
@@ -703,6 +708,7 @@ fn map_agent_message(
         borg_agent::Message::System { content } => ContextMessageObject {
             message_type: "system".to_string(),
             content: Some(content),
+            role: Some("system".to_string()),
             tool_call_id: None,
             tool_name: None,
             arguments: None,
@@ -712,6 +718,7 @@ fn map_agent_message(
         borg_agent::Message::User { content } => ContextMessageObject {
             message_type: "user".to_string(),
             content: Some(content),
+            role: Some("user".to_string()),
             tool_call_id: None,
             tool_name: None,
             arguments: None,
@@ -725,6 +732,7 @@ fn map_agent_message(
         } => ContextMessageObject {
             message_type: "user_audio".to_string(),
             content: Some(format!("Audio: {} (Transcript: {})", file_id, transcript)),
+            role: Some("user".to_string()),
             tool_call_id: None,
             tool_name: None,
             arguments: None,
@@ -734,6 +742,7 @@ fn map_agent_message(
         borg_agent::Message::Assistant { content } => ContextMessageObject {
             message_type: "assistant".to_string(),
             content: Some(content),
+            role: Some("assistant".to_string()),
             tool_call_id: None,
             tool_name: None,
             arguments: None,
@@ -747,6 +756,7 @@ fn map_agent_message(
         } => ContextMessageObject {
             message_type: "tool_call".to_string(),
             content: None,
+            role: Some("assistant".to_string()),
             tool_call_id: Some(tool_call_id),
             tool_name: Some(name),
             arguments: Some(JsonValue(arguments.to_value().unwrap_or_default())),
@@ -772,6 +782,7 @@ fn map_agent_message(
             ContextMessageObject {
                 message_type: "tool_result".to_string(),
                 content: None,
+                role: Some("tool".to_string()),
                 tool_call_id: Some(tool_call_id),
                 tool_name: Some(name),
                 arguments: None,
@@ -782,6 +793,7 @@ fn map_agent_message(
         borg_agent::Message::ActorEvent { name, .. } => ContextMessageObject {
             message_type: "actor_event".to_string(),
             content: Some(format!("Event: {}", name)),
+            role: Some("system".to_string()),
             tool_call_id: None,
             tool_name: None,
             arguments: None,

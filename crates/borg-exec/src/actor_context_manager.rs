@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use borg_agent::{
@@ -38,23 +40,6 @@ pub struct ActorContextManager {
 impl ActorContextManager {
     pub fn new(db: BorgDb) -> Self {
         Self { db }
-    }
-
-    pub async fn actor_thread_for_task(
-        &self,
-        requested_actor_id: Option<&ActorId>,
-    ) -> Result<ActorThread<BorgToolCall, BorgToolResult>> {
-        let actor_id = self.resolve_actor_id(requested_actor_id).await?;
-        let agent = self.resolve_agent_for_turn(&actor_id).await?;
-        let workspace_id = WorkspaceId::from_id("default");
-
-        let mut actor_thread =
-            ActorThread::new(actor_id.clone(), workspace_id, agent, self.db.clone()).await?;
-
-        let context_manager = self.build_context_manager(&actor_id).await?;
-        actor_thread.set_context_manager(context_manager);
-
-        Ok(actor_thread)
     }
 
     pub async fn build_context_manager(
@@ -123,16 +108,6 @@ impl ActorContextManager {
         let agent = self.resolve_agent_for_turn(actor_id).await?;
         let context_manager = self.build_context_manager(actor_id).await?;
         context_manager.build_context(&agent, &[]).await
-    }
-
-    async fn resolve_actor_id(&self, requested_actor_id: Option<&ActorId>) -> Result<ActorId> {
-        if let Some(actor_id) = requested_actor_id {
-            return Ok(actor_id.clone());
-        }
-
-        Err(anyhow!(
-            "missing actor id when creating actor thread; actor must be resolved by caller"
-        ))
     }
 
     async fn default_tools_for_actor(&self) -> Result<Vec<ToolSpec>> {

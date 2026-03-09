@@ -37,8 +37,8 @@ impl BorgRuntime {
         let actor_context_manager = ActorContextManager::new(db.clone());
         let llm_resolver = Arc::new(BorgLLMResolver::new(db.clone()));
 
-        let rt = Arc::new_cyclic(|me| {
-            let supervisor = BorgActorManager::new(me.clone());
+        let rt = Arc::new_cyclic(|_me| {
+            let supervisor = BorgActorManager::new(db.clone());
             Self {
                 db: db.clone(),
                 memory,
@@ -105,7 +105,7 @@ impl BorgRuntime {
         if receiver_id.as_str().starts_with("borg:actor:") {
             let actor_id = ActorId::parse(receiver_id.as_str())?;
             self.supervisor()
-                .send_to_actor_record(actor_id, record, self.clone())
+                .notify_running_actor(actor_id, record, self.clone())
                 .await?;
         }
 

@@ -234,13 +234,13 @@ async fn test_actor_context_window_query() {
     );
 
     let window = &res_json["data"]["actor"]["contextWindow"];
-    assert_eq!(window["systemPrompt"], "System prompt here");
     assert!(
-        window["behaviorPrompt"]
+        window["systemPrompt"]
             .as_str()
             .unwrap()
             .contains("Actor messaging protocol:")
     );
+    assert_eq!(window["behaviorPrompt"], "System prompt here");
 
     let messages = window["orderedMessages"].as_array().unwrap();
     assert!(messages.len() >= 2);

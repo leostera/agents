@@ -1,6 +1,6 @@
 use async_graphql::{Error, ErrorExtensions, Result as GqlResult};
 use borg_db::BorgDb;
-use borg_exec::BorgActorManager;
+use borg_exec::{BorgActorManager, BorgRuntime};
 use borg_memory::MemoryStore;
 use std::sync::Arc;
 
@@ -16,17 +16,24 @@ pub struct BorgGqlData {
     pub(crate) db: BorgDb,
     pub(crate) memory: MemoryStore,
     pub(crate) supervisor: Arc<BorgActorManager>,
+    pub(crate) runtime: Option<Arc<BorgRuntime>>,
     default_page_size: usize,
     max_page_size: usize,
 }
 
 impl BorgGqlData {
     /// Creates a new GraphQL resolver context.
-    pub fn new(db: BorgDb, memory: MemoryStore, supervisor: Arc<BorgActorManager>) -> Self {
+    pub fn new(
+        db: BorgDb,
+        memory: MemoryStore,
+        supervisor: Arc<BorgActorManager>,
+        runtime: Option<Arc<BorgRuntime>>,
+    ) -> Self {
         Self {
             db,
             memory,
             supervisor,
+            runtime,
             default_page_size: DEFAULT_PAGE_SIZE,
             max_page_size: MAX_PAGE_SIZE,
         }

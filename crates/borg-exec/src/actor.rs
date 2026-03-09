@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info};
 
@@ -14,21 +14,6 @@ use borg_db::BorgDb;
 use crate::mailbox::ActorCommand;
 use crate::runtime::BorgRuntime;
 
-#[derive(Clone)]
-pub struct ActorHandle {
-    pub actor_id: ActorId,
-    pub mailbox: mpsc::Sender<ActorCommand>,
-    pub task: Arc<Mutex<Option<JoinHandle<()>>>>,
-}
-
-impl ActorHandle {
-    pub async fn abort(&self) {
-        if let Some(handle) = self.task.lock().await.take() {
-            handle.abort();
-        }
-    }
-}
-
 pub struct Actor {
     pub actor_id: ActorId,
     pub workspace_id: WorkspaceId,
@@ -38,51 +23,53 @@ pub struct Actor {
     pub thread: ActorThread<BorgToolCall, BorgToolResult>,
 }
 
+fn _assert_send() {
+    fn is_send<T: Send>() {}
+    is_send::<ActorId>();
+    is_send::<WorkspaceId>();
+    is_send::<BorgDb>();
+    is_send::<Arc<BorgRuntime>>();
+    is_send::<Agent<BorgToolCall, BorgToolResult>>();
+    is_send::<ActorThread<BorgToolCall, BorgToolResult>>();
+    is_send::<Actor>();
+}
 impl Actor {
-    pub async fn spawn(
+    pub fn spawn(
         actor_id: ActorId,
         workspace_id: WorkspaceId,
         runtime: Arc<BorgRuntime>,
-    ) -> Result<ActorHandle> {
+    ) -> Result<(mpsc::Sender<ActorCommand>, JoinHandle<Result<()>>)> {
         let (tx, rx) = mpsc::channel(100);
-        let actor_id_clone = actor_id.clone();
-        let db = runtime.db.clone();
-
-        let actor = Self::new(actor_id.clone(), workspace_id, db, runtime).await?;
-
-        let task_handle = Arc::new(Mutex::new(None));
-        let task_handle_inner = task_handle.clone();
 
         let task = tokio::spawn(async move {
+            let actor = Self::new(actor_id.clone(), workspace_id, runtime).await?;
+            let actor_id_clone = actor_id.clone();
             if let Err(err) = actor.run(rx).await {
                 error!(actor_id = %actor_id_clone, error = %err, "actor failed");
+                Err(err)
+            } else {
+                Ok(())
             }
         });
 
-        *task_handle_inner.lock().await = Some(task);
-
-        Ok(ActorHandle {
-            actor_id,
-            mailbox: tx,
-            task: task_handle,
-        })
+        Ok((tx, task))
     }
 
     async fn new(
         actor_id: ActorId,
         workspace_id: WorkspaceId,
-        db: BorgDb,
         runtime: Arc<BorgRuntime>,
     ) -> Result<Self> {
         let agent = runtime
             .actor_context_manager
             .resolve_agent_for_turn(&actor_id)
             .await?;
+
         let mut thread = ActorThread::new(
             actor_id.clone(),
             workspace_id.clone(),
             agent.clone(),
-            db.clone(),
+            runtime.db.clone(),
         )
         .await?;
 
@@ -95,7 +82,7 @@ impl Actor {
         Ok(Self {
             actor_id,
             workspace_id,
-            db,
+            db: runtime.db.clone(),
             runtime,
             agent,
             thread,

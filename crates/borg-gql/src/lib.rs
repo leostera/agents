@@ -57,10 +57,15 @@ pub struct BorgGqlServer {
 
 impl BorgGqlServer {
     /// Creates a GraphQL server from runtime stores.
-    pub fn new(db: BorgDb, memory: MemoryStore, supervisor: Arc<BorgActorManager>) -> Self {
+    pub fn new(
+        db: BorgDb,
+        memory: MemoryStore,
+        supervisor: Arc<BorgActorManager>,
+        runtime: Arc<BorgRuntime>,
+    ) -> Self {
         Self {
             schema: Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
-                .data(BorgGqlData::new(db, memory, supervisor))
+                .data(BorgGqlData::new(db, memory, supervisor, Some(runtime)))
                 .limit_depth(100)
                 .limit_complexity(4_000)
                 .finish(),
@@ -221,7 +226,12 @@ pub struct BorgHttpServer {
 
 impl BorgHttpServer {
     pub fn new(bind: String, runtime: Arc<BorgRuntime>, supervisor: Arc<BorgActorManager>) -> Self {
-        let gql_server = BorgGqlServer::new(runtime.db.clone(), runtime.memory.clone(), supervisor);
+        let gql_server = BorgGqlServer::new(
+            runtime.db.clone(),
+            runtime.memory.clone(),
+            supervisor,
+            runtime.clone(),
+        );
         let ports_supervisor = BorgPortsSupervisor::new(runtime.clone());
         Self {
             bind,
