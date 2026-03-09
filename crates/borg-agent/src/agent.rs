@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::marker::PhantomData;
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::debug;
 use tracing::info;
 use tracing::{Instrument, error, info_span, warn};
 use uuid::Uuid;
@@ -226,7 +227,10 @@ where
                     model = req.model.as_str()
                 );
                 let assistant_message = match provider.chat(&req).instrument(llm_call_span).await {
-                    Ok(message) => message,
+                    Ok(message) => {
+                        debug!(target: "borg_agent", actor_id = %actor_thread.actor_id, message = ?message, "llm_provider_response");
+                        message
+                    }
                     Err(err) => {
                         return finish_turn(
                             actor_thread,

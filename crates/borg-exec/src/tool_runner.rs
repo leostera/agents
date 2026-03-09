@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use borg_agent::{
     BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
-    ToolchainBuilder, build_actor_admin_toolchain,
+    ToolchainBuilder, build_actor_admin_toolchain, default_actor_admin_tool_specs,
 };
 use borg_codemode::{CodeModeContext, CodeModeRuntime, build_code_mode_toolchain_with_context};
 use borg_core::{ActorId, EndpointUri, MessagePayload};
@@ -63,6 +63,7 @@ pub fn default_exec_admin_tool_specs() -> Vec<ToolSpec> {
     let mut specs = Vec::new();
     specs.extend(default_port_admin_tool_specs());
     specs.extend(default_actor_messaging_tool_specs());
+    specs.extend(default_actor_admin_tool_specs());
     specs.extend(
         default_provider_admin_tool_specs()
             .into_iter()

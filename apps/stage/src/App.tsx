@@ -40,6 +40,7 @@ import {
   Plus,
   Shield,
   Terminal,
+  Trash2,
   User2,
 } from "lucide-react";
 import React from "react";
@@ -56,6 +57,30 @@ import ReactFlow, {
   type NodeTypes,
   Position,
 } from "reactflow";
+import { ContextView } from "./components/ContextView";
+import { MessageBubble } from "./components/MessageBubble";
+import {
+  ActorContextWindow,
+  ActorDetailsDraft,
+  ActorMailbox,
+  ActorSummary,
+  ActorTab,
+  CreateActorDraft,
+  MailboxEntry,
+  MailboxMessage,
+  PortDetailsDraft,
+  PortSummary,
+  ProviderInfo,
+  RuntimeStatus,
+  StageActorMailboxResponse,
+  StageActorsResponse,
+  StageDeleteActorResponse,
+  StagePortsResponse,
+  StageProvidersResponse,
+  StageUpsertActorResponse,
+  StageUpsertPortActorBindingResponse,
+  StageUpsertPortResponse,
+} from "./types";
 
 const STAGE_QUERY_ACTORS = `
   query StageActors($first: Int!) {
@@ -197,261 +222,14 @@ const STAGE_QUERY_PORTS = `
   }
 `;
 
-type RuntimeStatus = "checking" | "online" | "offline";
-
-type ActorSummary = {
-  id: string;
-  name: string;
-  systemPrompt: string;
-  provider: string;
-  model: string;
-  status: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-type MailboxMessage = {
-  id: string;
-  createdAt: string;
-  messageType: string;
-  role: string | null;
-  text: string | null;
-  payload: unknown;
-};
-
-type ActorMailbox = {
-  actorId: string;
-  actorName: string;
-  actorStatus: string;
-  messages: MailboxMessage[];
-};
-
-type CreateActorDraft = {
-  actorId: string;
-  name: string;
-  provider: string;
-  model: string;
-  status: ActorStatusValue;
-  systemPrompt: string;
-};
-
-type StageActorsResponse = {
-  actors: {
-    edges: Array<{
-      node: {
-        id: string;
-        name: string;
-        model: string | null;
-        systemPrompt: string;
-        status: string;
-        createdAt: string;
-        updatedAt: string;
-      };
-    }>;
-  };
-};
-
-type StageActorMailboxResponse = {
-  actor: {
-    id: string;
-    name: string;
-    status: string;
-    messages: {
-      edges: Array<{
-        node: {
-          id: string;
-          createdAt: string;
-          messageType: string;
-          role: string | null;
-          text: string | null;
-          payload: unknown;
-        };
-      }>;
-    };
-  } | null;
-};
-
-type StageUpsertActorResponse = {
-  upsertActor: {
-    id: string;
-    name: string;
-    status: string;
-  };
-};
-
-type StageDeleteActorResponse = {
-  deleteActor: boolean;
-};
-
-type StageUpsertPortResponse = {
-  upsertPort: {
-    id: string;
-    name: string;
-    provider: string;
-    enabled: boolean;
-    allowsGuests: boolean;
-    assignedActorId: string | null;
-    settings: unknown;
-  };
-};
-
-type StageUpsertPortActorBindingResponse = {
-  upsertPortActorBinding: {
-    id: string;
-    conversationKey: string;
-    actorId: string | null;
-  };
-};
-
-type StageProvidersResponse = {
-  providers: {
-    edges: Array<{
-      node: {
-        id: string;
-        provider: string;
-        providerKind: string;
-        enabled: boolean;
-        defaultTextModel: string | null;
-        defaultModel: {
-          name: string;
-        } | null;
-        models: Array<{
-          name: string;
-        }>;
-      };
-    }>;
-  };
-};
-
-type ProviderInfo = {
-  id: string;
-  provider: string;
-  providerKind: string;
-  enabled: boolean;
-  tokensUsed: number;
-  baseUrl: string | null;
-  defaultTextModel: string | null;
-  defaultModel: string | null;
-  models: string[];
-};
-
-type PortSummary = {
-  id: string;
-  name: string;
-  provider: string;
-  enabled: boolean;
-  allowsGuests: boolean;
-  assignedActorId: string | null;
-  settings: unknown;
-  bindings: Array<{
-    id: string;
-    conversationKey: string;
-    actorId: string;
-  }>;
-  actorBindings: Array<{
-    id: string;
-    conversationKey: string;
-    actorId: string | null;
-  }>;
-  actorIds: string[];
-};
-
-type StagePortsResponse = {
-  ports: {
-    edges: Array<{
-      node: {
-        id: string;
-        name: string;
-        provider: string;
-        enabled: boolean;
-        allowsGuests: boolean;
-        assignedActorId: string | null;
-        settings: unknown;
-        bindings: {
-          edges: Array<{
-            node: {
-              id: string;
-              conversationKey: string;
-              actorId: string;
-            };
-          }>;
-        };
-        actorBindings: {
-          edges: Array<{
-            node: {
-              id: string;
-              conversationKey: string;
-              actorId: string | null;
-            };
-          }>;
-        };
-      };
-    }>;
-  };
-};
-
 type ActorNodeData = {
   actor: ActorSummary;
   onToggleStatus: (actorId: string, newStatus: string) => void;
 };
 
-type ActorTab = "details" | "mailbox" | "context";
-type ActorDetailsDraft = {
-  name: string;
-  provider: string;
-  model: string;
-  status: ActorStatusValue;
-  systemPrompt: string;
-};
-
-type PortDetailsDraft = {
-  name: string;
-  provider: string;
-  enabled: boolean;
-  allowsGuests: boolean;
-  assignedActorId: string;
-  settings: string;
-};
-
 type ToolField = {
   key: string;
   value: string;
-};
-
-type MailboxEntry =
-  | {
-      kind: "message";
-      key: string;
-      message: MailboxMessage;
-    }
-  | {
-      kind: "tool";
-      key: string;
-      role: string;
-      createdAt: string;
-      toolName: string;
-      fields: Array<{ key: string; value: string }>;
-      sourceType: "tool_call" | "tool_result";
-    };
-
-type ActorContextWindow = {
-  systemPrompt: string;
-  behaviorPrompt: string;
-  availableTools: Array<{
-    name: string;
-    description: string;
-    parameters: any;
-  }>;
-  availableCapabilities: Array<{
-    name: string;
-    description: string;
-  }>;
-  orderedMessages: Array<{
-    type: string;
-    content: string;
-    role?: string | null;
-    toolCalls?: any[] | null;
-  }>;
 };
 
 type ToolMailboxEntry = Extract<MailboxEntry, { kind: "tool" }>;
@@ -1050,139 +828,6 @@ function summarizeToolEntry(entry: ToolMailboxEntry): string {
   return `${first} (+${entry.fields.length - 1} fields)`;
 }
 
-function ContextView({ window }: { window: ActorContextWindow }) {
-  return (
-    <div className="flex h-full flex-col overflow-hidden bg-white">
-      <ScrollArea className="flex-1">
-        <div className="divide-y divide-slate-100">
-          <Collapsible className="group overflow-hidden">
-            <CollapsibleTrigger className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-slate-50">
-              <div className="flex items-center gap-3">
-                <Shield className="h-4 w-4 text-slate-400" />
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                  System Prompt
-                </span>
-              </div>
-              <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-data-[state=open]:rotate-180" />
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="bg-slate-50/50 p-4">
-                <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-slate-700">
-                  {window.systemPrompt || "(empty)"}
-                </pre>
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-
-          <Collapsible className="group overflow-hidden">
-            <CollapsibleTrigger className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-slate-50">
-              <div className="flex items-center gap-3">
-                <User2 className="h-4 w-4 text-slate-400" />
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                  Actor Prompt
-                </span>
-              </div>
-              <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-data-[state=open]:rotate-180" />
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="bg-slate-50/50 p-4">
-                <pre className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-slate-700">
-                  {window.behaviorPrompt || "(empty)"}
-                </pre>
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-
-          <Collapsible className="group overflow-hidden">
-            <CollapsibleTrigger className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-slate-50">
-              <div className="flex items-center gap-3">
-                <Terminal className="h-4 w-4 text-amber-500" />
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                  Available Tools ({window.availableTools.length})
-                </span>
-              </div>
-              <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-data-[state=open]:rotate-180" />
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="divide-y divide-slate-50 bg-slate-50/30">
-                {window.availableTools.map((tool) => (
-                  <Collapsible
-                    key={tool.name}
-                    className="group/tool overflow-hidden"
-                  >
-                    <CollapsibleTrigger className="flex w-full items-center justify-between pl-11 pr-4 py-2 text-left hover:bg-amber-50/50">
-                      <span className="font-mono text-[11px] font-semibold text-amber-700">
-                        {tool.name}
-                      </span>
-                      <Plus className="h-3.5 w-3.5 text-slate-300 transition-transform group-data-[state=open]/tool:rotate-45" />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="bg-white px-11 py-3">
-                      <p className="mb-3 text-[11px] leading-relaxed text-slate-600">
-                        {tool.description}
-                      </p>
-                      <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
-                        <pre className="font-mono text-[10px] text-slate-500">
-                          {JSON.stringify(tool.parameters, null, 2)}
-                        </pre>
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
-                ))}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-
-          <div className="p-4">
-            <div className="mb-4 flex items-center gap-3">
-              <HistoryIcon className="h-4 w-4 text-slate-400" />
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
-                Message History ({window.orderedMessages.length} turns)
-              </span>
-            </div>
-            <div className="space-y-3">
-              {window.orderedMessages.map((msg, i) => (
-                <div
-                  key={i}
-                  className={`rounded-2xl border p-3 shadow-sm ${
-                    msg.type === "user"
-                      ? "border-sky-100 bg-sky-50/20"
-                      : msg.type === "assistant"
-                        ? "border-slate-200 bg-white"
-                        : "border-slate-100 bg-slate-50/50"
-                  }`}
-                >
-                  <div className="mb-1.5 flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-tight text-slate-400">
-                    <span>{msg.role || msg.type}</span>
-                  </div>
-                  <p className="whitespace-pre-wrap text-[12px] leading-relaxed text-slate-700">
-                    {msg.content}
-                  </p>
-                  {msg.toolCalls?.map((call: any) => (
-                    <div
-                      key={call.id}
-                      className="mt-3 rounded-xl border border-amber-100 bg-amber-50/30 p-3 font-mono text-[10px]"
-                    >
-                      <div className="mb-2 flex items-center gap-2">
-                        <Terminal className="h-3 w-3 text-amber-600" />
-                        <span className="font-bold text-amber-700">
-                          CALL: {call.name}
-                        </span>
-                      </div>
-                      <pre className="text-slate-600">
-                        {JSON.stringify(call.arguments, null, 2)}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </ScrollArea>
-    </div>
-  );
-}
-
 function ActorNodeCard({ data, selected }: NodeProps<ActorNodeData>) {
   const actor = data.actor;
   const onToggleStatus = data.onToggleStatus;
@@ -1384,8 +1029,8 @@ export function App() {
 
             const messages =
               data.actor?.messages.edges
-                .map((edge) => edge.node)
-                .map((message) => ({
+                .map((edge: any) => edge.node)
+                .map((message: any) => ({
                   id: message.id,
                   createdAt: message.createdAt,
                   messageType: message.messageType,
@@ -1393,7 +1038,7 @@ export function App() {
                   text: message.text,
                   payload: message.payload,
                 }))
-                .filter((message) => !isActorEventMessage(message)) ?? [];
+                .filter((message: any) => !isActorEventMessage(message)) ?? [];
             return [actorId, messages];
           } catch {
             return [actorId, []];
@@ -1423,8 +1068,8 @@ export function App() {
       );
 
       const nextActors: ActorSummary[] = data.actors.edges
-        .map((edge) => edge.node)
-        .map((node) => {
+        .map((edge: any) => edge.node)
+        .map((node: any) => {
           const runtimeHints = parseRuntimeHintsFromPrompt(node.systemPrompt);
           return {
             id: node.id,
@@ -1527,8 +1172,8 @@ export function App() {
       }
 
       const messages = data.actor.messages.edges
-        .map((messageEdge) => messageEdge.node)
-        .map((message) => ({
+        .map((messageEdge: any) => messageEdge.node)
+        .map((message: any) => ({
           id: message.id,
           createdAt: message.createdAt,
           messageType: message.messageType,
@@ -1536,8 +1181,10 @@ export function App() {
           text: message.text,
           payload: message.payload,
         }))
-        .filter((message) => !isActorEventMessage(message))
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+        .filter((message: any) => !isActorEventMessage(message))
+        .sort((left: any, right: any) =>
+          left.createdAt.localeCompare(right.createdAt)
+        );
 
       setMailbox({
         actorId: data.actor.id,
@@ -1614,10 +1261,10 @@ export function App() {
         variables: { first: 50, bindingsFirst: 200, actorBindingsFirst: 200 },
       });
 
-      const nextPorts: PortSummary[] = data.ports.edges.map((edge) => {
+      const nextPorts: PortSummary[] = data.ports.edges.map((edge: any) => {
         const node = edge.node;
         const actorIds = new Set<string>();
-        const bindings = node.bindings.edges.map((binding) => {
+        const bindings = node.bindings.edges.map((binding: any) => {
           actorIds.add(binding.node.actorId);
           return {
             id: binding.node.id,
@@ -1625,7 +1272,7 @@ export function App() {
             actorId: binding.node.actorId,
           };
         });
-        const actorBindings = node.actorBindings.edges.map((binding) => {
+        const actorBindings = node.actorBindings.edges.map((binding: any) => {
           if (binding.node.actorId) {
             actorIds.add(binding.node.actorId);
           }
@@ -2046,6 +1693,30 @@ export function App() {
     providers,
     actorDetailsDraft,
   ]);
+
+  const clearMailbox = React.useCallback(async () => {
+    if (!selectedActorId) {
+      return;
+    }
+    if (
+      !confirm(
+        `Are you sure you want to clear the mailbox for ${selectedActorId}?`
+      )
+    ) {
+      return;
+    }
+
+    setError(null);
+    try {
+      await requestGraphQL<any, any>({
+        query: `mutation($id: Uri!) { deleteActorMessages(id: $id) }`,
+        variables: { id: selectedActorId },
+      });
+      await loadMailbox(selectedActorId);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }, [loadMailbox, selectedActorId]);
 
   const sendMessage = React.useCallback(async () => {
     if (sendInFlightRef.current) {
@@ -2846,19 +2517,33 @@ export function App() {
 
     for (const port of ports) {
       const sourceId = `stage:port:${port.id}`;
+      const stroke = colorForProvider(port.provider);
+
+      // Port -> Assigned Actor
+      if (port.assignedActorId && actorIds.has(port.assignedActorId)) {
+        allEdges.push({
+          id: `stage:port-assigned:${port.id}:${port.assignedActorId}`,
+          source: sourceId,
+          target: port.assignedActorId,
+          style: { stroke, strokeWidth: 2.5 },
+          animated: port.enabled,
+          label: "assigned",
+          labelStyle: { fontSize: "8px", fill: stroke, fontWeight: "bold" },
+        });
+      }
+
+      // Port -> Historical Actors (from bindings)
       for (const actorId of port.actorIds) {
-        if (!actorIds.has(actorId)) {
+        if (!actorIds.has(actorId) || actorId === port.assignedActorId) {
           continue;
         }
 
-        const actor = actorById.get(actorId);
-        const stroke = colorForProvider(actor?.provider ?? port.provider);
         allEdges.push({
-          id: `stage:port:${port.id}:${actorId}`,
+          id: `stage:port-bound:${port.id}:${actorId}`,
           source: sourceId,
           target: actorId,
-          style: { stroke, strokeWidth: 1.5 },
-          animated: port.enabled,
+          style: { stroke, strokeWidth: 1.5, strokeDasharray: "5,5" },
+          animated: false,
         });
       }
     }
@@ -3527,7 +3212,7 @@ export function App() {
                   <TabsContent value="mailbox" className="mt-0 min-h-0 flex-1">
                     <div className="flex h-full min-h-0 flex-col">
                       <ScrollArea className="min-h-0 flex-1 px-3 py-3">
-                        <div className="space-y-2">
+                        <div className="space-y-4">
                           {isLoadingMailbox && selectedMessages.length === 0 ? (
                             <p className="text-xs text-slate-500">
                               Loading mailbox...
@@ -3600,66 +3285,13 @@ export function App() {
                                 );
                               }
 
-                              const message = entry.message;
-                              const normalizedRole = (
-                                message.role ?? ""
-                              ).toLowerCase();
-                              const isUser = normalizedRole === "user";
-                              const isAssistant =
-                                normalizedRole === "assistant";
-                              const roleLabel = isAssistant
-                                ? (selectedActor?.name ?? "assistant")
-                                : (message.role ?? "system");
-                              const parsedPayload = parseJsonPayload(
-                                message.payload
-                              );
-                              const hasText =
-                                (message.text ?? "").trim().length > 0;
-
                               return (
-                                <article
+                                <MessageBubble
                                   key={entry.key}
-                                  className={`max-w-[94%] rounded-2xl border px-3 py-2 text-xs shadow-sm ${
-                                    isUser
-                                      ? "ml-auto border-sky-300 bg-sky-50"
-                                      : isAssistant
-                                        ? "mr-auto border-emerald-300 bg-emerald-50"
-                                        : "mr-auto border-slate-300 bg-slate-50"
-                                  }`}
-                                >
-                                  <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-slate-500">
-                                    <span>{roleLabel}</span>
-                                    <span>{formatDate(message.createdAt)}</span>
-                                  </div>
-
-                                  {hasText ? (
-                                    <p className="whitespace-pre-wrap text-[12px] text-slate-700">
-                                      {message.text}
-                                    </p>
-                                  ) : parsedPayload !== null &&
-                                    parsedPayload !== undefined ? (
-                                    typeof parsedPayload === "object" ? (
-                                      <div className="rounded-lg border border-slate-200 bg-white p-2">
-                                        <JsonTreeViewer
-                                          value={parsedPayload}
-                                          defaultExpandedDepth={1}
-                                        />
-                                      </div>
-                                    ) : (
-                                      <p className="whitespace-pre-wrap text-[12px] text-slate-700">
-                                        {String(parsedPayload)}
-                                      </p>
-                                    )
-                                  ) : (
-                                    <p className="text-[12px] text-slate-500">
-                                      (empty payload)
-                                    </p>
-                                  )}
-
-                                  <p className="mt-1 text-[10px] text-slate-500">
-                                    {message.messageType}
-                                  </p>
-                                </article>
+                                  message={entry.message}
+                                  actorName={selectedActor?.name}
+                                  formatDate={formatDate}
+                                />
                               );
                             })
                           ) : (
@@ -3689,7 +3321,18 @@ export function App() {
                           className="min-h-24"
                           placeholder="Type a message to this actor (Cmd/Ctrl + Enter to send)"
                         />
-                        <div className="flex justify-end">
+                        <div className="flex justify-between items-center">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void clearMailbox()}
+                            title="Clear Mailbox"
+                            className="text-slate-500 hover:text-rose-600 hover:bg-rose-50 border-slate-200"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                            Clear Mailbox
+                          </Button>
                           <Button
                             type="button"
                             onClick={() => void sendMessage()}

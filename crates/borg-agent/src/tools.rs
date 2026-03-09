@@ -12,40 +12,36 @@ use serde_json::Value;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct BorgToolCall {
-    encoded_json: String,
+    value: Value,
 }
 
 impl BorgToolCall {
     pub fn to_value(&self) -> Result<Value> {
-        Ok(serde_json::from_str(&self.encoded_json)?)
+        Ok(self.value.clone())
     }
 }
 
 impl From<Value> for BorgToolCall {
     fn from(value: Value) -> Self {
-        Self {
-            encoded_json: value.to_string(),
-        }
+        Self { value }
     }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct BorgToolResult {
-    encoded_json: String,
+    value: Value,
 }
 
 impl BorgToolResult {
     pub fn to_value(&self) -> Result<Value> {
-        Ok(serde_json::from_str(&self.encoded_json)?)
+        Ok(self.value.clone())
     }
 }
 
 impl From<Value> for BorgToolResult {
     fn from(value: Value) -> Self {
-        Self {
-            encoded_json: value.to_string(),
-        }
+        Self { value }
     }
 }
 

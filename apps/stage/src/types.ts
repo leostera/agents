@@ -127,3 +127,125 @@ export type ActorContextWindow = {
     toolCalls?: any[] | null;
   }>;
 };
+
+export type StageActorsResponse = {
+  actors: {
+    edges: Array<{
+      node: {
+        id: string;
+        name: string;
+        model: string | null;
+        systemPrompt: string;
+        status: string;
+        createdAt: string;
+        updatedAt: string;
+      };
+    }>;
+  };
+};
+
+export type StageActorMailboxResponse = {
+  actor: {
+    id: string;
+    name: string;
+    status: string;
+    messages: {
+      edges: Array<{
+        node: {
+          id: string;
+          createdAt: string;
+          messageType: string;
+          role: string | null;
+          text: string | null;
+          payload: unknown;
+        };
+      }>;
+    };
+  } | null;
+};
+
+export type StageUpsertActorResponse = {
+  upsertActor: {
+    id: string;
+    name: string;
+    status: string;
+  };
+};
+
+export type StageDeleteActorResponse = {
+  deleteActor: boolean;
+};
+
+export type StageUpsertPortResponse = {
+  upsertPort: {
+    id: string;
+    name: string;
+    provider: string;
+    enabled: boolean;
+    allowsGuests: boolean;
+    assignedActorId: string | null;
+    settings: unknown;
+  };
+};
+
+export type StageUpsertPortActorBindingResponse = {
+  upsertPortActorBinding: {
+    id: string;
+    conversationKey: string;
+    actorId: string | null;
+  };
+};
+
+export type StageProvidersResponse = {
+  providers: {
+    edges: Array<{
+      node: {
+        id: string;
+        provider: string;
+        providerKind: string;
+        enabled: boolean;
+        defaultTextModel: string | null;
+        defaultModel: {
+          name: string;
+        } | null;
+        models: Array<{
+          name: string;
+        }>;
+      };
+    }>;
+  };
+};
+
+export type StagePortsResponse = {
+  ports: {
+    edges: Array<{
+      node: {
+        id: string;
+        name: string;
+        provider: string;
+        enabled: boolean;
+        allowsGuests: boolean;
+        assignedActorId: string | null;
+        settings: unknown;
+        bindings: {
+          edges: Array<{
+            node: {
+              id: string;
+              conversationKey: string;
+              actorId: string;
+            };
+          }>;
+        };
+        actorBindings: {
+          edges: Array<{
+            node: {
+              id: string;
+              conversationKey: string;
+              actorId: string | null;
+            };
+          }>;
+        };
+      };
+    }>;
+  };
+};

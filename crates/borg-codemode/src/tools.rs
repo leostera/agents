@@ -15,8 +15,8 @@ struct SearchApisArgs {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ExecuteCodeArgs {
-    hint: String,
-    code: String,
+    hint: serde_json::Value,
+    code: serde_json::Value,
 }
 
 pub fn default_tool_specs() -> Vec<ToolSpec> {
@@ -131,8 +131,20 @@ pub fn build_code_mode_toolchain_with_context(
                 let runtime = runtime.clone();
                 let context = context.clone();
                 async move {
-                    let _hint = request.arguments.hint;
-                    let code = request.arguments.code.trim().to_string();
+                    let _hint = match request.arguments.hint {
+                        serde_json::Value::String(s) => s,
+                        val => val.to_string(),
+                    };
+                    let code = match request.arguments.code {
+                        serde_json::Value::String(s) => s,
+                        val => val
+                            .get("code")
+                            .or_else(|| val.get("source"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| val.to_string()),
+                    };
+                    let code = code.trim().to_string();
                     if code.is_empty() {
                         return Err(anyhow!("CodeMode-executeCode tool requires code"));
                     }
