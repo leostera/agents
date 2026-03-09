@@ -54,9 +54,11 @@ async fn generate_schema_artifacts() -> anyhow::Result<()> {
     let memory = borg_memory::MemoryStore::new(&memory_path, &search_path)?;
     memory.migrate().await?;
 
+    let supervisor = std::sync::Arc::new(borg_exec::BorgActorManager::new(std::sync::Weak::new()));
+
     let schema =
         async_graphql::Schema::build(sdl::QueryRoot, sdl::MutationRoot, sdl::SubscriptionRoot)
-            .data(context::BorgGqlData::new(db, memory))
+            .data(context::BorgGqlData::new(db, memory, supervisor))
             .limit_depth(100)
             .limit_complexity(4_000)
             .finish();

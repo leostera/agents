@@ -6,6 +6,7 @@ use crate::message::{BorgCommand, BorgInput, BorgMessage};
 use crate::port_context::PortContext;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct ActorMailboxEnvelope {
     pub actor_id: String,
     pub user_id: String,
@@ -15,6 +16,7 @@ pub struct ActorMailboxEnvelope {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum ActorMailboxInput {
     Chat {
         text: String,
@@ -30,6 +32,7 @@ pub enum ActorMailboxInput {
     },
 }
 
+#[allow(dead_code)]
 impl ActorMailboxEnvelope {
     pub fn from_borg_message(msg: &BorgMessage) -> Self {
         Self {

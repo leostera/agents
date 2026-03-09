@@ -5,6 +5,7 @@ mod core;
 mod devmode;
 mod files;
 mod llm_calls;
+mod messages;
 mod migrations;
 mod ports;
 mod providers;
@@ -17,7 +18,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::SqlitePool;
 
-use borg_core::Uri;
+use borg_core::{
+    ActorId, CorrelationId, EndpointUri, LlmCallId, MessageId, MessagePayload, PortId,
+    ProcessingState, ProviderId, ToolCallId, ToolCallStatus, Uri, WorkspaceId,
+};
 pub use schedule::{CreateScheduleJobInput, UpdateScheduleJobInput};
 
 #[derive(Clone)]
@@ -46,6 +50,105 @@ impl BorgDb {
     }
 }
 
+// ---------------------------------------------------------------------------
+// RFD0033 Canonical Record Types
+// ---------------------------------------------------------------------------
+
+/// Canonical message record as stored in the database.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MessageRecord {
+    pub message_id: MessageId,
+    pub workspace_id: WorkspaceId,
+    pub sender_id: EndpointUri,
+    pub receiver_id: EndpointUri,
+    pub payload: MessagePayload,
+    pub conversation_id: Option<String>,
+    pub in_reply_to_message_id: Option<MessageId>,
+    pub correlation_id: Option<CorrelationId>,
+    pub delivered_at: DateTime<Utc>,
+    pub processing_state: ProcessingState,
+    pub processed_at: Option<DateTime<Utc>>,
+    pub failed_at: Option<DateTime<Utc>>,
+    pub failure_code: Option<String>,
+    pub failure_message: Option<String>,
+}
+
+/// Canonical tool call record as stored in the database.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ToolCallRecord {
+    pub tool_call_id: ToolCallId,
+    pub workspace_id: WorkspaceId,
+    pub actor_id: ActorId,
+    pub message_id: MessageId,
+    pub tool_name: String,
+    pub request_json: Value,
+    pub result_json: Option<Value>,
+    pub status: ToolCallStatus,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
+/// Canonical LLM call record as stored in the database.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LlmCallRecord {
+    pub llm_call_id: LlmCallId,
+    pub workspace_id: WorkspaceId,
+    pub actor_id: ActorId,
+    pub message_id: MessageId,
+    pub provider_id: ProviderId,
+    pub model: String,
+    pub request_json: Value,
+    pub response_json: Option<Value>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ActorRecord {
+    pub actor_id: ActorId,
+    pub workspace_id: WorkspaceId,
+    pub name: String,
+    pub system_prompt: String,
+    pub actor_prompt: String,
+    pub default_provider_id: Option<ProviderId>,
+    pub model: Option<String>,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PortRecord {
+    pub port_id: PortId,
+    pub workspace_id: WorkspaceId,
+    pub provider: String,
+    pub port_name: String,
+    pub enabled: bool,
+    pub allows_guests: bool,
+    pub assigned_actor_id: Option<ActorId>,
+    pub settings: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PortBindingRecord {
+    pub workspace_id: WorkspaceId,
+    pub port_id: PortId,
+    pub conversation_key: String,
+    pub actor_id: ActorId,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Remaining Core Types
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ProviderRecord {
     pub provider: String,
@@ -59,53 +162,6 @@ pub struct ProviderRecord {
     pub default_audio_model: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PortRecord {
-    pub port_id: Uri,
-    pub provider: String,
-    pub port_name: String,
-    pub enabled: bool,
-    pub allows_guests: bool,
-    pub assigned_actor_id: Option<Uri>,
-    // Legacy compatibility field; prefer assigned_actor_id for all new flows.
-    pub default_actor_id: Option<Uri>,
-    pub settings: Value,
-    pub active_bindings: u64,
-    pub updated_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct LlmCallRecord {
-    pub call_id: String,
-    pub provider: String,
-    pub capability: String,
-    pub model: String,
-    pub success: bool,
-    pub status_code: Option<u16>,
-    pub status_reason: Option<String>,
-    pub http_reason: Option<String>,
-    pub error: Option<String>,
-    pub latency_ms: Option<u64>,
-    pub sent_at: DateTime<Utc>,
-    pub received_at: Option<DateTime<Utc>>,
-    pub request_json: Value,
-    pub response_json: Value,
-    pub response_body: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ToolCallRecord {
-    pub call_id: String,
-    pub actor_id: String,
-    pub tool_name: String,
-    pub arguments_json: Value,
-    pub output_json: Value,
-    pub success: bool,
-    pub error: Option<String>,
-    pub duration_ms: Option<u64>,
-    pub called_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -163,18 +219,6 @@ pub struct AppSecretRecord {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ActorRecord {
-    pub actor_id: Uri,
-    pub name: String,
-    pub model: Option<String>,
-    pub default_provider_id: Option<String>,
-    pub system_prompt: String,
-    pub status: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FileRecord {
     pub file_id: Uri,
     pub backend: String,
@@ -187,29 +231,6 @@ pub struct FileRecord {
     pub deleted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ActorMailboxRecord {
-    pub actor_message_id: Uri,
-    pub sender_actor_id: Option<Uri>,
-    pub actor_id: Uri,
-    pub payload: Value,
-    pub status: String,
-    pub reply_to_actor_id: Option<Uri>,
-    pub reply_to_message_id: Option<Uri>,
-    pub error: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub finished_at: Option<DateTime<Utc>>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ActorMessageRecord {
-    pub message_id: Uri,
-    pub actor_id: Uri,
-    pub payload: Value,
-    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

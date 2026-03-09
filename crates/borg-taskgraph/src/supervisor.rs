@@ -1,5 +1,5 @@
 use anyhow::Result;
-use borg_core::Uri;
+use borg_core::{ActorId, Uri};
 use borg_db::BorgDb;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -38,7 +38,7 @@ pub struct TaskDispatch {
     pub title: String,
     pub description: String,
     pub definition_of_done: String,
-    pub assignee_actor_id: Uri,
+    pub assignee_actor_id: ActorId,
 }
 
 impl TryFrom<crate::model::TaskRecord> for TaskDispatch {
@@ -51,7 +51,7 @@ impl TryFrom<crate::model::TaskRecord> for TaskDispatch {
             title: value.title,
             description: value.description,
             definition_of_done: value.definition_of_done,
-            assignee_actor_id: Uri::parse(&value.assignee_actor_id).map_err(|_| {
+            assignee_actor_id: ActorId::parse(&value.assignee_actor_id).map_err(|_| {
                 anyhow::anyhow!(
                     "task.invalid_assignee_actor_id: {}",
                     value.assignee_actor_id
@@ -177,18 +177,18 @@ impl TaskGraphSupervisor {
 
         let assignee_actor_ids = store.list_assignee_actor_ids().await?;
         for assignee_actor_id in assignee_actor_ids {
-            let assignee_actor_uri = match Uri::parse(&assignee_actor_id) {
-                Ok(uri) => uri,
+            let assignee_actor_id_parsed = match ActorId::parse(&assignee_actor_id) {
+                Ok(id) => id,
                 Err(_) => {
                     warn!(
                         target: "borg_taskgraph",
                         assignee_actor_id = %assignee_actor_id,
-                        "skipping task dispatch for invalid assignee actor uri"
+                        "skipping task dispatch for invalid assignee actor id"
                     );
                     continue;
                 }
             };
-            let assignee_exists = match store.db().get_actor(&assignee_actor_uri).await {
+            let assignee_exists = match store.db().get_actor(&assignee_actor_id_parsed).await {
                 Ok(Some(_)) => true,
                 Ok(None) => false,
                 Err(err) => {

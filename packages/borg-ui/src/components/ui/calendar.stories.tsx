@@ -1,4 +1,4 @@
-import type { Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import { addDays } from "date-fns";
 import { useState } from "react";
 import type { DateRange } from "react-day-picker";

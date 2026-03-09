@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use borg_core::Uri;
+use borg_core::{ActorId, PortId};
 use borg_exec::{ActorOutput, RuntimeToolCall, RuntimeToolResult};
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -41,12 +41,12 @@ pub enum Status {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PortConfig {
-    pub port_id: Uri,
+    pub port_id: PortId,
     pub port_name: String,
     pub provider: Provider,
     pub status: Status,
     pub privacy: Privacy,
-    pub assigned_actor_id: Option<Uri>,
+    pub assigned_actor_id: Option<ActorId>,
     pub settings_json: String,
 }
 

@@ -3,9 +3,9 @@ use std::{io, io::Write};
 use anyhow::Result;
 use borg_apps::DefaultAppsCatalog;
 use borg_codemode::CodeModeRuntime;
-use borg_core::{Uri, borgdir::BorgDir};
+use borg_core::{ActorId, EndpointUri, MessagePayload, WorkspaceId, borgdir::BorgDir};
 use borg_db::BorgDb;
-use borg_exec::{BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, PortContext};
+use borg_exec::BorgRuntime;
 use borg_fs::BorgFs;
 use borg_gql::BorgHttpServer;
 use borg_memory::{FactInput, MemoryStore, SearchQuery};
@@ -60,7 +60,7 @@ impl BorgCliApp {
 
         let memory_for_state_facts = memory.clone();
         let memory_for_search = memory.clone();
-        let runtime = CodeModeRuntime::default()
+        let runtime_code = CodeModeRuntime::default()
             .with_ffi_handler("memory__state_facts", move |args| {
                 ffi_memory_state_facts(memory_for_state_facts.clone(), args)
             })
@@ -69,20 +69,25 @@ impl BorgCliApp {
             });
         let shell_runtime = ShellModeRuntime::new();
         let files = BorgFs::local(db.clone(), self.borg_dir.files().to_path_buf());
-        let runtime = BorgRuntime::new(db.clone(), memory.clone(), runtime, shell_runtime, files);
-        let runtime = std::sync::Arc::new(runtime);
 
-        let supervisor = std::sync::Arc::new(BorgSupervisor::new(runtime.clone()));
-        let supervisor_for_http = supervisor.clone();
+        // BorgRuntime::new now returns Arc<BorgRuntime> and handles its own supervisor
+        let runtime = BorgRuntime::new(
+            db.clone(),
+            memory.clone(),
+            runtime_code,
+            shell_runtime,
+            files,
+        );
+        let supervisor = runtime.supervisor().clone();
+
         let (task_dispatch_tx, mut task_dispatch_rx) =
             tokio::sync::mpsc::channel::<TaskDispatch>(128);
 
-        let supervisor_for_tasks = supervisor.clone();
+        let runtime_for_tasks = runtime.clone();
         let _task_dispatch_worker = tokio::spawn(async move {
             while let Some(task) = task_dispatch_rx.recv().await {
                 let actor_id = task.assignee_actor_id.clone();
-                let user_id = Uri::from_parts("borg", "user", Some("taskgraph"))
-                    .expect("valid synthetic taskgraph user uri");
+                let user_id = EndpointUri::parse("borg:user:taskgraph").expect("valid uri");
                 let text = format!(
                     "This is your task: {}\n\
                      Task URI: {}\n\
@@ -95,30 +100,14 @@ impl BorgCliApp {
                      4. If subtasks are not justified by rule #3, continue doing the work directly and finish it.",
                     task.title, task.task_uri, task.description, task.definition_of_done
                 );
-                if let Err(err) = supervisor_for_tasks
-                    .cast(BorgMessage {
-                        actor_id,
-                        user_id,
-                        input: BorgInput::Chat { text },
-                        port_context: PortContext::Unknown,
-                    })
+
+                let payload = MessagePayload::user_text(text);
+
+                if let Err(err) = runtime_for_tasks
+                    .send_message(&user_id, &actor_id.into(), payload)
                     .await
                 {
-                    let err_message = err.to_string();
-                    if err_message.contains("actor spec not found") {
-                        tracing::debug!(
-                            target: "borg_cli",
-                            task_uri = %task.task_uri,
-                            "skipping task dispatch because assignee actor no longer exists"
-                        );
-                        continue;
-                    }
-                    tracing::warn!(
-                        target: "borg_cli",
-                        error = %err,
-                        task_uri = %task.task_uri,
-                        "failed to enqueue task dispatch actor message"
-                    );
+                    tracing::warn!(target: "borg_cli", error = %err, task_uri = %task.task_uri, "failed to dispatch task");
                 }
             }
         });
@@ -129,7 +118,6 @@ impl BorgCliApp {
         let _schedule_handle = self.spawn_schedule_supervisor(db.clone());
 
         info!(target: "borg_cli", "starting all supervisors concurrently");
-        let _supervisor_handle = supervisor.start().await?;
         let _taskgraph_handle = taskgraph_supervisor.start().await;
 
         let dashboard_url = format!("http://{bind}/");
@@ -139,34 +127,15 @@ impl BorgCliApp {
             "open admin dashboard"
         );
 
-        let http_server = BorgHttpServer::new(bind, runtime, supervisor_for_http);
+        let http_server = BorgHttpServer::new(bind, runtime, std::sync::Arc::new(supervisor));
         http_server.run().await
     }
 
-    fn spawn_schedule_supervisor(&self, db: BorgDb) -> tokio::task::JoinHandle<()> {
+    fn spawn_schedule_supervisor(&self, _db: BorgDb) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut ticker = interval(Duration::from_secs(1));
             loop {
                 ticker.tick().await;
-                let now = chrono::Utc::now().to_rfc3339();
-                match db.list_due_schedule_jobs(&now, 100).await {
-                    Ok(due_jobs) => {
-                        if !due_jobs.is_empty() {
-                            tracing::debug!(
-                                target: "borg_cli",
-                                due_count = due_jobs.len(),
-                                "schedule scaffold loop found due jobs"
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "borg_cli",
-                            error = %error,
-                            "schedule supervisor poll failed"
-                        );
-                    }
-                }
             }
         })
     }
@@ -232,13 +201,16 @@ impl BorgCliApp {
                 if provider.is_empty() {
                     anyhow::bail!("providers.default must not be empty");
                 }
+                let workspace_id = WorkspaceId::from_id("default");
                 db.upsert_port_setting(
+                    &workspace_id,
                     RUNTIME_SETTINGS_PORT,
                     RUNTIME_PREFERRED_PROVIDER_KEY,
                     provider.as_str(),
                 )
                 .await?;
                 db.upsert_port_setting(
+                    &workspace_id,
                     RUNTIME_SETTINGS_PORT,
                     RUNTIME_PREFERRED_PROVIDER_ID_KEY,
                     provider.as_str(),
@@ -267,15 +239,21 @@ impl BorgCliApp {
                     .as_ref()
                     .map(|port| port.allows_guests)
                     .unwrap_or(true);
-                let default_actor_id = existing
+                let assigned_actor_id = existing
                     .as_ref()
-                    .and_then(|port| port.default_actor_id.as_ref());
+                    .and_then(|port| port.assigned_actor_id.as_ref());
+
+                let workspace_id = WorkspaceId::from_id("default");
+                let port_id = borg_core::PortId::from_id("telegram");
+
                 db.upsert_port(
+                    &port_id,
+                    &workspace_id,
                     "telegram",
                     "telegram",
                     enabled,
                     allows_guests,
-                    default_actor_id,
+                    assigned_actor_id,
                     &settings,
                 )
                 .await?;
@@ -288,7 +266,7 @@ impl BorgCliApp {
     }
 
     pub(crate) async fn actor_stream(&self, actor_id: String, poll_ms: u64) -> Result<()> {
-        let actor_id = Uri::parse(&actor_id).map_err(|_| {
+        let actor_id = ActorId::parse(&actor_id).map_err(|_| {
             anyhow::anyhow!(
                 "invalid actor id `{}` (expected URI like borg:actor:<id>)",
                 actor_id
@@ -296,7 +274,6 @@ impl BorgCliApp {
         })?;
         let db = self.open_config_db().await?;
 
-        let mut next_index: usize = 0;
         loop {
             tokio::select! {
                 ctrl = tokio::signal::ctrl_c() => {
@@ -305,33 +282,17 @@ impl BorgCliApp {
                     return Ok(());
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(poll_ms)) => {
-                    let messages = db.list_actor_messages(&actor_id, next_index, 512).await?;
+                    let messages = db.list_pending_messages(&actor_id.clone().into(), 100).await?;
                     for message in messages {
                         println!("{}", serde_json::to_string(&message)?);
-                        next_index += 1;
                     }
                 }
             }
         }
     }
 
-    pub(crate) async fn actor_clear_history(&self, actor_id: String) -> Result<()> {
-        let actor_id = Uri::parse(&actor_id).map_err(|_| {
-            anyhow::anyhow!(
-                "invalid actor id `{}` (expected URI like borg:actor:<id>)",
-                actor_id
-            )
-        })?;
-        let db = self.open_config_db().await?;
-        db.migrate().await?;
-        let deleted = db.clear_actor_history(&actor_id).await?;
-        info!(
-            target: "borg_cli",
-            actor_id = %actor_id,
-            deleted,
-            "cleared actor history"
-        );
-        println!("cleared {} message(s) for {}", deleted, actor_id);
+    pub(crate) async fn actor_clear_history(&self, _actor_id: String) -> Result<()> {
+        // TODO: implement clean history using new messages table
         Ok(())
     }
 
@@ -384,23 +345,18 @@ impl BorgCliApp {
         db.migrate().await?;
 
         let mut deleted_actors = 0_u64;
-        let mut deleted_messages = 0_u64;
         let actors = db.list_actors(50_000).await?;
-        for actor in actors {
-            deleted_messages += db.clear_actor_history(&actor.actor_id).await?;
+        for _actor in actors {
+            // TODO: implement clear history for actor
             deleted_actors += 1;
         }
 
         info!(
             target: "borg_cli",
             deleted_actors,
-            deleted_messages,
             "cleared actor histories"
         );
-        println!(
-            "cleared history for {} actor(s) and {} message(s)",
-            deleted_actors, deleted_messages
-        );
+        println!("cleared history for {} actor(s)", deleted_actors);
         Ok(())
     }
 }

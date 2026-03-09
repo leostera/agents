@@ -1,5 +1,5 @@
 use anyhow::Result;
-use borg_core::Uri;
+use borg_core::ActorId;
 use borg_db::BorgDb;
 use serde_json::json;
 use tokio::time::{Duration, timeout};
@@ -296,9 +296,17 @@ async fn taskgraph_supervisor_creation_and_lifecycle() -> Result<()> {
 #[tokio::test]
 async fn taskgraph_supervisor_dispatches_runnable_tasks() -> Result<()> {
     let db = test_db().await?;
-    let worker_id = Uri::parse("borg:actor:worker")?;
-    db.upsert_actor(&worker_id, "Worker", "worker prompt", "RUNNING")
-        .await?;
+    let worker_id = ActorId::from_id("worker");
+    let workspace_id = borg_core::WorkspaceId::from_id("default");
+    db.upsert_actor(
+        &worker_id,
+        &workspace_id,
+        "Worker",
+        "worker prompt",
+        "",
+        "RUNNING",
+    )
+    .await?;
     let store = TaskGraphStore::new(db.clone());
     let created = store
         .create_task(

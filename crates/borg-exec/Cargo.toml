@@ -24,6 +24,7 @@ uuid.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 chrono.workspace = true
+futures = "0.3"
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

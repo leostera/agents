@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use borg_agent::{
     BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
 };
-use borg_core::Uri;
+use borg_core::{ActorId, PortId, Uri, WorkspaceId};
 use borg_db::BorgDb;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -118,29 +118,32 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                 async move {
                     let port_uri =
                         Uri::parse(&require_non_empty(&request.arguments.port_uri, "port_uri")?)?;
-                    let port_name = port_name_from_uri(&port_uri)?;
+                    let port_id = PortId(port_uri);
+                    let port_name = port_name_from_uri(port_id.as_uri())?;
                     if db.get_port(&port_name).await?.is_some() {
                         return Err(anyhow!("port.already_exists"));
                     }
                     let provider = require_non_empty(&request.arguments.provider, "provider")?;
                     let enabled = request.arguments.enabled.unwrap_or(true);
                     let allows_guests = request.arguments.allows_guests.unwrap_or(true);
-                    let default_actor_id = request
+                    let assigned_actor_id = request
                         .arguments
                         .default_actor_id
                         .as_deref()
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
-                        .map(Uri::parse)
+                        .map(ActorId::parse)
                         .transpose()?;
                     let settings = request.arguments.settings.unwrap_or_else(|| json!({}));
 
                     db.upsert_port(
+                        &port_id,
+                        &WorkspaceId::from_id("default"),
                         &port_name,
                         &provider,
                         enabled,
                         allows_guests,
-                        default_actor_id.as_ref(),
+                        assigned_actor_id.as_ref(),
                         &settings,
                     )
                     .await?;
@@ -161,7 +164,8 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                 async move {
                     let port_uri =
                         Uri::parse(&require_non_empty(&request.arguments.port_uri, "port_uri")?)?;
-                    let port_name = port_name_from_uri(&port_uri)?;
+                    let port_id = PortId(port_uri);
+                    let port_name = port_name_from_uri(port_id.as_uri())?;
                     let existing = db
                         .get_port(&port_name)
                         .await?
@@ -174,23 +178,25 @@ pub fn build_port_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, 
                         .arguments
                         .allows_guests
                         .unwrap_or(existing.allows_guests);
-                    let default_actor_id = request
+                    let assigned_actor_id = request
                         .arguments
                         .default_actor_id
                         .as_deref()
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
-                        .map(Uri::parse)
+                        .map(ActorId::parse)
                         .transpose()?
-                        .or(existing.default_actor_id);
+                        .or(existing.assigned_actor_id);
                     let settings = request.arguments.settings.unwrap_or(existing.settings);
 
                     db.upsert_port(
+                        &port_id,
+                        &WorkspaceId::from_id("default"),
                         &port_name,
-                        provider.as_str(),
+                        &provider,
                         enabled,
                         allows_guests,
-                        default_actor_id.as_ref(),
+                        assigned_actor_id.as_ref(),
                         &settings,
                     )
                     .await?;

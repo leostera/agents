@@ -61,6 +61,7 @@ pub enum ProvidersCommand {
 pub async fn run(app: &BorgCliApp, cmd: ProvidersCommand) -> Result<()> {
     let db = app.open_config_db().await?;
     db.migrate().await?;
+    let workspace_id = borg_core::WorkspaceId::from_id("default");
 
     let output = match cmd {
         ProvidersCommand::List { limit } => {
@@ -119,12 +120,14 @@ pub async fn run(app: &BorgCliApp, cmd: ProvidersCommand) -> Result<()> {
                     anyhow::bail!("provider must not be empty");
                 }
                 db.upsert_port_setting(
+                    &workspace_id,
                     RUNTIME_SETTINGS_PORT,
                     RUNTIME_PREFERRED_PROVIDER_KEY,
                     &provider,
                 )
                 .await?;
                 db.upsert_port_setting(
+                    &workspace_id,
                     RUNTIME_SETTINGS_PORT,
                     RUNTIME_PREFERRED_PROVIDER_ID_KEY,
                     &provider,

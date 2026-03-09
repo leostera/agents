@@ -1,6 +1,8 @@
 use async_graphql::{Error, ErrorExtensions, Result as GqlResult};
 use borg_db::BorgDb;
+use borg_exec::BorgActorManager;
 use borg_memory::MemoryStore;
+use std::sync::Arc;
 
 pub(crate) const DEFAULT_PAGE_SIZE: usize = 25;
 pub(crate) const MAX_PAGE_SIZE: usize = 200;
@@ -13,16 +15,18 @@ pub(crate) const MAX_SUBSCRIPTION_POLL_MS: u64 = 5_000;
 pub struct BorgGqlData {
     pub(crate) db: BorgDb,
     pub(crate) memory: MemoryStore,
+    pub(crate) supervisor: Arc<BorgActorManager>,
     default_page_size: usize,
     max_page_size: usize,
 }
 
 impl BorgGqlData {
     /// Creates a new GraphQL resolver context.
-    pub fn new(db: BorgDb, memory: MemoryStore) -> Self {
+    pub fn new(db: BorgDb, memory: MemoryStore, supervisor: Arc<BorgActorManager>) -> Self {
         Self {
             db,
             memory,
+            supervisor,
             default_page_size: DEFAULT_PAGE_SIZE,
             max_page_size: MAX_PAGE_SIZE,
         }

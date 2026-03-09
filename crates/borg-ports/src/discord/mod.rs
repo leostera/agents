@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use borg_core::Uri;
+use borg_core::{PortId, Uri};
 use borg_exec::{
     ActorOutboundMessage, ActorOutput, DiscordContext, PortContext, RuntimeToolCall,
     RuntimeToolResult,
@@ -30,7 +30,7 @@ struct DiscordConfig {
 
 #[derive(Clone)]
 pub struct DiscordPort {
-    port_id: Uri,
+    port_id: PortId,
     port_name: String,
     allows_guests: bool,
     #[allow(dead_code)]
@@ -85,7 +85,7 @@ impl DiscordPort {
         }
 
         Some(PortMessage {
-            port_id: self.port_id.clone(),
+            port_id: self.port_id.clone().into_uri(),
             conversation_key,
             user_id,
             input: PortInput::Chat { text },
@@ -142,7 +142,7 @@ impl Port for DiscordPort {
         let discord_config: DiscordConfig = serde_json::from_str(&port_config.settings_json)?;
         let http = Arc::new(Http::new(&discord_config.bot_token));
         Ok(Self {
-            port_id: port_config.port_id.clone(),
+            port_id: port_config.port_id,
             port_name: port_config.port_name,
             allows_guests: matches!(port_config.privacy, crate::port::Privacy::Public),
             http,

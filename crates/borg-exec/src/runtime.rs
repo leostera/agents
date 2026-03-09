@@ -2,14 +2,16 @@ use anyhow::Result;
 use borg_agent::{BorgToolCall, BorgToolResult, Toolchain};
 use borg_apps::BorgApps;
 use borg_codemode::{CodeModeContext, CodeModeRuntime};
-use borg_core::Uri;
+use borg_core::{ActorId, EndpointUri, MessageId, MessagePayload, WorkspaceId};
 use borg_db::{AppConnectionRecord, BorgDb};
 use borg_fs::BorgFs;
 use borg_memory::MemoryStore;
 use borg_shellmode::ShellModeRuntime;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::actor_context_manager::ActorContextManager;
+use crate::actor_manager::BorgActorManager;
 use crate::llm_resolver::BorgLLMResolver;
 use crate::tool_runner::build_exec_toolchain_with_context;
 
@@ -19,8 +21,9 @@ pub struct BorgRuntime {
     pub runtime: CodeModeRuntime,
     pub shell_runtime: ShellModeRuntime,
     pub files: BorgFs,
-    pub llm_resolver: BorgLLMResolver,
+    pub llm_resolver: Arc<BorgLLMResolver>,
     pub actor_context_manager: ActorContextManager,
+    supervisor: Arc<BorgActorManager>,
 }
 
 impl BorgRuntime {
@@ -30,30 +33,100 @@ impl BorgRuntime {
         runtime: CodeModeRuntime,
         shell_runtime: ShellModeRuntime,
         files: BorgFs,
-    ) -> Self {
+    ) -> Arc<Self> {
         let actor_context_manager = ActorContextManager::new(db.clone());
-        Self {
-            db: db.clone(),
-            memory,
-            runtime,
-            shell_runtime,
-            files,
-            llm_resolver: BorgLLMResolver::new(db),
-            actor_context_manager,
-        }
+        let llm_resolver = Arc::new(BorgLLMResolver::new(db.clone()));
+
+        let rt = Arc::new_cyclic(|me| {
+            let supervisor = BorgActorManager::new(me.clone());
+            Self {
+                db: db.clone(),
+                memory,
+                runtime,
+                shell_runtime,
+                files,
+                llm_resolver: llm_resolver.clone(),
+                actor_context_manager,
+                supervisor: Arc::new(supervisor),
+            }
+        });
+
+        // Start background tasks
+        tokio::spawn(llm_resolver.clone().start_update_loop());
+        let supervisor = rt.supervisor.clone();
+        let rt_clone = rt.clone();
+        tokio::spawn(async move {
+            if let Err(err) = supervisor.start(rt_clone).await {
+                tracing::error!(target: "borg_exec", error = %err, "supervisor failed to start");
+            }
+        });
+
+        rt
     }
 
-    pub async fn llm(&self) -> Result<borg_llm::BorgLLM> {
+    pub fn supervisor(&self) -> &BorgActorManager {
+        &self.supervisor
+    }
+
+    pub async fn llm(&self) -> Result<Arc<borg_llm::BorgLLM>> {
         self.llm_resolver.llm().await
     }
 
+    /// Primary entry point for sending a message between Borg entities.
+    pub async fn send_message(
+        self: &Arc<Self>,
+        sender_id: &EndpointUri,
+        receiver_id: &EndpointUri,
+        payload: MessagePayload,
+    ) -> Result<MessageId> {
+        let workspace_id = WorkspaceId::from_id("default");
+
+        // 1. Deliver to DB
+        let message_id = MessageId::new();
+        self.db
+            .insert_message(
+                &message_id,
+                &workspace_id,
+                sender_id,
+                receiver_id,
+                &payload,
+                None,
+                None,
+                None,
+            )
+            .await?;
+
+        // 2. Notify receiver
+        let record = self.db.get_message(&message_id).await?.ok_or_else(|| {
+            anyhow::anyhow!("failed to fetch message after insertion: {}", message_id)
+        })?;
+
+        // If the receiver is an actor, we notify the supervisor.
+        if receiver_id.as_str().starts_with("borg:actor:") {
+            let actor_id = ActorId::parse(receiver_id.as_str())?;
+            self.supervisor()
+                .send_to_actor_record(actor_id, record, self.clone())
+                .await?;
+        }
+
+        Ok(message_id)
+    }
+
     pub async fn build_toolchain(
-        &self,
-        user_id: &Uri,
-        actor_id: &Uri,
+        self: &Arc<Self>,
+        user_id: &EndpointUri,
+        actor_id: &ActorId,
     ) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
-        let context = self.code_mode_context_for_turn(user_id, actor_id).await?;
+        let env = self.app_env_for_actor(user_id).await?;
+        let context = CodeModeContext {
+            current_port_id: None,
+            current_message_id: None,
+            current_actor_id: Some(actor_id.clone().into()),
+            current_user_id: Some(user_id.clone().into()),
+            env,
+        };
         let runtime_toolchain = build_exec_toolchain_with_context(
+            self.clone(),
             self.runtime.clone(),
             self.shell_runtime.clone(),
             context,
@@ -69,21 +142,10 @@ impl BorgRuntime {
         Ok(runtime_toolchain.merge(apps_toolchain)?)
     }
 
-    async fn code_mode_context_for_turn(
+    async fn app_env_for_actor(
         &self,
-        user_id: &Uri,
-        actor_id: &Uri,
-    ) -> Result<CodeModeContext> {
-        Ok(CodeModeContext {
-            current_port_id: None,
-            current_message_id: None,
-            current_actor_id: Some(actor_id.clone()),
-            current_user_id: Some(user_id.clone()),
-            env: self.app_env_for_actor(user_id).await?,
-        })
-    }
-
-    async fn app_env_for_actor(&self, current_user_id: &Uri) -> Result<HashMap<String, String>> {
+        current_user_id: &EndpointUri,
+    ) -> Result<HashMap<String, String>> {
         let mut env = HashMap::new();
         let apps = self.db.list_apps(500).await?;
 
@@ -122,16 +184,17 @@ impl BorgRuntime {
 
 fn select_connection_for_user<'a>(
     connections: &'a [AppConnectionRecord],
-    current_user_id: &Uri,
+    current_user_id: &EndpointUri,
 ) -> Option<&'a AppConnectionRecord> {
     let mut owned = None;
     let mut shared = None;
+    let user_uri = current_user_id.as_uri();
     for connection in connections
         .iter()
         .filter(|connection| connection.status.trim().eq_ignore_ascii_case("connected"))
     {
         match connection.owner_user_id.as_ref() {
-            Some(owner) if owner == current_user_id => {
+            Some(owner) if owner == user_uri => {
                 if owned.is_none() {
                     owned = Some(connection);
                 }

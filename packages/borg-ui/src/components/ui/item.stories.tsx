@@ -4,7 +4,7 @@ import {
   LinkIcon,
   RobotIcon,
 } from "@phosphor-icons/react";
-import type { Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import { Badge } from "./badge";
 import { Button } from "./button";

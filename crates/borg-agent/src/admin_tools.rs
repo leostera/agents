@@ -1,9 +1,8 @@
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use uuid::Uuid;
 
-use borg_core::{Uri, uri};
+use borg_core::{ActorId, WorkspaceId};
 use borg_db::BorgDb;
 
 use crate::{
@@ -113,9 +112,10 @@ pub fn default_actor_admin_tool_specs() -> Vec<ToolSpec> {
 
 pub fn build_actor_admin_toolchain(
     db: BorgDb,
-    current_actor_id: Uri,
+    current_actor_id: ActorId,
 ) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
-    let whoami_actor_id = current_actor_id.to_string();
+    let whoami_actor_id = current_actor_id.clone();
+    let workspace_id = WorkspaceId::from_id("default");
 
     let db_list = db.clone();
     let db_create = db.clone();
@@ -147,99 +147,134 @@ pub fn build_actor_admin_toolchain(
                 }
             },
         ))?
-        .add_tool(Tool::new_transcoded(
-            required_spec("Actors-createActor")?,
-            None,
-            move |request: crate::ToolRequest<CreateAgentArgs>| {
-                let db = db_create.clone();
-                async move {
-                    let actor_id = request
-                        .arguments
-                        .actor_id
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(Uri::parse)
-                        .transpose()?
-                        .unwrap_or_else(|| uri!("borg", "actor", &Uuid::now_v7().to_string()));
-                    let name = require_non_empty(&request.arguments.name, "name")?;
-                    let model = require_non_empty(&request.arguments.model, "model")?;
-                    let system_prompt =
-                        require_non_empty(&request.arguments.system_prompt, "system_prompt")?;
-                    db.upsert_actor(&actor_id, &name, &system_prompt, "RUNNING")
+        .add_tool({
+            let db = db_create;
+            let workspace_id = workspace_id.clone();
+            Tool::new_transcoded(
+                required_spec("Actors-createActor").unwrap(),
+                None,
+                move |request: crate::ToolRequest<CreateAgentArgs>| {
+                    let db = db.clone();
+                    let workspace_id = workspace_id.clone();
+                    async move {
+                        let actor_id = request
+                            .arguments
+                            .actor_id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ActorId::parse)
+                            .transpose()?
+                            .unwrap_or_else(|| ActorId::new());
+                        let name = require_non_empty(&request.arguments.name, "name")?;
+                        let model = require_non_empty(&request.arguments.model, "model")?;
+                        let system_prompt =
+                            require_non_empty(&request.arguments.system_prompt, "system_prompt")?;
+                        db.upsert_actor(
+                            &actor_id,
+                            &workspace_id,
+                            &name,
+                            &system_prompt,
+                            "",
+                            "RUNNING",
+                        )
                         .await?;
-                    db.set_actor_model(&actor_id, &model).await?;
+                        db.set_actor_model(&actor_id, &model).await?;
 
-                    let agent = db
-                        .get_actor(&actor_id)
-                        .await?
-                        .ok_or_else(|| anyhow!("actor.not_found"))?;
-                    json_text(&json!({ "actor": agent }))
-                }
-            },
-        ))?
-        .add_tool(Tool::new_transcoded(
-            required_spec("Actors-updateActor")?,
-            None,
-            move |request: crate::ToolRequest<UpdateAgentArgs>| {
-                let db = db_update.clone();
-                async move {
-                    let actor_id =
-                        Uri::parse(&require_non_empty(&request.arguments.actor_id, "actor_id")?)?;
-                    let existing = db
-                        .get_actor(&actor_id)
-                        .await?
-                        .ok_or_else(|| anyhow!("actor.not_found"))?;
-
-                    let name = option_non_empty(request.arguments.name)
-                        .unwrap_or_else(|| existing.name.clone());
-                    let model = option_non_empty(request.arguments.model)
-                        .or(existing.model.clone())
-                        .ok_or_else(|| anyhow!("actor.model_not_set"))?;
-                    let system_prompt = option_non_empty(request.arguments.system_prompt)
-                        .unwrap_or(existing.system_prompt);
-                    db.upsert_actor(&actor_id, name.as_str(), system_prompt.as_str(), "RUNNING")
-                        .await?;
-                    db.set_actor_model(&actor_id, model.as_str()).await?;
-
-                    let agent = db
-                        .get_actor(&actor_id)
-                        .await?
-                        .ok_or_else(|| anyhow!("actor.not_found"))?;
-                    json_text(&json!({ "actor": agent }))
-                }
-            },
-        ))?
-        .add_tool(Tool::new_transcoded(
-            required_spec("Actors-disableActor")?,
-            None,
-            move |request: crate::ToolRequest<DisableAgentArgs>| {
-                let db = db_disable.clone();
-                async move {
-                    let actor_id =
-                        Uri::parse(&require_non_empty(&request.arguments.actor_id, "actor_id")?)?;
-                    let existing = db
-                        .get_actor(&actor_id)
-                        .await?
-                        .ok_or_else(|| anyhow!("actor.not_found"))?;
-                    db.upsert_actor(
-                        &actor_id,
-                        existing.name.as_str(),
-                        existing.system_prompt.as_str(),
-                        "STOPPED",
-                    )
-                    .await?;
-                    if let Some(model) = existing.model {
-                        db.set_actor_model(&actor_id, model.as_str()).await?;
+                        let agent = db
+                            .get_actor(&actor_id)
+                            .await?
+                            .ok_or_else(|| anyhow!("actor.not_found"))?;
+                        json_text(&json!({ "actor": agent }))
                     }
-                    let agent = db
-                        .get_actor(&actor_id)
-                        .await?
-                        .ok_or_else(|| anyhow!("actor.not_found"))?;
-                    json_text(&json!({ "actor": agent }))
-                }
-            },
-        ))?
+                },
+            )
+        })?
+        .add_tool({
+            let db = db_update;
+            let workspace_id = workspace_id.clone();
+            Tool::new_transcoded(
+                required_spec("Actors-updateActor").unwrap(),
+                None,
+                move |request: crate::ToolRequest<UpdateAgentArgs>| {
+                    let db = db.clone();
+                    let workspace_id = workspace_id.clone();
+                    async move {
+                        let actor_id = ActorId::parse(&require_non_empty(
+                            &request.arguments.actor_id,
+                            "actor_id",
+                        )?)?;
+                        let existing = db
+                            .get_actor(&actor_id)
+                            .await?
+                            .ok_or_else(|| anyhow!("actor.not_found"))?;
+
+                        let name = option_non_empty(request.arguments.name)
+                            .unwrap_or_else(|| existing.name.clone());
+                        let model = option_non_empty(request.arguments.model)
+                            .or(existing.model.clone())
+                            .ok_or_else(|| anyhow!("actor.model_not_set"))?;
+                        let system_prompt = option_non_empty(request.arguments.system_prompt)
+                            .unwrap_or(existing.system_prompt);
+                        db.upsert_actor(
+                            &actor_id,
+                            &workspace_id,
+                            name.as_str(),
+                            system_prompt.as_str(),
+                            "",
+                            "RUNNING",
+                        )
+                        .await?;
+                        db.set_actor_model(&actor_id, model.as_str()).await?;
+
+                        let agent = db
+                            .get_actor(&actor_id)
+                            .await?
+                            .ok_or_else(|| anyhow!("actor.not_found"))?;
+                        json_text(&json!({ "actor": agent }))
+                    }
+                },
+            )
+        })?
+        .add_tool({
+            let db = db_disable;
+            let workspace_id = workspace_id;
+            Tool::new_transcoded(
+                required_spec("Actors-disableActor").unwrap(),
+                None,
+                move |request: crate::ToolRequest<DisableAgentArgs>| {
+                    let db = db.clone();
+                    let workspace_id = workspace_id.clone();
+                    async move {
+                        let actor_id = ActorId::parse(&require_non_empty(
+                            &request.arguments.actor_id,
+                            "actor_id",
+                        )?)?;
+                        let existing = db
+                            .get_actor(&actor_id)
+                            .await?
+                            .ok_or_else(|| anyhow!("actor.not_found"))?;
+                        db.upsert_actor(
+                            &actor_id,
+                            &workspace_id,
+                            existing.name.as_str(),
+                            existing.system_prompt.as_str(),
+                            "",
+                            "STOPPED",
+                        )
+                        .await?;
+                        if let Some(model) = existing.model {
+                            db.set_actor_model(&actor_id, model.as_str()).await?;
+                        }
+                        let agent = db
+                            .get_actor(&actor_id)
+                            .await?
+                            .ok_or_else(|| anyhow!("actor.not_found"))?;
+                        json_text(&json!({ "actor": agent }))
+                    }
+                },
+            )
+        })?
         .build()
 }
 

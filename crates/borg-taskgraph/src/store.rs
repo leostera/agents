@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use borg_core::Uri;
+use borg_core::{ActorId, Uri};
 use borg_db::BorgDb;
 use chrono::Utc;
 use sqlx::{Row, Sqlite, Transaction};
@@ -1599,9 +1599,9 @@ fn ensure_non_empty(input: &str, code: &str) -> Result<()> {
 }
 
 async fn ensure_actor_exists(db: &BorgDb, actor_id: &str, code: &str) -> Result<()> {
-    let uri = Uri::parse(actor_id).map_err(|_| anyhow!(code.to_string()))?;
+    let id = ActorId::parse(actor_id).map_err(|_| anyhow!(code.to_string()))?;
     let actor = db
-        .get_actor(&uri)
+        .get_actor(&id)
         .await
         .map_err(|_| anyhow!(code.to_string()))?;
     if actor.is_none() {

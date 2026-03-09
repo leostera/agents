@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use borg_core::{Uri, uri};
+use borg_core::{ActorId, uri};
 use borg_db::BorgDb;
 use borg_llm::{LlmRequest, Provider, ProviderBlock, ReasoningEffort, StopReason};
 use serde::de::DeserializeOwned;
@@ -19,8 +19,12 @@ use crate::{
 pub const DEFAULT_MAX_TURNS: usize = 50;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Agent<TToolCall, TToolResult> {
-    pub actor_id: Uri,
+pub struct Agent<TToolCall, TToolResult>
+where
+    TToolCall: Send + Sync,
+    TToolResult: Send + Sync,
+{
+    pub actor_id: ActorId,
     pub model: String,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub system_prompt: String,
@@ -31,8 +35,12 @@ pub struct Agent<TToolCall, TToolResult> {
     _marker: PhantomData<(TToolCall, TToolResult)>,
 }
 
-impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult> {
-    pub fn new(actor_id: Uri) -> Self {
+impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult>
+where
+    TToolCall: Send + Sync,
+    TToolResult: Send + Sync,
+{
+    pub fn new(actor_id: ActorId) -> Self {
         Self {
             actor_id,
             model: String::new(),
@@ -45,7 +53,7 @@ impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult> {
         }
     }
 
-    pub async fn load(actor_id: &Uri, db: &BorgDb) -> Result<Self> {
+    pub async fn load(actor_id: &ActorId, db: &BorgDb) -> Result<Self> {
         if let Some(actor) = db.get_actor(actor_id).await? {
             let model = actor
                 .model
@@ -66,7 +74,7 @@ impl<TToolCall, TToolResult> Agent<TToolCall, TToolResult> {
     }
 
     pub async fn default(db: &BorgDb) -> Result<Self> {
-        let actor_id = uri!("borg", "actor", "default");
+        let actor_id = ActorId::from_id("default");
         Self::load(&actor_id, db).await
     }
 
@@ -214,7 +222,7 @@ where
                     "llm_provider_call",
                     call_id = %call_id,
                     actor_id = %actor_thread.actor_id,
-                    user_id = ?user_key.as_ref().map(Uri::to_string),
+                    user_id = ?user_key.as_ref().map(|u| u.to_string()),
                     model = req.model.as_str()
                 );
                 let assistant_message = match provider.chat(&req).instrument(llm_call_span).await {
@@ -267,7 +275,7 @@ where
                                 )
                                 .await;
                             }
-                    };
+                        };
                     tool_calls.push((id.clone(), name.clone(), arguments));
                 }
                 if tool_calls.is_empty() {
@@ -496,7 +504,9 @@ struct NdjsonToolCall {
     arguments: Value,
 }
 
-fn parse_ndjson_tool_calls<TToolCall>(text: &str) -> Result<Option<Vec<(String, String, TToolCall)>>>
+fn parse_ndjson_tool_calls<TToolCall>(
+    text: &str,
+) -> Result<Option<Vec<(String, String, TToolCall)>>>
 where
     TToolCall: DeserializeOwned,
 {

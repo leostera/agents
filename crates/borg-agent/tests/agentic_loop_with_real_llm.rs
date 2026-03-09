@@ -3,7 +3,7 @@ use borg_agent::{
     ActorRunOutput, ActorRunResult, ActorThread, Agent, Message, Tool, ToolRequest, ToolResponse,
     ToolResultData, ToolSpec, Toolchain,
 };
-use borg_core::{Uri, uri};
+use borg_core::{ActorId, WorkspaceId, uri};
 use borg_db::BorgDb;
 use borg_llm::providers::openai::OpenAiProvider;
 use borg_llm::testing::llm_container::LlmContainer;
@@ -53,9 +53,7 @@ impl RecordingToolRunner {
     fn calls(&self) -> Vec<ToolRequest<Value>> {
         self.calls.lock().expect("calls lock poisoned").clone()
     }
-}
 
-impl RecordingToolRunner {
     async fn run_request(&self, request: ToolRequest<Value>) -> Result<ToolResponse<Value>> {
         trace!(
             target: "borg_agent_it",
@@ -196,7 +194,7 @@ fn init_test_tracing() {
 }
 
 fn make_agent(
-    actor_id: Uri,
+    actor_id: ActorId,
     model: String,
     system_prompt: String,
     tools: Vec<ToolSpec>,
@@ -425,7 +423,7 @@ async fn e2e_single_tool_happy_path_persists_messages_and_output() {
         let runner = RecordingToolRunner::new(RunnerMode::SingleSuccess);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            uri!("borg", "agent"),
+            ActorId(uri!("borg", "agent")),
             llm.model.clone(),
             format!(
                 "You are in an integration test.
@@ -442,9 +440,14 @@ After receiving the tool result, return a concise assistant answer.",
             ),
             single_tool_specs(),
         );
-        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
-            .await
-            .unwrap();
+        let mut thread = ActorThread::new(
+            ActorId(uri!("borg", "thread")),
+            WorkspaceId::from_id("default"),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
         thread
             .add_message(Message::User {
                 content: "Find a battery recommendation and explain briefly.".to_string(),
@@ -517,7 +520,7 @@ async fn e2e_multi_tool_chain_then_final_answer_uses_all_results() {
         let runner = RecordingToolRunner::new(RunnerMode::MultiChain);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            uri!("borg", "agent"),
+            ActorId(uri!("borg", "agent")),
             llm.model.clone(),
             format!(
                 "You are in an integration test.
@@ -539,9 +542,14 @@ Then provide one final answer that references the three result labels.",
             ),
             multi_chain_tool_specs(),
         );
-        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
-            .await
-            .unwrap();
+        let mut thread = ActorThread::new(
+            ActorId(uri!("borg", "thread")),
+            WorkspaceId::from_id("default"),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
         thread
             .add_message(Message::User {
                 content: "Customer c-22 cannot start the app. Diagnose and suggest steps."
@@ -635,7 +643,7 @@ async fn e2e_multi_tool_with_intermediate_dependency_updates_arguments() {
         let runner = RecordingToolRunner::new(RunnerMode::DependentChain);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            uri!("borg", "agent"),
+            ActorId(uri!("borg", "agent")),
             llm.model.clone(),
             "Call discover_key first.
 Then call fetch_by_key using the exact key returned by discover_key.
@@ -650,9 +658,14 @@ After the second result, answer briefly with the fetched record."
                 .to_string(),
             dependent_chain_tool_specs(),
         );
-        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
-            .await
-            .unwrap();
+        let mut thread = ActorThread::new(
+            ActorId(uri!("borg", "thread")),
+            WorkspaceId::from_id("default"),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
         thread
             .add_message(Message::User {
                 content: "Fetch the secure record for alpha account.".to_string(),
@@ -742,7 +755,7 @@ async fn e2e_multi_tool_partial_failure_then_recovery() {
         let runner = RecordingToolRunner::new(RunnerMode::PartialFailureThenRecovery);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            uri!("borg", "agent"),
+            ActorId(uri!("borg", "agent")),
             llm.model.clone(),
             "Run staged tools in order with JSON tool calls/results:
 1) stage_one
@@ -751,9 +764,9 @@ async fn e2e_multi_tool_partial_failure_then_recovery() {
 4) stage_three
 
 Example calls:
-{\"name\":\"stage_one\",\"arguments\":{\"input\":\"start\"}}
-{\"name\":\"stage_two\",\"arguments\":{\"input\":\"from stage one\"}}
-{\"name\":\"stage_three\",\"arguments\":{\"input\":\"from stage two\"}}
+{{\"name\":\"stage_one\",\"arguments\":{\"input\":\"start\"}}}
+{{\"name\":\"stage_two\",\"arguments\":{\"input\":\"from stage one\"}}}
+{{\"name\":\"stage_three\",\"arguments\":{\"input\":\"from stage two\"}}}
 
 Example results:
 \"{\"stage\":\"one\",\"status\":\"ok\",\"value\":\"STAGE_ONE_OK\"}\"
@@ -765,9 +778,14 @@ Return a final answer after stage_three."
                 .to_string(),
             staged_tool_specs(),
         );
-        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
-            .await
-            .unwrap();
+        let mut thread = ActorThread::new(
+            ActorId(uri!("borg", "thread")),
+            WorkspaceId::from_id("default"),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
         thread
             .add_message(Message::User {
                 content: "Run the full staged repair flow.".to_string(),
@@ -852,12 +870,12 @@ async fn e2e_tool_error_is_recorded_not_fatal() {
         let runner = RecordingToolRunner::new(RunnerMode::AlwaysFail);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            uri!("borg", "agent"),
+            ActorId(uri!("borg", "agent")),
             llm.model.clone(),
             "Call catalog_lookup before final answer.
 
 Example call:
-{\"name\":\"catalog_lookup\",\"arguments\":{\"query\":\"catalog data\"}}
+{{\"name\":\"catalog_lookup\",\"arguments\":{\"query\":\"catalog data\"}}}
 
 If the tool result is an error like:
 \"tool error: INTENTIONAL_TOOL_FAILURE\"
@@ -865,9 +883,14 @@ then continue and summarize that error briefly in your final response."
                 .to_string(),
             single_tool_specs(),
         );
-        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
-            .await
-            .unwrap();
+        let mut thread = ActorThread::new(
+            ActorId(uri!("borg", "thread")),
+            WorkspaceId::from_id("default"),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
         thread
             .add_message(Message::User {
                 content: "Try to find catalog data.".to_string(),
@@ -917,7 +940,7 @@ async fn e2e_follow_up_turn_reuses_actor_state_and_calls_tools_again() {
         let runner = RecordingToolRunner::new(RunnerMode::FollowUpEcho);
         let db = make_test_db().await.unwrap();
         let agent = make_agent(
-            uri!("borg", "agent"),
+            ActorId(uri!("borg", "agent")),
             llm.model.clone(),
             "For each user turn, call catalog_lookup exactly once, then answer.
 
@@ -935,9 +958,14 @@ Do not skip tool calls on any turn."
                 .to_string(),
             single_tool_specs(),
         );
-        let mut thread = ActorThread::new(uri!("borg", "thread"), agent.clone(), db)
-            .await
-            .unwrap();
+        let mut thread = ActorThread::new(
+            ActorId(uri!("borg", "thread")),
+            WorkspaceId::from_id("default"),
+            agent.clone(),
+            db,
+        )
+        .await
+        .unwrap();
 
         thread
             .add_message(Message::User {

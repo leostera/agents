@@ -1,22 +1,14 @@
-use crate::message::{ActorOutput, BorgMessage};
-use anyhow::Result;
-use borg_agent::{BorgToolCall, BorgToolResult};
-use borg_core::Uri;
-use tokio::sync::mpsc::Sender;
+use borg_agent::{BorgToolCall, BorgToolResult, ContextWindow};
+use borg_db::MessageRecord;
 use tokio::sync::oneshot;
 
 pub enum ActorCommand {
-    Cast {
-        actor_message_id: Uri,
-        sender_actor_id: Option<Uri>,
-        msg: BorgMessage,
-    },
-    Call {
-        actor_message_id: Uri,
-        sender_actor_id: Option<Uri>,
-        msg: BorgMessage,
-        progress_tx: Option<Sender<ActorOutput<BorgToolCall, BorgToolResult>>>,
-        response_tx: oneshot::Sender<Result<ActorOutput<BorgToolCall, BorgToolResult>>>,
-    },
+    /// Notify the actor that a new message has been delivered to its mailbox.
+    Notify,
+    /// Deliver a specific message to the actor.
+    Message(MessageRecord),
+    /// Request the current effective context window from the actor.
+    InspectContext(oneshot::Sender<anyhow::Result<ContextWindow<BorgToolCall, BorgToolResult>>>),
+    /// Terminate the actor loop.
     Terminate,
 }

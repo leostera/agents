@@ -1,36 +1,25 @@
 use super::super::*;
 
-#[Object(use_type_description)]
+#[Object]
 impl QueryRoot {
-    /// Fetches a single graph node by URI and resolves the concrete runtime type.
-    ///
-    /// Usage notes:
-    /// - Works for actor/port/provider/app/task/memory entities.
-    /// - Use inline fragments to read type-specific fields.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($id: Uri!) {
-    ///   node(id: $id) {
-    ///     id
-    ///     ... on Actor { name status }
-    ///   }
-    /// }
-    /// ```
+    async fn version(&self) -> &str {
+        "0.1.0"
+    }
+
     async fn node(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<Option<Node>> {
         let data = ctx_data(ctx)?;
 
         match parse_uri_kind(&id.0) {
             Some("actor") => Ok(data
                 .db
-                .get_actor(&id.0)
+                .get_actor(&borg_core::ActorId(id.0.clone()))
                 .await
                 .map_err(map_anyhow)?
                 .map(ActorObject::new)
                 .map(Node::from)),
             Some("port") => Ok(data
                 .db
-                .get_port_by_id(&id.0)
+                .get_port_by_id(&borg_core::PortId(id.0.clone()))
                 .await
                 .map_err(map_anyhow)?
                 .map(PortObject::new)
@@ -76,37 +65,16 @@ impl QueryRoot {
         }
     }
 
-    /// Fetches one actor by URI.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($id: Uri!) { actor(id: $id) { id name status } }
-    /// ```
     async fn actor(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<Option<ActorObject>> {
         let data = ctx_data(ctx)?;
         Ok(data
             .db
-            .get_actor(&id.0)
+            .get_actor(&borg_core::ActorId(id.0))
             .await
             .map_err(map_anyhow)?
             .map(ActorObject::new))
     }
 
-    /// Lists actors ordered by most-recent update.
-    ///
-    /// Usage notes:
-    /// - `first` defaults to 25 and is capped server-side.
-    /// - Pass the previous `endCursor` into `after` to paginate.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query {
-    ///   actors(first: 10) {
-    ///     edges { cursor node { id name } }
-    ///     pageInfo { hasNextPage endCursor }
-    ///   }
-    /// }
-    /// ```
     async fn actors(
         &self,
         ctx: &Context<'_>,
@@ -138,12 +106,6 @@ impl QueryRoot {
         })
     }
 
-    /// Fetches one port by canonical port name (for example `http`, `telegram`).
-    ///
-    /// Example:
-    /// ```graphql
-    /// query { port(name: "http") { id name provider enabled } }
-    /// ```
     async fn port(&self, ctx: &Context<'_>, name: String) -> GqlResult<Option<PortObject>> {
         let data = ctx_data(ctx)?;
         Ok(data
@@ -154,35 +116,16 @@ impl QueryRoot {
             .map(PortObject::new))
     }
 
-    /// Fetches one port by URI.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($id: Uri!) { portById(id: $id) { id name allowsGuests } }
-    /// ```
     async fn port_by_id(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<Option<PortObject>> {
         let data = ctx_data(ctx)?;
         Ok(data
             .db
-            .get_port_by_id(&id.0)
+            .get_port_by_id(&borg_core::PortId(id.0))
             .await
             .map_err(map_anyhow)?
             .map(PortObject::new))
     }
 
-    /// Lists ports ordered by activity.
-    ///
-    /// Usage notes:
-    /// - Includes `activeBindings` and binding relations for routing debugging.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query {
-    ///   ports(first: 20) {
-    ///     edges { node { name provider activeBindings } }
-    ///   }
-    /// }
-    /// ```
     async fn ports(
         &self,
         ctx: &Context<'_>,
@@ -214,12 +157,6 @@ impl QueryRoot {
         })
     }
 
-    /// Fetches one provider by provider key.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query { provider(provider: "openai") { id provider providerKind enabled } }
-    /// ```
     async fn provider(
         &self,
         ctx: &Context<'_>,
@@ -235,16 +172,6 @@ impl QueryRoot {
             .transpose()?)
     }
 
-    /// Lists configured model providers.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query {
-    ///   providers(first: 10) {
-    ///     edges { node { provider providerKind defaultTextModel tokensUsed } }
-    ///   }
-    /// }
-    /// ```
     async fn providers(
         &self,
         ctx: &Context<'_>,
@@ -280,12 +207,6 @@ impl QueryRoot {
         })
     }
 
-    /// Fetches one app by URI.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($id: Uri!) { app(id: $id) { id name slug status } }
-    /// ```
     async fn app(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<Option<AppObject>> {
         let data = ctx_data(ctx)?;
         Ok(data
@@ -296,12 +217,6 @@ impl QueryRoot {
             .map(AppObject::new))
     }
 
-    /// Fetches one app by slug.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query { appBySlug(slug: "github") { id name capabilities(first: 5) { edges { node { name } } } } }
-    /// ```
     async fn app_by_slug(&self, ctx: &Context<'_>, slug: String) -> GqlResult<Option<AppObject>> {
         let data = ctx_data(ctx)?;
         Ok(data
@@ -312,16 +227,6 @@ impl QueryRoot {
             .map(AppObject::new))
     }
 
-    /// Lists apps available in Borg.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query {
-    ///   apps(first: 25) {
-    ///     edges { node { id slug authStrategy availableSecrets } }
-    ///   }
-    /// }
-    /// ```
     async fn apps(
         &self,
         ctx: &Context<'_>,
@@ -353,12 +258,6 @@ impl QueryRoot {
         })
     }
 
-    /// Fetches one schedule job by `jobId`.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query { scheduleJob(jobId: "daily-digest") { id status nextRunAt } }
-    /// ```
     async fn schedule_job(
         &self,
         ctx: &Context<'_>,
@@ -373,16 +272,6 @@ impl QueryRoot {
             .map(ScheduleJobObject::new))
     }
 
-    /// Lists schedule jobs with optional status filtering.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query {
-    ///   scheduleJobs(first: 20, status: ACTIVE) {
-    ///     edges { node { id kind status runs(first: 5) { edges { node { id firedAt } } } } }
-    ///   }
-    /// }
-    /// ```
     async fn schedule_jobs(
         &self,
         ctx: &Context<'_>,
@@ -419,17 +308,6 @@ impl QueryRoot {
         })
     }
 
-    /// Fetches one task by URI.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($id: Uri!) {
-    ///   task(id: $id) {
-    ///     id title status
-    ///     comments(first: 10) { edges { node { id body } } }
-    ///   }
-    /// }
-    /// ```
     async fn task(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<Option<TaskObject>> {
         let data = ctx_data(ctx)?;
         let store = TaskGraphStore::new(data.db.clone());
@@ -440,20 +318,6 @@ impl QueryRoot {
         }
     }
 
-    /// Lists top-level taskgraph tasks.
-    ///
-    /// Usage notes:
-    /// - Cursor format follows taskgraph ordering (`createdAt`, `id`).
-    /// - Traverse children via `Task.children`.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query {
-    ///   tasks(first: 15) {
-    ///     edges { node { id title status parentUri } }
-    ///   }
-    /// }
-    /// ```
     async fn tasks(
         &self,
         ctx: &Context<'_>,
@@ -490,12 +354,6 @@ impl QueryRoot {
         })
     }
 
-    /// Fetches one memory entity by URI.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($id: Uri!) { memoryEntity(id: $id) { id label props { key value { kind text } } } }
-    /// ```
     async fn memory_entity(
         &self,
         ctx: &Context<'_>,
@@ -511,16 +369,6 @@ impl QueryRoot {
             .map(MemoryEntityObject::new))
     }
 
-    /// Searches memory entities by free text plus optional namespace/kind filters.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query {
-    ///   memoryEntities(queryText: "alice", kind: "person", first: 10) {
-    ///     edges { node { id label } }
-    ///   }
-    /// }
-    /// ```
     async fn memory_entities(
         &self,
         ctx: &Context<'_>,
@@ -565,12 +413,6 @@ impl QueryRoot {
         })
     }
 
-    /// Fetches one fact row by fact URI string.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($id: String!) { memoryFact(id: $id) { id arity value { kind text } } }
-    /// ```
     async fn memory_fact(
         &self,
         ctx: &Context<'_>,
@@ -585,19 +427,6 @@ impl QueryRoot {
             .map(MemoryFactObject::new))
     }
 
-    /// Lists fact rows with optional entity/field filters.
-    ///
-    /// Usage notes:
-    /// - Set `includeRetracted: true` for audit/replay tooling.
-    ///
-    /// Example:
-    /// ```graphql
-    /// query($entity: Uri!) {
-    ///   memoryFacts(entityId: $entity, first: 20) {
-    ///     edges { node { id field value { kind text reference } } }
-    ///   }
-    /// }
-    /// ```
     async fn memory_facts(
         &self,
         ctx: &Context<'_>,

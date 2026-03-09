@@ -1,5 +1,5 @@
 use anyhow::Result;
-use borg_core::Uri;
+use borg_core::{ActorId, PortId, Uri, WorkspaceId};
 use clap::Subcommand;
 use serde_json::{Value, json};
 
@@ -42,6 +42,7 @@ pub enum PortsCommand {
 pub async fn run(app: &BorgCliApp, cmd: PortsCommand) -> Result<()> {
     let db = app.open_config_db().await?;
     db.migrate().await?;
+    let workspace_id = WorkspaceId::from_id("default");
 
     let output = match cmd {
         PortsCommand::List { limit } => {
@@ -71,14 +72,14 @@ pub async fn run(app: &BorgCliApp, cmd: PortsCommand) -> Result<()> {
                 .or_else(|| existing.as_ref().map(|record| record.allows_guests))
                 .unwrap_or(true);
 
-            let default_actor_id = match default_actor_id {
+            let assigned_actor_id = match default_actor_id {
                 Some(raw) if raw.trim().is_empty() => None,
-                Some(raw) => Some(Uri::parse(raw.trim()).map_err(|_| {
+                Some(raw) => Some(ActorId::parse(raw.trim()).map_err(|_| {
                     anyhow::anyhow!("invalid default_actor_id uri `{}`", raw.trim())
                 })?),
                 None => existing
                     .as_ref()
-                    .and_then(|record| record.default_actor_id.clone()),
+                    .and_then(|record| record.assigned_actor_id.clone()),
             };
 
             let settings: Value = match settings_json {
@@ -91,12 +92,16 @@ pub async fn run(app: &BorgCliApp, cmd: PortsCommand) -> Result<()> {
                     .unwrap_or_else(|| json!({})),
             };
 
+            let port_id = PortId(Uri::from_parts("borg", "port", Some(&port_name))?);
+
             db.upsert_port(
+                &port_id,
+                &workspace_id,
                 &port_name,
                 &provider,
                 enabled,
                 allows_guests,
-                default_actor_id.as_ref(),
+                assigned_actor_id.as_ref(),
                 &settings,
             )
             .await?;
@@ -105,7 +110,8 @@ pub async fn run(app: &BorgCliApp, cmd: PortsCommand) -> Result<()> {
             json!({ "ok": true, "entity": "ports", "item": port })
         }
         PortsCommand::Delete { port_name } => {
-            db.delete_port(&port_name).await?;
+            let port_id = PortId(Uri::from_parts("borg", "port", Some(&port_name))?);
+            db.delete_port(&port_id).await?;
             json!({ "ok": true, "entity": "ports", "deleted": 1, "port_name": port_name })
         }
     };

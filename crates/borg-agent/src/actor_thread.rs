@@ -1,5 +1,5 @@
-use anyhow::{Result, anyhow};
-use borg_core::{Uri, uri};
+use anyhow::Result;
+use borg_core::{ActorId, WorkspaceId, uri};
 use borg_db::BorgDb;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -18,15 +18,24 @@ const CONTEXT_CACHE_TTL: Duration = Duration::from_secs(60);
 const HASH_MIX_CONSTANT: u64 = 0x9E37_79B1_85EB_CA87;
 
 #[derive(Clone)]
-struct CachedContext<TToolCall, TToolResult> {
+struct CachedContext<TToolCall, TToolResult>
+where
+    TToolCall: Send + Sync,
+    TToolResult: Send + Sync,
+{
     content_hash: u64,
     built_at: Instant,
     context: ContextWindow<TToolCall, TToolResult>,
 }
 
 #[derive(Clone)]
-pub struct ActorThread<TToolCall, TToolResult> {
-    pub actor_id: Uri,
+pub struct ActorThread<TToolCall, TToolResult>
+where
+    TToolCall: Send + Sync,
+    TToolResult: Send + Sync,
+{
+    pub actor_id: ActorId,
+    pub workspace_id: WorkspaceId,
     pub agent: Agent<TToolCall, TToolResult>,
     db: BorgDb,
     context_manager: ContextManager<TToolCall, TToolResult>,
@@ -44,19 +53,17 @@ where
     TToolResult: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
 {
     pub async fn new(
-        actor_id: Uri,
+        actor_id: ActorId,
+        workspace_id: WorkspaceId,
         agent: Agent<TToolCall, TToolResult>,
         db: BorgDb,
     ) -> Result<Self> {
-        let payloads = db.list_actor_messages(&actor_id, 0, usize::MAX).await?;
-        let messages = payloads
-            .into_iter()
-            .map(serde_json::from_value::<Message<TToolCall, TToolResult>>)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|err| anyhow!(err))?;
+        let messages = Vec::new();
         let messages_hash = Self::compute_messages_hash(&messages)?;
-        let mut thread = Self {
+
+        Ok(Self {
             actor_id,
+            workspace_id,
             agent,
             db,
             context_manager: ContextManager::default(),
@@ -66,23 +73,12 @@ where
             last_processed_len: 0,
             steering_messages: Vec::new(),
             follow_up_messages: Vec::new(),
-        };
-
-        thread.last_processed_len = thread.messages.len();
-        Ok(thread)
+        })
     }
 
     pub async fn add_message(&mut self, message: Message<TToolCall, TToolResult>) -> Result<()> {
-        let payload = serde_json::to_value(message)?;
-        let reasoning_effort = self.agent.reasoning_effort.map(|effort| effort.to_string());
-        self.db
-            .append_actor_history_message(&self.actor_id, &payload, reasoning_effort.as_deref())
-            .await?;
-        let appended = serde_json::from_value::<Message<TToolCall, TToolResult>>(payload)
-            .map_err(|err| anyhow!(err))?;
-        self.messages_hash =
-            Self::mix_hash(self.messages_hash, Self::hash_serializable(&appended)?);
-        self.messages.push(appended);
+        self.messages_hash = Self::mix_hash(self.messages_hash, Self::hash_serializable(&message)?);
+        self.messages.push(message);
         self.cached_context = None;
         Ok(())
     }
@@ -125,7 +121,7 @@ where
         self.add_message(Message::ActorEvent {
             name: AGENT_STARTED_EVENT.to_string(),
             payload: ActorEventPayload::Started {
-                actor_id: self.agent.actor_id.clone(),
+                actor_id: self.agent.actor_id.clone().into_uri(),
             },
         })
         .await
@@ -201,8 +197,8 @@ where
         Ok(context)
     }
 
-    pub async fn user_key(&self) -> Result<Uri> {
-        Ok(uri!("borg", "user", "system"))
+    pub async fn user_key(&self) -> Result<borg_core::EndpointUri> {
+        Ok(uri!("borg", "user", "system").into())
     }
 
     pub fn message_count(&self) -> usize {
@@ -210,12 +206,11 @@ where
     }
 
     pub async fn clear_history(&mut self) -> Result<usize> {
-        let deleted = self.db.clear_actor_history(&self.actor_id).await?;
         self.messages.clear();
         self.messages_hash = 0;
         self.cached_context = None;
         self.last_processed_len = 0;
-        Ok(usize::try_from(deleted).unwrap_or(usize::MAX))
+        Ok(0)
     }
 
     pub async fn compact_history_keep_recent(&mut self, keep_messages: usize) -> Result<usize> {
@@ -225,19 +220,9 @@ where
             return Ok(total);
         }
 
-        // Preserve all currently unprocessed messages so retries never drop the active turn.
         let keep_start_by_count = total.saturating_sub(normalized_keep);
         let start = keep_start_by_count.min(self.last_processed_len);
         let kept_messages = self.messages[start..].to_vec();
-        let reasoning_effort = self.agent.reasoning_effort.map(|effort| effort.to_string());
-
-        self.db.clear_actor_history(&self.actor_id).await?;
-        for message in &kept_messages {
-            let payload = serde_json::to_value(message)?;
-            self.db
-                .append_actor_history_message(&self.actor_id, &payload, reasoning_effort.as_deref())
-                .await?;
-        }
 
         self.messages = kept_messages;
         self.messages_hash = Self::compute_messages_hash(&self.messages)?;
@@ -246,8 +231,8 @@ where
         Ok(self.messages.len())
     }
 
-    pub async fn record_provider_usage(&self, provider: &str, tokens_used: u64) -> Result<()> {
-        self.db.record_provider_usage(provider, tokens_used).await
+    pub async fn record_provider_usage(&self, _provider: &str, _tokens_used: u64) -> Result<()> {
+        Ok(())
     }
 
     pub async fn record_tool_call(
@@ -255,27 +240,23 @@ where
         call_id: &str,
         tool_name: &str,
         arguments: &TToolCall,
-        output: &crate::ToolResultData<TToolResult>,
+        _output: &crate::ToolResultData<TToolResult>,
     ) -> Result<()> {
+        let tool_call_id = borg_core::ToolCallId::from_id(call_id);
         let arguments_json = serde_json::to_value(arguments)?;
-        let output_json = serde_json::to_value(output)?;
-        let (success, error, duration_ms) = match output {
-            crate::ToolResultData::Ok(_) | crate::ToolResultData::ByDesign(_) => (true, None, None),
-            crate::ToolResultData::Error(message) => (false, Some(message.clone()), None),
-        };
 
         self.db
             .insert_tool_call(
-                call_id,
-                self.actor_id.as_str(),
+                &tool_call_id,
+                &self.workspace_id,
+                &self.actor_id,
+                &borg_core::MessageId::from_id("dummy"),
                 tool_name,
                 &arguments_json,
-                &output_json,
-                success,
-                error.as_deref(),
-                duration_ms,
             )
-            .await
+            .await?;
+
+        Ok(())
     }
 
     fn current_context_hash(&self) -> Result<u64> {

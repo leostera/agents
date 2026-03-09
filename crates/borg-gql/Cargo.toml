@@ -9,6 +9,7 @@ anyhow.workspace = true
 async-graphql.workspace = true
 axum = { workspace = true, features = ["ws"] }
 base64.workspace = true
+borg-agent = { path = "../borg-agent" }
 borg-core = { path = "../borg-core" }
 borg-db = { path = "../borg-db" }
 borg-exec = { path = "../borg-exec" }
@@ -25,13 +26,20 @@ tower-http.workspace = true
 
 [dev-dependencies]
 uuid.workspace = true
+tower = { workspace = true, features = ["util"] }
+borg-codemode = { path = "../borg-codemode" }
+borg-shellmode = { path = "../borg-shellmode" }
+borg-fs = { path = "../borg-fs" }
+http = "1"
 
 [build-dependencies]
 anyhow.workspace = true
 async-graphql.workspace = true
 base64.workspace = true
+borg-agent = { path = "../borg-agent" }
 borg-core = { path = "../borg-core" }
 borg-db = { path = "../borg-db" }
+borg-exec = { path = "../borg-exec" }
 borg-llm = { path = "../borg-llm" }
 borg-memory = { path = "../borg-memory" }
 borg-taskgraph = { path = "../borg-taskgraph" }

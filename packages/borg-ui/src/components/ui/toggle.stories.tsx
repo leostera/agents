@@ -1,5 +1,5 @@
 import { TextBIcon } from "@phosphor-icons/react";
-import type { Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 
 import { Toggle } from "./toggle";

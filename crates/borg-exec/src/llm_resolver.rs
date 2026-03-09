@@ -1,4 +1,9 @@
 use anyhow::Result;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
+use tokio::time::interval;
+use tracing::{error, info};
+
 use borg_db::BorgDb;
 use borg_llm::BorgLLM;
 use borg_llm::providers::openai::{OpenAiApiMode, OpenAiProvider};
@@ -10,14 +15,47 @@ const LEGACY_PREFERRED_PROVIDER_KEY: &str = "preferred_provider";
 
 pub struct BorgLLMResolver {
     db: BorgDb,
+    cached_llm: Arc<RwLock<Option<Arc<BorgLLM>>>>,
 }
 
 impl BorgLLMResolver {
     pub fn new(db: BorgDb) -> Self {
-        Self { db }
+        Self {
+            db,
+            cached_llm: Arc::new(RwLock::new(None)),
+        }
     }
 
-    pub async fn llm(&self) -> Result<BorgLLM> {
+    pub async fn llm(&self) -> Result<Arc<BorgLLM>> {
+        if let Some(llm) = self.cached_llm.read().unwrap().as_ref() {
+            return Ok(llm.clone());
+        }
+
+        // Initial load if not cached yet
+        let llm = Arc::new(self.resolve_llm_from_db().await?);
+        *self.cached_llm.write().unwrap() = Some(llm.clone());
+        Ok(llm)
+    }
+
+    pub async fn start_update_loop(self: Arc<Self>) {
+        info!(target: "borg_exec", "starting llm resolver update loop");
+        let mut ticker = interval(Duration::from_millis(500));
+        loop {
+            ticker.tick().await;
+            if let Err(err) = self.update_cache().await {
+                error!(target: "borg_exec", error = %err, "failed to update llm resolver cache");
+            }
+        }
+    }
+
+    async fn update_cache(&self) -> Result<()> {
+        // Simple polling for now
+        let llm = Arc::new(self.resolve_llm_from_db().await?);
+        *self.cached_llm.write().unwrap() = Some(llm);
+        Ok(())
+    }
+
+    async fn resolve_llm_from_db(&self) -> Result<BorgLLM> {
         let settings = self.load_provider_settings().await?;
 
         let mut builder = BorgLLM::builder();

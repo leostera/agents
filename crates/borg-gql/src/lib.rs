@@ -13,17 +13,19 @@ use async_graphql::http::{ALL_WEBSOCKET_PROTOCOLS, GraphiQLSource, WebSocketProt
 use async_graphql::{Request, Response, Schema};
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use axum::extract::{Extension, State, WebSocketUpgrade};
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri as AxumUri, header};
+use axum::http::{HeaderMap, Method, StatusCode, Uri as AxumUri, header};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use borg_core::Uri;
+use borg_core::{ActorId, MessagePayload, PortId, Uri, WorkspaceId};
 use borg_db::BorgDb;
 use borg_exec::{
-    BorgCommand, BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, HttpContext, PortContext,
+    BorgActorManager, BorgCommand, BorgInput, BorgRuntime, DiscordContext, HttpContext,
+    PortContext, TelegramContext,
 };
+
 use borg_memory::MemoryStore;
-use borg_ports::BorgPortsSupervisor;
+use borg_ports::{BorgPortsSupervisor, deterministic_actor_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -37,6 +39,7 @@ use sdl::{MutationRoot, QueryRoot, SubscriptionRoot};
 const DEFAULT_GQL_BIND_ADDR: &str = "127.0.0.1:4008";
 const HEALTH_STATUS_OK: &str = "ok";
 const HTTP_PORT_NAME: &str = "http";
+const STAGE_PORT_NAME: &str = "stage";
 const HTTP_HELP_TEXT: &str = "Available commands: /help, /start, /model [model_name], /participants, /context, /reset, /compact";
 const HTTP_START_GREETING: &str = "Borg is online. Send a message to start.";
 const MODEL_COMMAND_USAGE: &str = "Usage: /model [model_name]";
@@ -54,10 +57,10 @@ pub struct BorgGqlServer {
 
 impl BorgGqlServer {
     /// Creates a GraphQL server from runtime stores.
-    pub fn new(db: BorgDb, memory: MemoryStore) -> Self {
+    pub fn new(db: BorgDb, memory: MemoryStore, supervisor: Arc<BorgActorManager>) -> Self {
         Self {
             schema: Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
-                .data(BorgGqlData::new(db, memory))
+                .data(BorgGqlData::new(db, memory, supervisor))
                 .limit_depth(100)
                 .limit_complexity(4_000)
                 .finish(),
@@ -181,7 +184,7 @@ impl BorgGqlServer {
 #[derive(Clone)]
 struct RuntimeHttpState {
     db: BorgDb,
-    supervisor: Arc<BorgSupervisor>,
+    runtime: Arc<BorgRuntime>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -198,8 +201,8 @@ pub struct HttpPortRequest {
 struct ValidatedHttpPortRequest {
     user_id: Uri,
     text: String,
-    actor_id: Option<Uri>,
-    metadata: Option<Value>,
+    _actor_id: Option<Uri>,
+    _metadata: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -217,15 +220,15 @@ pub struct BorgHttpServer {
 }
 
 impl BorgHttpServer {
-    pub fn new(bind: String, runtime: Arc<BorgRuntime>, supervisor: Arc<BorgSupervisor>) -> Self {
-        let gql_server = BorgGqlServer::new(runtime.db.clone(), runtime.memory.clone());
-        let ports_supervisor = BorgPortsSupervisor::new(runtime.clone(), supervisor.clone());
+    pub fn new(bind: String, runtime: Arc<BorgRuntime>, supervisor: Arc<BorgActorManager>) -> Self {
+        let gql_server = BorgGqlServer::new(runtime.db.clone(), runtime.memory.clone(), supervisor);
+        let ports_supervisor = BorgPortsSupervisor::new(runtime.clone());
         Self {
             bind,
             gql_server,
             state: RuntimeHttpState {
                 db: runtime.db.clone(),
-                supervisor,
+                runtime,
             },
             ports_supervisor,
         }
@@ -300,15 +303,15 @@ impl BorgHttpServer {
             Err(err) => return err,
         };
 
-        let conversation_key = validated.user_id.clone();
+        let conversation_key = validated.user_id.to_string();
 
         let input = match resolve_http_port_input(&validated.text) {
             Ok(value) => value,
             Err(err) => return bad_request(err),
         };
 
-        let body = match input {
-            HttpPortInput::LocalReply(reply) => json!({
+        match input {
+            HttpPortInput::LocalReply(reply) => Json(json!({
                 "actor_id": serde_json::Value::Null,
                 "outbound_messages": [{
                     "kind": "port_reply",
@@ -317,77 +320,103 @@ impl BorgHttpServer {
                     "metadata": {}
                 }],
                 "tool_calls": [],
-            }),
-            HttpPortInput::Forward(forward_input) => {
-                let default_actor_id = match state.db.get_port(HTTP_PORT_NAME).await {
-                    Ok(Some(port)) => port.assigned_actor_id,
-                    Ok(None) => None,
-                    Err(err) => return internal_error(err),
+            }))
+            .into_response(),
+            HttpPortInput::Forward(_) => {
+                let workspace_id = WorkspaceId::from_id("default");
+
+                // Detect if this is the Stage UI hitting the HTTP port
+                let is_stage = validated
+                    ._metadata
+                    .as_ref()
+                    .and_then(|m| m.get("port"))
+                    .and_then(|p| p.as_str())
+                    == Some("stage");
+
+                let port_name = if is_stage {
+                    STAGE_PORT_NAME
+                } else {
+                    HTTP_PORT_NAME
+                };
+                let port_id = PortId::from_id(port_name);
+
+                // 1. Resolve Actor ID
+                let actor_id = if let Some(requested_id) = validated._actor_id {
+                    let id = ActorId(requested_id);
+                    // Ensure the binding exists for this conversation
+                    let _ = state
+                        .db
+                        .upsert_port_binding(&workspace_id, &port_id, &conversation_key, &id)
+                        .await;
+                    id
+                } else {
+                    match state
+                        .db
+                        .resolve_port_actor(&port_id, &conversation_key)
+                        .await
+                    {
+                        Ok(Some(id)) => id,
+                        Ok(None) => {
+                            let id = deterministic_actor_id(&port_id, &conversation_key);
+                            if let Ok(None) = state.db.get_actor(&id).await {
+                                let _ = state
+                                    .db
+                                    .upsert_actor(
+                                        &id,
+                                        &workspace_id,
+                                        &format!(
+                                            "{} User {}",
+                                            port_name.to_uppercase(),
+                                            conversation_key
+                                        ),
+                                        "You are a helpful assistant.",
+                                        "",
+                                        "RUNNING",
+                                    )
+                                    .await;
+                            }
+                            let _ = state
+                                .db
+                                .upsert_port_binding(
+                                    &workspace_id,
+                                    &port_id,
+                                    &conversation_key,
+                                    &id,
+                                )
+                                .await;
+                            id
+                        }
+                        Err(err) => return internal_error(err),
+                    }
                 };
 
-                let actor_id = match state
-                    .db
-                    .resolve_port_actor(
-                        HTTP_PORT_NAME,
-                        &conversation_key,
-                        validated.actor_id.as_ref(),
-                        default_actor_id.as_ref(),
-                    )
+                // 2. Wrap message in the expected structure
+                let payload_json = json!({
+                    "kind": "port_message",
+                    "actor_id": actor_id.as_str(),
+                    "user_id": validated.user_id.as_str(),
+                    "text": validated.text,
+                    "port_context": {
+                        "port": port_name,
+                        "metadata": validated._metadata.unwrap_or(json!({}))
+                    }
+                });
+                let payload = MessagePayload::user_text(payload_json.to_string());
+
+                match state
+                    .runtime
+                    .send_message(&port_id.into(), &actor_id.into(), payload)
                     .await
                 {
-                    Ok(value) => value,
-                    Err(err) => return internal_error(err),
-                };
-
-                let output = match state
-                    .supervisor
-                    .call(BorgMessage {
-                        actor_id,
-                        user_id: validated.user_id,
-                        input: forward_input,
-                        port_context: validated
-                            .metadata
-                            .as_ref()
-                            .and_then(|value| {
-                                serde_json::from_value::<PortContext>(value.clone()).ok()
-                            })
-                            .unwrap_or(PortContext::Http(HttpContext::default())),
-                    })
-                    .await
-                {
-                    Ok(value) => value,
-                    Err(err) => return internal_error(err),
-                };
-
-                json!({
-                    "actor_id": output.actor_id,
-                    "outbound_messages": output.outbound_messages,
-                    "tool_calls": output
-                        .tool_calls
-                        .into_iter()
-                        .map(|call| {
-                            json!({
-                                "tool_name": call.tool_name,
-                                "arguments": call.arguments,
-                                "output": call.output,
-                            })
-                        })
-                        .collect::<Vec<_>>(),
-                })
+                    Ok(message_id) => Json(json!({
+                        "status": "delivered",
+                        "message_id": message_id.to_string()
+                    }))
+                    .into_response(),
+                    Err(err) => internal_error(err),
+                }
             }
-        };
-
-        let actor_id_header = body
-            .as_object()
-            .and_then(|obj| obj.get("actor_id"))
-            .and_then(Value::as_str)
-            .and_then(|actor_id| HeaderValue::from_str(actor_id).ok());
-
-        let mut response = (StatusCode::OK, Json(body)).into_response();
-        if let Some(value) = actor_id_header {
-            response.headers_mut().insert(BORG_ACTOR_ID_HEADER, value);
         }
-        response
     }
 }
 
@@ -415,8 +444,8 @@ fn validate_port_request(
     Ok(ValidatedHttpPortRequest {
         user_id,
         text,
-        actor_id,
-        metadata: payload.metadata,
+        _actor_id: actor_id,
+        _metadata: payload.metadata,
     })
 }
 

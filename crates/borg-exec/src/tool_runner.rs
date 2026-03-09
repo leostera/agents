@@ -1,58 +1,35 @@
-use crate::mailbox_envelope::{ActorMailboxEnvelope, ActorMailboxInput};
-use crate::patch_apply::apply_patch_payload;
 use anyhow::{Result, anyhow};
+use serde::Deserialize;
+use serde_json::json;
+use std::sync::Arc;
+
 use borg_agent::{
     BorgToolCall, BorgToolResult, Tool, ToolResponse, ToolResultData, ToolSpec, Toolchain,
-    ToolchainBuilder, build_actor_admin_toolchain, default_actor_admin_tool_specs,
+    ToolchainBuilder, build_actor_admin_toolchain,
 };
 use borg_codemode::{CodeModeContext, CodeModeRuntime, build_code_mode_toolchain_with_context};
-use borg_core::Uri;
+use borg_core::{ActorId, EndpointUri, MessagePayload};
 use borg_db::BorgDb;
-use borg_fs::{BorgFs, build_borg_fs_toolchain, default_borg_fs_tool_specs};
-use borg_llm::{default_provider_admin_tool_specs, run_provider_admin_tool};
+use borg_fs::{BorgFs, build_borg_fs_toolchain};
+use borg_llm::default_provider_admin_tool_specs;
 use borg_memory::{MemoryStore, build_memory_toolchain};
 use borg_ports_tools::{build_port_admin_toolchain, default_port_admin_tool_specs};
 use borg_schedule::build_schedule_toolchain;
 use borg_shellmode::{ShellModeRuntime, build_shell_mode_toolchain};
 use borg_taskgraph::{build_taskgraph_toolchain, build_taskgraph_worker_toolchain};
-use serde::Deserialize;
-use serde_json::json;
-use tokio::time::{Duration, Instant, sleep};
 
-const ACTOR_RECEIVE_DEFAULT_TIMEOUT_MS: u64 = 60_000;
-const ACTOR_RECEIVE_POLL_INTERVAL_MS: u64 = 100;
-const PATCH_APPLY_TOOL_NAME: &str = "Patch-apply";
-
-#[derive(Debug, Clone, Deserialize)]
-struct ActorsSendMessageArgs {
-    target_actor_id: String,
-    text: String,
-    #[serde(default)]
-    in_reply_to_submission_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ActorsReceiveArgs {
-    #[serde(default)]
-    expected_submission_id: Option<String>,
-    #[serde(default)]
-    timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct PatchApplyArgs {
-    patch: String,
-}
+use crate::runtime::BorgRuntime;
 
 pub fn build_exec_toolchain_with_context(
+    rt: Arc<BorgRuntime>,
     runtime: CodeModeRuntime,
     shell_runtime: ShellModeRuntime,
     context: CodeModeContext,
     memory: MemoryStore,
     db: BorgDb,
     files: BorgFs,
-    current_actor_id: Uri,
-    current_user_id: Uri,
+    current_actor_id: ActorId,
+    _current_user_id: EndpointUri,
     allow_task_creation: bool,
 ) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let code = build_code_mode_toolchain_with_context(runtime, context)?;
@@ -66,8 +43,7 @@ pub fn build_exec_toolchain_with_context(
     };
     let schedule = build_schedule_toolchain(db.clone())?;
     let actor_admin = build_actor_admin_toolchain(db.clone(), current_actor_id.clone())?;
-    let actor_messaging =
-        build_actor_messaging_toolchain(db.clone(), current_actor_id, current_user_id)?;
+    let actor_messaging = build_actor_messaging_toolchain(rt, current_actor_id)?;
     let patch_tools = build_patch_toolchain()?;
     let port_admin = build_port_admin_toolchain(db.clone())?;
     let provider_admin = build_provider_admin_toolchain(db)?;
@@ -84,112 +60,36 @@ pub fn build_exec_toolchain_with_context(
 }
 
 pub fn default_exec_admin_tool_specs() -> Vec<ToolSpec> {
-    let mut out = Vec::new();
-    out.extend(default_actor_admin_tool_specs());
-    out.extend(default_actor_messaging_tool_specs());
-    out.push(patch_apply_tool_spec());
-    out.extend(default_port_admin_tool_specs());
-    out.extend(default_borg_fs_tool_specs());
-    out.extend(
+    let mut specs = Vec::new();
+    specs.extend(default_port_admin_tool_specs());
+    specs.extend(default_actor_messaging_tool_specs());
+    specs.extend(
         default_provider_admin_tool_specs()
             .into_iter()
-            .map(|spec| ToolSpec {
-                name: spec.name,
-                description: spec.description,
-                parameters: spec.parameters,
+            .map(|s| ToolSpec {
+                name: s.name,
+                description: s.description,
+                parameters: s.parameters,
             }),
     );
-    out
+    specs
 }
 
-fn patch_apply_tool_spec() -> ToolSpec {
-    ToolSpec {
-        name: PATCH_APPLY_TOOL_NAME.to_string(),
-        description:
-            "Apply a stripped patch to workspace files using Add/Delete/Update/Move directives."
-                .to_string(),
-        parameters: json!({
-            "type": "object",
-            "required": ["patch"],
-            "properties": {
-                "patch": {
-                    "type": "string",
-                    "description": "Patch payload using *** Begin Patch / *** End Patch format."
-                }
-            },
-            "additionalProperties": false
-        }),
-    }
-}
-
-fn build_patch_toolchain() -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
-    ToolchainBuilder::new()
-        .add_tool(Tool::new_transcoded(
-            patch_apply_tool_spec(),
-            None,
-            move |request: borg_agent::ToolRequest<PatchApplyArgs>| async move {
-                let result = apply_patch_payload(&request.arguments.patch)?;
-                Ok(ToolResponse {
-                    output: ToolResultData::Ok(serde_json::to_value(result)?),
-                })
-            },
-        ))?
-        .build()
-}
-
-fn default_actor_messaging_tool_specs() -> Vec<ToolSpec> {
-    vec![
-        ToolSpec {
-            name: "Actors-sendMessage".to_string(),
-            description: "Send a message from the current actor to another actor. If an inbound actor JSON payload includes `reply_target_actor_id`, use this tool to reply and include `in_reply_to_submission_id` when provided."
-                .to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "target_actor_id": {
-                        "type": "string",
-                        "format": "uri",
-                        "description": "Destination actor URI. For replies, set this to `reply_target_actor_id` from the inbound actor JSON payload."
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "Message text to send to the target actor."
-                    },
-                    "in_reply_to_submission_id": {
-                        "type": "string",
-                        "format": "uri",
-                        "description": "Submission/message URI being replied to. Use `submission_id` from inbound actor JSON payload when present."
-                    }
-                },
-                "required": ["target_actor_id", "text"],
-                "additionalProperties": false
-            }),
-        },
-        ToolSpec {
-            name: "Actors-receive".to_string(),
-            description:
-                "Wait for the next actor reply message for this actor, optionally filtered by submission id. Reply messages include `source_actor_id`; when responding back, call `Actors-sendMessage`."
-                    .to_string(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "expected_submission_id": {
-                        "type": "string",
-                        "format": "uri",
-                        "description": "Only return replies that reference this submission/message URI."
-                    },
-                    "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 300000 }
-                },
-                "additionalProperties": false
-            }),
-        },
-    ]
+#[derive(Debug, Clone, Deserialize)]
+struct SendMessageArgs {
+    target_actor_id: String,
+    text: String,
+    #[serde(default)]
+    reply_target_actor_id: Option<String>,
+    #[serde(default)]
+    submission_id: Option<String>,
+    #[serde(default)]
+    in_reply_to_submission_id: Option<String>,
 }
 
 fn build_actor_messaging_toolchain(
-    db: BorgDb,
-    current_actor_id: Uri,
-    current_user_id: Uri,
+    rt: Arc<BorgRuntime>,
+    current_actor_id: ActorId,
 ) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
     let mut builder = ToolchainBuilder::new();
 
@@ -197,134 +97,34 @@ fn build_actor_messaging_toolchain(
         .into_iter()
         .find(|spec| spec.name == "Actors-sendMessage")
         .ok_or_else(|| anyhow!("missing Actors-sendMessage spec"))?;
-    let receive_spec = default_actor_messaging_tool_specs()
-        .into_iter()
-        .find(|spec| spec.name == "Actors-receive")
-        .ok_or_else(|| anyhow!("missing Actors-receive spec"))?;
 
-    let db_send = db.clone();
-    let sender_actor_id = current_actor_id.clone();
-    let sender_user_id = current_user_id.clone();
     builder = builder.add_tool(Tool::new_transcoded(
         send_spec,
         None,
-        move |request: borg_agent::ToolRequest<ActorsSendMessageArgs>| {
-            let db = db_send.clone();
-            let sender_actor_id = sender_actor_id.clone();
-            let sender_user_id = sender_user_id.clone();
+        move |request: borg_agent::ToolRequest<SendMessageArgs>| {
+            let rt = rt.clone();
+            let sender_id = current_actor_id.clone();
             async move {
-                let target_actor_id = Uri::parse(request.arguments.target_actor_id.trim())?;
-                if db.get_actor(&target_actor_id).await?.is_none() {
-                    return Err(anyhow!("actor.not_found"));
-                }
+                let target_id = ActorId::parse(&request.arguments.target_actor_id)?;
 
-                let in_reply_to_submission_id = request
-                    .arguments
-                    .in_reply_to_submission_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(Uri::parse)
-                    .transpose()?;
-
-                let text = request.arguments.text.trim();
-                if text.is_empty() {
-                    return Err(anyhow!("validation_failed: missing text"));
-                }
-                let input = ActorMailboxInput::Chat {
-                    text: text.to_string(),
-                };
-
-                let envelope = ActorMailboxEnvelope {
-                    actor_id: target_actor_id.to_string(),
-                    user_id: sender_user_id.to_string(),
-                    port_context: crate::PortContext::Unknown,
-                    input,
-                };
-                let payload = serde_json::to_value(envelope)?;
-                let actor_message_id = db
-                    .enqueue_actor_message_from_sender(
-                        Some(&sender_actor_id),
-                        &target_actor_id,
-                        &payload,
-                        None,
-                        in_reply_to_submission_id.as_ref(),
-                    )
-                    .await?;
-                let response = json!({
-                    "status": "delivered",
-                    "actor_message_id": actor_message_id.to_string(),
-                    "submission_id": actor_message_id.to_string(),
-                    "sender_actor_id": sender_actor_id.to_string(),
-                    "target_actor_id": target_actor_id.to_string(),
+                // Construct the structured actor message as per protocol
+                let payload_json = json!({
+                    "type": "actor_message",
+                    "sender_actor_id": sender_id.as_str(),
+                    "text": request.arguments.text,
+                    "reply_target_actor_id": request.arguments.reply_target_actor_id,
+                    "submission_id": request.arguments.submission_id,
+                    "in_reply_to_submission_id": request.arguments.in_reply_to_submission_id,
                 });
+
+                let payload = MessagePayload::user_text(payload_json.to_string());
+
+                rt.send_message(&sender_id.into(), &target_id.into(), payload)
+                    .await?;
+
                 Ok(ToolResponse {
-                    output: ToolResultData::Ok(response),
+                    output: ToolResultData::Ok(json!({ "status": "sent" })),
                 })
-            }
-        },
-    ))?;
-
-    let db_receive = db.clone();
-    builder = builder.add_tool(Tool::new_transcoded(
-        receive_spec,
-        None,
-        move |request: borg_agent::ToolRequest<ActorsReceiveArgs>| {
-            let db = db_receive.clone();
-            let current_actor_id = current_actor_id.clone();
-            async move {
-                let timeout_ms = request
-                    .arguments
-                    .timeout_ms
-                    .unwrap_or(ACTOR_RECEIVE_DEFAULT_TIMEOUT_MS);
-                let expected_submission_id = request
-                    .arguments
-                    .expected_submission_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(Uri::parse)
-                    .transpose()?;
-
-                let timeout = Duration::from_millis(timeout_ms);
-                let deadline = Instant::now() + timeout;
-                loop {
-                    if let Some(row) = db
-                        .claim_next_actor_reply_message(
-                            &current_actor_id,
-                            expected_submission_id.as_ref(),
-                        )
-                        .await?
-                    {
-                        let envelope: ActorMailboxEnvelope =
-                            serde_json::from_value(row.payload.clone())?;
-                        let text = match envelope.input {
-                            ActorMailboxInput::Chat { text } => text,
-                            ActorMailboxInput::Command { command } => {
-                                serde_json::to_string(&command)?
-                            }
-                            ActorMailboxInput::Audio { file_id, .. } => file_id,
-                        };
-                        let _ = db.ack_actor_message(&row.actor_message_id).await;
-                        let response = json!({
-                            "status": "completed",
-                            "actor_message_id": row.actor_message_id.to_string(),
-                            "submission_id": row.actor_message_id.to_string(),
-                            "in_reply_to_submission_id": row.reply_to_message_id.map(|value| value.to_string()),
-                            "source_actor_id": row.sender_actor_id.map(|value| value.to_string()),
-                            "text": text,
-                        });
-                        return Ok(ToolResponse {
-                             output: ToolResultData::Ok(response),
-                        });
-                    }
-
-                    if Instant::now() >= deadline {
-                        return Err(anyhow!("actors.receive.timeout"));
-                    }
-
-                    sleep(Duration::from_millis(ACTOR_RECEIVE_POLL_INTERVAL_MS)).await;
-                }
             }
         },
     ))?;
@@ -332,31 +132,29 @@ fn build_actor_messaging_toolchain(
     builder.build()
 }
 
-fn build_provider_admin_toolchain(db: BorgDb) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
-    let mut builder = ToolchainBuilder::new();
-    for spec in default_provider_admin_tool_specs() {
-        let db = db.clone();
-        let name = spec.name.clone();
-        let tool = Tool::new_transcoded(
-            ToolSpec {
-                name: spec.name,
-                description: spec.description,
-                parameters: spec.parameters,
+pub fn default_actor_messaging_tool_specs() -> Vec<ToolSpec> {
+    vec![ToolSpec {
+        name: "Actors-sendMessage".to_string(),
+        description: "Send a structured message to another actor.".to_string(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "target_actor_id": { "type": "string", "format": "uri", "description": "The recipient Actor ID (borg:actor:<id>)" },
+                "text": { "type": "string", "description": "The message content" },
+                "reply_target_actor_id": { "type": "string", "format": "uri", "description": "Optional: Actor ID where replies should be sent" },
+                "submission_id": { "type": "string", "description": "Optional: Unique ID for this message to track replies" },
+                "in_reply_to_submission_id": { "type": "string", "description": "Optional: If replying to a message, include its submission_id here" }
             },
-            None,
-            move |request: borg_agent::ToolRequest<BorgToolCall>| {
-                let db = db.clone();
-                let name = name.clone();
-                async move {
-                    let arguments = request.arguments.to_value()?;
-                    let value = run_provider_admin_tool(&db, &name, &arguments).await?;
-                    Ok(ToolResponse {
-                        output: ToolResultData::Ok(value),
-                    })
-                }
-            },
-        );
-        builder = builder.add_tool(tool)?;
-    }
-    builder.build()
+            "required": ["target_actor_id", "text"],
+            "additionalProperties": false
+        }),
+    }]
+}
+
+fn build_patch_toolchain() -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+    ToolchainBuilder::new().build()
+}
+
+fn build_provider_admin_toolchain(_db: BorgDb) -> Result<Toolchain<BorgToolCall, BorgToolResult>> {
+    ToolchainBuilder::new().build()
 }

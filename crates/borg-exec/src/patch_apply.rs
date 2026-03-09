@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use serde_json::json;
@@ -121,7 +123,11 @@ struct PatchPlan {
 
 pub fn apply_patch_payload(raw_patch: &str) -> Result<PatchApplyResult> {
     if raw_patch.trim().is_empty() {
-        return Err(patch_err("patch.validation.empty", "patch is required", None));
+        return Err(patch_err(
+            "patch.validation.empty",
+            "patch is required",
+            None,
+        ));
     }
     if raw_patch.len() > PATCH_MAX_BYTES {
         return Err(anyhow!(
@@ -191,9 +197,13 @@ fn patch_err(code: &str, message: &str, line_number: Option<usize>) -> anyhow::E
 fn parse_patch(raw_patch: &str) -> Result<ParsedPatch> {
     let mut cursor = ParseCursor::new(raw_patch);
 
-    let begin = cursor
-        .next()
-        .ok_or_else(|| patch_err("patch.parse.unexpected_eof", "missing *** Begin Patch", None))?;
+    let begin = cursor.next().ok_or_else(|| {
+        patch_err(
+            "patch.parse.unexpected_eof",
+            "missing *** Begin Patch",
+            None,
+        )
+    })?;
     if begin.value != PATCH_BEGIN {
         return Err(patch_err(
             "patch.parse.expected_begin",
@@ -255,9 +265,13 @@ fn parse_patch(raw_patch: &str) -> Result<ParsedPatch> {
 }
 
 fn parse_add_file(cursor: &mut ParseCursor) -> Result<PatchOp> {
-    let header = cursor
-        .next()
-        .ok_or_else(|| patch_err("patch.parse.unexpected_eof", "missing add-file header", None))?;
+    let header = cursor.next().ok_or_else(|| {
+        patch_err(
+            "patch.parse.unexpected_eof",
+            "missing add-file header",
+            None,
+        )
+    })?;
     let path = header
         .value
         .strip_prefix(PATCH_ADD_FILE)
@@ -358,9 +372,9 @@ fn parse_update_file(cursor: &mut ParseCursor) -> Result<PatchOp> {
     if let Some(line) = cursor.peek()
         && line.value.starts_with(PATCH_MOVE_TO)
     {
-        let move_line = cursor.next().ok_or_else(|| {
-            patch_err("patch.parse.unexpected_eof", "missing move-to path", None)
-        })?;
+        let move_line = cursor
+            .next()
+            .ok_or_else(|| patch_err("patch.parse.unexpected_eof", "missing move-to path", None))?;
         let path = move_line
             .value
             .strip_prefix(PATCH_MOVE_TO)
@@ -403,13 +417,19 @@ fn parse_update_file(cursor: &mut ParseCursor) -> Result<PatchOp> {
                 break;
             }
             let row = cursor.next().ok_or_else(|| {
-                patch_err("patch.parse.unexpected_eof", "unexpected eof in hunk body", None)
+                patch_err(
+                    "patch.parse.unexpected_eof",
+                    "unexpected eof in hunk body",
+                    None,
+                )
             })?;
-            let first = row
-                .value
-                .chars()
-                .next()
-                .ok_or_else(|| patch_err("patch.parse.invalid_hunk_line", "empty hunk line", Some(row.number)))?;
+            let first = row.value.chars().next().ok_or_else(|| {
+                patch_err(
+                    "patch.parse.invalid_hunk_line",
+                    "empty hunk line",
+                    Some(row.number),
+                )
+            })?;
             let kind = match first {
                 ' ' => PatchHunkLineKind::Context,
                 '+' => PatchHunkLineKind::Add,
@@ -717,14 +737,16 @@ fn apply_patch_plan(plan: &PatchPlan) -> Result<()> {
         if !path.exists() {
             continue;
         }
-        std::fs::remove_file(path).with_context(|| format!("failed deleting `{}`", path.display()))?;
+        std::fs::remove_file(path)
+            .with_context(|| format!("failed deleting `{}`", path.display()))?;
     }
     for (path, content) in &plan.writes {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed creating parent `{}`", parent.display()))?;
         }
-        std::fs::write(path, content).with_context(|| format!("failed writing `{}`", path.display()))?;
+        std::fs::write(path, content)
+            .with_context(|| format!("failed writing `{}`", path.display()))?;
     }
     Ok(())
 }
@@ -806,11 +828,9 @@ fn find_hunk_start(source: &[String], from: usize, expected: &[&str]) -> Option<
     }
     let max = source.len().saturating_sub(expected.len());
     for start in from..=max {
-        if expected
-            .iter()
-            .enumerate()
-            .all(|(offset, needle)| source.get(start + offset).map(|line| line.as_str()) == Some(*needle))
-        {
+        if expected.iter().enumerate().all(|(offset, needle)| {
+            source.get(start + offset).map(|line| line.as_str()) == Some(*needle)
+        }) {
             return Some(start);
         }
     }
@@ -849,11 +869,8 @@ mod tests {
     use super::*;
 
     fn tmp_dir(test_name: &str) -> Result<PathBuf> {
-        let root = std::env::temp_dir().join(format!(
-            "borg-patch-{}-{}",
-            test_name,
-            uuid::Uuid::new_v4()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("borg-patch-{}-{}", test_name, uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root)?;
         Ok(root)
     }

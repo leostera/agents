@@ -1,14 +1,27 @@
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
-use url::Url;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Uri(Url);
+/// A Borg URI. Format: `scheme:[//]path`
+///
+/// This implementation is intentionally flexible to support both
+/// `borg:actor:id` and `tg://chat/id` as specified in RFD0033.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Uri(String);
 
 impl Uri {
     pub fn parse(input: &str) -> anyhow::Result<Self> {
-        let url = Url::parse(input)?;
-        Ok(Self(url))
+        let input = input.trim();
+        if input.is_empty() {
+            anyhow::bail!("URI cannot be empty");
+        }
+
+        // Basic validation: must have a scheme and a colon
+        if !input.contains(':') {
+            anyhow::bail!("invalid URI: `{}` (missing scheme)", input);
+        }
+
+        Ok(Self(input.to_string()))
     }
 
     pub fn from_parts(ns: &str, kind: &str, id: Option<&str>) -> anyhow::Result<Self> {
@@ -20,13 +33,13 @@ impl Uri {
     }
 
     pub fn as_str(&self) -> &str {
-        self.0.as_ref()
+        &self.0
     }
 }
 
 impl fmt::Display for Uri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.as_str())
+        f.write_str(&self.0)
     }
 }
 
@@ -38,21 +51,8 @@ impl FromStr for Uri {
     }
 }
 
-impl Serialize for Uri {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for Uri {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        Uri::parse(&raw).map_err(serde::de::Error::custom)
+impl AsRef<str> for Uri {
+    fn as_ref(&self) -> &str {
+        &self.0
     }
 }

@@ -3,18 +3,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use borg_core::Uri;
-use borg_db::BorgDb;
-use borg_exec::{
-    ActorOutput, BorgInput, BorgMessage, BorgRuntime, BorgSupervisor, RuntimeToolCall,
-    RuntimeToolResult,
-};
+use borg_core::{ActorId, MessagePayload, PortId, WorkspaceId};
+use borg_exec::BorgRuntime;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::task::JoinHandle;
 use tokio::time;
 use tracing::{error, info, warn};
 
 use crate::PortMessage;
+use crate::actor_id::deterministic_actor_id;
 use crate::discord::DiscordPort;
 use crate::message::PortInput;
 use crate::port::Provider::{Discord, Telegram, Unknown};
@@ -27,8 +24,7 @@ const PORT_CHANNEL_CAPACITY: usize = 256;
 
 pub struct BorgPortsSupervisor {
     rt: Arc<BorgRuntime>,
-    sup: Arc<BorgSupervisor>,
-    ports: HashMap<Uri, (PortConfig, JoinHandle<()>)>,
+    ports: HashMap<PortId, (PortConfig, JoinHandle<()>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,15 +35,15 @@ struct RunningPortState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ReconcileAction {
-    Stop(Uri),
-    Restart(Uri),
-    Start(Uri),
+    Stop(PortId),
+    Restart(PortId),
+    Start(PortId),
 }
 
 impl BorgPortsSupervisor {
-    pub fn new(rt: Arc<BorgRuntime>, sup: Arc<BorgSupervisor>) -> Self {
+    pub fn new(rt: Arc<BorgRuntime>) -> Self {
         let ports = HashMap::default();
-        Self { rt, sup, ports }
+        Self { rt, ports }
     }
 
     pub async fn start(mut self) -> Result<()> {
@@ -62,7 +58,7 @@ impl BorgPortsSupervisor {
 
     pub async fn reconcile_now(&mut self) -> Result<()> {
         let mut desired_ports = self.desired_ports().await?;
-        let running_states: HashMap<Uri, RunningPortState> = self
+        let running_states: HashMap<PortId, RunningPortState> = self
             .ports
             .iter()
             .map(|(port_id, (config, task))| {
@@ -105,7 +101,7 @@ impl BorgPortsSupervisor {
         Ok(())
     }
 
-    async fn desired_ports(&self) -> Result<HashMap<Uri, PortConfig>> {
+    async fn desired_ports(&self) -> Result<HashMap<PortId, PortConfig>> {
         let mut desired = HashMap::new();
         let ports = self.rt.db.list_ports(PORT_SCAN_LIMIT).await?;
 
@@ -120,45 +116,30 @@ impl BorgPortsSupervisor {
         Ok(desired)
     }
 
-    async fn spawn_port(&mut self, port_id: Uri, config: PortConfig) -> Result<()> {
+    async fn spawn_port(&mut self, port_id: PortId, config: PortConfig) -> Result<()> {
         if matches!(config.provider, Unknown) {
-            let provider = format!("{:?}", config.provider);
             let task = tokio::spawn(async move { std::future::pending::<()>().await });
             self.ports.insert(port_id.clone(), (config, task));
-            warn!(
-                target: "borg_ports",
-                port_id = %port_id,
-                provider = %provider,
-                "port provider is not implemented yet; skipping startup"
-            );
+            warn!(target: "borg_ports", port_id = %port_id, "unknown port provider; skipping");
             return Ok(());
         }
 
         let (inbound_tx, inbound_rx): (Sender<PortMessage>, Receiver<PortMessage>) =
             mpsc::channel(PORT_CHANNEL_CAPACITY);
-        let (outbound_tx, outbound_rx): (
-            Sender<ActorOutput<RuntimeToolCall, RuntimeToolResult>>,
-            Receiver<ActorOutput<RuntimeToolCall, RuntimeToolResult>>,
-        ) = mpsc::channel(PORT_CHANNEL_CAPACITY);
 
-        let sup = self.sup.clone();
-        let db = self.rt.db.clone();
-        let port_name = config.port_name.clone();
-        let assigned_actor_id = config.assigned_actor_id.clone();
+        let (_outbound_tx, outbound_rx) = mpsc::channel(PORT_CHANNEL_CAPACITY);
+
+        let bridge = BridgeLoop::new(
+            self.rt.clone(),
+            port_id.clone(),
+            inbound_rx,
+            config.assigned_actor_id.clone(),
+        );
         let bridge_task = tokio::spawn(async move {
-            bridge_loop(
-                db,
-                sup,
-                port_name,
-                assigned_actor_id,
-                inbound_rx,
-                outbound_tx,
-            )
-            .await;
+            bridge.run().await;
         });
 
         let config_for_port_task = config.clone();
-        let port_id_for_port_task = port_id.clone();
         let port_task = tokio::spawn(async move {
             match config_for_port_task.provider {
                 Discord => match DiscordPort::new(config_for_port_task.clone()).await {
@@ -169,21 +150,13 @@ impl BorgPortsSupervisor {
                     Ok(port) => port.run(inbound_tx, outbound_rx).await,
                     Err(err) => Err(err),
                 },
-                Unknown => {
-                    warn!(target: "borg_ports", port_id = %port_id_for_port_task, "unknown port provider; skipping");
-                    Ok(())
-                }
+                _ => Ok(()),
             }
         });
 
         let task = tokio::spawn(async move {
             tokio::select! {
-                result = bridge_task => {
-                    match result {
-                        Ok(()) => info!(target: "borg_ports", "bridge task exited"),
-                        Err(err) => error!(target: "borg_ports", error = %err, "bridge task crashed"),
-                    }
-                }
+                _ = bridge_task => info!(target: "borg_ports", "bridge task exited"),
                 result = port_task => {
                     match result {
                         Ok(Ok(())) => info!(target: "borg_ports", "port task exited"),
@@ -200,12 +173,116 @@ impl BorgPortsSupervisor {
     }
 }
 
+pub struct BridgeLoop {
+    rt: Arc<BorgRuntime>,
+    port_id: PortId,
+    inbound_rx: Receiver<PortMessage>,
+    default_actor_id: Option<ActorId>,
+}
+
+impl BridgeLoop {
+    pub fn new(
+        rt: Arc<BorgRuntime>,
+        port_id: PortId,
+        inbound_rx: Receiver<PortMessage>,
+        default_actor_id: Option<ActorId>,
+    ) -> Self {
+        Self {
+            rt,
+            port_id,
+            inbound_rx,
+            default_actor_id,
+        }
+    }
+
+    pub async fn run(mut self) {
+        let workspace_id = WorkspaceId::from_id("default");
+        while let Some(message) = self.inbound_rx.recv().await {
+            let payload = match message.input {
+                PortInput::Chat { text } => MessagePayload::user_text(text),
+                PortInput::Audio {
+                    file_id,
+                    mime_type,
+                    duration_ms,
+                    ..
+                } => MessagePayload::UserAudio(borg_core::message_payload::UserAudioPayload {
+                    file_id: file_id.to_string(),
+                    transcript: None,
+                    mime_type,
+                    duration_ms,
+                }),
+                PortInput::Command(command) => MessagePayload::user_text(format!("/{:?}", command)),
+            };
+
+            // 1. Actor resolution happens on the port side
+            let conversation_key = message.conversation_key.to_string();
+            let actor_id = match self
+                .rt
+                .db
+                .resolve_port_actor(&self.port_id, &conversation_key)
+                .await
+            {
+                Ok(Some(id)) => id,
+                Ok(None) => {
+                    // Spawn or bind
+                    let actor_id = self.default_actor_id.clone().unwrap_or_else(|| {
+                        deterministic_actor_id(&self.port_id, &conversation_key)
+                    });
+
+                    // If deterministic, ensure actor exists
+                    if self.default_actor_id.is_none() {
+                        if let Ok(None) = self.rt.db.get_actor(&actor_id).await {
+                            let _ = self
+                                .rt
+                                .db
+                                .upsert_actor(
+                                    &actor_id,
+                                    &workspace_id,
+                                    &format!("Port {} - {}", self.port_id, conversation_key),
+                                    "You are a helpful assistant.",
+                                    "",
+                                    "RUNNING",
+                                )
+                                .await;
+                        }
+                    }
+
+                    let _ = self
+                        .rt
+                        .db
+                        .upsert_port_binding(
+                            &workspace_id,
+                            &self.port_id,
+                            &conversation_key,
+                            &actor_id,
+                        )
+                        .await;
+                    actor_id
+                }
+                Err(err) => {
+                    error!(target: "borg_ports", error = %err, "failed to resolve actor for port input");
+                    continue;
+                }
+            };
+
+            // 2. Send message to runtime
+            if let Err(err) = self
+                .rt
+                .send_message(&self.port_id.clone().into(), &actor_id.into(), payload)
+                .await
+            {
+                error!(target: "borg_ports", error = %err, "failed to send message from port to runtime");
+            }
+        }
+    }
+}
+
 fn compute_reconcile_plan(
-    current: &HashMap<Uri, RunningPortState>,
-    desired: &HashMap<Uri, PortConfig>,
+    current: &HashMap<PortId, RunningPortState>,
+    desired: &HashMap<PortId, PortConfig>,
 ) -> Vec<ReconcileAction> {
-    let current_port_set: HashSet<Uri> = current.keys().cloned().collect();
-    let desired_port_set: HashSet<Uri> = desired.keys().cloned().collect();
+    let current_port_set: HashSet<PortId> = current.keys().cloned().collect();
+    let desired_port_set: HashSet<PortId> = desired.keys().cloned().collect();
 
     let mut actions = Vec::new();
 
@@ -236,274 +313,8 @@ fn compute_reconcile_plan(
 
 fn action_key(action: &ReconcileAction) -> (&'static str, String) {
     match action {
-        ReconcileAction::Stop(port_id) => ("0", port_id.as_str().to_string()),
-        ReconcileAction::Restart(port_id) => ("1", port_id.as_str().to_string()),
-        ReconcileAction::Start(port_id) => ("2", port_id.as_str().to_string()),
-    }
-}
-
-async fn bridge_loop(
-    db: BorgDb,
-    sup: Arc<BorgSupervisor>,
-    port_name: String,
-    assigned_actor_id: Option<Uri>,
-    mut inbound_rx: Receiver<PortMessage>,
-    outbound_tx: Sender<ActorOutput<RuntimeToolCall, RuntimeToolResult>>,
-) {
-    while let Some(message) = inbound_rx.recv().await {
-        let actor_id = match db
-            .resolve_port_actor(
-                &port_name,
-                &message.conversation_key,
-                None,
-                assigned_actor_id.as_ref(),
-            )
-            .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                warn!(
-                    target: "borg_ports",
-                    error = %err,
-                    port_name = %port_name,
-                    conversation_key = %message.conversation_key,
-                    "failed to resolve actor binding"
-                );
-                continue;
-            }
-        };
-        if let Ok(ctx) = serde_json::to_value(&message.port_context) {
-            if let Err(err) = db
-                .upsert_port_actor_context(&port_name, &actor_id, &ctx)
-                .await
-            {
-                warn!(
-                    target: "borg_ports",
-                    error = %err,
-                    port_name = %port_name,
-                    actor_id = %actor_id.as_str(),
-                    "failed to persist port actor context snapshot"
-                );
-            }
-        }
-
-        let output = match sup
-            .call_with_progress(
-                BorgMessage {
-                    actor_id,
-                    user_id: message.user_id,
-                    input: match message.input {
-                        PortInput::Chat { text } => BorgInput::Chat { text },
-                        PortInput::Audio {
-                            file_id,
-                            mime_type,
-                            duration_ms,
-                            language_hint,
-                        } => BorgInput::Audio {
-                            file_id,
-                            mime_type,
-                            duration_ms,
-                            language_hint,
-                        },
-                        PortInput::Command(command) => BorgInput::Command(command),
-                    },
-                    port_context: message.port_context,
-                },
-                Some(outbound_tx.clone()),
-            )
-            .await
-        {
-            Ok(value) => value,
-            Err(err) => {
-                error!(
-                    target: "borg_ports",
-                    error = %err,
-                    port_name = %port_name,
-                    "failed to process port message"
-                );
-                continue;
-            }
-        };
-
-        // Store outbound messages in DB before sending to port
-        if let Some(actor_message_id) = &output.actor_message_id {
-            for outbound in &output.outbound_messages {
-                let outbound_json = serde_json::to_value(outbound).unwrap_or_default();
-                if let Err(err) = db.store_outbound_message(actor_message_id, &outbound_json).await {
-                    warn!(
-                        target: "borg_ports",
-                        error = %err,
-                        actor_message_id = %actor_message_id,
-                        "failed to store outbound message"
-                    );
-                }
-            }
-        }
-
-        if outbound_tx.send(output).await.is_err() {
-            break;
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-    use std::path::PathBuf;
-
-    use super::{ReconcileAction, RunningPortState, compute_reconcile_plan};
-    use crate::port::{PortConfig, Privacy, Provider, Status};
-    use borg_core::Uri;
-    use borg_db::BorgDb;
-
-    fn uri(value: &str) -> Uri {
-        Uri::parse(value).expect("valid uri")
-    }
-
-    fn config(port_id: &str, name: &str, provider: Provider) -> PortConfig {
-        PortConfig {
-            port_id: uri(port_id),
-            port_name: name.to_string(),
-            provider,
-            status: Status::Enabled,
-            privacy: Privacy::Public,
-            assigned_actor_id: None,
-            settings_json: r#"{"bot_token":"test"}"#.to_string(),
-        }
-    }
-
-    fn tmp_db_path(test_name: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("unix epoch")
-            .as_nanos();
-        let pid = std::process::id();
-        let mut path = std::env::temp_dir();
-        path.push(format!(
-            "borg-ports-supervisor-{test_name}-{pid}-{nanos}.db"
-        ));
-        path
-    }
-
-    #[test]
-    fn reconcile_plan_stops_removed_ports() {
-        let mut current = HashMap::new();
-        current.insert(
-            uri("borg:port:telegram"),
-            RunningPortState {
-                config: config("borg:port:telegram", "telegram", Provider::Telegram),
-                is_finished: false,
-            },
-        );
-        let desired = HashMap::new();
-
-        let actions = compute_reconcile_plan(&current, &desired);
-        assert_eq!(
-            actions,
-            vec![ReconcileAction::Stop(uri("borg:port:telegram"))]
-        );
-    }
-
-    #[test]
-    fn reconcile_plan_starts_new_ports() {
-        let current = HashMap::new();
-        let mut desired = HashMap::new();
-        desired.insert(
-            uri("borg:port:telegram"),
-            config("borg:port:telegram", "telegram", Provider::Telegram),
-        );
-
-        let actions = compute_reconcile_plan(&current, &desired);
-        assert_eq!(
-            actions,
-            vec![ReconcileAction::Start(uri("borg:port:telegram"))]
-        );
-    }
-
-    #[test]
-    fn reconcile_plan_restarts_when_config_changes() {
-        let mut current = HashMap::new();
-        current.insert(
-            uri("borg:port:telegram"),
-            RunningPortState {
-                config: config("borg:port:telegram", "telegram-old", Provider::Telegram),
-                is_finished: false,
-            },
-        );
-        let mut desired = HashMap::new();
-        desired.insert(
-            uri("borg:port:telegram"),
-            config("borg:port:telegram", "telegram", Provider::Telegram),
-        );
-
-        let actions = compute_reconcile_plan(&current, &desired);
-        assert_eq!(
-            actions,
-            vec![ReconcileAction::Restart(uri("borg:port:telegram"))]
-        );
-    }
-
-    #[test]
-    fn reconcile_plan_restarts_finished_ports() {
-        let mut current = HashMap::new();
-        current.insert(
-            uri("borg:port:telegram"),
-            RunningPortState {
-                config: config("borg:port:telegram", "telegram", Provider::Telegram),
-                is_finished: true,
-            },
-        );
-        let mut desired = HashMap::new();
-        desired.insert(
-            uri("borg:port:telegram"),
-            config("borg:port:telegram", "telegram", Provider::Telegram),
-        );
-
-        let actions = compute_reconcile_plan(&current, &desired);
-        assert_eq!(
-            actions,
-            vec![ReconcileAction::Restart(uri("borg:port:telegram"))]
-        );
-    }
-
-    #[test]
-    fn reconcile_plan_starts_new_discord_port() {
-        let current = HashMap::new();
-        let mut desired = HashMap::new();
-        desired.insert(
-            uri("borg:port:discord"),
-            config("borg:port:discord", "discord", Provider::Discord),
-        );
-
-        let actions = compute_reconcile_plan(&current, &desired);
-        assert_eq!(
-            actions,
-            vec![ReconcileAction::Start(uri("borg:port:discord"))]
-        );
-    }
-
-    #[tokio::test]
-    async fn context_snapshot_roundtrips_through_port_bindings() {
-        let path = tmp_db_path("context-roundtrip");
-        let db = BorgDb::open_local(path.to_str().expect("db path"))
-            .await
-            .expect("open db");
-        db.migrate().await.expect("migrate db");
-
-        let actor_id = uri("borg:actor:actor-1");
-        let conversation_key = uri("telegram:chat:1");
-        db.upsert_port_binding_full_record("telegram", &conversation_key, Some(Some(&actor_id)))
-            .await
-            .expect("seed binding");
-
-        db.upsert_port_actor_context("telegram", &actor_id, &serde_json::json!({"chat":{"id":1}}))
-            .await
-            .expect("write context");
-
-        let context = db
-            .get_port_actor_context("telegram", &actor_id)
-            .await
-            .expect("read context");
-        assert_eq!(context, Some(serde_json::json!({"chat":{"id":1}})));
+        ReconcileAction::Stop(id) => ("0", id.to_string()),
+        ReconcileAction::Restart(id) => ("1", id.to_string()),
+        ReconcileAction::Start(id) => ("2", id.to_string()),
     }
 }

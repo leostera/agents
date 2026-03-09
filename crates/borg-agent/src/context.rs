@@ -105,29 +105,6 @@ pub trait ContextProvider<TToolCall, TToolResult>: Send + Sync {
     async fn get_context(&self) -> Result<Vec<ContextChunk<TToolCall, TToolResult>>>;
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct StaticContextProvider<TToolCall, TToolResult> {
-    chunks: Vec<ContextChunk<TToolCall, TToolResult>>,
-}
-
-impl<TToolCall, TToolResult> StaticContextProvider<TToolCall, TToolResult> {
-    pub fn new(chunks: Vec<ContextChunk<TToolCall, TToolResult>>) -> Self {
-        Self { chunks }
-    }
-}
-
-#[async_trait]
-impl<TToolCall, TToolResult> ContextProvider<TToolCall, TToolResult>
-    for StaticContextProvider<TToolCall, TToolResult>
-where
-    TToolCall: Clone + Send + Sync,
-    TToolResult: Clone + Send + Sync,
-{
-    async fn get_context(&self) -> Result<Vec<ContextChunk<TToolCall, TToolResult>>> {
-        Ok(self.chunks.clone())
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum ContextManagerStrategy {
     Passthrough,
@@ -147,12 +124,20 @@ impl Default for ContextManagerStrategy {
 }
 
 #[derive(Clone)]
-pub struct ContextManager<TToolCall, TToolResult> {
+pub struct ContextManager<TToolCall, TToolResult>
+where
+    TToolCall: Send + Sync,
+    TToolResult: Send + Sync,
+{
     strategy: ContextManagerStrategy,
     providers: Vec<Arc<dyn ContextProvider<TToolCall, TToolResult>>>,
 }
 
-impl<TToolCall, TToolResult> Default for ContextManager<TToolCall, TToolResult> {
+impl<TToolCall, TToolResult> Default for ContextManager<TToolCall, TToolResult>
+where
+    TToolCall: Send + Sync,
+    TToolResult: Send + Sync,
+{
     fn default() -> Self {
         Self {
             strategy: ContextManagerStrategy::default(),
@@ -227,12 +212,20 @@ where
     }
 }
 
-pub struct ContextManagerBuilder<TToolCall, TToolResult> {
+pub struct ContextManagerBuilder<TToolCall, TToolResult>
+where
+    TToolCall: Send + Sync,
+    TToolResult: Send + Sync,
+{
     strategy: ContextManagerStrategy,
     providers: Vec<Arc<dyn ContextProvider<TToolCall, TToolResult>>>,
 }
 
-impl<TToolCall, TToolResult> Default for ContextManagerBuilder<TToolCall, TToolResult> {
+impl<TToolCall, TToolResult> Default for ContextManagerBuilder<TToolCall, TToolResult>
+where
+    TToolCall: Send + Sync,
+    TToolResult: Send + Sync,
+{
     fn default() -> Self {
         Self {
             strategy: ContextManagerStrategy::default(),
@@ -273,8 +266,8 @@ fn compact_messages<TToolCall, TToolResult>(
     keep_recent_messages: usize,
 ) -> (Vec<Message<TToolCall, TToolResult>>, bool)
 where
-    TToolCall: Clone + Serialize,
-    TToolResult: Clone + Serialize,
+    TToolCall: Clone + Serialize + Send + Sync,
+    TToolResult: Clone + Serialize + Send + Sync,
 {
     let normalized_max_chars = max_chars.max(1);
     let normalized_keep_recent_messages = keep_recent_messages.max(1);
@@ -325,8 +318,8 @@ fn build_context_window<TToolCall, TToolResult>(
     messages: Vec<Message<TToolCall, TToolResult>>,
 ) -> ContextWindow<TToolCall, TToolResult>
 where
-    TToolCall: Clone + Serialize,
-    TToolResult: Clone + Serialize,
+    TToolCall: Clone + Serialize + Send + Sync,
+    TToolResult: Clone + Serialize + Send + Sync,
 {
     let ordered_messages = messages
         .into_iter()
@@ -406,8 +399,8 @@ fn with_context_metadata<TToolCall, TToolResult>(
     current_actor_id: &str,
 ) -> Vec<Message<TToolCall, TToolResult>>
 where
-    TToolCall: Clone + Serialize,
-    TToolResult: Clone + Serialize,
+    TToolCall: Clone + Serialize + Send + Sync,
+    TToolResult: Clone + Serialize + Send + Sync,
 {
     let base_messages: Vec<Message<TToolCall, TToolResult>> = messages
         .into_iter()
@@ -443,8 +436,8 @@ fn summarize_message_line<TToolCall, TToolResult>(
     message: &Message<TToolCall, TToolResult>,
 ) -> Option<String>
 where
-    TToolCall: Serialize,
-    TToolResult: Serialize,
+    TToolCall: Serialize + Send + Sync,
+    TToolResult: Serialize + Send + Sync,
 {
     let mut line = match message {
         Message::System { content } => format!("System: {}", content),
@@ -484,8 +477,8 @@ where
 
 fn message_char_count<TToolCall, TToolResult>(message: &Message<TToolCall, TToolResult>) -> usize
 where
-    TToolCall: Serialize,
-    TToolResult: Serialize,
+    TToolCall: Serialize + Send + Sync,
+    TToolResult: Serialize + Send + Sync,
 {
     match message {
         Message::System { content } => content.chars().count(),
@@ -520,5 +513,36 @@ where
                     .map(|value| value.chars().count())
                     .unwrap_or(0)
         }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StaticContextProvider<TToolCall, TToolResult>
+where
+    TToolCall: Send + Sync,
+    TToolResult: Send + Sync,
+{
+    chunks: Vec<ContextChunk<TToolCall, TToolResult>>,
+}
+
+impl<TToolCall, TToolResult> StaticContextProvider<TToolCall, TToolResult>
+where
+    TToolCall: Send + Sync,
+    TToolResult: Send + Sync,
+{
+    pub fn new(chunks: Vec<ContextChunk<TToolCall, TToolResult>>) -> Self {
+        Self { chunks }
+    }
+}
+
+#[async_trait]
+impl<TToolCall, TToolResult> ContextProvider<TToolCall, TToolResult>
+    for StaticContextProvider<TToolCall, TToolResult>
+where
+    TToolCall: Clone + Send + Sync,
+    TToolResult: Clone + Send + Sync,
+{
+    async fn get_context(&self) -> Result<Vec<ContextChunk<TToolCall, TToolResult>>> {
+        Ok(self.chunks.clone())
     }
 }

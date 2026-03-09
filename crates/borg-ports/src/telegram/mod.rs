@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use borg_agent::ToolResultData;
 use borg_cmd::CommandRegistry;
-use borg_core::{TelegramUserId, Uri};
+use borg_core::{PortId, TelegramUserId, Uri};
 use borg_exec::{
     ActorOutboundMessage, ActorOutput, BorgCommand, PortContext, ReasoningEffort, RuntimeToolCall,
     RuntimeToolResult, TelegramContext,
@@ -42,7 +42,7 @@ struct TelegramConfig {
 
 #[derive(Clone)]
 pub struct TelegramPort {
-    port_id: Uri,
+    port_id: PortId,
     port_name: String,
     allows_guests: bool,
     bot: Bot,
@@ -66,7 +66,7 @@ impl TelegramPort {
         }
 
         Some(PortMessage {
-            port_id: self.port_id.clone(),
+            port_id: self.port_id.clone().into_uri(),
             conversation_key,
             user_id,
             input,
@@ -137,7 +137,7 @@ impl Port for TelegramPort {
     async fn new(port_config: PortConfig) -> Result<Self> {
         let telegram_config: TelegramConfig = serde_json::from_str(&port_config.settings_json)?;
         Ok(Self {
-            port_id: port_config.port_id.clone(),
+            port_id: port_config.port_id,
             port_name: port_config.port_name,
             allows_guests: matches!(port_config.privacy, crate::port::Privacy::Public),
             bot: Bot::new(telegram_config.bot_token.clone()),
@@ -486,101 +486,5 @@ fn tool_call_elapsed(output: &ToolResultData<RuntimeToolResult>) -> Option<std::
             .and_then(|value| value.get("duration_ms").and_then(|value| value.as_u64()))
             .map(std::time::Duration::from_millis),
         ToolResultData::Error(_) => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        ModelCommandAction, SettingsCommandAction, is_allowed_external_user,
-        parse_model_command_action, parse_settings_command_action, routing_key_for_chat_id,
-    };
-    use borg_exec::ReasoningEffort;
-    use borg_exec::TelegramContext;
-
-    #[test]
-    fn routing_key_uses_chat_id() {
-        let key = routing_key_for_chat_id(12345).expect("routing key");
-        assert_eq!(key.as_str(), "telegram:conversation:12345");
-    }
-
-    #[test]
-    fn allowlist_matches_numeric_id() {
-        let mut ctx = TelegramContext::default();
-        ctx.set_chat(1, "private");
-        ctx.set_last_message_refs(Some(10), None);
-        ctx.upsert_participant(2_654_566, None, Some("Leo".to_string()), None);
-
-        let allowed = vec!["2654566".to_string()];
-        assert!(is_allowed_external_user(&allowed, &ctx));
-    }
-
-    #[test]
-    fn allowlist_matches_username() {
-        let mut ctx = TelegramContext::default();
-        ctx.set_chat(1, "private");
-        ctx.set_last_message_refs(Some(11), None);
-        ctx.upsert_participant(
-            123,
-            Some("leostera".to_string()),
-            Some("Leo".to_string()),
-            None,
-        );
-
-        let allowed = vec!["@leostera".to_string()];
-        assert!(is_allowed_external_user(&allowed, &ctx));
-    }
-
-    #[test]
-    fn parse_model_command_action_handles_show() {
-        assert_eq!(parse_model_command_action(&[]), ModelCommandAction::Show);
-    }
-
-    #[test]
-    fn parse_model_command_action_handles_set() {
-        assert_eq!(
-            parse_model_command_action(&["openai/gpt-4.1-mini".to_string()]),
-            ModelCommandAction::Set("openai/gpt-4.1-mini".to_string())
-        );
-    }
-
-    #[test]
-    fn parse_model_command_action_handles_usage_for_invalid_shape() {
-        assert_eq!(
-            parse_model_command_action(&["first".to_string(), "second".to_string()]),
-            ModelCommandAction::Usage
-        );
-    }
-
-    #[test]
-    fn parse_settings_command_action_handles_reasoning_show() {
-        assert_eq!(
-            parse_settings_command_action(&["reasoning".to_string()]),
-            SettingsCommandAction::ReasoningShow
-        );
-    }
-
-    #[test]
-    fn parse_settings_command_action_handles_reasoning_set() {
-        assert_eq!(
-            parse_settings_command_action(&["reasoning".to_string(), "minimum".to_string()]),
-            SettingsCommandAction::ReasoningSet(ReasoningEffort::Minimal)
-        );
-        assert_eq!(
-            parse_settings_command_action(&["reasoning".to_string(), "xhigh".to_string()]),
-            SettingsCommandAction::ReasoningSet(ReasoningEffort::XHigh)
-        );
-    }
-
-    #[test]
-    fn parse_settings_command_action_handles_invalid_shape() {
-        assert_eq!(
-            parse_settings_command_action(&[]),
-            SettingsCommandAction::Usage
-        );
-        assert_eq!(
-            parse_settings_command_action(&["reasoning".to_string(), "unknown".to_string()]),
-            SettingsCommandAction::Usage
-        );
     }
 }

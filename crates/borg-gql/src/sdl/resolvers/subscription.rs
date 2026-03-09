@@ -1,25 +1,12 @@
 use super::super::*;
 
-#[Subscription(use_type_description)]
+#[Subscription]
 impl SubscriptionRoot {
+    async fn version(&self) -> impl Stream<Item = &str> {
+        stream::once(async move { "0.1.0" })
+    }
+
     /// Streams new messages from an actor timeline as they are appended.
-    ///
-    /// Usage notes:
-    /// - When `afterMessageId` is omitted, the stream starts from the first message.
-    /// - Provide `afterMessageId` to replay from a known point.
-    /// - `pollIntervalMs` is clamped to safe server bounds.
-    ///
-    /// Example:
-    /// ```graphql
-    /// subscription($actor: Uri!, $after: Uri) {
-    ///   actorChat(actorId: $actor, afterMessageId: $after, pollIntervalMs: 500) {
-    ///     id
-    ///     messageType
-    ///     role
-    ///     text
-    ///   }
-    /// }
-    /// ```
     async fn actor_chat(
         &self,
         ctx: &Context<'_>,
@@ -50,23 +37,6 @@ impl SubscriptionRoot {
     }
 
     /// Streams actor notifications derived from new timeline messages.
-    ///
-    /// Usage notes:
-    /// - By default, user-authored messages are filtered out.
-    /// - Set `includeUserMessages: true` to receive all roles.
-    ///
-    /// Example:
-    /// ```graphql
-    /// subscription($actor: Uri!) {
-    ///   actorNotifications(actorId: $actor) {
-    ///     id
-    ///     kind
-    ///     title
-    ///     text
-    ///     actorMessage { id messageType role }
-    ///   }
-    /// }
-    /// ```
     async fn actor_notifications(
         &self,
         ctx: &Context<'_>,
@@ -90,8 +60,7 @@ impl SubscriptionRoot {
                 .filter_map(move |item| async move {
                     match item {
                         Ok(message) => {
-                            let parsed = message.parsed();
-                            let is_user = parsed.role.as_deref() == Some("user");
+                            let is_user = message.record.payload.kind() == "user_text";
                             if is_user && !include_users {
                                 return None;
                             }

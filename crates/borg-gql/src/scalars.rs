@@ -1,5 +1,5 @@
 use async_graphql::{InputValueError, InputValueResult, Scalar, ScalarType, Value};
-use borg_core::Uri;
+use borg_core::{ActorId, EndpointUri, MessageId, PortId, Uri};
 
 /// Scalar wrapper around `borg_core::Uri`.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -14,6 +14,34 @@ impl From<Uri> for UriScalar {
 impl From<UriScalar> for Uri {
     fn from(value: UriScalar) -> Self {
         value.0
+    }
+}
+
+impl From<ActorId> for UriScalar {
+    fn from(value: ActorId) -> Self {
+        Self(value.into_uri())
+    }
+}
+
+impl From<PortId> for UriScalar {
+    fn from(value: PortId) -> Self {
+        Self(value.into_uri())
+    }
+}
+
+impl From<EndpointUri> for UriScalar {
+    fn from(value: EndpointUri) -> Self {
+        Self(value.0)
+    }
+}
+
+impl From<MessageId> for UriScalar {
+    fn from(value: MessageId) -> Self {
+        if let Ok(uri) = Uri::parse(value.as_str()) {
+            Self(uri)
+        } else {
+            Self(Uri::from_parts("borg", "id", Some(value.as_str())).unwrap())
+        }
     }
 }
 

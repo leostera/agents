@@ -1,258 +1,192 @@
-use anyhow::{Context, Result, anyhow};
-use borg_core::Uri;
+use anyhow::{Context, Result};
 use chrono::Utc;
-use sha2::{Digest, Sha256};
 
-use crate::BorgDb;
+use crate::utils::parse_ts;
+use crate::{BorgDb, PortBindingRecord};
+use borg_core::{ActorId, PortId, WorkspaceId};
 
 impl BorgDb {
-    pub async fn list_port_actor_bindings(
+    pub async fn upsert_port_binding(
         &self,
-        port: &str,
-        limit: usize,
-    ) -> Result<Vec<(Uri, Option<Uri>)>> {
-        Ok(self
-            .list_port_binding_records(port, limit)
-            .await?
-            .into_iter()
-            .map(|(conversation_key, actor_id)| (conversation_key, actor_id))
-            .collect())
-    }
-
-    pub async fn upsert_port_actor_binding(
-        &self,
-        port: &str,
-        conversation_key: &Uri,
-        actor_id: &Uri,
+        workspace_id: &WorkspaceId,
+        port_id: &PortId,
+        conversation_key: &str,
+        actor_id: &ActorId,
     ) -> Result<()> {
-        if self.get_actor(actor_id).await?.is_none() {
-            return Err(anyhow!("actor not found for actor_id {}", actor_id));
-        }
-        self.upsert_port_binding_full_record(port, conversation_key, Some(Some(actor_id)))
-            .await
-            .context("failed to upsert port actor binding")
-    }
+        let workspace = workspace_id.to_string();
+        let port = port_id.to_string();
+        let key = conversation_key.to_string();
+        let actor = actor_id.to_string();
+        let now = Utc::now().to_rfc3339();
 
-    pub async fn get_port_actor_binding(
-        &self,
-        port: &str,
-        conversation_key: &Uri,
-    ) -> Result<Option<Uri>> {
-        Ok(self
-            .get_port_binding_full_record(port, conversation_key)
-            .await?
-            .and_then(|(_conversation_key, actor_id)| actor_id))
-    }
-
-    pub async fn clear_port_actor_binding(
-        &self,
-        port: &str,
-        conversation_key: &Uri,
-    ) -> Result<u64> {
-        let updated = sqlx::query(
+        sqlx::query!(
             r#"
-            UPDATE port_bindings
-            SET actor_id = NULL,
-                updated_at = ?3
-            WHERE port = ?1 AND conversation_key = ?2
+            INSERT INTO port_bindings (
+                workspace_id, port_id, conversation_key, actor_id,
+                created_at, updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(port_id, conversation_key) DO UPDATE SET
+                workspace_id = excluded.workspace_id,
+                actor_id = excluded.actor_id,
+                updated_at = excluded.updated_at
             "#,
+            workspace,
+            port,
+            key,
+            actor,
+            now,
+            now
         )
-        .bind(port)
-        .bind(conversation_key.to_string())
-        .bind(Utc::now().to_rfc3339())
         .execute(self.pool())
         .await
-        .context("failed to clear port actor binding")?
-        .rows_affected();
-        Ok(updated)
+        .context("failed to upsert port binding")?;
+
+        Ok(())
     }
 
+    pub async fn get_port_binding(
+        &self,
+        port_id: &PortId,
+        conversation_key: &str,
+    ) -> Result<Option<PortBindingRecord>> {
+        let port = port_id.to_string();
+        let key = conversation_key.to_string();
+
+        let row = sqlx::query!(
+            r#"
+            SELECT
+                workspace_id as "workspace_id!: String",
+                port_id as "port_id!: String",
+                conversation_key as "conversation_key!: String",
+                actor_id as "actor_id!: String",
+                created_at as "created_at!: String",
+                updated_at as "updated_at!: String"
+            FROM port_bindings
+            WHERE port_id = ?1 AND conversation_key = ?2
+            LIMIT 1
+            "#,
+            port,
+            key
+        )
+        .fetch_optional(self.pool())
+        .await
+        .context("failed to get port binding")?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        Ok(Some(PortBindingRecord {
+            workspace_id: WorkspaceId::parse(&row.workspace_id)?,
+            port_id: PortId::parse(&row.port_id)?,
+            conversation_key: row.conversation_key,
+            actor_id: ActorId::parse(&row.actor_id)?,
+            created_at: parse_ts(&row.created_at)?,
+            updated_at: parse_ts(&row.updated_at)?,
+        }))
+    }
+
+    pub async fn list_port_bindings(
+        &self,
+        port_id: &PortId,
+        limit: usize,
+    ) -> Result<Vec<PortBindingRecord>> {
+        let port = port_id.to_string();
+        let limit = i64::try_from(limit).unwrap_or(100);
+
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                workspace_id as "workspace_id!: String",
+                port_id as "port_id!: String",
+                conversation_key as "conversation_key!: String",
+                actor_id as "actor_id!: String",
+                created_at as "created_at!: String",
+                updated_at as "updated_at!: String"
+            FROM port_bindings
+            WHERE port_id = ?1
+            ORDER BY updated_at DESC
+            LIMIT ?2
+            "#,
+            port,
+            limit
+        )
+        .fetch_all(self.pool())
+        .await
+        .context("failed to list port bindings")?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(PortBindingRecord {
+                    workspace_id: WorkspaceId::parse(&row.workspace_id)?,
+                    port_id: PortId::parse(&row.port_id)?,
+                    conversation_key: row.conversation_key,
+                    actor_id: ActorId::parse(&row.actor_id)?,
+                    created_at: parse_ts(&row.created_at)?,
+                    updated_at: parse_ts(&row.updated_at)?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn delete_port_binding(
+        &self,
+        port_id: &PortId,
+        conversation_key: &str,
+    ) -> Result<u64> {
+        let port = port_id.to_string();
+        let key = conversation_key.to_string();
+
+        let deleted = sqlx::query!(
+            "DELETE FROM port_bindings WHERE port_id = ?1 AND conversation_key = ?2",
+            port,
+            key
+        )
+        .execute(self.pool())
+        .await
+        .context("failed to delete port binding")?
+        .rows_affected();
+
+        Ok(deleted)
+    }
+
+    /// Finds any port conversation bound to this actor and returns (port_name, settings_json).
+    pub async fn get_any_port_actor_context(
+        &self,
+        actor_id: &ActorId,
+    ) -> Result<Option<(String, String)>> {
+        let actor = actor_id.to_string();
+
+        let row = sqlx::query!(
+            r#"
+            SELECT
+                p.port_name as "port_name!: String",
+                p.settings_json as "settings_json!: String"
+            FROM port_bindings pb
+            JOIN ports p ON pb.port_id = p.port_id
+            WHERE pb.actor_id = ?1
+            LIMIT 1
+            "#,
+            actor
+        )
+        .fetch_optional(self.pool())
+        .await
+        .context("failed to get any port actor context")?;
+
+        Ok(row.map(|r| (r.port_name, r.settings_json)))
+    }
+
+    /// Resolves the actor for a given port conversation.
+    /// If no binding exists, it returns None.
     pub async fn resolve_port_actor(
         &self,
-        port: &str,
-        conversation_key: &Uri,
-        requested_actor_id: Option<&Uri>,
-        default_actor_id: Option<&Uri>,
-    ) -> Result<Uri> {
-        if let Some(actor_id) = requested_actor_id {
-            self.upsert_port_actor_binding(port, conversation_key, actor_id)
-                .await?;
-            return Ok(actor_id.clone());
+        port_id: &PortId,
+        conversation_key: &str,
+    ) -> Result<Option<ActorId>> {
+        if let Some(existing) = self.get_port_binding(port_id, conversation_key).await? {
+            return Ok(Some(existing.actor_id));
         }
-
-        if let Some(existing) = self.get_port_actor_binding(port, conversation_key).await? {
-            return Ok(existing);
-        }
-
-        if let Some(default_actor_id) = default_actor_id {
-            self.upsert_port_actor_binding(port, conversation_key, default_actor_id)
-                .await?;
-            return Ok(default_actor_id.clone());
-        }
-
-        let actor_id = deterministic_actor_id(port, conversation_key)?;
-        if self.get_actor(&actor_id).await?.is_none() {
-            self.upsert_actor(
-                &actor_id,
-                &fallback_actor_name(port, conversation_key),
-                "",
-                "RUNNING",
-            )
-            .await?;
-        }
-        self.upsert_port_binding_full_record(port, conversation_key, Some(Some(&actor_id)))
-            .await?;
-        Ok(actor_id)
-    }
-}
-
-fn fallback_actor_name(port: &str, conversation_key: &Uri) -> String {
-    let tail = conversation_key
-        .as_str()
-        .rsplit(':')
-        .next()
-        .filter(|value| !value.is_empty())
-        .unwrap_or("conversation");
-    format!("{port}-{tail}")
-}
-
-fn deterministic_actor_id(port: &str, conversation_key: &Uri) -> Result<Uri> {
-    let mut hasher = Sha256::new();
-    hasher.update(port.as_bytes());
-    hasher.update(b":");
-    hasher.update(conversation_key.as_str().as_bytes());
-    let digest = hex::encode(hasher.finalize());
-    Uri::from_parts("borg", "actor", Some(digest.as_str()))
-        .context("failed to build deterministic actor uri")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    fn tmp_db_path(test_name: &str) -> PathBuf {
-        let mut path = std::env::temp_dir();
-        path.push(format!(
-            "borg-db-actor-bindings-{test_name}-{}.db",
-            uuid::Uuid::new_v4()
-        ));
-        path
-    }
-
-    #[tokio::test]
-    async fn resolve_port_actor_prefers_requested_then_existing() -> Result<()> {
-        let path = tmp_db_path("resolve");
-        let db = BorgDb::open_local(
-            path.to_str()
-                .ok_or_else(|| anyhow::anyhow!("invalid temp db path"))?,
-        )
-        .await?;
-        db.migrate().await?;
-
-        let actor_a = Uri::from_parts("devmode", "actor", Some("bind-a"))?;
-        let actor_b = Uri::from_parts("devmode", "actor", Some("bind-b"))?;
-        let key = Uri::from_parts("borg", "conversation", Some("c1"))?;
-        db.upsert_actor(&actor_a, "A", "prompt", "RUNNING").await?;
-        db.upsert_actor(&actor_b, "B", "prompt", "RUNNING").await?;
-
-        let resolved = db
-            .resolve_port_actor("telegram", &key, Some(&actor_a), None)
-            .await?;
-        assert_eq!(resolved, actor_a);
-
-        let existing = db.resolve_port_actor("telegram", &key, None, None).await?;
-        assert_eq!(existing, actor_a);
-
-        let overridden = db
-            .resolve_port_actor("telegram", &key, Some(&actor_b), None)
-            .await?;
-        assert_eq!(overridden, actor_b);
-
-        let existing_after_override = db.resolve_port_actor("telegram", &key, None, None).await?;
-        assert_eq!(existing_after_override, actor_b);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn resolve_port_actor_uses_default_and_autocreates_without_actor() -> Result<()> {
-        let path = tmp_db_path("default");
-        let db = BorgDb::open_local(
-            path.to_str()
-                .ok_or_else(|| anyhow::anyhow!("invalid temp db path"))?,
-        )
-        .await?;
-        db.migrate().await?;
-
-        let actor = Uri::from_parts("devmode", "actor", Some("default-a"))?;
-        let key = Uri::from_parts("borg", "conversation", Some("c2"))?;
-        db.upsert_actor(&actor, "A", "prompt", "RUNNING").await?;
-
-        let resolved = db
-            .resolve_port_actor("http", &key, None, Some(&actor))
-            .await?;
-        assert_eq!(resolved, actor);
-
-        let key_missing = Uri::from_parts("borg", "conversation", Some("c3"))?;
-        let created = db
-            .resolve_port_actor("http", &key_missing, None, None)
-            .await?;
-        assert_eq!(created, deterministic_actor_id("http", &key_missing)?);
-        assert!(db.get_actor(&created).await?.is_some());
-
-        let created_again = db
-            .resolve_port_actor("http", &key_missing, None, None)
-            .await?;
-        assert_eq!(created_again, created);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn clear_port_actor_binding_nulls_actor_id() -> Result<()> {
-        let path = tmp_db_path("clear-binding");
-        let db = BorgDb::open_local(
-            path.to_str()
-                .ok_or_else(|| anyhow::anyhow!("invalid temp db path"))?,
-        )
-        .await?;
-        db.migrate().await?;
-
-        let actor = Uri::from_parts("devmode", "actor", Some("clear-a"))?;
-        let key = Uri::from_parts("borg", "conversation", Some("clear-c"))?;
-        db.upsert_actor(&actor, "A", "prompt", "RUNNING").await?;
-        db.upsert_port_actor_binding("telegram", &key, &actor)
-            .await?;
-        assert_eq!(
-            db.get_port_actor_binding("telegram", &key).await?,
-            Some(actor.clone())
-        );
-
-        let updated = db.clear_port_actor_binding("telegram", &key).await?;
-        assert_eq!(updated, 1);
-        assert_eq!(db.get_port_actor_binding("telegram", &key).await?, None);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn list_port_actor_bindings_returns_rows_for_port() -> Result<()> {
-        let path = tmp_db_path("list-bindings");
-        let db = BorgDb::open_local(
-            path.to_str()
-                .ok_or_else(|| anyhow::anyhow!("invalid temp db path"))?,
-        )
-        .await?;
-        db.migrate().await?;
-
-        let actor = Uri::from_parts("devmode", "actor", Some("list-a"))?;
-        let key = Uri::from_parts("borg", "conversation", Some("list-c"))?;
-        db.upsert_actor(&actor, "A", "prompt", "RUNNING").await?;
-        db.upsert_port_actor_binding("telegram", &key, &actor)
-            .await?;
-
-        let rows = db.list_port_actor_bindings("telegram", 10).await?;
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].0, key);
-        assert_eq!(rows[0].1, Some(actor));
-        Ok(())
+        Ok(None)
     }
 }

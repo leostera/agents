@@ -8,7 +8,7 @@ use super::{
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use borg_core::uri;
+use borg_core::{ActorId, WorkspaceId, uri};
 use borg_db::BorgDb;
 use borg_llm::{
     LlmAssistantMessage, LlmRequest, Provider, ProviderBlock, StopReason, TranscriptionRequest,
@@ -190,8 +190,10 @@ async fn make_test_db() -> Result<BorgDb> {
 async fn make_thread() -> Result<(Agent<Value, Value>, ActorThread<Value, Value>)> {
     init_test_tracing();
     let db = make_test_db().await?;
-    let agent = Agent::new(uri!("borg", "actor", "test-agent")).with_system_prompt("system prompt");
-    let thread = ActorThread::new(uri!("borg", "actor", "test-thread"), agent.clone(), db).await?;
+    let actor_id = ActorId(uri!("borg", "actor", "test-agent"));
+    let workspace_id = WorkspaceId::from_id("default");
+    let agent = Agent::new(actor_id.clone()).with_system_prompt("system prompt");
+    let thread = ActorThread::new(actor_id, workspace_id, agent.clone(), db).await?;
     debug!(target: "borg_agent_test", "created test actor thread");
     Ok((agent, thread))
 }
@@ -236,10 +238,8 @@ async fn ndjson_tool_call_text_is_executed() {
         .unwrap();
 
     let ndjson = r#"{"tool_name":"search","arguments":{"query":"rust"}}"#;
-    let (provider, _requests_rx) = scripted_provider(vec![
-        Ok(assistant_text(ndjson)),
-        Ok(assistant_text("done")),
-    ]);
+    let (provider, _requests_rx) =
+        scripted_provider(vec![Ok(assistant_text(ndjson)), Ok(assistant_text("done"))]);
     let (toolchain, mut calls_rx) = scripted_toolchain(vec![Ok(ToolResponse {
         output: ToolResultData::Ok(json!({"hits":[{"id":"1"}]})),
     })])
@@ -327,15 +327,14 @@ async fn a3_multiple_tools_keep_order() {
 #[tokio::test]
 async fn a17_typed_toolchain_decodes_provider_arguments() {
     let db = make_test_db().await.unwrap();
-    let agent = Agent::<EchoArgs, EchoResult>::new(uri!("borg", "actor", "typed-agent"))
-        .with_system_prompt("system prompt");
-    let mut thread = ActorThread::<EchoArgs, EchoResult>::new(
-        uri!("borg", "actor", "typed-thread"),
-        agent.clone(),
-        db,
-    )
-    .await
-    .unwrap();
+    let actor_id = ActorId(uri!("borg", "actor", "typed-agent"));
+    let workspace_id = WorkspaceId::from_id("default");
+    let agent =
+        Agent::<EchoArgs, EchoResult>::new(actor_id.clone()).with_system_prompt("system prompt");
+    let mut thread =
+        ActorThread::<EchoArgs, EchoResult>::new(actor_id, workspace_id, agent.clone(), db)
+            .await
+            .unwrap();
     thread
         .add_message(Message::User {
             content: "echo hello".to_string(),
@@ -736,7 +735,8 @@ fn llm_adapter_auto_closes_dangling_tool_call_before_user_message() {
 
 #[tokio::test]
 async fn context_window_splits_messages_into_typed_sections() {
-    let agent = Agent::<Value, Value>::new(uri!("borg", "agent", "context-sections"))
+    let actor_id = ActorId(uri!("borg", "actor", "context-sections"));
+    let agent = Agent::<Value, Value>::new(actor_id)
         .with_system_prompt("system-prompt")
         .with_behavior_prompt("behavior-prompt")
         .with_tools(vec![ToolSpec {
@@ -781,7 +781,8 @@ async fn context_window_splits_messages_into_typed_sections() {
 
 #[tokio::test]
 async fn context_provider_input_messages_start_with_system_then_behavior() {
-    let agent = Agent::<Value, Value>::new(uri!("borg", "agent", "context-order"))
+    let actor_id = ActorId(uri!("borg", "actor", "context-order"));
+    let agent = Agent::<Value, Value>::new(actor_id)
         .with_system_prompt("system-prompt")
         .with_behavior_prompt("behavior-prompt")
         .with_tools(vec![]);
@@ -807,7 +808,8 @@ async fn context_provider_input_messages_start_with_system_then_behavior() {
 
 #[tokio::test]
 async fn compaction_keeps_prompts_tools_and_capabilities_uncompacted() {
-    let agent = Agent::<Value, Value>::new(uri!("borg", "agent", "context-compact"))
+    let actor_id = ActorId(uri!("borg", "actor", "context-compact"));
+    let agent = Agent::<Value, Value>::new(actor_id)
         .with_system_prompt("system-prompt")
         .with_behavior_prompt("behavior-prompt")
         .with_tools(vec![ToolSpec {
@@ -853,7 +855,8 @@ async fn compaction_keeps_prompts_tools_and_capabilities_uncompacted() {
 
 #[tokio::test]
 async fn context_filters_persisted_prompt_messages_from_ordered_history() {
-    let agent = Agent::<Value, Value>::new(uri!("borg", "agent", "context-dedup"))
+    let actor_id = ActorId(uri!("borg", "actor", "context-dedup"));
+    let agent = Agent::<Value, Value>::new(actor_id)
         .with_system_prompt("system-prompt")
         .with_behavior_prompt("behavior-prompt")
         .with_tools(vec![]);
@@ -889,7 +892,8 @@ async fn context_filters_persisted_prompt_messages_from_ordered_history() {
 
 #[tokio::test]
 async fn context_manager_keeps_pinned_provider_chunks_uncompacted() {
-    let agent = Agent::<Value, Value>::new(uri!("borg", "agent", "context-pinned-provider"))
+    let actor_id = ActorId(uri!("borg", "actor", "context-pinned-provider"));
+    let agent = Agent::<Value, Value>::new(actor_id)
         .with_system_prompt("system-prompt")
         .with_behavior_prompt("behavior-prompt")
         .with_tools(vec![]);

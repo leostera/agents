@@ -284,7 +284,7 @@ mod tests {
             LlmError::message("should not be called"),
         )]));
         let second = FakeProvider::with_transcription_results(vec![Ok("ok".to_string())]);
-        let llm = BorgLLM::build()
+        let llm = BorgLLM::builder()
             .add_provider(first)
             .add_provider(second)
             .build()
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn build_requires_at_least_one_provider() {
-        let err = match BorgLLM::build().build() {
+        let err = match BorgLLM::builder().build() {
             Ok(_) => panic!("builder should fail"),
             Err(err) => err,
         };

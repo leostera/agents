@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use borg_llm::ToolDescriptor;
-use serde::de::{DeserializeOwned, Deserializer};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct BorgToolCall {
     encoded_json: String,
 }
@@ -28,30 +29,8 @@ impl From<Value> for BorgToolCall {
     }
 }
 
-impl Serialize for BorgToolCall {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let value: Value =
-            serde_json::from_str(&self.encoded_json).map_err(serde::ser::Error::custom)?;
-        value.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for BorgToolCall {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-        Ok(Self {
-            encoded_json: value.to_string(),
-        })
-    }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct BorgToolResult {
     encoded_json: String,
 }
@@ -67,29 +46,6 @@ impl From<Value> for BorgToolResult {
         Self {
             encoded_json: value.to_string(),
         }
-    }
-}
-
-impl Serialize for BorgToolResult {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let value: Value =
-            serde_json::from_str(&self.encoded_json).map_err(serde::ser::Error::custom)?;
-        value.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for BorgToolResult {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-        Ok(Self {
-            encoded_json: value.to_string(),
-        })
     }
 }
 

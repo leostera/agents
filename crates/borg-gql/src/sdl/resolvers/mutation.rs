@@ -1,31 +1,27 @@
 use super::super::*;
+use borg_core::{ActorId, PortId, WorkspaceId};
 
-#[Object(use_type_description)]
+#[Object]
 impl MutationRoot {
-    /// Creates or updates an actor.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($id: Uri!) {
-    ///   upsertActor(input: {
-    ///     id: $id
-    ///     name: "Planner"
-    ///     systemPrompt: "You plan work."
-    ///     status: RUNNING
-    ///   }) { id name status }
-    /// }
-    /// ```
+    async fn version(&self) -> &str {
+        "0.1.0"
+    }
+
     async fn upsert_actor(
         &self,
         ctx: &Context<'_>,
         input: UpsertActorInput,
     ) -> GqlResult<ActorObject> {
         let data = ctx_data(ctx)?;
+        let workspace_id = WorkspaceId::from_id("default");
+
         data.db
             .upsert_actor(
-                &input.id.0,
+                &ActorId(input.id.0.clone()),
+                &workspace_id,
                 &input.name,
                 &input.system_prompt,
+                "", // TODO: actor_prompt
                 input.status.as_db_str(),
             )
             .await
@@ -38,14 +34,14 @@ impl MutationRoot {
             .filter(|value| !value.is_empty())
         {
             data.db
-                .set_actor_model(&input.id.0, model)
+                .set_actor_model(&ActorId(input.id.0.clone()), model)
                 .await
                 .map_err(map_anyhow)?;
         }
 
         let actor = data
             .db
-            .get_actor(&input.id.0)
+            .get_actor(&ActorId(input.id.0))
             .await
             .map_err(map_anyhow)?
             .ok_or_else(|| gql_error_with_code("actor not found after upsert", "INTERNAL"))?;
@@ -53,42 +49,34 @@ impl MutationRoot {
         Ok(ActorObject::new(actor))
     }
 
-    /// Deletes an actor by URI.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($id: Uri!) { deleteActor(id: $id) }
-    /// ```
     async fn delete_actor(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<bool> {
         let data = ctx_data(ctx)?;
-        let deleted = data.db.delete_actor(&id.0).await.map_err(map_anyhow)?;
+        let deleted = data
+            .db
+            .delete_actor(&ActorId(id.0))
+            .await
+            .map_err(map_anyhow)?;
         Ok(deleted > 0)
     }
 
-    /// Creates or updates a port.
-    ///
-    /// Usage notes:
-    /// - `assignedActorId` is mirrored into `settings.actor_id` for compatibility.
-    /// - `settings` must be a JSON object when provided.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation {
-    ///   upsertPort(input: {
-    ///     name: "http"
-    ///     provider: "custom"
-    ///     enabled: true
-    ///     allowsGuests: true
-    ///   }) { id name enabled allowsGuests }
-    /// }
-    /// ```
+    async fn delete_actor_messages(&self, ctx: &Context<'_>, id: UriScalar) -> GqlResult<u64> {
+        let data = ctx_data(ctx)?;
+        let deleted = data
+            .db
+            .delete_messages_for_endpoint(&id.0.into())
+            .await
+            .map_err(map_anyhow)?;
+        Ok(deleted)
+    }
+
     async fn upsert_port(
         &self,
         ctx: &Context<'_>,
         input: UpsertPortInput,
     ) -> GqlResult<PortObject> {
         let data = ctx_data(ctx)?;
-        let mut settings = input
+        let workspace_id = WorkspaceId::from_id("default");
+        let settings = input
             .settings
             .map(|value| value.0)
             .unwrap_or_else(|| json!({}));
@@ -99,24 +87,22 @@ impl MutationRoot {
             ));
         }
 
-        if let Some(actor_id) = &input.assigned_actor_id {
-            if let Some(object) = settings.as_object_mut() {
-                object.insert(
-                    "actor_id".to_string(),
-                    serde_json::Value::String(actor_id.0.to_string()),
-                );
-            }
-        } else if let Some(object) = settings.as_object_mut() {
-            object.remove("actor_id");
-        }
+        let port_id =
+            PortId(Uri::from_parts("borg", "port", Some(&input.name)).map_err(map_anyhow)?);
 
         data.db
             .upsert_port(
+                &port_id,
+                &workspace_id,
                 &input.name,
                 &input.provider,
                 input.enabled,
                 input.allows_guests,
-                input.assigned_actor_id.as_ref().map(|uri| &uri.0),
+                input
+                    .assigned_actor_id
+                    .as_ref()
+                    .map(|uri| ActorId(uri.0.clone()))
+                    .as_ref(),
                 &settings,
             )
             .await
@@ -131,100 +117,74 @@ impl MutationRoot {
         Ok(PortObject::new(port))
     }
 
-    /// Creates or updates a port/actor binding.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($actor: Uri!, $key: Uri!) {
-    ///   upsertPortBinding(input: {
-    ///     portName: "telegram"
-    ///     conversationKey: $key
-    ///     actorId: $actor
-    ///   }) { portName conversationKey actorId }
-    /// }
-    /// ```
     async fn upsert_port_binding(
         &self,
         ctx: &Context<'_>,
         input: UpsertPortBindingInput,
     ) -> GqlResult<PortBindingObject> {
         let data = ctx_data(ctx)?;
+        let workspace_id = WorkspaceId::from_id("default");
+
+        let port_id =
+            PortId(Uri::from_parts("borg", "port", Some(&input.port_name)).map_err(map_anyhow)?);
+
         data.db
-            .upsert_port_binding_record(
-                &input.port_name,
-                &input.conversation_key.0,
-                &input.actor_id.0,
+            .upsert_port_binding(
+                &workspace_id,
+                &port_id,
+                input.conversation_key.0.as_str(),
+                &ActorId(input.actor_id.0.clone()),
             )
             .await
             .map_err(map_anyhow)?;
 
         Ok(PortBindingObject {
             port_name: input.port_name,
-            conversation_key: input.conversation_key.0,
+            conversation_key: input.conversation_key.0.to_string(),
             actor_id: input.actor_id.0,
         })
     }
 
-    /// Creates or updates a port/actor binding.
-    ///
-    /// Usage notes:
-    /// - Pass `actorId: null` to clear the actor binding.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($key: Uri!, $actor: Uri!) {
-    ///   upsertPortActorBinding(input: {
-    ///     portName: "telegram"
-    ///     conversationKey: $key
-    ///     actorId: $actor
-    ///   }) { portName conversationKey actorId }
-    /// }
-    /// ```
     async fn upsert_port_actor_binding(
         &self,
         ctx: &Context<'_>,
         input: UpsertPortActorBindingInput,
     ) -> GqlResult<PortActorBindingObject> {
         let data = ctx_data(ctx)?;
+        let workspace_id = WorkspaceId::from_id("default");
+        let port_id =
+            PortId(Uri::from_parts("borg", "port", Some(&input.port_name)).map_err(map_anyhow)?);
+
         if let Some(actor_id) = input.actor_id.as_ref() {
             data.db
-                .upsert_port_actor_binding(&input.port_name, &input.conversation_key.0, &actor_id.0)
+                .upsert_port_binding(
+                    &workspace_id,
+                    &port_id,
+                    input.conversation_key.0.as_str(),
+                    &ActorId(actor_id.0.clone()),
+                )
                 .await
                 .map_err(map_anyhow)?;
         } else {
             data.db
-                .clear_port_actor_binding(&input.port_name, &input.conversation_key.0)
+                .delete_port_binding(&port_id, input.conversation_key.0.as_str())
                 .await
                 .map_err(map_anyhow)?;
         }
 
-        let actor_id = data
+        let binding = data
             .db
-            .get_port_actor_binding(&input.port_name, &input.conversation_key.0)
+            .get_port_binding(&port_id, input.conversation_key.0.as_str())
             .await
             .map_err(map_anyhow)?;
 
         Ok(PortActorBindingObject {
             port_name: input.port_name,
-            conversation_key: input.conversation_key.0,
-            actor_id,
+            conversation_key: input.conversation_key.0.to_string(),
+            actor_id: binding.map(|b| b.actor_id.into_uri()),
         })
     }
 
-    /// Creates or updates a provider.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation {
-    ///   upsertProvider(input: {
-    ///     provider: "openrouter"
-    ///     providerKind: "openrouter"
-    ///     apiKey: "sk-***"
-    ///     enabled: true
-    ///     defaultTextModel: "openai/gpt-4.1-mini"
-    ///   }) { provider providerKind enabled }
-    /// }
-    /// ```
     async fn upsert_provider(
         &self,
         ctx: &Context<'_>,
@@ -258,12 +218,6 @@ impl MutationRoot {
         ProviderObject::try_new(provider)
     }
 
-    /// Deletes a provider and associated usage summary.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation { deleteProvider(provider: "openrouter") }
-    /// ```
     async fn delete_provider(&self, ctx: &Context<'_>, provider: String) -> GqlResult<bool> {
         let data = ctx_data(ctx)?;
         let deleted = data
@@ -274,24 +228,6 @@ impl MutationRoot {
         Ok(deleted > 0)
     }
 
-    /// Creates or updates an app.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($id: Uri!) {
-    ///   upsertApp(input: {
-    ///     id: $id
-    ///     name: "GitHub"
-    ///     slug: "github"
-    ///     description: "GitHub integration"
-    ///     status: ACTIVE
-    ///     builtIn: false
-    ///     source: "custom"
-    ///     authStrategy: "oauth2"
-    ///     availableSecrets: ["GITHUB_TOKEN"]
-    ///   }) { id slug status }
-    /// }
-    /// ```
     async fn upsert_app(&self, ctx: &Context<'_>, input: UpsertAppInput) -> GqlResult<AppObject> {
         let data = ctx_data(ctx)?;
         let auth_config = input
@@ -324,22 +260,6 @@ impl MutationRoot {
         Ok(AppObject::new(app))
     }
 
-    /// Creates or updates an app capability.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($app: Uri!, $cap: Uri!) {
-    ///   upsertAppCapability(input: {
-    ///     appId: $app
-    ///     capabilityId: $cap
-    ///     name: "issues.list"
-    ///     hint: "List GitHub issues"
-    ///     mode: "READ"
-    ///     instructions: "Use filters when possible"
-    ///     status: ACTIVE
-    ///   }) { id name status }
-    /// }
-    /// ```
     async fn upsert_app_capability(
         &self,
         ctx: &Context<'_>,
@@ -369,19 +289,6 @@ impl MutationRoot {
         Ok(AppCapabilityObject::new(capability))
     }
 
-    /// Creates or updates an app connection.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($app: Uri!, $conn: Uri!, $owner: Uri) {
-    ///   upsertAppConnection(input: {
-    ///     appId: $app
-    ///     connectionId: $conn
-    ///     ownerUserId: $owner
-    ///     status: CONNECTED
-    ///   }) { id appId status }
-    /// }
-    /// ```
     async fn upsert_app_connection(
         &self,
         ctx: &Context<'_>,
@@ -416,20 +323,6 @@ impl MutationRoot {
         Ok(AppExternalConnectionObject::new(connection))
     }
 
-    /// Creates or updates an app secret.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($app: Uri!, $secret: Uri!) {
-    ///   upsertAppSecret(input: {
-    ///     appId: $app
-    ///     secretId: $secret
-    ///     key: "GITHUB_TOKEN"
-    ///     value: "..."
-    ///     kind: "token"
-    ///   }) { id key kind }
-    /// }
-    /// ```
     async fn upsert_app_secret(
         &self,
         ctx: &Context<'_>,
@@ -458,21 +351,6 @@ impl MutationRoot {
         Ok(AppSecretObject::new(secret))
     }
 
-    /// Creates a schedule job.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($actor: Uri!) {
-    ///   createScheduleJob(input: {
-    ///     jobId: "daily-standup"
-    ///     kind: "cron"
-    ///     actorId: $actor
-    ///     messageType: "user"
-    ///     payload: { text: "Daily standup" }
-    ///     scheduleSpec: { cron: "0 9 * * 1-5" }
-    ///   }) { id status nextRunAt }
-    /// }
-    /// ```
     async fn create_schedule_job(
         &self,
         ctx: &Context<'_>,
@@ -508,17 +386,6 @@ impl MutationRoot {
         Ok(ScheduleJobObject::new(job))
     }
 
-    /// Updates mutable schedule job fields.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation {
-    ///   updateScheduleJob(
-    ///     jobId: "daily-standup",
-    ///     patch: { scheduleSpec: { cron: "0 10 * * 1-5" } }
-    ///   ) { id status scheduleSpec }
-    /// }
-    /// ```
     async fn update_schedule_job(
         &self,
         ctx: &Context<'_>,
@@ -551,12 +418,6 @@ impl MutationRoot {
         Ok(ScheduleJobObject::new(job))
     }
 
-    /// Pauses an active schedule job.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation { pauseScheduleJob(jobId: "daily-standup") }
-    /// ```
     async fn pause_schedule_job(&self, ctx: &Context<'_>, job_id: String) -> GqlResult<bool> {
         let data = ctx_data(ctx)?;
         let updated = data
@@ -567,12 +428,6 @@ impl MutationRoot {
         Ok(updated > 0)
     }
 
-    /// Resumes a paused schedule job.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation { resumeScheduleJob(jobId: "daily-standup") }
-    /// ```
     async fn resume_schedule_job(&self, ctx: &Context<'_>, job_id: String) -> GqlResult<bool> {
         let data = ctx_data(ctx)?;
         let updated = data
@@ -583,12 +438,6 @@ impl MutationRoot {
         Ok(updated > 0)
     }
 
-    /// Cancels a schedule job.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation { cancelScheduleJob(jobId: "daily-standup") }
-    /// ```
     async fn cancel_schedule_job(&self, ctx: &Context<'_>, job_id: String) -> GqlResult<bool> {
         let data = ctx_data(ctx)?;
         let updated = data
@@ -599,20 +448,6 @@ impl MutationRoot {
         Ok(updated > 0)
     }
 
-    /// Creates a task in the taskgraph store.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($actor: Uri!, $creator: Uri!, $assignee: Uri!) {
-    ///   createTask(input: {
-    ///     actorId: $actor
-    ///     creatorActorId: $creator
-    ///     assigneeActorId: $assignee
-    ///     title: "Ship borg-gql docs"
-    ///     description: "Document all schema entrypoints"
-    ///   }) { id title status }
-    /// }
-    /// ```
     async fn create_task(
         &self,
         ctx: &Context<'_>,
@@ -650,18 +485,6 @@ impl MutationRoot {
         TaskObject::try_new(created)
     }
 
-    /// Updates mutable task text fields.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($task: Uri!, $actor: Uri!) {
-    ///   updateTask(input: {
-    ///     taskId: $task
-    ///     actorId: $actor
-    ///     title: "Updated title"
-    ///   }) { id title updatedAt }
-    /// }
-    /// ```
     async fn update_task(
         &self,
         ctx: &Context<'_>,
@@ -685,20 +508,6 @@ impl MutationRoot {
         TaskObject::try_new(task)
     }
 
-    /// Moves a task to a new allowed status.
-    ///
-    /// Usage notes:
-    /// - Auth constraints follow taskgraph rules (assignee/reviewer checks).
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($task: Uri!, $actor: Uri!) {
-    ///   setTaskStatus(input: { taskId: $task, actorId: $actor, status: DOING }) {
-    ///     id
-    ///     status
-    ///   }
-    /// }
-    /// ```
     async fn set_task_status(
         &self,
         ctx: &Context<'_>,
@@ -718,22 +527,6 @@ impl MutationRoot {
         TaskObject::try_new(task)
     }
 
-    /// Placeholder runtime wrapper; enabled after `borg-api` integration.
-    ///
-    /// Usage notes:
-    /// - Currently returns `BAD_REQUEST`.
-    /// - Keep frontend contracts ready for upcoming runtime integration.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($actor: Uri!, $user: Uri!) {
-    ///   runActorChat(input: {
-    ///     actorId: $actor
-    ///     userId: $user
-    ///     text: "Summarize pending tasks"
-    ///   }) { ok message }
-    /// }
-    /// ```
     async fn run_actor_chat(&self, _input: RunActorChatInput) -> GqlResult<RunActorChatResult> {
         Err(gql_error_with_code(
             "runActorChat is not available in standalone borg-gql",
@@ -741,18 +534,6 @@ impl MutationRoot {
         ))
     }
 
-    /// Placeholder runtime wrapper; enabled after `borg-api` integration.
-    ///
-    /// Usage notes:
-    /// - Currently returns `BAD_REQUEST`.
-    /// - Expected to mirror `POST /ports/http` behavior in a later phase.
-    ///
-    /// Example:
-    /// ```graphql
-    /// mutation($user: Uri!) {
-    ///   runPortHttp(input: { userId: $user, text: "Hello" }) { ok message }
-    /// }
-    /// ```
     async fn run_port_http(&self, _input: RunPortHttpInput) -> GqlResult<RunPortHttpResult> {
         Err(gql_error_with_code(
             "runPortHttp is not available in standalone borg-gql",

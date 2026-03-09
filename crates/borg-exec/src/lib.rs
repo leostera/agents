@@ -1,22 +1,22 @@
 mod actor;
 mod actor_context_manager;
+mod actor_manager;
 mod llm_resolver;
 mod mailbox;
 mod mailbox_envelope;
 mod message;
 mod runtime;
-mod supervisor;
 
+pub use actor_manager::BorgActorManager;
 pub use message::{
     ActorOutboundMessage, ActorOutput, BorgCommand, BorgInput, BorgMessage,
     PortInboundActorMessage, RuntimeToolCall, RuntimeToolResult,
 };
 pub use port_context::{DiscordContext, HttpContext, PortContext, TelegramContext};
 pub use runtime::BorgRuntime;
-pub use supervisor::BorgSupervisor;
 
-mod port_context;
 mod patch_apply;
+mod port_context;
 mod provider_config;
 mod provider_supervisor;
 mod tool_runner;
