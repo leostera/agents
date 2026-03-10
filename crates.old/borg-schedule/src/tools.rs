@@ -1,0 +1,530 @@
+use anyhow::{Result, anyhow};
+use borg_agent::{Tool, ToolCall, ToolResponse, ToolResult, ToolResultData, ToolSpec, Toolchain};
+use borg_db::{BorgDb, CreateScheduleJobInput, UpdateScheduleJobInput};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use uuid::Uuid;
+
+const MESSAGE_TYPE: &str = "BorgMessage";
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ListJobsArgs {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct JobIdArgs {
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ListRunsArgs {
+    pub job_id: String,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScheduleSpecDto {
+    Once { run_at: String },
+    Cron { cron: String },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CreateJobArgs {
+    #[serde(default)]
+    pub job_id: Option<String>,
+    pub kind: String,
+    pub actor_id: String,
+    pub message_text: String,
+    pub schedule_spec: ScheduleSpecDto,
+    #[serde(default)]
+    pub next_run_at: Option<String>,
+    #[serde(default)]
+    pub headers: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpdateJobArgs {
+    pub job_id: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub actor_id: Option<String>,
+    #[serde(default)]
+    pub message_text: Option<String>,
+    #[serde(default)]
+    pub schedule_spec: Option<ScheduleSpecDto>,
+    #[serde(default)]
+    pub next_run_at: Option<Option<String>>,
+    #[serde(default)]
+    pub headers: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListJobsResult {
+    pub jobs: Vec<borg_db::ScheduleJobRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobResult {
+    pub job: borg_db::ScheduleJobRecord,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListRunsResult {
+    pub runs: Vec<borg_db::ScheduleJobRunRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ScheduleResult {
+    ListJobs(ListJobsResult),
+    Job(JobResult),
+    ListRuns(ListRunsResult),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "tool", content = "args", rename_all = "kebab-case")]
+pub enum ScheduleCall {
+    #[serde(rename = "Schedule-listJobs")]
+    ListJobs(ListJobsArgs),
+    #[serde(rename = "Schedule-getJob")]
+    GetJob(JobIdArgs),
+    #[serde(rename = "Schedule-createJob")]
+    CreateJob(CreateJobArgs),
+    #[serde(rename = "Schedule-updateJob")]
+    UpdateJob(UpdateJobArgs),
+    #[serde(rename = "Schedule-pauseJob")]
+    PauseJob(JobIdArgs),
+    #[serde(rename = "Schedule-resumeJob")]
+    ResumeJob(JobIdArgs),
+    #[serde(rename = "Schedule-cancelJob")]
+    CancelJob(JobIdArgs),
+    #[serde(rename = "Schedule-listRuns")]
+    ListRuns(ListRunsArgs),
+}
+
+pub fn default_tool_specs() -> Vec<ToolSpec> {
+    vec![
+        tool_spec(
+            "Schedule-listJobs",
+            "List scheduled schedule jobs.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "number" },
+                    "status": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        tool_spec(
+            "Schedule-getJob",
+            "Get one schedule job by id.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "job_id": { "type": "string" }
+                },
+                "required": ["job_id"],
+                "additionalProperties": false
+            }),
+        ),
+        tool_spec(
+            "Schedule-createJob",
+            "Create a schedule job that delivers a Borg chat message to an actor.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "job_id": { "type": "string" },
+                    "kind": { "type": "string", "enum": ["once", "cron"] },
+                    "actor_id": { "type": "string" },
+                    "message_text": { "type": "string" },
+                    "schedule_spec": { "type": "object", "additionalProperties": true },
+                    "next_run_at": { "type": "string" },
+                    "headers": { "type": "object", "additionalProperties": true }
+                },
+                "required": ["kind", "actor_id", "message_text", "schedule_spec"],
+                "additionalProperties": false
+            }),
+        ),
+        tool_spec(
+            "Schedule-updateJob",
+            "Update a schedule job fields and/or schedule.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "job_id": { "type": "string" },
+                    "kind": { "type": "string", "enum": ["once", "cron"] },
+                    "actor_id": { "type": "string" },
+                    "message_text": { "type": "string" },
+                    "schedule_spec": { "type": "object", "additionalProperties": true },
+                    "next_run_at": {},
+                    "headers": { "type": "object", "additionalProperties": true }
+                },
+                "required": ["job_id"],
+                "additionalProperties": false
+            }),
+        ),
+        tool_spec(
+            "Schedule-pauseJob",
+            "Pause a schedule job.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "job_id": { "type": "string" }
+                },
+                "required": ["job_id"],
+                "additionalProperties": false
+            }),
+        ),
+        tool_spec(
+            "Schedule-resumeJob",
+            "Resume a paused schedule job.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "job_id": { "type": "string" }
+                },
+                "required": ["job_id"],
+                "additionalProperties": false
+            }),
+        ),
+        tool_spec(
+            "Schedule-cancelJob",
+            "Cancel a schedule job.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "job_id": { "type": "string" }
+                },
+                "required": ["job_id"],
+                "additionalProperties": false
+            }),
+        ),
+        tool_spec(
+            "Schedule-listRuns",
+            "List recorded runs for one schedule job.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "job_id": { "type": "string" },
+                    "limit": { "type": "number" }
+                },
+                "required": ["job_id"],
+                "additionalProperties": false
+            }),
+        ),
+    ]
+}
+
+pub fn build_schedule_toolchain<TToolCall, TToolResult>(
+    db: BorgDb,
+) -> Result<Toolchain<TToolCall, TToolResult>>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
+    Toolchain::builder()
+        .add_tool(ScheduleTools::list_jobs(db.clone())?)?
+        .add_tool(ScheduleTools::get_job(db.clone())?)?
+        .add_tool(ScheduleTools::create_job(db.clone())?)?
+        .add_tool(ScheduleTools::update_job(db.clone())?)?
+        .add_tool(ScheduleTools::pause_job(db.clone())?)?
+        .add_tool(ScheduleTools::resume_job(db.clone())?)?
+        .add_tool(ScheduleTools::cancel_job(db.clone())?)?
+        .add_tool(ScheduleTools::list_runs(db)?)?
+        .build()
+}
+
+struct ScheduleTools;
+
+impl ScheduleTools {
+    fn list_jobs<TToolCall, TToolResult>(db: BorgDb) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
+        let spec = required_spec("Schedule-listJobs")?;
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<ListJobsArgs>| {
+                let db = db.clone();
+                async move {
+                    let limit = request.arguments.limit.unwrap_or(200);
+                    let status = request
+                        .arguments
+                        .status
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty());
+                    let jobs = db.list_schedule_jobs(limit, status).await?;
+                    Ok(ToolResponse {
+                        output: ToolResultData::Ok(TToolResult::from(serde_json::to_value(
+                            ScheduleResult::ListJobs(ListJobsResult { jobs }),
+                        )?)),
+                    })
+                }
+            },
+        ))
+    }
+
+    fn get_job<TToolCall, TToolResult>(db: BorgDb) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
+        let spec = required_spec("Schedule-getJob")?;
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<JobIdArgs>| {
+                let db = db.clone();
+                async move {
+                    let job_id = require_non_empty(&request.arguments.job_id, "job_id")?;
+                    let job = db.get_schedule_job(&job_id).await?;
+                    Ok(ToolResponse {
+                        output: ToolResultData::Ok(TToolResult::from(serde_json::to_value(
+                            ScheduleResult::Job(JobResult { job }),
+                        )?)),
+                    })
+                }
+            },
+        ))
+    }
+
+    fn create_job<TToolCall, TToolResult>(db: BorgDb) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
+        let spec = required_spec("Schedule-createJob")?;
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<CreateJobArgs>| {
+                let db = db.clone();
+                async move {
+                    let kind = require_non_empty(&request.arguments.kind, "kind")?;
+                    if kind != "once" && kind != "cron" {
+                        return Err(anyhow!(
+                            "schedule.validation_failed: kind must be once or cron"
+                        ));
+                    }
+
+                    let actor_id = require_non_empty(&request.arguments.actor_id, "actor_id")?;
+                    let message_text =
+                        require_non_empty(&request.arguments.message_text, "message_text")?;
+                    if message_text.trim().is_empty() {
+                        return Err(anyhow!(
+                            "schedule.validation_failed: message_text cannot be empty"
+                        ));
+                    }
+
+                    let schedule_spec = serde_json::to_value(&request.arguments.schedule_spec)?;
+                    let headers =
+                        serde_json::to_value(request.arguments.headers.unwrap_or_default())?;
+                    let next_run_at = option_non_empty(request.arguments.next_run_at);
+
+                    let job_id = request
+                        .arguments
+                        .job_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToOwned::to_owned)
+                        .unwrap_or_else(|| format!("borg:schedule_job:{}", Uuid::new_v4()));
+
+                    db.create_schedule_job(&CreateScheduleJobInput {
+                        job_id: job_id.clone(),
+                        kind,
+                        target_actor_id: actor_id,
+                        message_type: MESSAGE_TYPE.to_string(),
+                        payload: json!({ "text": message_text }),
+                        headers,
+                        schedule_spec,
+                        next_run_at,
+                    })
+                    .await?;
+
+                    let job = db.get_schedule_job(&job_id).await?;
+                    Ok(ToolResponse {
+                        output: ToolResultData::Ok(TToolResult::from(serde_json::to_value(
+                            ScheduleResult::Job(JobResult { job }),
+                        )?)),
+                    })
+                }
+            },
+        ))
+    }
+
+    fn update_job<TToolCall, TToolResult>(db: BorgDb) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
+        let spec = required_spec("Schedule-updateJob")?;
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<UpdateJobArgs>| {
+                let db = db.clone();
+                async move {
+                    let job_id = require_non_empty(&request.arguments.job_id, "job_id")?;
+
+                    let payload = request
+                        .arguments
+                        .message_text
+                        .as_deref()
+                        .map(|text| json!({ "text": text }));
+
+                    let headers = request
+                        .arguments
+                        .headers
+                        .map(serde_json::to_value)
+                        .transpose()?;
+                    let schedule_spec = request
+                        .arguments
+                        .schedule_spec
+                        .map(|value| serde_json::to_value(value))
+                        .transpose()?;
+                    let next_run_at = request.arguments.next_run_at;
+
+                    let patch = UpdateScheduleJobInput {
+                        kind: option_non_empty(request.arguments.kind),
+                        target_actor_id: option_non_empty(request.arguments.actor_id),
+                        message_type: Some(MESSAGE_TYPE.to_string()),
+                        payload,
+                        headers,
+                        schedule_spec,
+                        next_run_at,
+                    };
+
+                    db.update_schedule_job(&job_id, &patch).await?;
+                    let job = db.get_schedule_job(&job_id).await?;
+                    Ok(ToolResponse {
+                        output: ToolResultData::Ok(TToolResult::from(serde_json::to_value(
+                            ScheduleResult::Job(JobResult { job }),
+                        )?)),
+                    })
+                }
+            },
+        ))
+    }
+
+    fn pause_job<TToolCall, TToolResult>(db: BorgDb) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
+        status_tool(db, "Schedule-pauseJob", "paused")
+    }
+
+    fn resume_job<TToolCall, TToolResult>(db: BorgDb) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
+        status_tool(db, "Schedule-resumeJob", "active")
+    }
+
+    fn cancel_job<TToolCall, TToolResult>(db: BorgDb) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
+        status_tool(db, "Schedule-cancelJob", "cancelled")
+    }
+
+    fn list_runs<TToolCall, TToolResult>(db: BorgDb) -> Result<Tool<TToolCall, TToolResult>>
+    where
+        TToolCall: ToolCall,
+        TToolResult: ToolResult,
+    {
+        let spec = required_spec("Schedule-listRuns")?;
+        Ok(Tool::new_transcoded(
+            spec,
+            None,
+            move |request: borg_agent::ToolRequest<ListRunsArgs>| {
+                let db = db.clone();
+                async move {
+                    let job_id = require_non_empty(&request.arguments.job_id, "job_id")?;
+                    let limit = request.arguments.limit.unwrap_or(200);
+                    let runs = db.list_schedule_job_runs(&job_id, limit).await?;
+                    Ok(ToolResponse {
+                        output: ToolResultData::Ok(TToolResult::from(serde_json::to_value(
+                            ScheduleResult::ListRuns(ListRunsResult { runs }),
+                        )?)),
+                    })
+                }
+            },
+        ))
+    }
+}
+
+fn status_tool<TToolCall, TToolResult>(
+    db: BorgDb,
+    spec_name: &str,
+    status: &'static str,
+) -> Result<Tool<TToolCall, TToolResult>>
+where
+    TToolCall: ToolCall,
+    TToolResult: ToolResult,
+{
+    let spec = required_spec(spec_name)?;
+    Ok(Tool::new_transcoded(
+        spec,
+        None,
+        move |request: borg_agent::ToolRequest<JobIdArgs>| {
+            let db = db.clone();
+            async move {
+                let job_id = require_non_empty(&request.arguments.job_id, "job_id")?;
+                db.set_schedule_job_status(&job_id, status).await?;
+                let job = db.get_schedule_job(&job_id).await?;
+                Ok(ToolResponse {
+                    output: ToolResultData::Ok(TToolResult::from(serde_json::to_value(
+                        ScheduleResult::Job(JobResult { job }),
+                    )?)),
+                })
+            }
+        },
+    ))
+}
+
+fn require_non_empty(value: &str, key: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("schedule.validation_failed: missing {}", key));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn option_non_empty(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn tool_spec(name: &str, description: &str, parameters: Value) -> ToolSpec {
+    ToolSpec {
+        name: name.to_string(),
+        description: description.to_string(),
+        parameters,
+    }
+}
+
+fn required_spec(name: &str) -> Result<ToolSpec> {
+    default_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == name)
+        .ok_or_else(|| anyhow!("missing schedule tool spec {}", name))
+}

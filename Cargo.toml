@@ -1,23 +1,24 @@
 [workspace]
 members = [
-  "crates/borg-agent",
-  "crates/borg-apps",
-  "crates/borg-cli",
-  "crates/borg-schedule",
-  "crates/borg-gql",
-  "crates/borg-cmd",
-  "crates/borg-taskgraph",
-  "crates/borg-core",
-  "crates/borg-db",
-  "crates/borg-exec",
-  "crates/borg-infer",
   "crates/borg-llm",
-  "crates/borg-memory",
-  "crates/borg-ports",
-  "crates/borg-ports-tools",
-  "crates/borg-codemode",
-  "crates/borg-shellmode",
-  "crates/borg-fs",
+  # "crates/borg-agent",
+  # "crates/borg-cli",
+  # "crates/borg-core",
+  # "crates/borg-db",
+  # "crates/borg-exec",
+  # "crates/borg-gql",
+  # "crates/borg-llm",
+  # "crates/borg-ports",
+  #  "crates/borg-apps",
+  #  "crates/borg-schedule",
+  #  "crates/borg-cmd",
+  #  "crates/borg-taskgraph",
+  #  "crates/borg-infer",
+  #  "crates/borg-memory",
+  #  "crates/borg-ports-tools",
+  #  "crates/borg-codemode",
+  #  "crates/borg-shellmode",
+  #  "crates/borg-fs",
 ]
 resolver = "2"
 
@@ -30,6 +31,7 @@ chrono = { version = "0.4", features = ["serde", "clock"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_derive = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs", "io-util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
@@ -53,3 +55,4 @@ thiserror = "2"
 sha2 = "0.10"
 hex = "0.4"
 infer = "0.16"
+derive_builder = "0.20"
