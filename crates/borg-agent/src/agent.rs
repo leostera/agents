@@ -1,4 +1,5 @@
 use std::any::TypeId;
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -18,7 +19,9 @@ use tokio::sync::mpsc;
 
 use crate::context::{ContextChunk, ContextManager, ContextStrategy, ContextWindow};
 use crate::error::{AgentError, AgentResult};
-use crate::tools::{NoToolRunner, ToolCallEnvelope, ToolResultEnvelope, ToolRunner};
+use crate::tools::{
+    NoToolRunner, ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope, ToolRunner,
+};
 
 #[derive(Debug, Clone)]
 pub enum AgentInput<M> {
@@ -268,6 +271,11 @@ where
         match input {
             AgentInput::Cancel => {
                 if let Some(active_turn) = self.active_turn.as_mut() {
+                    for result in abandoned_tool_results(&active_turn.state, "cancelled") {
+                        self.context_manager
+                            .push(tool_result_to_chunk(&result, ContextStrategy::Compactable)?)
+                            .await?;
+                    }
                     active_turn.state = TurnState::CancelPending;
                 }
                 Ok(())
@@ -284,12 +292,19 @@ where
             AgentInput::Steer(message) => {
                 let item = message.into();
                 if self.active_turn.is_some() {
+                    if let Some(active_turn) = self.active_turn.as_mut() {
+                        for result in
+                            abandoned_tool_results(&active_turn.state, "interrupted by steering")
+                        {
+                            self.context_manager
+                                .push(tool_result_to_chunk(&result, ContextStrategy::Compactable)?)
+                                .await?;
+                        }
+                        active_turn.state = TurnState::NeedLlm;
+                    }
                     self.context_manager
                         .push(input_item_to_chunk(item, ContextStrategy::Compactable)?)
                         .await?;
-                    if let Some(active_turn) = self.active_turn.as_mut() {
-                        active_turn.state = TurnState::NeedLlm;
-                    }
                 } else {
                     self.start_turn(item, profile).await?;
                 }
@@ -679,6 +694,54 @@ where
         id: result.call_id.clone(),
         result: value,
     })
+}
+
+fn abandoned_tool_results<C, T, R>(
+    state: &TurnState<C, T, R>,
+    reason: &str,
+) -> Vec<ToolResultEnvelope<T>> {
+    let mut call_ids = Vec::new();
+    let mut seen = HashSet::new();
+    collect_pending_tool_call_ids(state, &mut call_ids, &mut seen);
+    call_ids
+        .into_iter()
+        .map(|call_id| ToolResultEnvelope {
+            call_id,
+            result: ToolExecutionResult::Error {
+                message: reason.to_string(),
+            },
+        })
+        .collect()
+}
+
+fn collect_pending_tool_call_ids<C, T, R>(
+    state: &TurnState<C, T, R>,
+    call_ids: &mut Vec<String>,
+    seen: &mut HashSet<String>,
+) {
+    match state {
+        TurnState::ExecuteTool { current, remaining } => {
+            if seen.insert(current.call_id.clone()) {
+                call_ids.push(current.call_id.clone());
+            }
+            for call in remaining {
+                if seen.insert(call.call_id.clone()) {
+                    call_ids.push(call.call_id.clone());
+                }
+            }
+        }
+        TurnState::EmitQueue { queue, next } => {
+            for event in queue {
+                if let AgentEvent::ToolCallRequested { call } = event
+                    && seen.insert(call.call_id.clone())
+                {
+                    call_ids.push(call.call_id.clone());
+                }
+            }
+            collect_pending_tool_call_ids(next, call_ids, seen);
+        }
+        TurnState::CancelPending | TurnState::NeedLlm | TurnState::Done => {}
+    }
 }
 
 #[cfg(test)]
@@ -1402,6 +1465,15 @@ mod tests {
 
         let requests = provider.take_requests();
         assert_eq!(requests.len(), 2);
+        assert!(requests[1].input.iter().any(|item| {
+            matches!(
+                item,
+                RawInputItem::ToolResult {
+                    tool_use_id,
+                    content,
+                } if tool_use_id == "call_ping_1" && content.contains("interrupted by steering")
+            )
+        }));
         assert!(matches!(
             requests[1].input.last(),
             Some(RawInputItem::Message {
@@ -1438,6 +1510,17 @@ mod tests {
             Some(AgentEvent::Cancelled)
         ));
         assert!(agent.next().await.expect("done").is_none());
+
+        let transcript = agent.transcript().await.expect("transcript");
+        assert!(transcript.iter().any(|item| {
+            matches!(
+                item,
+                InputItem::ToolResult {
+                    tool_use_id,
+                    content,
+                } if tool_use_id == "call_ping_1" && content.contains("cancelled")
+            )
+        }));
     }
 
     #[tokio::test]
