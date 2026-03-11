@@ -48,48 +48,6 @@ pub struct PingArgs {
     pub value: String,
 }
 
-pub async fn assert_non_empty_text_stream<C>(
-    stream: &mut borg_llm::completion::CompletionEventStream<C, String>,
-) -> LlmResult<()> {
-    let mut saw_text_delta = false;
-    let mut final_content = None;
-
-    while let Some(event) = stream.recv().await {
-        match event? {
-            CompletionEvent::TextDelta { text } => {
-                if !text.trim().is_empty() {
-                    saw_text_delta = true;
-                }
-            }
-            CompletionEvent::ReasoningDelta { .. } => {}
-            CompletionEvent::ToolCall { .. } => {}
-            CompletionEvent::Done(response) => {
-                final_content = response.output.iter().find_map(|item| match item {
-                    OutputItem::Message { content, .. } => {
-                        content.iter().find_map(|content| match content {
-                            OutputContent::Text { text } => Some(text.clone()),
-                            OutputContent::Structured { .. } => None,
-                        })
-                    }
-                    OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
-                });
-                break;
-            }
-        }
-    }
-
-    assert!(saw_text_delta, "expected at least one non-empty text delta");
-    assert!(
-        final_content
-            .as_deref()
-            .is_some_and(|content| !content.trim().is_empty()),
-        "expected non-empty final streamed response, got {:?}",
-        final_content
-    );
-
-    Ok(())
-}
-
 pub async fn assert_streamed_typed_response(
     stream: &mut borg_llm::completion::CompletionEventStream<(), EchoResponse>,
 ) -> LlmResult<()> {

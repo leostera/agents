@@ -729,64 +729,6 @@ impl LlmProvider for OpenAI {
     }
 }
 
-fn flatten_text_content(content: &[RawInputContent]) -> String {
-    content
-        .iter()
-        .filter_map(|content| match content {
-            RawInputContent::Text { text } => Some(text.as_str()),
-            RawInputContent::ImageUrl { .. } => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn map_tool_choice(choice: RawToolChoice) -> Option<ToolChoice> {
-    match choice {
-        RawToolChoice::ProviderDefault => None,
-        RawToolChoice::Auto => Some(ToolChoice {
-            r#type: "auto".to_string(),
-            function: None,
-        }),
-        RawToolChoice::Required => Some(ToolChoice {
-            r#type: "required".to_string(),
-            function: None,
-        }),
-        RawToolChoice::Specific { name } => Some(ToolChoice {
-            r#type: "function".to_string(),
-            function: Some(ToolChoiceFunction { name }),
-        }),
-        RawToolChoice::None => Some(ToolChoice {
-            r#type: "none".to_string(),
-            function: None,
-        }),
-    }
-}
-
-fn map_tool_definitions(tools: Vec<RawToolDefinition>) -> Vec<ToolDefinition> {
-    tools
-        .into_iter()
-        .map(|tool| ToolDefinition {
-            r#type: tool.r#type,
-            function: ToolFunction {
-                name: tool.function.name,
-                description: tool.function.description,
-                parameters: tool.function.parameters,
-            },
-        })
-        .collect()
-}
-
-fn map_response_format(format: RawResponseFormat) -> ResponseFormat {
-    ResponseFormat {
-        r#type: format.r#type,
-        json_schema: format.json_schema.map(|schema| JsonSchema {
-            name: schema.name,
-            strict: schema.strict,
-            schema: schema.schema,
-        }),
-    }
-}
-
 fn build_responses_request(
     default_model: &str,
     req: RawCompletionRequest,
