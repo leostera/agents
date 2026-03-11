@@ -483,6 +483,21 @@ async fn openrouter_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()>
             );
             call_id
         }
+        Some(AgentEvent::ModelOutputItem { .. }) => match next_nonempty_event(&mut agent).await? {
+            Some(AgentEvent::ToolCallRequested { call }) => {
+                let call_id = call.call_id;
+                assert_eq!(
+                    call.call,
+                    TestTools::Pong {
+                        value: "rerouted".to_string()
+                    }
+                );
+                call_id
+            }
+            other => {
+                panic!("expected rerouted tool call event after steering output, got {other:?}")
+            }
+        },
         Some(AgentEvent::ToolExecutionCompleted { .. }) => {
             panic!("steering should interrupt the pending ping tool execution before it completes");
         }
