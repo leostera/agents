@@ -443,6 +443,121 @@ async fn openai_agent_run_executes_ping_tool_and_finishes_long() -> LlmResult<()
 }
 
 #[tokio::test]
+async fn openai_agent_run_queues_messages_in_order_long() -> LlmResult<()> {
+    let runner = runner_with_openai_model(&openai_model())?;
+    let agent = Agent::builder()
+        .with_llm_runner(runner)
+        .build()
+        .expect("agent");
+
+    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    tx.send(AgentInput::Message(InputItem::user_text(
+        "Reply with exactly FIRST and nothing else.",
+    )))
+    .await
+    .expect("first send");
+    tx.send(AgentInput::Message(InputItem::user_text(
+        "Reply with exactly SECOND and nothing else.",
+    )))
+    .await
+    .expect("second send");
+    drop(tx);
+
+    let first_reply = loop {
+        match map_agent_error(rx.recv().await.expect("first turn event"))? {
+            AgentEvent::ModelOutputItem { .. } => continue,
+            AgentEvent::Completed { reply } => break reply,
+            other => panic!("expected first completed event, got {other:?}"),
+        }
+    };
+    assert!(
+        first_reply.to_lowercase().contains("first"),
+        "expected first queued reply, got {first_reply:?}"
+    );
+
+    let second_reply = loop {
+        match map_agent_error(rx.recv().await.expect("second turn event"))? {
+            AgentEvent::ModelOutputItem { .. } => continue,
+            AgentEvent::Completed { reply } => break reply,
+            other => panic!("expected second completed event, got {other:?}"),
+        }
+    };
+    assert!(
+        second_reply.to_lowercase().contains("second"),
+        "expected second queued reply, got {second_reply:?}"
+    );
+    assert!(rx.recv().await.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn openai_agent_run_cancels_active_turn_long() -> LlmResult<()> {
+    let runner = runner_with_openai_model(&openai_model())?;
+    let tool_runner = CallbackToolRunner::new(|call: ToolCallEnvelope<TestTools>| async move {
+        match call.call {
+            TestTools::Ping { value } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("pong:{value}"),
+                    },
+                },
+            }),
+            TestTools::Redirect { destination } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("redirected:{destination}"),
+                    },
+                },
+            }),
+        }
+    });
+
+    let agent = Agent::builder()
+        .with_llm_runner(runner)
+        .with_tool_runner(tool_runner)
+        .build()
+        .expect("agent");
+
+    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    tx.send(AgentInput::Message(InputItem::user_text(
+        "Call the ping tool exactly once with value=\"hello-tool\". Do not explain the plan before calling it.",
+    )))
+    .await
+    .expect("send");
+
+    match map_agent_error(rx.recv().await.expect("first event"))? {
+        AgentEvent::ToolCallRequested { .. } => {}
+        AgentEvent::ModelOutputItem { .. } => {
+            match map_agent_error(rx.recv().await.expect("tool call"))? {
+                AgentEvent::ToolCallRequested { .. } => {}
+                other => {
+                    panic!("expected tool call event after initial model output, got {other:?}")
+                }
+            }
+        }
+        other => panic!("expected tool call event, got {other:?}"),
+    }
+
+    tx.send(AgentInput::Cancel).await.expect("cancel");
+    drop(tx);
+
+    match map_agent_error(rx.recv().await.expect("post-cancel event"))? {
+        AgentEvent::Cancelled => {}
+        AgentEvent::ToolExecutionCompleted { .. } => {
+            assert!(matches!(
+                map_agent_error(rx.recv().await.expect("cancelled"))?,
+                AgentEvent::Cancelled
+            ));
+        }
+        other => panic!("expected cancellation path event, got {other:?}"),
+    }
+    assert!(rx.recv().await.is_none());
+    Ok(())
+}
+
+#[tokio::test]
 async fn openai_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
     let runner = runner_with_openai_model(&openai_model())?;
     let tool_runner = CallbackToolRunner::new(|call: ToolCallEnvelope<TestTools>| async move {

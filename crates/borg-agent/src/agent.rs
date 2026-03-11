@@ -417,6 +417,27 @@ where
                         if event_tx.send(Ok(event)).await.is_err() {
                             return;
                         }
+
+                        if !input_closed {
+                            tokio::select! {
+                                biased;
+                                maybe_input = input_rx.recv() => {
+                                    match maybe_input {
+                                        Some(input) => {
+                                            if let Err(error) = self.send(input).await
+                                                && event_tx.send(Err(error)).await.is_err()
+                                            {
+                                                return;
+                                            }
+                                        }
+                                        None => {
+                                            input_closed = true;
+                                        }
+                                    }
+                                }
+                                _ = tokio::task::yield_now() => {}
+                            }
+                        }
                     }
                     Ok(None) => {
                         if input_closed {

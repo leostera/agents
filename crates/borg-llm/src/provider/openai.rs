@@ -243,6 +243,7 @@ pub enum ResponseInputItem {
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum ResponseContent {
     InputText { text: String },
+    OutputText { text: String },
     InputImage { image_url: String },
 }
 
@@ -814,7 +815,10 @@ fn build_responses_request(
                     content: content
                         .into_iter()
                         .map(|content| match content {
-                            RawInputContent::Text { text } => ResponseContent::InputText { text },
+                            RawInputContent::Text { text } => match role {
+                                Role::Assistant => ResponseContent::OutputText { text },
+                                Role::System | Role::User => ResponseContent::InputText { text },
+                            },
                             RawInputContent::ImageUrl { url } => {
                                 ResponseContent::InputImage { image_url: url }
                             }
