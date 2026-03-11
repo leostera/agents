@@ -225,6 +225,14 @@ dependencies = [
 [[package]]
 name = "borg-agent"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "borg-llm",
+ "serde",
+ "serial_test",
+ "thiserror 2.0.18",
+ "tokio",
+]
 
 [[package]]
 name = "borg-llm"
