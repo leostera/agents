@@ -21,21 +21,35 @@ struct EchoResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 enum TestTools {
     Ping { value: String },
+    Pong { value: String },
 }
 
 impl TypedTool for TestTools {
     fn tool_definitions() -> Vec<RawToolDefinition> {
-        vec![RawToolDefinition::function(
-            "ping",
-            Some("Echo a value back to the caller"),
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "value": { "type": "string" }
-                },
-                "required": ["value"]
-            }),
-        )]
+        vec![
+            RawToolDefinition::function(
+                "ping",
+                Some("Echo a value back to the caller"),
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "value": { "type": "string" }
+                    },
+                    "required": ["value"]
+                }),
+            ),
+            RawToolDefinition::function(
+                "pong",
+                Some("Return a pong-flavored value back to the caller"),
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "value": { "type": "string" }
+                    },
+                    "required": ["value"]
+                }),
+            ),
+        ]
     }
 
     fn decode_tool_call(name: &str, arguments: serde_json::Value) -> LlmResult<Self> {
@@ -49,6 +63,16 @@ impl TypedTool for TestTools {
                 let args: PingArgs = serde_json::from_value(arguments)
                     .map_err(|error| borg_llm::error::Error::parse("tool arguments", error))?;
                 Ok(TestTools::Ping { value: args.value })
+            }
+            "pong" => {
+                #[derive(Deserialize)]
+                struct PongArgs {
+                    value: String,
+                }
+
+                let args: PongArgs = serde_json::from_value(arguments)
+                    .map_err(|error| borg_llm::error::Error::parse("tool arguments", error))?;
+                Ok(TestTools::Pong { value: args.value })
             }
             other => Err(borg_llm::error::Error::InvalidResponse {
                 reason: format!("unexpected tool name: {other}"),
@@ -244,6 +268,14 @@ async fn ollama_agent_executes_ping_tool_and_finishes_long() -> LlmResult<()> {
                     },
                 },
             }),
+            TestTools::Pong { value } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("alt-pong:{value}"),
+                    },
+                },
+            }),
         }
     });
 
@@ -309,6 +341,270 @@ async fn ollama_agent_executes_ping_tool_and_finishes_long() -> LlmResult<()> {
         }
         other => panic!("expected completed event, got {other:?}"),
     }
+    assert!(next_event(&mut agent).await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn ollama_agent_queues_message_behind_active_turn_long() -> LlmResult<()> {
+    let ctx = TestContext::shared(TestProvider::Ollama).await?;
+    let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
+
+    let mut agent = Agent::builder()
+        .with_llm_runner(runner)
+        .build()
+        .expect("agent");
+
+    agent
+        .send_with_profile(
+            AgentInput::Message(InputItem::user_text(
+                "Reply with exactly FIRST and nothing else.",
+            )),
+            ollama_profile(),
+        )
+        .await
+        .expect("first");
+
+    agent
+        .send_with_profile(
+            AgentInput::Message(InputItem::user_text(
+                "Reply with exactly SECOND and nothing else.",
+            )),
+            ollama_profile(),
+        )
+        .await
+        .expect("second");
+
+    match next_event(&mut agent).await? {
+        Some(AgentEvent::ModelOutputItem { .. }) => {}
+        Some(AgentEvent::Completed { reply }) => {
+            assert!(
+                reply.to_lowercase().contains("first"),
+                "expected first queued reply, got {:?}",
+                reply
+            );
+            match next_event(&mut agent).await? {
+                Some(AgentEvent::ModelOutputItem { .. }) => {}
+                Some(AgentEvent::Completed { reply }) => {
+                    assert!(
+                        reply.to_lowercase().contains("second"),
+                        "expected second queued reply, got {:?}",
+                        reply
+                    );
+                    assert!(next_event(&mut agent).await?.is_none());
+                    return Ok(());
+                }
+                other => panic!("expected second queued turn event, got {other:?}"),
+            }
+        }
+        other => panic!("expected first queued turn event, got {other:?}"),
+    }
+
+    match next_event(&mut agent).await? {
+        Some(AgentEvent::Completed { reply }) => {
+            assert!(
+                reply.to_lowercase().contains("first"),
+                "expected first queued reply, got {:?}",
+                reply
+            );
+        }
+        other => panic!("expected first completed event, got {other:?}"),
+    }
+    match next_event(&mut agent).await? {
+        Some(AgentEvent::ModelOutputItem { .. }) => {}
+        Some(AgentEvent::Completed { reply }) => {
+            assert!(
+                reply.to_lowercase().contains("second"),
+                "expected second queued reply, got {:?}",
+                reply
+            );
+            assert!(next_event(&mut agent).await?.is_none());
+            return Ok(());
+        }
+        other => panic!("expected second queued turn event, got {other:?}"),
+    }
+    match next_event(&mut agent).await? {
+        Some(AgentEvent::Completed { reply }) => {
+            assert!(
+                reply.to_lowercase().contains("second"),
+                "expected second queued reply, got {:?}",
+                reply
+            );
+        }
+        other => panic!("expected second completed event, got {other:?}"),
+    }
+    assert!(next_event(&mut agent).await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn ollama_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
+    let ctx = TestContext::shared(TestProvider::Ollama).await?;
+    let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
+
+    let tool_runner = CallbackToolRunner::new(|call: ToolCallEnvelope<TestTools>| async move {
+        match call.call {
+            TestTools::Ping { value } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("pong:{value}"),
+                    },
+                },
+            }),
+            TestTools::Pong { value } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("alt-pong:{value}"),
+                    },
+                },
+            }),
+        }
+    });
+
+    let mut agent = Agent::builder()
+        .with_llm_runner(runner)
+        .with_tool_runner(tool_runner)
+        .build()
+        .expect("agent");
+
+    agent
+        .send_with_profile(
+            AgentInput::Message(InputItem::user_text(
+                "First call the ping tool exactly once with value=\"hello-tool\". Then explain the result.",
+            )),
+            ollama_profile(),
+        )
+        .await
+        .expect("turn");
+
+    match next_event(&mut agent).await? {
+        Some(AgentEvent::ToolCallRequested { call }) => {
+            assert_eq!(
+                call.call,
+                TestTools::Ping {
+                    value: "hello-tool".to_string()
+                }
+            );
+        }
+        other => panic!("expected tool call event, got {other:?}"),
+    }
+
+    agent
+        .send_with_profile(
+            AgentInput::Steer(InputItem::user_text(
+                "IMPORTANT: Ignore the previous request to call ping. Instead call the pong tool exactly once with value=\"rerouted\" and then reply with exactly STEERED.",
+            )),
+            ollama_profile(),
+        )
+        .await
+        .expect("steer");
+
+    let rerouted_call_id = match next_event(&mut agent).await? {
+        Some(AgentEvent::ToolCallRequested { call }) => {
+            let call_id = call.call_id;
+            assert_eq!(
+                call.call,
+                TestTools::Pong {
+                    value: "rerouted".to_string()
+                }
+            );
+            call_id
+        }
+        Some(AgentEvent::ToolExecutionCompleted { .. }) => {
+            panic!("steering should interrupt the pending ping tool execution before it completes");
+        }
+        other => panic!("expected rerouted tool call event, got {other:?}"),
+    };
+    match next_event(&mut agent).await? {
+        Some(AgentEvent::ToolExecutionCompleted { result }) => {
+            assert_eq!(result.call_id, rerouted_call_id);
+            match result.result {
+                ToolExecutionResult::Ok { data } => {
+                    assert_eq!(
+                        data,
+                        Pong {
+                            value: "alt-pong:rerouted".to_string()
+                        }
+                    );
+                }
+                ToolExecutionResult::Error { message } => {
+                    panic!("unexpected rerouted tool error: {message}");
+                }
+            }
+        }
+        other => panic!("expected rerouted tool execution event, got {other:?}"),
+    }
+
+    agent
+        .send(AgentInput::Cancel)
+        .await
+        .expect("cancel rerouted turn");
+    assert!(matches!(
+        next_event(&mut agent).await?,
+        Some(AgentEvent::Cancelled)
+    ));
+    assert!(next_event(&mut agent).await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn ollama_agent_cancel_during_active_turn_long() -> LlmResult<()> {
+    let ctx = TestContext::shared(TestProvider::Ollama).await?;
+    let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
+
+    let tool_runner = CallbackToolRunner::new(|call: ToolCallEnvelope<TestTools>| async move {
+        match call.call {
+            TestTools::Ping { value } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("pong:{value}"),
+                    },
+                },
+            }),
+            TestTools::Pong { value } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("alt-pong:{value}"),
+                    },
+                },
+            }),
+        }
+    });
+
+    let mut agent = Agent::builder()
+        .with_llm_runner(runner)
+        .with_tool_runner(tool_runner)
+        .build()
+        .expect("agent");
+
+    agent
+        .send_with_profile(
+            AgentInput::Message(InputItem::user_text(
+                "Call the ping tool exactly once with value=\"hello-tool\" and then explain it.",
+            )),
+            ollama_profile(),
+        )
+        .await
+        .expect("turn");
+
+    match next_event(&mut agent).await? {
+        Some(AgentEvent::ToolCallRequested { .. }) => {}
+        other => panic!("expected tool call event, got {other:?}"),
+    }
+
+    agent.send(AgentInput::Cancel).await.expect("cancel");
+
+    assert!(matches!(
+        next_event(&mut agent).await?,
+        Some(AgentEvent::Cancelled)
+    ));
     assert!(next_event(&mut agent).await?.is_none());
     Ok(())
 }

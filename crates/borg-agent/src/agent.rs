@@ -21,6 +21,7 @@ use crate::tools::{NoToolRunner, ToolCallEnvelope, ToolResultEnvelope, ToolRunne
 #[derive(Debug, Clone)]
 pub enum AgentInput<M> {
     Message(M),
+    Steer(M),
     Cancel,
 }
 
@@ -171,6 +172,7 @@ where
             transcript: Vec::new(),
             next_turn: 1,
             active_turn: None,
+            queued_turns: VecDeque::new(),
             _message: PhantomData,
             _response: PhantomData,
         })
@@ -184,6 +186,7 @@ pub struct Agent<M, C, T, R> {
     transcript: Vec<InputItem>,
     next_turn: u64,
     active_turn: Option<ActiveTurn<C, T, R>>,
+    queued_turns: VecDeque<QueuedTurn>,
     _message: PhantomData<M>,
     _response: PhantomData<R>,
 }
@@ -192,6 +195,12 @@ struct ActiveTurn<C, T, R> {
     turn: u64,
     profile: ExecutionProfile,
     state: TurnState<C, T, R>,
+}
+
+struct QueuedTurn {
+    turn: u64,
+    profile: ExecutionProfile,
+    item: InputItem,
 }
 
 enum TurnState<C, T, R> {
@@ -225,34 +234,52 @@ where
         input: AgentInput<M>,
         profile: ExecutionProfile,
     ) -> AgentResult<()> {
-        if self.active_turn.is_some() {
-            return Err(AgentError::InvalidInput {
-                reason: "cannot send a new input while a turn is in progress".to_string(),
-            });
-        }
-
-        let turn = self.next_turn;
-        self.next_turn += 1;
-
-        let state = match input {
-            AgentInput::Cancel => TurnState::CancelPending,
-            AgentInput::Message(message) => {
-                self.transcript.push(message.into());
-                TurnState::NeedLlm
+        match input {
+            AgentInput::Cancel => {
+                if let Some(active_turn) = self.active_turn.as_mut() {
+                    active_turn.state = TurnState::CancelPending;
+                }
+                Ok(())
             }
-        };
-
-        self.active_turn = Some(ActiveTurn {
-            turn,
-            profile,
-            state,
-        });
-
-        Ok(())
+            AgentInput::Message(message) => {
+                let item = message.into();
+                if self.active_turn.is_some() {
+                    self.queue_turn(item, profile);
+                } else {
+                    self.start_turn(item, profile);
+                }
+                Ok(())
+            }
+            AgentInput::Steer(message) => {
+                let item = message.into();
+                if self.active_turn.is_some() {
+                    self.transcript.push(item);
+                    if let Some(active_turn) = self.active_turn.as_mut() {
+                        active_turn.state = TurnState::NeedLlm;
+                    }
+                } else {
+                    self.start_turn(item, profile);
+                }
+                Ok(())
+            }
+        }
     }
 
     pub async fn next(&mut self) -> AgentResult<Option<AgentEvent<C, T, R>>> {
         loop {
+            if self.active_turn.is_none() {
+                if let Some(queued_turn) = self.queued_turns.pop_front() {
+                    self.transcript.push(queued_turn.item);
+                    self.active_turn = Some(ActiveTurn {
+                        turn: queued_turn.turn,
+                        profile: queued_turn.profile,
+                        state: TurnState::NeedLlm,
+                    });
+                } else {
+                    return Ok(None);
+                }
+            }
+
             let Some(mut active_turn) = self.active_turn.take() else {
                 return Ok(None);
             };
@@ -261,14 +288,13 @@ where
 
             match state {
                 TurnState::Done => {
-                    return Ok(None);
+                    continue;
                 }
                 TurnState::CancelPending => {
                     return Ok(Some(AgentEvent::Cancelled));
                 }
                 TurnState::NeedLlm => {
-                    let request =
-                        build_request::<C, R>(self.transcript.clone(), &active_turn.profile);
+                    let request = self.build_request(active_turn.profile.clone());
                     let response = self.llm.chat::<C, R>(request).await?;
                     active_turn.state = self.turn_state_from_response(response).await?;
                     self.active_turn = Some(active_turn);
@@ -324,6 +350,10 @@ where
         self.active_turn.as_ref().map(|turn| turn.turn)
     }
 
+    pub fn queued_turn_count(&self) -> usize {
+        self.queued_turns.len()
+    }
+
     async fn turn_state_from_response(
         &mut self,
         response: CompletionResponse<C, R>,
@@ -359,7 +389,7 @@ where
             });
         }
 
-        let reply = extract_reply(&response)?;
+        let reply = self.extract_reply(&response)?;
         self.transcript.push(assistant_item_for_reply(&reply)?);
 
         let mut queue = VecDeque::from(non_tool_items);
@@ -370,45 +400,92 @@ where
             next: Box::new(TurnState::Done),
         })
     }
+
+    fn start_turn(&mut self, item: InputItem, profile: ExecutionProfile) {
+        let turn = self.next_turn;
+        self.next_turn += 1;
+        self.transcript.push(item);
+        self.active_turn = Some(ActiveTurn {
+            turn,
+            profile,
+            state: TurnState::NeedLlm,
+        });
+    }
+
+    fn queue_turn(&mut self, item: InputItem, profile: ExecutionProfile) {
+        let turn = self.next_turn;
+        self.next_turn += 1;
+        self.queued_turns.push_back(QueuedTurn {
+            turn,
+            profile,
+            item,
+        });
+    }
+
+    fn build_request(&self, profile: ExecutionProfile) -> CompletionRequest<C, R> {
+        let mut request = CompletionRequest::new(self.transcript.clone(), profile.model_selector)
+            .with_token_limit(profile.token_limit)
+            .with_tool_choice(profile.tool_choice)
+            .with_response_mode(ResponseMode::Buffered);
+
+        if let Temperature::Value(value) = profile.temperature {
+            request = request.with_temperature(value);
+        }
+
+        if let TopP::Value(value) = profile.top_p {
+            request = request.with_top_p(value);
+        }
+
+        if let TopK::Value(value) = profile.top_k {
+            request = request.with_top_k(value);
+        }
+
+        if TypeId::of::<C>() != TypeId::of::<()>() {
+            request = request.with_tools(TypedToolSet::new());
+        }
+
+        if TypeId::of::<R>() != TypeId::of::<String>() {
+            request = request.with_typed_response(TypedResponse::new("agent_response"));
+        }
+
+        request
+    }
+
+    fn extract_reply(&self, response: &CompletionResponse<C, R>) -> AgentResult<R> {
+        for item in &response.output {
+            match item {
+                OutputItem::Message { content, .. } => {
+                    for content in content {
+                        match content {
+                            OutputContent::Structured { value } => return Ok(value.clone()),
+                            OutputContent::Text { text }
+                                if TypeId::of::<R>() == TypeId::of::<String>() =>
+                            {
+                                let boxed: Box<dyn std::any::Any> = Box::new(text.clone());
+                                return boxed.downcast::<R>().map(|value| *value).map_err(|_| {
+                                    AgentError::Internal {
+                                        message: "failed to downcast string response".to_string(),
+                                    }
+                                });
+                            }
+                            OutputContent::Text { .. } => {}
+                        }
+                    }
+                }
+                OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => {}
+            }
+        }
+
+        Err(AgentError::InvalidResponse {
+            reason: "model returned no assistant reply matching expected response type".to_string(),
+        })
+    }
 }
 
 impl Agent<InputItem, (), (), String> {
     pub fn builder() -> AgentBuilder<InputItem, (), (), String> {
         AgentBuilder::new()
     }
-}
-
-fn build_request<C, R>(input: Vec<InputItem>, profile: &ExecutionProfile) -> CompletionRequest<C, R>
-where
-    C: TypedTool,
-    R: JsonSchema + 'static,
-{
-    let mut request = CompletionRequest::new(input, profile.model_selector.clone())
-        .with_token_limit(profile.token_limit)
-        .with_tool_choice(profile.tool_choice.clone())
-        .with_response_mode(ResponseMode::Buffered);
-
-    if let Temperature::Value(value) = profile.temperature {
-        request = request.with_temperature(value);
-    }
-
-    if let TopP::Value(value) = profile.top_p {
-        request = request.with_top_p(value);
-    }
-
-    if let TopK::Value(value) = profile.top_k {
-        request = request.with_top_k(value);
-    }
-
-    if TypeId::of::<C>() != TypeId::of::<()>() {
-        request = request.with_tools(TypedToolSet::new());
-    }
-
-    if TypeId::of::<R>() != TypeId::of::<String>() {
-        request = request.with_typed_response(TypedResponse::new("agent_response"));
-    }
-
-    request
 }
 
 fn extract_tool_calls<C, R>(response: &CompletionResponse<C, R>) -> Vec<ToolCall<C>>
@@ -423,39 +500,6 @@ where
             OutputItem::Message { .. } | OutputItem::Reasoning { .. } => None,
         })
         .collect()
-}
-
-fn extract_reply<C, R>(response: &CompletionResponse<C, R>) -> AgentResult<R>
-where
-    R: Clone + DeserializeOwned + JsonSchema + 'static,
-{
-    for item in &response.output {
-        match item {
-            OutputItem::Message { content, .. } => {
-                for content in content {
-                    match content {
-                        OutputContent::Structured { value } => return Ok(value.clone()),
-                        OutputContent::Text { text }
-                            if TypeId::of::<R>() == TypeId::of::<String>() =>
-                        {
-                            let boxed: Box<dyn std::any::Any> = Box::new(text.clone());
-                            return boxed.downcast::<R>().map(|value| *value).map_err(|_| {
-                                AgentError::Internal {
-                                    message: "failed to downcast string response".to_string(),
-                                }
-                            });
-                        }
-                        OutputContent::Text { .. } => {}
-                    }
-                }
-            }
-            OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => {}
-        }
-    }
-
-    Err(AgentError::InvalidResponse {
-        reason: "model returned no assistant reply matching expected response type".to_string(),
-    })
 }
 
 fn assistant_item_for_reply<R>(reply: &R) -> AgentResult<InputItem>
@@ -864,7 +908,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_does_not_call_llm() {
+    async fn cancel_while_idle_is_a_no_op() {
         let mut agent = Agent::builder()
             .with_llm_runner(
                 LlmRunner::builder()
@@ -875,11 +919,7 @@ mod tests {
             .expect("agent");
 
         agent.send(AgentInput::Cancel).await.expect("turn");
-        assert!(matches!(
-            agent.next().await.expect("next"),
-            Some(AgentEvent::Cancelled)
-        ));
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(agent.next().await.expect("idle").is_none());
     }
 
     #[tokio::test]
@@ -919,13 +959,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_errors_when_turn_already_in_progress() {
+    async fn send_queues_messages_while_turn_is_in_progress() {
         let mut agent = Agent::builder()
             .with_llm_runner(
                 LlmRunner::builder()
-                    .add_provider(FakeProvider::with_responses(vec![Ok(
-                        assistant_text_response("hello"),
-                    )]))
+                    .add_provider(FakeProvider::with_responses(vec![
+                        Ok(assistant_text_response("first")),
+                        Ok(assistant_text_response("second")),
+                    ]))
                     .build(),
             )
             .build()
@@ -935,13 +976,146 @@ mod tests {
             .send(AgentInput::Message(InputItem::user_text("first")))
             .await
             .expect("first send");
+        assert_eq!(agent.queued_turn_count(), 0);
 
-        let error = agent
+        agent
             .send(AgentInput::Message(InputItem::user_text("second")))
             .await
-            .expect_err("should fail");
+            .expect("second send");
+        assert_eq!(agent.queued_turn_count(), 1);
 
-        assert!(matches!(error, AgentError::InvalidInput { .. }));
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ModelOutputItem { .. })
+        ));
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::Completed { reply }) if reply == "first"
+        ));
+        match agent.next().await.expect("next") {
+            Some(AgentEvent::ModelOutputItem { .. }) => {
+                assert!(matches!(
+                    agent.next().await.expect("next"),
+                    Some(AgentEvent::Completed { reply }) if reply == "second"
+                ));
+            }
+            Some(AgentEvent::Completed { reply }) => {
+                assert_eq!(reply, "second");
+            }
+            other => panic!("expected queued turn event, got {other:?}"),
+        }
+        assert!(agent.next().await.expect("done").is_none());
+    }
+
+    #[tokio::test]
+    async fn steer_while_idle_behaves_like_message() {
+        let mut agent = Agent::builder()
+            .with_llm_runner(
+                LlmRunner::builder()
+                    .add_provider(FakeProvider::with_responses(vec![Ok(
+                        assistant_text_response("steered"),
+                    )]))
+                    .build(),
+            )
+            .build()
+            .expect("agent");
+
+        agent
+            .send(AgentInput::Steer(InputItem::user_text("hello")))
+            .await
+            .expect("steer");
+
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ModelOutputItem { .. })
+        ));
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::Completed { reply }) if reply == "steered"
+        ));
+        assert!(agent.next().await.expect("done").is_none());
+    }
+
+    #[tokio::test]
+    async fn steer_during_pending_tool_plan_clears_remaining_tool_calls() {
+        let provider = Arc::new(FakeProvider::with_responses(vec![
+            Ok(tool_call_response()),
+            Ok(assistant_text_response("steered reply")),
+        ]));
+        let runner = LlmRunner::builder()
+            .add_provider(ArcBackedFakeProvider(provider.clone()))
+            .build();
+        let mut agent = Agent::builder()
+            .with_tool_runner(ping_tool_runner())
+            .with_llm_runner(runner)
+            .build()
+            .expect("agent");
+
+        agent
+            .send(AgentInput::Message(InputItem::user_text("ping please")))
+            .await
+            .expect("first");
+
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ToolCallRequested { .. })
+        ));
+
+        agent
+            .send(AgentInput::Steer(InputItem::user_text(
+                "Do not call any tool. Reply with 'steered reply'.",
+            )))
+            .await
+            .expect("steer");
+
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ModelOutputItem { .. })
+        ));
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::Completed { reply }) if reply == "steered reply"
+        ));
+        assert!(agent.next().await.expect("done").is_none());
+
+        let requests = provider.take_requests();
+        assert_eq!(requests.len(), 2);
+        assert!(matches!(
+            requests[1].input.last(),
+            Some(RawInputItem::Message {
+                role: Role::User,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancel_during_active_turn_finishes_immediately() {
+        let mut agent = Agent::builder()
+            .with_tool_runner(ping_tool_runner())
+            .with_llm_runner(
+                LlmRunner::builder()
+                    .add_provider(FakeProvider::with_responses(vec![Ok(tool_call_response())]))
+                    .build(),
+            )
+            .build()
+            .expect("agent");
+
+        agent
+            .send(AgentInput::Message(InputItem::user_text("ping please")))
+            .await
+            .expect("turn");
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ToolCallRequested { .. })
+        ));
+
+        agent.send(AgentInput::Cancel).await.expect("cancel");
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::Cancelled)
+        ));
+        assert!(agent.next().await.expect("done").is_none());
     }
 
     #[tokio::test]
