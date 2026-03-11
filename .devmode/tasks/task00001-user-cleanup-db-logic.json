@@ -1,8 +1,0 @@
-{
-  "id": "borg:task:user-cleanup-db-logic",
-  "title": "Remove users module and DB logic",
-  "description": "Delete crates/borg-db/src/users.rs, remove UserRecord and UserObject from crates/borg-db/src/lib.rs, and drop the users table from the database schema. This aligns with RFD 0017 by removing legacy JSON-based user profiles.",
-  "definition_of_done": "crates/borg-db/src/users.rs is deleted, crates/borg-db/src/lib.rs is cleaned of user types, and the project compiles.",
-  "status": "todo",
-  "dependencies": []
-}

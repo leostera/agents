@@ -1,8 +1,0 @@
-{
-  "id": "borg:task:user-cleanup-frontend",
-  "title": "Remove User management from Frontend",
-  "description": "Sweep the TypeScript workspace (@borg/dashboard-control, etc.) for any user management UI components or API clients and remove them.",
-  "definition_of_done": "No user management UI remains in the frontend packages.",
-  "status": "todo",
-  "dependencies": ["borg:task:user-cleanup-api"]
-}
