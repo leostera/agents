@@ -389,7 +389,11 @@ fn raw_output_from_lmstudio(
             content: vec![RawOutputContent::Text { text: content }],
         });
     }
-    output.extend(tool_calls.into_iter().map(|call| RawOutputItem::ToolCall { call }));
+    output.extend(
+        tool_calls
+            .into_iter()
+            .map(|call| RawOutputItem::ToolCall { call }),
+    );
     output
 }
 

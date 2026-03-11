@@ -283,7 +283,10 @@ impl LlmProvider for Anthropic {
         };
 
         let system = req.input.iter().find_map(|item| match item {
-            RawInputItem::Message { role: Role::System, content } => Some(build_content(content)),
+            RawInputItem::Message {
+                role: Role::System,
+                content,
+            } => Some(build_content(content)),
             RawInputItem::Message { .. } | RawInputItem::ToolResult { .. } => None,
         });
 
@@ -388,7 +391,10 @@ impl LlmProvider for Anthropic {
         };
 
         let system = req.input.iter().find_map(|item| match item {
-            RawInputItem::Message { role: Role::System, content } => Some(build_content(content)),
+            RawInputItem::Message {
+                role: Role::System,
+                content,
+            } => Some(build_content(content)),
             RawInputItem::Message { .. } | RawInputItem::ToolResult { .. } => None,
         });
 
@@ -481,15 +487,14 @@ impl LlmProvider for Anthropic {
                             let parsed: Value = match serde_json::from_str(&message.data) {
                                 Ok(parsed) => parsed,
                                 Err(error) => {
-                                    let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ =
+                                        sender.send(Err(Error::parse(message.data, error))).await;
                                     let _ = event_source.close();
                                     return;
                                 }
                             };
                             let index = parsed.get("index").and_then(Value::as_u64).unwrap_or(0);
-                            match serde_json::from_value::<ContentBlockDeltaEvent>(
-                                parsed.clone(),
-                            ) {
+                            match serde_json::from_value::<ContentBlockDeltaEvent>(parsed.clone()) {
                                 Ok(delta) => match delta.delta {
                                     ContentBlockDelta::TextDelta { text } => {
                                         content.push_str(&text);
@@ -514,7 +519,8 @@ impl LlmProvider for Anthropic {
                                     }
                                 },
                                 Err(error) => {
-                                    let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ =
+                                        sender.send(Err(Error::parse(message.data, error))).await;
                                     let _ = event_source.close();
                                     return;
                                 }
@@ -524,7 +530,8 @@ impl LlmProvider for Anthropic {
                             let parsed: Value = match serde_json::from_str(&message.data) {
                                 Ok(parsed) => parsed,
                                 Err(error) => {
-                                    let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ =
+                                        sender.send(Err(Error::parse(message.data, error))).await;
                                     let _ = event_source.close();
                                     return;
                                 }
@@ -562,7 +569,8 @@ impl LlmProvider for Anthropic {
                             let parsed: Value = match serde_json::from_str(&message.data) {
                                 Ok(parsed) => parsed,
                                 Err(error) => {
-                                    let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ =
+                                        sender.send(Err(Error::parse(message.data, error))).await;
                                     let _ = event_source.close();
                                     return;
                                 }
@@ -575,13 +583,18 @@ impl LlmProvider for Anthropic {
                                     match serde_json::from_str(&input) {
                                         Ok(arguments) => arguments,
                                         Err(error) => {
-                                            let _ = sender.send(Err(Error::parse(input, error))).await;
+                                            let _ =
+                                                sender.send(Err(Error::parse(input, error))).await;
                                             let _ = event_source.close();
                                             return;
                                         }
                                     }
                                 };
-                                let call = RawToolCall { id, name, arguments };
+                                let call = RawToolCall {
+                                    id,
+                                    name,
+                                    arguments,
+                                };
                                 tool_calls.push(call.clone());
                                 if sender
                                     .send(Ok(RawCompletionEvent::ToolCall { call }))
@@ -679,7 +692,11 @@ fn raw_output_from_anthropic(text: String, tool_calls: Vec<RawToolCall>) -> Vec<
             content: vec![RawOutputContent::Text { text }],
         });
     }
-    output.extend(tool_calls.into_iter().map(|call| RawOutputItem::ToolCall { call }));
+    output.extend(
+        tool_calls
+            .into_iter()
+            .map(|call| RawOutputItem::ToolCall { call }),
+    );
     output
 }
 

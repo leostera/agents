@@ -20,7 +20,7 @@ use crate::provider::LlmProvider;
 use crate::response::RawResponseFormat;
 use crate::tools::{RawToolCall, RawToolDefinition};
 use crate::transcription::{AudioSource, AudioTranscriptionRequest, AudioTranscriptionResponse};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[derive(Debug, Clone)]
 pub struct OpenAIConfig {
@@ -496,13 +496,12 @@ impl LlmProvider for OpenAI {
             req_builder = req_builder.header("OpenAI-Organization", org);
         }
 
-        let event_source =
-            req_builder
-                .json(&responses_req)
-                .eventsource()
-                .map_err(|error| Error::Internal {
-                    message: error.to_string(),
-                })?;
+        let event_source = req_builder
+            .json(&responses_req)
+            .eventsource()
+            .map_err(|error| Error::Internal {
+                message: error.to_string(),
+            })?;
 
         let (sender, receiver) = mpsc::channel(32);
 
@@ -514,115 +513,143 @@ impl LlmProvider for OpenAI {
             while let Some(event) = event_source.next().await {
                 match event {
                     Ok(Event::Open) => {}
-                    Ok(Event::Message(message)) => {
-                        match message.event.as_str() {
-                            "response.output_text.delta" => {
-                                let parsed: Value = match serde_json::from_str(&message.data) {
-                                    Ok(parsed) => parsed,
-                                    Err(error) => {
-                                        let _ = sender.send(Err(Error::parse(message.data, error))).await;
-                                        let _ = event_source.close();
-                                        return;
-                                    }
-                                };
-                                if let Some(text) = parsed.get("delta").and_then(Value::as_str) {
-                                    if sender
-                                        .send(Ok(RawCompletionEvent::TextDelta {
-                                            text: text.to_string(),
-                                        }))
-                                        .await
-                                        .is_err()
-                                    {
-                                        let _ = event_source.close();
-                                        return;
-                                    }
+                    Ok(Event::Message(message)) => match message.event.as_str() {
+                        "response.output_text.delta" => {
+                            let parsed: Value = match serde_json::from_str(&message.data) {
+                                Ok(parsed) => parsed,
+                                Err(error) => {
+                                    let _ =
+                                        sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ = event_source.close();
+                                    return;
+                                }
+                            };
+                            if let Some(text) = parsed.get("delta").and_then(Value::as_str) {
+                                if sender
+                                    .send(Ok(RawCompletionEvent::TextDelta {
+                                        text: text.to_string(),
+                                    }))
+                                    .await
+                                    .is_err()
+                                {
+                                    let _ = event_source.close();
+                                    return;
                                 }
                             }
-                            "response.output_item.added" | "response.output_item.done" => {
-                                let parsed: Value = match serde_json::from_str(&message.data) {
-                                    Ok(parsed) => parsed,
-                                    Err(error) => {
-                                        let _ = sender.send(Err(Error::parse(message.data, error))).await;
-                                        let _ = event_source.close();
-                                        return;
-                                    }
-                                };
-                                if let Some(item) = parsed.get("item") {
-                                    if item.get("type").and_then(Value::as_str) == Some("function_call") {
-                                        let item_id = item.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
-                                        let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or(&item_id).to_string();
-                                        let name = item.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
-                                        let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or_default().to_string();
-                                        function_calls.insert(item_id.clone(), (call_id.clone(), name.clone(), arguments.clone()));
-                                        if message.event == "response.output_item.done" {
-                                            match parse_function_call(&call_id, &name, &arguments) {
-                                                Ok(call) => {
-                                                    if sender.send(Ok(RawCompletionEvent::ToolCall { call })).await.is_err() {
-                                                        let _ = event_source.close();
-                                                        return;
-                                                    }
-                                                }
-                                                Err(error) => {
-                                                    let _ = sender.send(Err(error)).await;
+                        }
+                        "response.output_item.added" | "response.output_item.done" => {
+                            let parsed: Value = match serde_json::from_str(&message.data) {
+                                Ok(parsed) => parsed,
+                                Err(error) => {
+                                    let _ =
+                                        sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ = event_source.close();
+                                    return;
+                                }
+                            };
+                            if let Some(item) = parsed.get("item") {
+                                if item.get("type").and_then(Value::as_str) == Some("function_call")
+                                {
+                                    let item_id = item
+                                        .get("id")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_string();
+                                    let call_id = item
+                                        .get("call_id")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or(&item_id)
+                                        .to_string();
+                                    let name = item
+                                        .get("name")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_string();
+                                    let arguments = item
+                                        .get("arguments")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_string();
+                                    function_calls.insert(
+                                        item_id.clone(),
+                                        (call_id.clone(), name.clone(), arguments.clone()),
+                                    );
+                                    if message.event == "response.output_item.done" {
+                                        match parse_function_call(&call_id, &name, &arguments) {
+                                            Ok(call) => {
+                                                if sender
+                                                    .send(Ok(RawCompletionEvent::ToolCall { call }))
+                                                    .await
+                                                    .is_err()
+                                                {
                                                     let _ = event_source.close();
                                                     return;
                                                 }
+                                            }
+                                            Err(error) => {
+                                                let _ = sender.send(Err(error)).await;
+                                                let _ = event_source.close();
+                                                return;
                                             }
                                         }
                                     }
                                 }
                             }
-                            "response.function_call_arguments.delta" => {
-                                let parsed: Value = match serde_json::from_str(&message.data) {
-                                    Ok(parsed) => parsed,
-                                    Err(error) => {
-                                        let _ = sender.send(Err(Error::parse(message.data, error))).await;
-                                        let _ = event_source.close();
-                                        return;
-                                    }
-                                };
-                                if let (Some(item_id), Some(delta)) = (
-                                    parsed.get("item_id").and_then(Value::as_str),
-                                    parsed.get("delta").and_then(Value::as_str),
-                                ) {
-                                    if let Some((_, _, arguments)) = function_calls.get_mut(item_id) {
-                                        arguments.push_str(delta);
-                                    }
+                        }
+                        "response.function_call_arguments.delta" => {
+                            let parsed: Value = match serde_json::from_str(&message.data) {
+                                Ok(parsed) => parsed,
+                                Err(error) => {
+                                    let _ =
+                                        sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ = event_source.close();
+                                    return;
+                                }
+                            };
+                            if let (Some(item_id), Some(delta)) = (
+                                parsed.get("item_id").and_then(Value::as_str),
+                                parsed.get("delta").and_then(Value::as_str),
+                            ) {
+                                if let Some((_, _, arguments)) = function_calls.get_mut(item_id) {
+                                    arguments.push_str(delta);
                                 }
                             }
-                            "response.completed" => {
-                                let parsed: Value = match serde_json::from_str(&message.data) {
-                                    Ok(parsed) => parsed,
-                                    Err(error) => {
-                                        let _ = sender.send(Err(Error::parse(message.data, error))).await;
-                                        let _ = event_source.close();
-                                        return;
-                                    }
-                                };
-                                let response = parsed.get("response").cloned().unwrap_or(parsed);
-                                let final_response = match parse_responses_response(response) {
-                                    Ok(response) => response,
-                                    Err(error) => {
-                                        let _ = sender.send(Err(error)).await;
-                                        let _ = event_source.close();
-                                        return;
-                                    }
-                                };
-                                let _ = sender.send(Ok(RawCompletionEvent::Done(final_response))).await;
-                                break;
-                            }
-                            "response.failed" => {
-                                let _ = sender
-                                    .send(Err(Error::InvalidResponse {
-                                        reason: format!("OpenAI stream failed: {}", message.data),
-                                    }))
-                                    .await;
-                                let _ = event_source.close();
-                                return;
-                            }
-                            _ => {}
                         }
-                    }
+                        "response.completed" => {
+                            let parsed: Value = match serde_json::from_str(&message.data) {
+                                Ok(parsed) => parsed,
+                                Err(error) => {
+                                    let _ =
+                                        sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ = event_source.close();
+                                    return;
+                                }
+                            };
+                            let response = parsed.get("response").cloned().unwrap_or(parsed);
+                            let final_response = match parse_responses_response(response) {
+                                Ok(response) => response,
+                                Err(error) => {
+                                    let _ = sender.send(Err(error)).await;
+                                    let _ = event_source.close();
+                                    return;
+                                }
+                            };
+                            let _ = sender
+                                .send(Ok(RawCompletionEvent::Done(final_response)))
+                                .await;
+                            break;
+                        }
+                        "response.failed" => {
+                            let _ = sender
+                                .send(Err(Error::InvalidResponse {
+                                    reason: format!("OpenAI stream failed: {}", message.data),
+                                }))
+                                .await;
+                            let _ = event_source.close();
+                            return;
+                        }
+                        _ => {}
+                    },
                     Err(error) => {
                         let _ = sender
                             .send(Err(Error::Internal {
@@ -788,9 +815,9 @@ fn build_responses_request(
                     .into_iter()
                     .map(|content| match content {
                         RawInputContent::Text { text } => ResponseContent::InputText { text },
-                        RawInputContent::ImageUrl { url } => ResponseContent::InputImage {
-                            image_url: url,
-                        },
+                        RawInputContent::ImageUrl { url } => {
+                            ResponseContent::InputImage { image_url: url }
+                        }
                     })
                     .collect(),
             },
@@ -867,12 +894,13 @@ fn parse_responses_response(value: Value) -> LlmResult<RawCompletionResponse> {
         })?
         .to_string();
 
-    let output_values = value
-        .get("output")
-        .and_then(Value::as_array)
-        .ok_or(Error::InvalidResponse {
-            reason: "OpenAI responses payload missing output".to_string(),
-        })?;
+    let output_values =
+        value
+            .get("output")
+            .and_then(Value::as_array)
+            .ok_or(Error::InvalidResponse {
+                reason: "OpenAI responses payload missing output".to_string(),
+            })?;
 
     let mut output = Vec::new();
     let mut saw_tool_call = false;
@@ -893,7 +921,9 @@ fn parse_responses_response(value: Value) -> LlmResult<RawCompletionResponse> {
                             }
                             Some("output_json") => {
                                 if let Some(json) = part.get("json") {
-                                    content.push(RawOutputContent::Json { value: json.clone() });
+                                    content.push(RawOutputContent::Json {
+                                        value: json.clone(),
+                                    });
                                 }
                             }
                             _ => {}
@@ -915,18 +945,17 @@ fn parse_responses_response(value: Value) -> LlmResult<RawCompletionResponse> {
                     .ok_or(Error::InvalidResponse {
                         reason: "OpenAI function_call missing call id".to_string(),
                     })?;
-                let name = item
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .ok_or(Error::InvalidResponse {
-                        reason: "OpenAI function_call missing name".to_string(),
-                    })?;
-                let arguments = item
-                    .get("arguments")
-                    .and_then(Value::as_str)
-                    .ok_or(Error::InvalidResponse {
+                let name =
+                    item.get("name")
+                        .and_then(Value::as_str)
+                        .ok_or(Error::InvalidResponse {
+                            reason: "OpenAI function_call missing name".to_string(),
+                        })?;
+                let arguments = item.get("arguments").and_then(Value::as_str).ok_or(
+                    Error::InvalidResponse {
                         reason: "OpenAI function_call missing arguments".to_string(),
-                    })?;
+                    },
+                )?;
                 output.push(RawOutputItem::ToolCall {
                     call: parse_function_call(call_id, name, arguments)?,
                 });
@@ -984,7 +1013,8 @@ fn parse_function_call(call_id: &str, name: &str, arguments: &str) -> LlmResult<
     Ok(RawToolCall {
         id: call_id.to_string(),
         name: name.to_string(),
-        arguments: serde_json::from_str(arguments).map_err(|e| Error::parse("tool arguments", e))?,
+        arguments: serde_json::from_str(arguments)
+            .map_err(|e| Error::parse("tool arguments", e))?,
     })
 }
 
@@ -1031,12 +1061,9 @@ fn normalize_openai_schema(schema: Value) -> Value {
 
             Value::Object(map)
         }
-        Value::Array(values) => Value::Array(
-            values
-                .into_iter()
-                .map(normalize_openai_schema)
-                .collect(),
-        ),
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(normalize_openai_schema).collect())
+        }
         other => other,
     }
 }

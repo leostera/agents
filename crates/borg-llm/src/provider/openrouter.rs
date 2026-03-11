@@ -608,12 +608,14 @@ impl LlmProvider for OpenRouter {
                                             return;
                                         }
                                     }
-                                    if let Some(delta_tool_calls) = choice.delta.tool_calls.clone() {
+                                    if let Some(delta_tool_calls) = choice.delta.tool_calls.clone()
+                                    {
                                         for call in delta_tool_calls {
                                             let Some(index) = call.index else {
                                                 continue;
                                             };
-                                            let partial = partial_tool_calls.entry(index).or_default();
+                                            let partial =
+                                                partial_tool_calls.entry(index).or_default();
                                             if let Some(id) = call.id {
                                                 partial.id = id;
                                             }
@@ -739,7 +741,11 @@ fn raw_output_from_openrouter(
             content: vec![RawOutputContent::Text { text: content }],
         });
     }
-    output.extend(tool_calls.into_iter().map(|call| RawOutputItem::ToolCall { call }));
+    output.extend(
+        tool_calls
+            .into_iter()
+            .map(|call| RawOutputItem::ToolCall { call }),
+    );
     output
 }
 

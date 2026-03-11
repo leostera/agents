@@ -215,32 +215,34 @@ impl Ollama {
             .input
             .iter()
             .filter_map(|item| match item {
-                RawInputItem::Message { role, content } => Some(crate::provider::ollama::ChatMessage {
-                    role: match role {
-                        Role::System => "system".to_string(),
-                        Role::User => "user".to_string(),
-                        Role::Assistant => "assistant".to_string(),
-                    },
-                    content: content
-                        .iter()
-                        .filter_map(|content| match content {
-                            RawInputContent::Text { text } => Some(text.as_str()),
-                            RawInputContent::ImageUrl { .. } => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                    images: Some(
-                        content
+                RawInputItem::Message { role, content } => {
+                    Some(crate::provider::ollama::ChatMessage {
+                        role: match role {
+                            Role::System => "system".to_string(),
+                            Role::User => "user".to_string(),
+                            Role::Assistant => "assistant".to_string(),
+                        },
+                        content: content
                             .iter()
                             .filter_map(|content| match content {
-                                RawInputContent::ImageUrl { url } => Some(url.clone()),
-                                RawInputContent::Text { .. } => None,
+                                RawInputContent::Text { text } => Some(text.as_str()),
+                                RawInputContent::ImageUrl { .. } => None,
                             })
-                            .collect(),
-                    )
-                    .filter(|images: &Vec<String>| !images.is_empty()),
-                    tool_calls: None,
-                }),
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        images: Some(
+                            content
+                                .iter()
+                                .filter_map(|content| match content {
+                                    RawInputContent::ImageUrl { url } => Some(url.clone()),
+                                    RawInputContent::Text { .. } => None,
+                                })
+                                .collect(),
+                        )
+                        .filter(|images: &Vec<String>| !images.is_empty()),
+                        tool_calls: None,
+                    })
+                }
                 RawInputItem::ToolResult {
                     tool_use_id,
                     content,

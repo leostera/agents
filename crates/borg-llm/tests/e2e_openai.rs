@@ -2,8 +2,8 @@ mod common;
 
 use borg_llm::completion::{
     CompletionRequest, InputItem, ModelSelector, OutputContent, OutputItem, RawCompletionRequest,
-    RawInputContent, RawInputItem, RawOutputContent, RawOutputItem, ResponseMode, Temperature,
-    TokenLimit, ToolChoice, TopK, TopP, Role,
+    RawInputContent, RawInputItem, RawOutputContent, RawOutputItem, ResponseMode, Role,
+    Temperature, TokenLimit, ToolChoice, TopK, TopP,
 };
 use borg_llm::error::LlmResult;
 use borg_llm::provider::LlmProvider;

@@ -503,10 +503,12 @@ mod tests {
             .expect("raw response should decode into typed response");
 
         let typed_response = response.output.iter().find_map(|item| match item {
-            OutputItem::Message { content, .. } => content.iter().find_map(|content| match content {
-                OutputContent::Structured { value } => Some(value),
-                OutputContent::Text { .. } => None,
-            }),
+            OutputItem::Message { content, .. } => {
+                content.iter().find_map(|content| match content {
+                    OutputContent::Structured { value } => Some(value),
+                    OutputContent::Text { .. } => None,
+                })
+            }
             OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
         });
 
