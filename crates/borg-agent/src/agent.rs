@@ -122,6 +122,12 @@ impl AgentBuilder<(), ()> {
     }
 }
 
+impl Default for AgentBuilder<(), ()> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<C, T> AgentBuilder<C, T>
 where
     C: Clone + Send + Sync + 'static,
