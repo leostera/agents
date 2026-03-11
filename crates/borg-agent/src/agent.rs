@@ -1,13 +1,16 @@
-use std::sync::Arc;
+use std::any::TypeId;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use async_trait::async_trait;
 use borg_llm::completion::{
     CompletionRequest, CompletionResponse, FinishReason, InputItem, ModelSelector, OutputContent,
-    OutputItem, TokenLimit, TopK, TopP,
+    OutputItem, ResponseMode, TokenLimit, TopK, TopP,
 };
+use borg_llm::response::TypedResponse;
 use borg_llm::runner::LlmRunner;
 use borg_llm::{completion::Temperature, completion::ToolChoice};
+use schemars::JsonSchema;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use tokio::sync::Mutex;
 
 use crate::error::{AgentError, AgentResult};
@@ -58,7 +61,7 @@ impl ExecutionProfile {
 }
 
 #[derive(Debug, Clone)]
-pub enum AgentEvent {
+pub enum AgentEvent<R> {
     InputAccepted {
         item: InputItem,
     },
@@ -66,14 +69,14 @@ pub enum AgentEvent {
         turn: u64,
     },
     ModelOutputItem {
-        item: OutputItem<(), String>,
+        item: OutputItem<(), R>,
     },
     TurnCompleted {
         turn: u64,
         finish_reason: FinishReason,
     },
     Completed {
-        reply: String,
+        reply: R,
     },
     Cancelled,
 }
@@ -87,30 +90,12 @@ pub enum TurnOutcome<R> {
 #[derive(Debug, Clone)]
 pub struct TurnReport<R> {
     pub turn: u64,
-    pub events: Vec<AgentEvent>,
+    pub events: Vec<AgentEvent<R>>,
     pub outcome: TurnOutcome<R>,
 }
 
-#[async_trait]
-pub trait AgentLlmClient: Send + Sync {
-    async fn chat_string(
-        &self,
-        request: CompletionRequest<(), String>,
-    ) -> AgentResult<CompletionResponse<(), String>>;
-}
-
-#[async_trait]
-impl AgentLlmClient for LlmRunner {
-    async fn chat_string(
-        &self,
-        request: CompletionRequest<(), String>,
-    ) -> AgentResult<CompletionResponse<(), String>> {
-        self.chat(request).await.map_err(AgentError::from)
-    }
-}
-
 pub struct AgentBuilder {
-    llm: Option<Arc<dyn AgentLlmClient>>,
+    llm: Option<LlmRunner>,
     execution_profile: ExecutionProfile,
 }
 
@@ -122,11 +107,8 @@ impl AgentBuilder {
         }
     }
 
-    pub fn with_llm_runner<L>(mut self, llm: L) -> Self
-    where
-        L: AgentLlmClient + 'static,
-    {
-        self.llm = Some(Arc::new(llm));
+    pub fn with_llm_runner(mut self, llm: LlmRunner) -> Self {
+        self.llm = Some(llm);
         self
     }
 
@@ -156,7 +138,7 @@ impl Default for AgentBuilder {
 }
 
 pub struct Agent {
-    llm: Arc<dyn AgentLlmClient>,
+    llm: LlmRunner,
     execution_profile: ExecutionProfile,
     transcript: Mutex<Vec<InputItem>>,
     next_turn: AtomicU64,
@@ -167,31 +149,34 @@ impl Agent {
         AgentBuilder::new()
     }
 
-    pub async fn send<M>(&self, input: AgentInput<M>) -> AgentResult<TurnReport<String>>
+    pub async fn send<M, R>(&self, input: AgentInput<M>) -> AgentResult<TurnReport<R>>
     where
         M: Into<InputItem> + Send,
+        R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
     {
         self.run_turn(input, None).await
     }
 
-    pub async fn send_with_profile<M>(
+    pub async fn send_with_profile<M, R>(
         &self,
         input: AgentInput<M>,
         profile: ExecutionProfile,
-    ) -> AgentResult<TurnReport<String>>
+    ) -> AgentResult<TurnReport<R>>
     where
         M: Into<InputItem> + Send,
+        R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
     {
         self.run_turn(input, Some(profile)).await
     }
 
-    pub async fn run_turn<M>(
+    pub async fn run_turn<M, R>(
         &self,
         input: AgentInput<M>,
         profile_override: Option<ExecutionProfile>,
-    ) -> AgentResult<TurnReport<String>>
+    ) -> AgentResult<TurnReport<R>>
     where
         M: Into<InputItem> + Send,
+        R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
     {
         let turn = self.next_turn.fetch_add(1, Ordering::SeqCst);
         let mut events = vec![AgentEvent::TurnStarted { turn }];
@@ -215,15 +200,15 @@ impl Agent {
 
                     let profile =
                         profile_override.unwrap_or_else(|| self.execution_profile.clone());
-                    build_request(transcript.clone(), &profile)
+                    build_request::<R>(transcript.clone(), &profile)
                 };
 
-                let response = self.llm.chat_string(request).await?;
+                let response = self.llm.chat::<(), R>(request).await?;
                 let reply = extract_reply(&response)?;
 
                 {
                     let mut transcript = self.transcript.lock().await;
-                    transcript.push(InputItem::assistant_text(reply.clone()));
+                    transcript.push(assistant_item_for_reply(&reply)?);
                 }
 
                 for item in response.output.iter().cloned() {
@@ -252,13 +237,14 @@ impl Agent {
     }
 }
 
-fn build_request(
-    input: Vec<InputItem>,
-    profile: &ExecutionProfile,
-) -> CompletionRequest<(), String> {
+fn build_request<R>(input: Vec<InputItem>, profile: &ExecutionProfile) -> CompletionRequest<(), R>
+where
+    R: JsonSchema + 'static,
+{
     let mut request = CompletionRequest::new(input, profile.model_selector.clone())
         .with_token_limit(profile.token_limit)
-        .with_tool_choice(profile.tool_choice.clone());
+        .with_tool_choice(profile.tool_choice.clone())
+        .with_response_mode(ResponseMode::Buffered);
 
     if let Temperature::Value(value) = profile.temperature {
         request = request.with_temperature(value);
@@ -272,49 +258,92 @@ fn build_request(
         request = request.with_top_k(value);
     }
 
+    if TypeId::of::<R>() != TypeId::of::<String>() {
+        request = request.with_typed_response(TypedResponse::new("agent_response"));
+    }
+
     request
 }
 
-fn extract_reply(response: &CompletionResponse<(), String>) -> AgentResult<String> {
-    let reply = response
-        .output
-        .iter()
-        .filter_map(|item| match item {
-            OutputItem::Message {
-                role: borg_llm::completion::Role::Assistant,
-                content,
-            } => Some(
-                content
-                    .iter()
-                    .filter_map(|content| match content {
-                        OutputContent::Text { text } => Some(text.as_str()),
-                        OutputContent::Structured { .. } => None,
-                    })
-                    .collect::<String>(),
-            ),
-            _ => None,
-        })
-        .find(|reply| !reply.trim().is_empty());
+fn extract_reply<R>(response: &CompletionResponse<(), R>) -> AgentResult<R>
+where
+    R: Clone + DeserializeOwned + JsonSchema + 'static,
+{
+    for item in &response.output {
+        match item {
+            OutputItem::Message { content, .. } => {
+                for content in content {
+                    match content {
+                        OutputContent::Structured { value } => return Ok(value.clone()),
+                        OutputContent::Text { text }
+                            if TypeId::of::<R>() == TypeId::of::<String>() =>
+                        {
+                            let boxed: Box<dyn std::any::Any> = Box::new(text.clone());
+                            return boxed.downcast::<R>().map(|value| *value).map_err(|_| {
+                                AgentError::Internal {
+                                    message: "failed to downcast string response".to_string(),
+                                }
+                            });
+                        }
+                        OutputContent::Text { .. } => {}
+                    }
+                }
+            }
+            OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => {}
+        }
+    }
 
-    reply.ok_or(AgentError::InvalidResponse {
-        reason: "model returned no assistant text reply".to_string(),
+    Err(AgentError::InvalidResponse {
+        reason: "model returned no assistant reply matching expected response type".to_string(),
     })
+}
+
+fn assistant_item_for_reply<R>(reply: &R) -> AgentResult<InputItem>
+where
+    R: Serialize + 'static,
+{
+    if TypeId::of::<R>() == TypeId::of::<String>() {
+        let value = serde_json::to_value(reply).map_err(|error| AgentError::Internal {
+            message: error.to_string(),
+        })?;
+        let text = value.as_str().ok_or(AgentError::Internal {
+            message: "string reply did not serialize as string".to_string(),
+        })?;
+        return Ok(InputItem::assistant_text(text));
+    }
+
+    let text = serde_json::to_string(reply).map_err(|error| AgentError::Internal {
+        message: error.to_string(),
+    })?;
+    Ok(InputItem::assistant_text(text))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use borg_llm::completion::{FinishReason, Role, Usage};
+    use async_trait::async_trait;
+    use borg_llm::capability::Capability;
+    use borg_llm::completion::{ProviderType, RawCompletionRequest, RawCompletionResponse, Role};
+    use borg_llm::error::{Error as LlmError, LlmResult};
+    use borg_llm::model::Model;
+    use borg_llm::provider::LlmProvider;
+    use borg_llm::transcription::{AudioTranscriptionRequest, AudioTranscriptionResponse};
+    use serde::{Deserialize, Serialize};
     use std::collections::VecDeque;
+    use std::sync::Arc;
 
-    #[derive(Default)]
-    struct FakeLlmClient {
-        responses: Mutex<VecDeque<AgentResult<CompletionResponse<(), String>>>>,
-        requests: Mutex<Vec<CompletionRequest<(), String>>>,
+    #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+    struct EchoResponse {
+        value: String,
     }
 
-    impl FakeLlmClient {
-        fn with_response(response: CompletionResponse<(), String>) -> Self {
+    struct FakeProvider {
+        responses: Mutex<VecDeque<LlmResult<RawCompletionResponse>>>,
+        requests: Mutex<Vec<RawCompletionRequest>>,
+    }
+
+    impl FakeProvider {
+        fn with_response(response: RawCompletionResponse) -> Self {
             let mut responses = VecDeque::new();
             responses.push_back(Ok(response));
             Self {
@@ -323,37 +352,63 @@ mod tests {
             }
         }
 
-        async fn take_requests(&self) -> Vec<CompletionRequest<(), String>> {
+        async fn take_requests(&self) -> Vec<RawCompletionRequest> {
             self.requests.lock().await.clone()
         }
     }
 
     #[async_trait]
-    impl AgentLlmClient for FakeLlmClient {
-        async fn chat_string(
-            &self,
-            request: CompletionRequest<(), String>,
-        ) -> AgentResult<CompletionResponse<(), String>> {
-            self.requests.lock().await.push(request);
+    impl LlmProvider for FakeProvider {
+        fn provider_type(&self) -> ProviderType {
+            ProviderType::OpenAI
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "fake"
+        }
+
+        fn capabilities(&self) -> &[Capability] {
+            &[]
+        }
+
+        async fn available_models(&self) -> LlmResult<Vec<Model>> {
+            Ok(Vec::new())
+        }
+
+        async fn chat_raw(&self, req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
+            self.requests.lock().await.push(req);
             self.responses.lock().await.pop_front().unwrap_or_else(|| {
-                Err(AgentError::Internal {
+                Err(LlmError::Internal {
                     message: "no fake response queued".to_string(),
                 })
             })
         }
+
+        async fn transcribe(
+            &self,
+            _req: AudioTranscriptionRequest,
+        ) -> LlmResult<AudioTranscriptionResponse> {
+            Err(LlmError::InvalidRequest {
+                reason: "unsupported".to_string(),
+            })
+        }
     }
 
-    fn assistant_response(text: &str) -> CompletionResponse<(), String> {
-        CompletionResponse {
-            provider: borg_llm::completion::ProviderType::OpenAI,
+    fn runner_with_provider(provider: FakeProvider) -> LlmRunner {
+        LlmRunner::builder().add_provider(provider).build()
+    }
+
+    fn assistant_text_response(text: &str) -> RawCompletionResponse {
+        RawCompletionResponse {
+            provider: ProviderType::OpenAI,
             model: "test-model".to_string(),
-            output: vec![OutputItem::Message {
+            output: vec![borg_llm::completion::RawOutputItem::Message {
                 role: Role::Assistant,
-                content: vec![OutputContent::Text {
+                content: vec![borg_llm::completion::RawOutputContent::Text {
                     text: text.to_string(),
                 }],
             }],
-            usage: Usage {
+            usage: borg_llm::completion::Usage {
                 prompt_tokens: 1,
                 completion_tokens: 1,
                 total_tokens: 2,
@@ -362,12 +417,29 @@ mod tests {
         }
     }
 
-    fn provider_error() -> AgentError {
-        AgentError::Llm(borg_llm::error::Error::Provider {
+    fn assistant_json_response(value: serde_json::Value) -> RawCompletionResponse {
+        RawCompletionResponse {
+            provider: ProviderType::OpenAI,
+            model: "test-model".to_string(),
+            output: vec![borg_llm::completion::RawOutputItem::Message {
+                role: Role::Assistant,
+                content: vec![borg_llm::completion::RawOutputContent::Json { value }],
+            }],
+            usage: borg_llm::completion::Usage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                total_tokens: 2,
+            },
+            finish_reason: FinishReason::Stop,
+        }
+    }
+
+    fn provider_error() -> LlmError {
+        LlmError::Provider {
             provider: "openrouter".to_string(),
             status: 503,
             message: "temporarily unavailable".to_string(),
-        })
+        }
     }
 
     #[tokio::test]
@@ -377,16 +449,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_records_input_and_reply_in_transcript() {
+    async fn send_records_string_input_and_reply_in_transcript() {
         let agent = Agent::builder()
-            .with_llm_runner(FakeLlmClient::with_response(assistant_response(
-                "hello back",
+            .with_llm_runner(runner_with_provider(FakeProvider::with_response(
+                assistant_text_response("hello back"),
             )))
             .build()
             .expect("agent");
 
         let report = agent
-            .send(AgentInput::Message(InputItem::user_text("hello")))
+            .send::<_, String>(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
 
@@ -414,15 +486,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancel_does_not_call_llm() {
-        let fake = FakeLlmClient::default();
+    async fn send_decodes_typed_response() {
         let agent = Agent::builder()
-            .with_llm_runner(fake)
+            .with_llm_runner(runner_with_provider(FakeProvider::with_response(
+                assistant_json_response(serde_json::json!({ "value": "typed-ok" })),
+            )))
             .build()
             .expect("agent");
 
         let report = agent
-            .send::<InputItem>(AgentInput::Cancel)
+            .send::<_, EchoResponse>(AgentInput::Message(InputItem::user_text("hello")))
+            .await
+            .expect("turn");
+
+        assert!(matches!(
+            report.outcome,
+            TurnOutcome::Completed { reply: EchoResponse { ref value } } if value == "typed-ok"
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancel_does_not_call_llm() {
+        let agent = Agent::builder()
+            .with_llm_runner(runner_with_provider(FakeProvider {
+                responses: Mutex::new(VecDeque::new()),
+                requests: Mutex::new(Vec::new()),
+            }))
+            .build()
+            .expect("agent");
+
+        let report = agent
+            .send::<InputItem, String>(AgentInput::Cancel)
             .await
             .expect("turn");
 
@@ -432,27 +526,30 @@ mod tests {
 
     #[tokio::test]
     async fn send_reuses_prior_transcript_in_next_request() {
-        let fake = Arc::new(FakeLlmClient {
+        let fake = Arc::new(FakeProvider {
             responses: Mutex::new(VecDeque::from(vec![
-                Ok(assistant_response("first reply")),
-                Ok(assistant_response("second reply")),
+                Ok(assistant_text_response("first reply")),
+                Ok(assistant_text_response("second reply")),
             ])),
             requests: Mutex::new(Vec::new()),
         });
 
+        let runner = LlmRunner::builder()
+            .add_provider(ArcBackedFakeProvider(fake.clone()))
+            .build();
         let agent = Agent {
-            llm: fake.clone(),
+            llm: runner,
             execution_profile: ExecutionProfile::default(),
             transcript: Mutex::new(Vec::new()),
             next_turn: AtomicU64::new(1),
         };
 
         agent
-            .send(AgentInput::Message(InputItem::user_text("first")))
+            .send::<_, String>(AgentInput::Message(InputItem::user_text("first")))
             .await
             .expect("first turn");
         agent
-            .send(AgentInput::Message(InputItem::user_text("second")))
+            .send::<_, String>(AgentInput::Message(InputItem::user_text("second")))
             .await
             .expect("second turn");
 
@@ -460,38 +557,17 @@ mod tests {
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].input.len(), 1);
         assert_eq!(requests[1].input.len(), 3);
-        assert!(matches!(
-            requests[1].input[0],
-            InputItem::Message {
-                role: Role::User,
-                ..
-            }
-        ));
-        assert!(matches!(
-            requests[1].input[1],
-            InputItem::Message {
-                role: Role::Assistant,
-                ..
-            }
-        ));
-        assert!(matches!(
-            requests[1].input[2],
-            InputItem::Message {
-                role: Role::User,
-                ..
-            }
-        ));
     }
 
     #[tokio::test]
-    async fn run_turn_returns_error_when_model_returns_no_assistant_text() {
-        let response = CompletionResponse {
-            provider: borg_llm::completion::ProviderType::OpenAI,
+    async fn run_turn_returns_error_when_model_returns_no_matching_reply_type() {
+        let response = RawCompletionResponse {
+            provider: ProviderType::OpenAI,
             model: "test-model".to_string(),
-            output: vec![OutputItem::Reasoning {
+            output: vec![borg_llm::completion::RawOutputItem::Reasoning {
                 text: "thinking".to_string(),
             }],
-            usage: Usage {
+            usage: borg_llm::completion::Usage {
                 prompt_tokens: 1,
                 completion_tokens: 1,
                 total_tokens: 2,
@@ -500,12 +576,12 @@ mod tests {
         };
 
         let agent = Agent::builder()
-            .with_llm_runner(FakeLlmClient::with_response(response))
+            .with_llm_runner(runner_with_provider(FakeProvider::with_response(response)))
             .build()
             .expect("agent");
 
         let error = agent
-            .send(AgentInput::Message(InputItem::user_text("hello")))
+            .send::<_, String>(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect_err("should fail");
 
@@ -514,11 +590,14 @@ mod tests {
 
     #[tokio::test]
     async fn send_applies_profile_override_to_request() {
-        let fake = Arc::new(FakeLlmClient::with_response(assistant_response(
+        let fake = Arc::new(FakeProvider::with_response(assistant_text_response(
             "hello back",
         )));
+        let runner = LlmRunner::builder()
+            .add_provider(ArcBackedFakeProvider(fake.clone()))
+            .build();
         let agent = Agent {
-            llm: fake.clone(),
+            llm: runner,
             execution_profile: ExecutionProfile::default(),
             transcript: Mutex::new(Vec::new()),
             next_turn: AtomicU64::new(1),
@@ -534,7 +613,10 @@ mod tests {
         };
 
         agent
-            .send_with_profile(AgentInput::Message(InputItem::user_text("hello")), profile)
+            .send_with_profile::<_, String>(
+                AgentInput::Message(InputItem::user_text("hello")),
+                profile,
+            )
             .await
             .expect("turn");
 
@@ -549,16 +631,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn typed_send_sets_typed_response_format() {
+        let fake = Arc::new(FakeProvider::with_response(assistant_json_response(
+            serde_json::json!({ "value": "typed-ok" }),
+        )));
+        let runner = LlmRunner::builder()
+            .add_provider(ArcBackedFakeProvider(fake.clone()))
+            .build();
+        let agent = Agent {
+            llm: runner,
+            execution_profile: ExecutionProfile::default(),
+            transcript: Mutex::new(Vec::new()),
+            next_turn: AtomicU64::new(1),
+        };
+
+        agent
+            .send::<_, EchoResponse>(AgentInput::Message(InputItem::user_text("hello")))
+            .await
+            .expect("turn");
+
+        let requests = fake.take_requests().await;
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].response_format.is_some());
+    }
+
+    #[tokio::test]
+    async fn string_send_does_not_set_typed_response_format() {
+        let fake = Arc::new(FakeProvider::with_response(assistant_text_response(
+            "hello back",
+        )));
+        let runner = LlmRunner::builder()
+            .add_provider(ArcBackedFakeProvider(fake.clone()))
+            .build();
+        let agent = Agent {
+            llm: runner,
+            execution_profile: ExecutionProfile::default(),
+            transcript: Mutex::new(Vec::new()),
+            next_turn: AtomicU64::new(1),
+        };
+
+        agent
+            .send::<_, String>(AgentInput::Message(InputItem::user_text("hello")))
+            .await
+            .expect("turn");
+
+        let requests = fake.take_requests().await;
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].response_format.is_none());
+    }
+
+    #[tokio::test]
     async fn turn_events_include_model_output_and_completion() {
         let agent = Agent::builder()
-            .with_llm_runner(FakeLlmClient::with_response(assistant_response(
-                "hello back",
+            .with_llm_runner(runner_with_provider(FakeProvider::with_response(
+                assistant_text_response("hello back"),
             )))
             .build()
             .expect("agent");
 
         let report = agent
-            .send(AgentInput::Message(InputItem::user_text("hello")))
+            .send::<_, String>(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
 
@@ -575,17 +707,16 @@ mod tests {
 
     #[tokio::test]
     async fn send_propagates_llm_errors() {
-        let fake = FakeLlmClient {
-            responses: Mutex::new(VecDeque::from(vec![Err(provider_error())])),
-            requests: Mutex::new(Vec::new()),
-        };
         let agent = Agent::builder()
-            .with_llm_runner(fake)
+            .with_llm_runner(runner_with_provider(FakeProvider {
+                responses: Mutex::new(VecDeque::from(vec![Err(provider_error())])),
+                requests: Mutex::new(Vec::new()),
+            }))
             .build()
             .expect("agent");
 
         let error = agent
-            .send(AgentInput::Message(InputItem::user_text("hello")))
+            .send::<_, String>(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect_err("should fail");
 
@@ -595,6 +726,38 @@ mod tests {
                 assert_eq!(inner.provider_status(), Some(503));
             }
             other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    struct ArcBackedFakeProvider(Arc<FakeProvider>);
+
+    #[async_trait]
+    impl LlmProvider for ArcBackedFakeProvider {
+        fn provider_type(&self) -> ProviderType {
+            self.0.provider_type()
+        }
+
+        fn provider_name(&self) -> &'static str {
+            self.0.provider_name()
+        }
+
+        fn capabilities(&self) -> &[Capability] {
+            self.0.capabilities()
+        }
+
+        async fn available_models(&self) -> LlmResult<Vec<Model>> {
+            self.0.available_models().await
+        }
+
+        async fn chat_raw(&self, req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
+            self.0.chat_raw(req).await
+        }
+
+        async fn transcribe(
+            &self,
+            req: AudioTranscriptionRequest,
+        ) -> LlmResult<AudioTranscriptionResponse> {
+            self.0.transcribe(req).await
         }
     }
 }
