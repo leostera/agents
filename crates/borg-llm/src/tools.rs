@@ -39,18 +39,6 @@ pub struct RawToolFunction {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RawToolChoice {
-    pub r#type: String,
-    pub function: Option<RawToolChoiceFunction>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RawToolChoiceFunction {
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawToolCall {
     pub id: String,
     pub name: String,

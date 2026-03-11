@@ -2,13 +2,15 @@ use async_trait::async_trait;
 use derive_builder::Builder;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 
 use crate::capability::Capability;
 use crate::completion::{
-    FinishReason, Message, ModelSelector, ProviderType, RawCompletionRequest,
-    RawCompletionResponse, Role, Usage,
+    FinishReason, Message, ModelSelector, ProviderType, RawCompletionEvent,
+    RawCompletionEventStream, RawCompletionRequest, RawCompletionResponse, Role, Usage,
 };
 use crate::error::{Error, LlmResult};
 use crate::model::Model;
@@ -23,16 +25,11 @@ pub struct OllamaConfig {
 }
 
 impl OllamaConfig {
-    pub fn new() -> Self {
+    pub fn new(default_model: impl Into<String>) -> Self {
         Self {
             base_url: "http://localhost:11434".to_string(),
-            default_model: String::new(),
+            default_model: default_model.into(),
         }
-    }
-
-    pub fn with_default_model(mut self, model: impl Into<String>) -> Self {
-        self.default_model = model.into();
-        self
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -46,7 +43,7 @@ impl OllamaConfig {
 
 impl Default for OllamaConfig {
     fn default() -> Self {
-        Self::new()
+        Self::new(String::new())
     }
 }
 
@@ -111,17 +108,27 @@ pub struct ToolFunction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct ModelOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub num_ctx: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub num_gpu: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub repeat_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tfs_z: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub num_predict: Option<i32>,
 }
 
@@ -190,6 +197,68 @@ impl Ollama {
         Ok(parsed)
     }
 
+    fn build_chat_request(&self, req: RawCompletionRequest) -> LlmResult<(String, ChatRequest)> {
+        let model = match req.model {
+            ModelSelector::Any => self.config.default_model.clone(),
+            ModelSelector::Provider(_) => self.config.default_model.clone(),
+            ModelSelector::Specific { model, .. } => model,
+        };
+
+        if model.is_empty() {
+            return Err(Error::NoMatchingProvider {
+                reason: "Ollama requires a model to be specified".to_string(),
+            });
+        }
+
+        let messages: Vec<crate::provider::ollama::ChatMessage> = req
+            .messages
+            .iter()
+            .map(|m| crate::provider::ollama::ChatMessage {
+                role: match m.role {
+                    Role::System => "system".to_string(),
+                    Role::User => "user".to_string(),
+                    Role::Assistant => "assistant".to_string(),
+                    Role::Tool => "user".to_string(),
+                },
+                content: m.content.clone(),
+                images: None,
+                tool_calls: None,
+            })
+            .collect();
+
+        let chat_req = crate::provider::ollama::ChatRequest {
+            model: model.clone(),
+            messages,
+            stream: Some(req.response_mode.is_streaming()),
+            format: req.response_format.and_then(|format| {
+                format
+                    .json_schema
+                    .map(|schema| OutputFormat::Schema(schema.schema))
+            }),
+            tools: req.tools.map(map_tool_definitions),
+            options: Some(ModelOptions {
+                temperature: req.temperature.as_option(),
+                top_p: req.top_p.as_option(),
+                top_k: req.top_k.as_option_i32(),
+                num_ctx: req
+                    .token_limit
+                    .as_option()
+                    .and_then(|value| i32::try_from(value).ok()),
+                num_gpu: None,
+                repeat_penalty: None,
+                seed: None,
+                stop: None,
+                tfs_z: None,
+                num_predict: req
+                    .token_limit
+                    .as_option()
+                    .and_then(|value| i32::try_from(value).ok()),
+            }),
+        };
+
+        Ok((model, chat_req))
+    }
+
     pub async fn list_models(&self) -> LlmResult<Vec<Model>> {
         let url = format!("{}/api/tags", self.config.base_url);
 
@@ -237,96 +306,151 @@ impl LlmProvider for Ollama {
     }
 
     async fn chat_raw(&self, req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
-        let model = match req.model {
-            ModelSelector::Any => self.config.default_model.clone(),
-            ModelSelector::Provider(_) => self.config.default_model.clone(),
-            ModelSelector::Specific { model, .. } => model,
-        };
+        let (_, mut chat_req) = self.build_chat_request(req)?;
+        chat_req.stream = Some(false);
 
-        if model.is_empty() {
-            return Err(Error::NoMatchingProvider {
-                reason: "Ollama requires a model to be specified".to_string(),
+        let chat_res = self.chat(&chat_req).await?;
+        Ok(raw_response_from_chat(chat_res))
+    }
+
+    async fn chat_raw_stream(
+        &self,
+        req: RawCompletionRequest,
+    ) -> LlmResult<RawCompletionEventStream> {
+        let (_, mut chat_req) = self.build_chat_request(req)?;
+        chat_req.stream = Some(true);
+
+        let url = format!("{}/api/chat", self.config.base_url);
+        let response = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&chat_req)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(Error::Provider {
+                provider: "ollama".to_string(),
+                status: status.as_u16(),
+                message: body,
             });
         }
 
-        let messages: Vec<crate::provider::ollama::ChatMessage> = req
-            .messages
-            .iter()
-            .map(|m| crate::provider::ollama::ChatMessage {
-                role: match m.role {
-                    Role::System => "system".to_string(),
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
-                    Role::Tool => "user".to_string(),
-                },
-                content: m.content.clone(),
-                images: None,
-                tool_calls: None,
-            })
-            .collect();
+        let (sender, receiver) = mpsc::channel(32);
 
-        let chat_req = crate::provider::ollama::ChatRequest {
-            model: model.clone(),
-            messages,
-            stream: req.stream,
-            format: req.response_format.and_then(|format| {
-                format
-                    .json_schema
-                    .map(|schema| OutputFormat::Schema(schema.schema))
-            }),
-            tools: req.tools.map(map_tool_definitions),
-            options: Some(ModelOptions {
-                temperature: req.temperature,
-                top_p: req.top_p,
-                top_k: req.top_k,
-                num_ctx: req.max_tokens.map(|value| value as i32),
-                num_gpu: None,
-                repeat_penalty: None,
-                seed: None,
-                stop: None,
-                tfs_z: None,
-                num_predict: req.max_tokens.map(|value| value as i32),
-            }),
-        };
+        tokio::spawn(async move {
+            let mut response = response;
+            let mut buffer = Vec::new();
+            let mut content = String::new();
+            let mut tool_calls = Vec::new();
+            let mut seen_tool_calls = HashSet::new();
+            let mut final_chunk: Option<ChatResponse> = None;
 
-        let chat_res = self.chat(&chat_req).await?;
-        let tool_calls = chat_res
-            .message
-            .tool_calls
-            .unwrap_or_default()
-            .into_iter()
-            .map(|call| RawToolCall {
-                id: call.function.name.clone(),
-                name: call.function.name,
-                arguments: call.function.arguments,
-            })
-            .collect::<Vec<_>>();
-        let has_tool_calls = !tool_calls.is_empty();
+            loop {
+                match response.chunk().await {
+                    Ok(Some(chunk)) => {
+                        buffer.extend_from_slice(&chunk);
 
-        Ok(RawCompletionResponse {
-            provider: ProviderType::Ollama,
-            model: chat_res.model,
-            message: Message {
-                role: Role::Assistant,
-                content: chat_res.message.content,
-            },
-            tool_calls,
-            usage: Usage {
-                prompt_tokens: chat_res.prompt_eval_count.unwrap_or(0) as u32,
-                completion_tokens: chat_res.eval_count.unwrap_or(0) as u32,
-                total_tokens: (chat_res.prompt_eval_count.unwrap_or(0)
-                    + chat_res.eval_count.unwrap_or(0)) as u32,
-            },
-            finish_reason: if chat_res.done {
-                if has_tool_calls {
-                    FinishReason::ToolCalls
-                } else {
-                    FinishReason::Stop
+                        while let Some(line) = take_next_json_line(&mut buffer) {
+                            if line.is_empty() {
+                                continue;
+                            }
+                            match serde_json::from_str::<ChatResponse>(&line) {
+                                Ok(chunk) => {
+                                    if emit_chunk_events(
+                                        &chunk,
+                                        &sender,
+                                        &mut content,
+                                        &mut tool_calls,
+                                        &mut seen_tool_calls,
+                                    )
+                                    .await
+                                    .is_err()
+                                    {
+                                        return;
+                                    }
+                                    final_chunk = Some(chunk);
+                                }
+                                Err(error) => {
+                                    let _ = sender.send(Err(Error::parse(line, error))).await;
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        let _ = sender.send(Err(Error::Http { source: error })).await;
+                        return;
+                    }
                 }
+            }
+
+            if !buffer.is_empty() {
+                let line = String::from_utf8_lossy(&buffer).trim().to_string();
+                if !line.is_empty() {
+                    match serde_json::from_str::<ChatResponse>(&line) {
+                        Ok(chunk) => {
+                            if emit_chunk_events(
+                                &chunk,
+                                &sender,
+                                &mut content,
+                                &mut tool_calls,
+                                &mut seen_tool_calls,
+                            )
+                            .await
+                            .is_err()
+                            {
+                                return;
+                            }
+                            final_chunk = Some(chunk);
+                        }
+                        Err(error) => {
+                            let _ = sender.send(Err(Error::parse(line, error))).await;
+                            return;
+                        }
+                    }
+                }
+            }
+
+            let Some(mut final_chunk) = final_chunk else {
+                let _ = sender
+                    .send(Err(Error::InvalidResponse {
+                        reason: "Ollama returned an empty response stream".to_string(),
+                    }))
+                    .await;
+                return;
+            };
+
+            final_chunk.message.content = content;
+            final_chunk.message.tool_calls = if tool_calls.is_empty() {
+                None
             } else {
-                FinishReason::Unknown("incomplete".to_string())
-            },
-        })
+                Some(
+                    tool_calls
+                        .iter()
+                        .cloned()
+                        .map(|call| ToolCall {
+                            function: ToolCallFunction {
+                                name: call.name,
+                                arguments: call.arguments,
+                            },
+                        })
+                        .collect(),
+                )
+            };
+
+            let _ = sender
+                .send(Ok(RawCompletionEvent::Done(raw_response_from_chat(
+                    final_chunk,
+                ))))
+                .await;
+        });
+
+        Ok(RawCompletionEventStream::new(receiver))
     }
 
     async fn transcribe(
@@ -351,6 +475,107 @@ fn map_tool_definitions(tools: Vec<RawToolDefinition>) -> Vec<Tool> {
             },
         })
         .collect()
+}
+
+fn raw_response_from_chat(chat_res: ChatResponse) -> RawCompletionResponse {
+    let tool_calls = chat_res
+        .message
+        .tool_calls
+        .unwrap_or_default()
+        .into_iter()
+        .map(|call| RawToolCall {
+            id: call.function.name.clone(),
+            name: call.function.name,
+            arguments: call.function.arguments,
+        })
+        .collect::<Vec<_>>();
+    let has_tool_calls = !tool_calls.is_empty();
+
+    RawCompletionResponse {
+        provider: ProviderType::Ollama,
+        model: chat_res.model,
+        message: Message {
+            role: Role::Assistant,
+            content: chat_res.message.content,
+        },
+        tool_calls,
+        usage: Usage {
+            prompt_tokens: chat_res.prompt_eval_count.unwrap_or(0) as u32,
+            completion_tokens: chat_res.eval_count.unwrap_or(0) as u32,
+            total_tokens: (chat_res.prompt_eval_count.unwrap_or(0)
+                + chat_res.eval_count.unwrap_or(0)) as u32,
+        },
+        finish_reason: if chat_res.done {
+            if has_tool_calls {
+                FinishReason::ToolCalls
+            } else {
+                FinishReason::Stop
+            }
+        } else {
+            FinishReason::Unknown("incomplete".to_string())
+        },
+    }
+}
+
+fn take_next_json_line(buffer: &mut Vec<u8>) -> Option<String> {
+    let newline_index = buffer.iter().position(|byte| *byte == b'\n')?;
+    let line = String::from_utf8_lossy(&buffer[..newline_index])
+        .trim()
+        .to_string();
+    buffer.drain(..=newline_index);
+    if line.is_empty() {
+        return Some(String::new());
+    }
+    Some(line)
+}
+
+async fn emit_chunk_events(
+    chunk: &ChatResponse,
+    sender: &mpsc::Sender<LlmResult<RawCompletionEvent>>,
+    content: &mut String,
+    tool_calls: &mut Vec<RawToolCall>,
+    seen_tool_calls: &mut HashSet<String>,
+) -> Result<(), ()> {
+    if !chunk.message.content.is_empty() {
+        content.push_str(&chunk.message.content);
+        if sender
+            .send(Ok(RawCompletionEvent::TextDelta {
+                text: chunk.message.content.clone(),
+            }))
+            .await
+            .is_err()
+        {
+            return Err(());
+        }
+    }
+
+    if let Some(calls) = &chunk.message.tool_calls {
+        for call in calls {
+            let raw_call = RawToolCall {
+                id: call.function.name.clone(),
+                name: call.function.name.clone(),
+                arguments: call.function.arguments.clone(),
+            };
+            let key = format!(
+                "{}:{}",
+                raw_call.name,
+                serde_json::to_string(&raw_call.arguments).unwrap_or_default()
+            );
+            if !seen_tool_calls.insert(key) {
+                continue;
+            }
+            tool_calls.push(raw_call.clone());
+            if sender
+                .send(Ok(RawCompletionEvent::ToolCall { call: raw_call }))
+                .await
+                .is_err()
+            {
+                return Err(());
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_chat_response_body(body: &str) -> LlmResult<ChatResponse> {

@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use crate::capability::Capability;
 use crate::completion::{
     FinishReason, Message, ModelSelector, ProviderType, RawCompletionRequest,
-    RawCompletionResponse, Role, Usage as CompletionUsage,
+    RawCompletionResponse, Role, ToolChoice as RawToolChoice, Usage as CompletionUsage,
 };
 use crate::error::{Error, LlmResult};
 use crate::model::Model;
@@ -25,17 +25,12 @@ pub struct LmStudioConfig {
 }
 
 impl LmStudioConfig {
-    pub fn new() -> Self {
+    pub fn new(default_model: impl Into<String>) -> Self {
         Self {
             base_url: "http://localhost:1234".to_string(),
             api_token: None,
-            default_model: String::new(),
+            default_model: default_model.into(),
         }
-    }
-
-    pub fn with_default_model(mut self, model: impl Into<String>) -> Self {
-        self.default_model = model.into();
-        self
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -54,7 +49,7 @@ impl LmStudioConfig {
 
 impl Default for LmStudioConfig {
     fn default() -> Self {
-        Self::new()
+        Self::new(String::new())
     }
 }
 
@@ -308,23 +303,18 @@ impl LlmProvider for LmStudio {
         let chat_req = crate::provider::lm_studio::ChatRequest {
             model: model.clone(),
             messages,
-            temperature: req.temperature,
-            top_p: req.top_p,
-            top_k: None,
-            max_tokens: req.max_tokens,
-            stream: req.stream,
+            temperature: req.temperature.as_option(),
+            top_p: req.top_p.as_option(),
+            top_k: req.top_k.as_option_i32(),
+            max_tokens: req.token_limit.as_option(),
+            stream: Some(req.response_mode.is_streaming()),
             stop: None,
             presence_penalty: None,
             frequency_penalty: None,
             repeat_penalty: None,
             seed: None,
             tools: req.tools.map(map_tool_definitions),
-            tool_choice: req.tool_choice.map(|choice| ToolChoice {
-                r#type: choice.r#type,
-                function: choice.function.map(|function| ToolChoiceFunction {
-                    name: function.name,
-                }),
-            }),
+            tool_choice: map_tool_choice(req.tool_choice),
             response_format: req.response_format.map(map_response_format),
         };
 
@@ -372,6 +362,28 @@ impl LlmProvider for LmStudio {
         Err(Error::NoMatchingProvider {
             reason: "LmStudio does not support audio transcription".to_string(),
         })
+    }
+}
+
+fn map_tool_choice(choice: RawToolChoice) -> Option<ToolChoice> {
+    match choice {
+        RawToolChoice::ProviderDefault => None,
+        RawToolChoice::Auto => Some(ToolChoice {
+            r#type: "auto".to_string(),
+            function: None,
+        }),
+        RawToolChoice::Required => Some(ToolChoice {
+            r#type: "required".to_string(),
+            function: None,
+        }),
+        RawToolChoice::Specific { name } => Some(ToolChoice {
+            r#type: "function".to_string(),
+            function: Some(ToolChoiceFunction { name }),
+        }),
+        RawToolChoice::None => Some(ToolChoice {
+            r#type: "none".to_string(),
+            function: None,
+        }),
     }
 }
 

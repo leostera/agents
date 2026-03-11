@@ -1,14 +1,18 @@
 use async_trait::async_trait;
 use derive_builder::Builder;
+use futures_util::StreamExt;
 use reqwest::Client;
+use reqwest_eventsource::{Event, RequestBuilderExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 
 use crate::capability::Capability;
 use crate::completion::{
-    FinishReason, Message, ModelSelector, ProviderType, RawCompletionRequest,
-    RawCompletionResponse, Role, Usage as CompletionUsage,
+    FinishReason, Message, ModelSelector, ProviderType, RawCompletionEvent,
+    RawCompletionEventStream, RawCompletionRequest, RawCompletionResponse, Role,
+    Usage as CompletionUsage,
 };
 use crate::error::{AnthropicConfigError, Error, LlmResult};
 use crate::model::Model;
@@ -25,7 +29,10 @@ pub struct AnthropicConfig {
 }
 
 impl AnthropicConfig {
-    pub fn new(api_key: impl Into<String>) -> Result<Self, AnthropicConfigError> {
+    pub fn new(
+        api_key: impl Into<String>,
+        default_model: impl Into<String>,
+    ) -> Result<Self, AnthropicConfigError> {
         let api_key = api_key.into();
         if api_key.is_empty() {
             return Err(AnthropicConfigError::MissingApiKey);
@@ -34,13 +41,8 @@ impl AnthropicConfig {
             api_key,
             version: "2023-06-01".to_string(),
             base_url: "https://api.anthropic.com".to_string(),
-            default_model: "claude-sonnet-4-5-20250520".to_string(),
+            default_model: default_model.into(),
         })
-    }
-
-    pub fn with_default_model(mut self, model: impl Into<String>) -> Self {
-        self.default_model = model.into();
-        self
     }
 
     pub fn with_version(mut self, version: impl Into<String>) -> Self {
@@ -61,7 +63,6 @@ pub struct Anthropic {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
     pub role: ChatRole,
     pub content: Content,
@@ -83,7 +84,7 @@ pub enum Content {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
+#[serde(rename_all = "snake_case", tag = "type")]
 pub enum ContentBlock {
     Text {
         text: String,
@@ -91,13 +92,11 @@ pub enum ContentBlock {
     Image {
         source: ImageSource,
     },
-    #[serde(rename_all = "camelCase")]
     ToolUse {
         id: String,
         name: String,
         input: serde_json::Value,
     },
-    #[serde(rename_all = "camelCase")]
     ToolResult {
         tool_use_id: String,
         content: String,
@@ -105,36 +104,43 @@ pub enum ContentBlock {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
+#[serde(rename_all = "snake_case", tag = "type")]
 pub enum ImageSource {
     Base64 { media_type: String, data: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ToolDefinition {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub input_schema: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Builder, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<Content>,
     pub max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<ToolDefinition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct ChatResponse {
     pub id: String,
     #[serde(rename = "type")]
@@ -148,12 +154,11 @@ pub struct ChatResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
+#[serde(rename_all = "snake_case", tag = "type")]
 pub enum ResponseContentBlock {
     Text {
         text: String,
     },
-    #[serde(rename_all = "camelCase")]
     ToolUse {
         id: String,
         name: String,
@@ -162,10 +167,45 @@ pub enum ResponseContentBlock {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct Usage {
     pub input_tokens: u32,
     pub output_tokens: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageStartEvent {
+    pub message: StreamMessage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamMessage {
+    pub model: String,
+    pub usage: Usage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContentBlockDeltaEvent {
+    pub delta: ContentBlockDelta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentBlockDelta {
+    TextDelta { text: String },
+    InputJsonDelta { partial_json: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageDeltaEvent {
+    pub delta: MessageDelta,
+    pub usage: Usage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageDelta {
+    pub stop_reason: Option<String>,
+    pub stop_sequence: Option<String>,
 }
 
 impl Anthropic {
@@ -265,13 +305,13 @@ impl LlmProvider for Anthropic {
             model: model.clone(),
             messages,
             system,
-            max_tokens: req.max_tokens.unwrap_or(1024),
-            temperature: req.temperature,
-            top_p: req.top_p,
-            top_k: None,
+            max_tokens: req.token_limit.as_option().unwrap_or(1024),
+            temperature: req.temperature.as_option(),
+            top_p: req.top_p.as_option(),
+            top_k: req.top_k.as_option_i32(),
             tools: req.tools.map(map_tool_definitions),
             stop_sequences: None,
-            stream: req.stream,
+            stream: Some(req.response_mode.is_streaming()),
         };
 
         let chat_res = self.chat(&chat_req).await?;
@@ -322,6 +362,159 @@ impl LlmProvider for Anthropic {
                 other => FinishReason::from(other.map(|value| value.to_string())),
             },
         })
+    }
+
+    async fn chat_raw_stream(
+        &self,
+        req: RawCompletionRequest,
+    ) -> LlmResult<RawCompletionEventStream> {
+        let model = match req.model {
+            ModelSelector::Any => self.config.default_model.clone(),
+            ModelSelector::Provider(_) => self.config.default_model.clone(),
+            ModelSelector::Specific { model, .. } => model,
+        };
+
+        let messages: Vec<crate::provider::anthropic::ChatMessage> = req
+            .messages
+            .iter()
+            .map(|m| crate::provider::anthropic::ChatMessage {
+                role: match m.role {
+                    Role::System => crate::provider::anthropic::ChatRole::System,
+                    Role::User => crate::provider::anthropic::ChatRole::User,
+                    Role::Assistant => crate::provider::anthropic::ChatRole::Assistant,
+                    Role::Tool => crate::provider::anthropic::ChatRole::User,
+                },
+                content: crate::provider::anthropic::Content::Text(m.content.clone()),
+            })
+            .collect();
+
+        let system = req
+            .messages
+            .iter()
+            .find(|m| m.role == Role::System)
+            .map(|m| crate::provider::anthropic::Content::Text(m.content.clone()));
+
+        let chat_req = crate::provider::anthropic::ChatRequest {
+            model,
+            messages,
+            system,
+            max_tokens: req.token_limit.as_option().unwrap_or(1024),
+            temperature: req.temperature.as_option(),
+            top_p: req.top_p.as_option(),
+            top_k: req.top_k.as_option_i32(),
+            tools: req.tools.map(map_tool_definitions),
+            stop_sequences: None,
+            stream: Some(true),
+        };
+
+        let url = format!("{}/v1/messages", self.config.base_url);
+        let event_source = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", &self.config.version)
+            .header("content-type", "application/json")
+            .json(&chat_req)
+            .eventsource()
+            .map_err(|error| Error::Internal {
+                message: error.to_string(),
+            })?;
+
+        let (sender, receiver) = mpsc::channel(32);
+
+        tokio::spawn(async move {
+            let mut event_source = event_source;
+            let mut model = None;
+            let mut content = String::new();
+            let mut usage = Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+            };
+            let mut finish_reason = FinishReason::Unknown("stream_incomplete".to_string());
+
+            while let Some(event) = event_source.next().await {
+                match event {
+                    Ok(Event::Open) => {}
+                    Ok(Event::Message(message)) => match message.event.as_str() {
+                        "message_start" => {
+                            if let Ok(start) =
+                                serde_json::from_str::<MessageStartEvent>(&message.data)
+                            {
+                                model = Some(start.message.model);
+                                usage.input_tokens = start.message.usage.input_tokens;
+                                usage.output_tokens = start.message.usage.output_tokens;
+                            }
+                        }
+                        "content_block_delta" => {
+                            match serde_json::from_str::<ContentBlockDeltaEvent>(&message.data) {
+                                Ok(delta) => {
+                                    if let ContentBlockDelta::TextDelta { text } = delta.delta {
+                                        content.push_str(&text);
+                                        if sender
+                                            .send(Ok(RawCompletionEvent::TextDelta { text }))
+                                            .await
+                                            .is_err()
+                                        {
+                                            let _ = event_source.close();
+                                            return;
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    let _ =
+                                        sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ = event_source.close();
+                                    return;
+                                }
+                            }
+                        }
+                        "message_delta" => {
+                            if let Ok(delta) =
+                                serde_json::from_str::<MessageDeltaEvent>(&message.data)
+                            {
+                                usage.output_tokens = delta.usage.output_tokens;
+                                finish_reason = match delta.delta.stop_reason.as_deref() {
+                                    Some("tool_use") => FinishReason::ToolCalls,
+                                    other => {
+                                        FinishReason::from(other.map(|value| value.to_string()))
+                                    }
+                                };
+                            }
+                        }
+                        "message_stop" => break,
+                        "ping" => {}
+                        _ => {}
+                    },
+                    Err(error) => {
+                        let _ = sender
+                            .send(Err(Error::Internal {
+                                message: error.to_string(),
+                            }))
+                            .await;
+                        let _ = event_source.close();
+                        return;
+                    }
+                }
+            }
+
+            let _ = event_source.close();
+            let _ = sender
+                .send(Ok(RawCompletionEvent::Done(RawCompletionResponse {
+                    provider: ProviderType::Anthropic,
+                    model: model.unwrap_or_else(|| "unknown".to_string()),
+                    message: Message::assistant(content),
+                    tool_calls: vec![],
+                    usage: CompletionUsage {
+                        prompt_tokens: usage.input_tokens,
+                        completion_tokens: usage.output_tokens,
+                        total_tokens: usage.input_tokens + usage.output_tokens,
+                    },
+                    finish_reason,
+                })))
+                .await;
+        });
+
+        Ok(RawCompletionEventStream::new(receiver))
     }
 
     async fn transcribe(

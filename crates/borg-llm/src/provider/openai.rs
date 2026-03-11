@@ -1,14 +1,18 @@
 use async_trait::async_trait;
 use derive_builder::Builder;
+use futures_util::StreamExt;
 use reqwest::Client;
+use reqwest_eventsource::{Event, RequestBuilderExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 
 use crate::capability::Capability;
 use crate::completion::{
-    FinishReason, Message, ModelSelector, ProviderType, RawCompletionRequest,
-    RawCompletionResponse, Role, Usage as CompletionUsage,
+    FinishReason, Message, ModelSelector, ProviderType, RawCompletionEvent,
+    RawCompletionEventStream, RawCompletionRequest, RawCompletionResponse, Role,
+    ToolChoice as RawToolChoice, Usage as CompletionUsage,
 };
 use crate::error::{Error, LlmResult, OpenAIConfigError};
 use crate::model::Model;
@@ -26,7 +30,10 @@ pub struct OpenAIConfig {
 }
 
 impl OpenAIConfig {
-    pub fn new(api_key: impl Into<String>) -> Result<Self, OpenAIConfigError> {
+    pub fn new(
+        api_key: impl Into<String>,
+        default_model: impl Into<String>,
+    ) -> Result<Self, OpenAIConfigError> {
         let api_key = api_key.into();
         if api_key.is_empty() {
             return Err(OpenAIConfigError::MissingApiKey);
@@ -35,13 +42,8 @@ impl OpenAIConfig {
             api_key,
             base_url: "https://api.openai.com".to_string(),
             organization: None,
-            default_model: "gpt-4o-mini".to_string(),
+            default_model: default_model.into(),
         })
-    }
-
-    pub fn with_default_model(mut self, model: impl Into<String>) -> Self {
-        self.default_model = model.into();
-        self
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -149,6 +151,31 @@ pub struct ChatResponse {
     pub model: String,
     pub choices: Vec<Choice>,
     pub usage: Usage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatStreamChunk {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<StreamChoice>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamChoice {
+    pub index: u32,
+    pub delta: StreamDelta,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamDelta {
+    pub role: Option<String>,
+    pub content: Option<String>,
+    pub tool_calls: Option<Vec<ChatToolCall>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -474,15 +501,12 @@ impl LlmProvider for OpenAI {
         let chat_req = ChatRequest {
             model: model.clone(),
             messages,
-            temperature: req.temperature,
-            top_p: req.top_p,
-            max_tokens: req.max_tokens,
-            stream: req.stream,
+            temperature: req.temperature.as_option(),
+            top_p: req.top_p.as_option(),
+            max_tokens: req.token_limit.as_option(),
+            stream: Some(req.response_mode.is_streaming()),
             tools: req.tools.map(map_tool_definitions),
-            tool_choice: req.tool_choice.map(|tc| ToolChoice {
-                r#type: tc.r#type,
-                function: tc.function.map(|f| ToolChoiceFunction { name: f.name }),
-            }),
+            tool_choice: map_tool_choice(req.tool_choice),
             response_format: req.response_format.map(map_response_format),
         };
 
@@ -521,6 +545,140 @@ impl LlmProvider for OpenAI {
             },
             finish_reason: FinishReason::from(first_choice.finish_reason.clone()),
         })
+    }
+
+    async fn chat_raw_stream(
+        &self,
+        req: RawCompletionRequest,
+    ) -> LlmResult<RawCompletionEventStream> {
+        let model = match req.model {
+            ModelSelector::Any => self.config.default_model.clone(),
+            ModelSelector::Provider(_) => self.config.default_model.clone(),
+            ModelSelector::Specific { model, .. } => model,
+        };
+
+        let messages: Vec<ChatMessage> = req
+            .messages
+            .iter()
+            .map(|m| ChatMessage {
+                role: match m.role {
+                    Role::System => "system".to_string(),
+                    Role::User => "user".to_string(),
+                    Role::Assistant => "assistant".to_string(),
+                    Role::Tool => "user".to_string(),
+                },
+                content: Some(m.content.clone()),
+                name: None,
+                tool_calls: None,
+            })
+            .collect();
+
+        let chat_req = ChatRequest {
+            model,
+            messages,
+            temperature: req.temperature.as_option(),
+            top_p: req.top_p.as_option(),
+            max_tokens: req.token_limit.as_option(),
+            stream: Some(true),
+            tools: req.tools.map(map_tool_definitions),
+            tool_choice: map_tool_choice(req.tool_choice),
+            response_format: req.response_format.map(map_response_format),
+        };
+
+        let url = format!("{}/v1/chat/completions", self.config.base_url);
+        let auth = self.auth_header();
+        let mut req_builder = self
+            .client
+            .post(&url)
+            .header("Authorization", auth)
+            .header("Content-Type", "application/json");
+
+        if let Some(ref org) = self.config.organization {
+            req_builder = req_builder.header("OpenAI-Organization", org);
+        }
+
+        let event_source =
+            req_builder
+                .json(&chat_req)
+                .eventsource()
+                .map_err(|error| Error::Internal {
+                    message: error.to_string(),
+                })?;
+
+        let (sender, receiver) = mpsc::channel(32);
+
+        tokio::spawn(async move {
+            let mut event_source = event_source;
+            let mut model = None;
+            let mut content = String::new();
+            let mut finish_reason = FinishReason::Unknown("stream_incomplete".to_string());
+
+            while let Some(event) = event_source.next().await {
+                match event {
+                    Ok(Event::Open) => {}
+                    Ok(Event::Message(message)) => {
+                        if message.data == "[DONE]" {
+                            break;
+                        }
+
+                        match serde_json::from_str::<ChatStreamChunk>(&message.data) {
+                            Ok(chunk) => {
+                                model = Some(chunk.model.clone());
+                                if let Some(choice) = chunk.choices.first() {
+                                    if let Some(text) = choice.delta.content.clone() {
+                                        content.push_str(&text);
+                                        if sender
+                                            .send(Ok(RawCompletionEvent::TextDelta { text }))
+                                            .await
+                                            .is_err()
+                                        {
+                                            let _ = event_source.close();
+                                            return;
+                                        }
+                                    }
+                                    if choice.finish_reason.is_some() {
+                                        finish_reason =
+                                            FinishReason::from(choice.finish_reason.clone());
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                let _ = event_source.close();
+                                return;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        let _ = sender
+                            .send(Err(Error::Internal {
+                                message: error.to_string(),
+                            }))
+                            .await;
+                        let _ = event_source.close();
+                        return;
+                    }
+                }
+            }
+
+            let _ = event_source.close();
+            let _ = sender
+                .send(Ok(RawCompletionEvent::Done(RawCompletionResponse {
+                    provider: ProviderType::OpenAI,
+                    model: model.unwrap_or_else(|| "unknown".to_string()),
+                    message: Message::assistant(content),
+                    tool_calls: vec![],
+                    usage: CompletionUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    finish_reason,
+                })))
+                .await;
+        });
+
+        Ok(RawCompletionEventStream::new(receiver))
     }
 
     async fn transcribe(
@@ -585,6 +743,28 @@ impl LlmProvider for OpenAI {
             model: "whisper-1".to_string(),
             text: parsed.text,
         })
+    }
+}
+
+fn map_tool_choice(choice: RawToolChoice) -> Option<ToolChoice> {
+    match choice {
+        RawToolChoice::ProviderDefault => None,
+        RawToolChoice::Auto => Some(ToolChoice {
+            r#type: "auto".to_string(),
+            function: None,
+        }),
+        RawToolChoice::Required => Some(ToolChoice {
+            r#type: "required".to_string(),
+            function: None,
+        }),
+        RawToolChoice::Specific { name } => Some(ToolChoice {
+            r#type: "function".to_string(),
+            function: Some(ToolChoiceFunction { name }),
+        }),
+        RawToolChoice::None => Some(ToolChoice {
+            r#type: "none".to_string(),
+            function: None,
+        }),
     }
 }
 

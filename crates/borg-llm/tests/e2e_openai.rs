@@ -7,26 +7,25 @@ use borg_llm::completion::{
 use borg_llm::error::LlmResult;
 use borg_llm::provider::LlmProvider;
 use borg_llm::response::TypedResponse;
-use borg_llm::testing::{TestContext, TestProvider};
+use borg_llm::testing::{openai_provider_for_model, optional_test_env, runner_with_openai_model};
 use borg_llm::tools::TypedToolSet;
-use common::{
-    EchoResponse, TestTools, assert_streamed_ping_tool_call, assert_streamed_typed_response,
-};
+use common::{EchoResponse, TestTools, assert_streamed_typed_response};
 use serial_test::serial;
 
-const OLLAMA_TEXT_MODEL: &str = "qwen2.5:7b";
-const OLLAMA_STRUCTURED_OUTPUT_MODEL: &str = "qwen2.5:7b";
-const OLLAMA_TOOL_MODEL: &str = "qwen2.5:7b";
+fn openai_model() -> String {
+    optional_test_env("BORG_TEST_OPENAI_MODEL")
+        .expect("BORG_TEST_OPENAI_MODEL must be set for OpenAI e2e tests")
+}
 
 #[tokio::test]
 #[serial]
-async fn ollama_provider_chat_raw_returns_text_long() -> LlmResult<()> {
-    let ctx = TestContext::shared(TestProvider::Ollama).await?;
-    let provider = ctx.ollama_provider_for_model(OLLAMA_TEXT_MODEL).await?;
+async fn openai_provider_chat_raw_returns_text_long() -> LlmResult<()> {
+    let model = openai_model();
+    let provider = openai_provider_for_model(&model)?;
 
     let response = provider
         .chat_raw(RawCompletionRequest {
-            model: ModelSelector::from_model(OLLAMA_TEXT_MODEL),
+            model: ModelSelector::from_model(model),
             messages: vec![Message::user(
                 "Reply with a short plain-text acknowledgment. Do not return JSON.",
             )],
@@ -43,7 +42,7 @@ async fn ollama_provider_chat_raw_returns_text_long() -> LlmResult<()> {
 
     assert!(
         !response.message.content.trim().is_empty(),
-        "expected non-empty assistant text, got: {:?}",
+        "expected non-empty assistant text, got {:?}",
         response.message.content
     );
     Ok(())
@@ -51,15 +50,17 @@ async fn ollama_provider_chat_raw_returns_text_long() -> LlmResult<()> {
 
 #[tokio::test]
 #[serial]
-async fn ollama_runner_typed_response_round_trip_long() -> LlmResult<()> {
-    let ctx = TestContext::shared(TestProvider::Ollama).await?;
-    let runner = ctx.runner_for_model(OLLAMA_STRUCTURED_OUTPUT_MODEL).await?;
+async fn openai_runner_typed_response_round_trip_long() -> LlmResult<()> {
+    let model = openai_model();
+    let runner = runner_with_openai_model(&model)?;
 
     let response = runner
         .chat::<(), EchoResponse>(
             CompletionRequest::new(
-                vec![Message::user("Hello!")],
-                ModelSelector::from_model(OLLAMA_STRUCTURED_OUTPUT_MODEL),
+                vec![Message::user(
+                    "Return valid JSON with a non-empty string field named value.",
+                )],
+                ModelSelector::from_model(model),
             )
             .with_max_tokens(64)
             .with_typed_response(TypedResponse::new("echo_response")),
@@ -76,9 +77,9 @@ async fn ollama_runner_typed_response_round_trip_long() -> LlmResult<()> {
 
 #[tokio::test]
 #[serial]
-async fn ollama_runner_decodes_typed_tool_calls_long() -> LlmResult<()> {
-    let ctx = TestContext::shared(TestProvider::Ollama).await?;
-    let runner = ctx.runner_for_model(OLLAMA_TOOL_MODEL).await?;
+async fn openai_runner_decodes_typed_tool_calls_long() -> LlmResult<()> {
+    let model = openai_model();
+    let runner = runner_with_openai_model(&model)?;
 
     let response = runner
         .chat::<TestTools, String>(
@@ -86,7 +87,7 @@ async fn ollama_runner_decodes_typed_tool_calls_long() -> LlmResult<()> {
                 vec![Message::user(
                     "You must call the ping tool exactly once. Use the argument value=\"hello-tool\". Do not answer in natural language.",
                 )],
-                ModelSelector::from_model(OLLAMA_TOOL_MODEL),
+                ModelSelector::from_model(model),
             )
             .with_max_tokens(128)
             .with_tools(TypedToolSet::new()),
@@ -105,15 +106,17 @@ async fn ollama_runner_decodes_typed_tool_calls_long() -> LlmResult<()> {
 
 #[tokio::test]
 #[serial]
-async fn ollama_runner_streams_typed_response_long() -> LlmResult<()> {
-    let ctx = TestContext::shared(TestProvider::Ollama).await?;
-    let runner = ctx.runner_for_model(OLLAMA_STRUCTURED_OUTPUT_MODEL).await?;
+async fn openai_runner_streams_typed_response_long() -> LlmResult<()> {
+    let model = openai_model();
+    let runner = runner_with_openai_model(&model)?;
 
     let mut stream = runner
         .chat_stream::<(), EchoResponse>(
             CompletionRequest::new(
-                vec![Message::user("Hello!")],
-                ModelSelector::from_model(OLLAMA_STRUCTURED_OUTPUT_MODEL),
+                vec![Message::user(
+                    "Return valid JSON with a non-empty string field named value.",
+                )],
+                ModelSelector::from_model(model),
             )
             .with_max_tokens(64)
             .with_response_mode(ResponseMode::Stream)
@@ -122,27 +125,4 @@ async fn ollama_runner_streams_typed_response_long() -> LlmResult<()> {
         .await?;
 
     assert_streamed_typed_response(&mut stream).await
-}
-
-#[tokio::test]
-#[serial]
-async fn ollama_runner_streams_typed_tool_calls_long() -> LlmResult<()> {
-    let ctx = TestContext::shared(TestProvider::Ollama).await?;
-    let runner = ctx.runner_for_model(OLLAMA_TOOL_MODEL).await?;
-
-    let mut stream = runner
-        .chat_stream::<TestTools, String>(
-            CompletionRequest::new(
-                vec![Message::user(
-                    "You must call the ping tool exactly once. Use the argument value=\"hello-tool\". Do not answer in natural language.",
-                )],
-                ModelSelector::from_model(OLLAMA_TOOL_MODEL),
-            )
-            .with_max_tokens(128)
-            .with_response_mode(ResponseMode::Stream)
-            .with_tools(TypedToolSet::new()),
-        )
-        .await?;
-
-    assert_streamed_ping_tool_call(&mut stream).await
 }

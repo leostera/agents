@@ -1,8 +1,10 @@
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
+use crate::error::{Error, LlmResult};
 use crate::response::{RawResponseFormat, TypedResponse};
-use crate::tools::{RawToolCall, RawToolChoice, RawToolDefinition, ToolCall, TypedToolSet};
+use crate::tools::{RawToolCall, RawToolDefinition, ToolCall, TypedToolSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProviderType {
@@ -129,24 +131,24 @@ impl From<Option<String>> for FinishReason {
 
 #[derive(Debug, Clone, Builder)]
 #[builder(setter(into))]
-pub struct CompletionRequest<ToolType = (), ResponseType = String> {
+pub struct CompletionRequest<ToolType, ResponseType> {
     #[builder(default = "ModelSelector::Any")]
     pub model: ModelSelector,
     pub messages: Vec<Message<String>>,
-    #[builder(default)]
-    pub temperature: Option<f32>,
-    #[builder(default)]
-    pub top_p: Option<f32>,
-    #[builder(default)]
-    pub top_k: Option<i32>,
-    #[builder(default)]
-    pub max_tokens: Option<u32>,
-    #[builder(default)]
-    pub stream: Option<bool>,
+    #[builder(default = "Temperature::ProviderDefault")]
+    pub temperature: Temperature,
+    #[builder(default = "TopP::ProviderDefault")]
+    pub top_p: TopP,
+    #[builder(default = "TopK::ProviderDefault")]
+    pub top_k: TopK,
+    #[builder(default = "TokenLimit::ProviderDefault")]
+    pub token_limit: TokenLimit,
+    #[builder(default = "ResponseMode::Buffered")]
+    pub response_mode: ResponseMode,
     #[builder(default)]
     pub tools: Option<TypedToolSet<ToolType>>,
-    #[builder(default)]
-    pub tool_choice: Option<RawToolChoice>,
+    #[builder(default = "ToolChoice::ProviderDefault")]
+    pub tool_choice: ToolChoice,
     #[builder(default)]
     pub response_format: Option<TypedResponse<ResponseType>>,
 }
@@ -156,24 +158,44 @@ impl<ToolType, ResponseType> CompletionRequest<ToolType, ResponseType> {
         Self {
             model,
             messages,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            max_tokens: None,
-            stream: None,
+            temperature: Temperature::ProviderDefault,
+            top_p: TopP::ProviderDefault,
+            top_k: TopK::ProviderDefault,
+            token_limit: TokenLimit::ProviderDefault,
+            response_mode: ResponseMode::Buffered,
             tools: None,
-            tool_choice: None,
+            tool_choice: ToolChoice::ProviderDefault,
             response_format: None,
         }
     }
 
     pub fn with_temperature(mut self, temperature: f32) -> Self {
-        self.temperature = Some(temperature);
+        self.temperature = Temperature::Value(temperature);
+        self
+    }
+
+    pub fn with_token_limit(mut self, token_limit: TokenLimit) -> Self {
+        self.token_limit = token_limit;
         self
     }
 
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
-        self.max_tokens = Some(max_tokens);
+        self.token_limit = TokenLimit::Max(max_tokens);
+        self
+    }
+
+    pub fn with_top_p(mut self, top_p: Probability) -> Self {
+        self.top_p = TopP::Value(top_p);
+        self
+    }
+
+    pub fn with_top_k(mut self, top_k: u32) -> Self {
+        self.top_k = TopK::Value(top_k);
+        self
+    }
+
+    pub fn with_response_mode(mut self, response_mode: ResponseMode) -> Self {
+        self.response_mode = response_mode;
         self
     }
 
@@ -182,8 +204,8 @@ impl<ToolType, ResponseType> CompletionRequest<ToolType, ResponseType> {
         self
     }
 
-    pub fn with_tool_choice(mut self, tool_choice: RawToolChoice) -> Self {
-        self.tool_choice = Some(tool_choice);
+    pub fn with_tool_choice(mut self, tool_choice: ToolChoice) -> Self {
+        self.tool_choice = tool_choice;
         self
     }
 
@@ -204,18 +226,151 @@ pub struct CompletionResponse<ToolType = (), ResponseType = String> {
     pub finish_reason: FinishReason,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResponseMode {
+    Buffered,
+    Stream,
+}
+
+impl ResponseMode {
+    pub fn is_streaming(self) -> bool {
+        matches!(self, Self::Stream)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Probability(f32);
+
+impl Probability {
+    pub fn new(value: f32) -> LlmResult<Self> {
+        if (0.0..=1.0).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(Error::InvalidRequest {
+                reason: format!("probability must be between 0.0 and 1.0, got {value}"),
+            })
+        }
+    }
+
+    pub fn value(self) -> f32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Temperature {
+    ProviderDefault,
+    Value(f32),
+}
+
+impl Temperature {
+    pub fn as_option(self) -> Option<f32> {
+        match self {
+            Self::ProviderDefault => None,
+            Self::Value(value) => Some(value),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TokenLimit {
+    ProviderDefault,
+    Max(u32),
+}
+
+impl TokenLimit {
+    pub fn as_option(self) -> Option<u32> {
+        match self {
+            Self::ProviderDefault => None,
+            Self::Max(value) => Some(value),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TopP {
+    ProviderDefault,
+    Value(Probability),
+}
+
+impl TopP {
+    pub fn as_option(self) -> Option<f32> {
+        match self {
+            Self::ProviderDefault => None,
+            Self::Value(value) => Some(value.value()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TopK {
+    ProviderDefault,
+    Value(u32),
+}
+
+impl TopK {
+    pub fn as_option_i32(self) -> Option<i32> {
+        match self {
+            Self::ProviderDefault => None,
+            Self::Value(value) => i32::try_from(value).ok(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolChoice {
+    ProviderDefault,
+    Auto,
+    Required,
+    Specific { name: String },
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CompletionEvent<ToolType, ResponseType> {
+    TextDelta { text: String },
+    ToolCall { call: ToolCall<ToolType> },
+    Done(CompletionResponse<ToolType, ResponseType>),
+}
+
+pub struct CompletionEventStream<ToolType, ResponseType> {
+    receiver: mpsc::Receiver<crate::error::LlmResult<CompletionEvent<ToolType, ResponseType>>>,
+}
+
+impl<ToolType, ResponseType> CompletionEventStream<ToolType, ResponseType> {
+    pub fn new(
+        receiver: mpsc::Receiver<crate::error::LlmResult<CompletionEvent<ToolType, ResponseType>>>,
+    ) -> Self {
+        Self { receiver }
+    }
+
+    pub async fn recv(
+        &mut self,
+    ) -> Option<crate::error::LlmResult<CompletionEvent<ToolType, ResponseType>>> {
+        self.receiver.recv().await
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawCompletionRequest {
     pub model: ModelSelector,
     pub messages: Vec<Message<String>>,
-    pub temperature: Option<f32>,
-    pub top_p: Option<f32>,
-    pub top_k: Option<i32>,
-    pub max_tokens: Option<u32>,
-    pub stream: Option<bool>,
+    pub temperature: Temperature,
+    pub top_p: TopP,
+    pub top_k: TopK,
+    pub token_limit: TokenLimit,
+    pub response_mode: ResponseMode,
     pub tools: Option<Vec<RawToolDefinition>>,
-    pub tool_choice: Option<RawToolChoice>,
+    pub tool_choice: ToolChoice,
     pub response_format: Option<RawResponseFormat>,
 }
 
@@ -228,6 +383,28 @@ pub struct RawCompletionResponse {
     pub tool_calls: Vec<RawToolCall>,
     pub usage: Usage,
     pub finish_reason: FinishReason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RawCompletionEvent {
+    TextDelta { text: String },
+    ToolCall { call: RawToolCall },
+    Done(RawCompletionResponse),
+}
+
+pub struct RawCompletionEventStream {
+    receiver: mpsc::Receiver<crate::error::LlmResult<RawCompletionEvent>>,
+}
+
+impl RawCompletionEventStream {
+    pub fn new(receiver: mpsc::Receiver<crate::error::LlmResult<RawCompletionEvent>>) -> Self {
+        Self { receiver }
+    }
+
+    pub async fn recv(&mut self) -> Option<crate::error::LlmResult<RawCompletionEvent>> {
+        self.receiver.recv().await
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

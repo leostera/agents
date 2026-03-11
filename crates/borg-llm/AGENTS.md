@@ -35,10 +35,12 @@ src/
 Each provider implements `LlmProvider` trait with:
 - `provider_type()` - Returns `ProviderType`
 - `chat_raw(req: RawCompletionRequest)` - Returns `LlmResult<RawCompletionResponse>`
+- `chat_raw_stream(req: RawCompletionRequest)` - Returns `LlmResult<RawCompletionEventStream>`
 - `transcribe(req: AudioTranscriptionRequest)` - Returns `LlmResult<AudioTranscriptionResponse>`
 - `available_models()` - Returns `LlmResult<Vec<Model>>`
 
 Providers do not deserialize user-defined tool/response Rust types. They only translate between raw provider-neutral types and provider wire formats.
+Native streaming parsers are provider-specific, but they must normalize into the shared `RawCompletionEvent` enum.
 
 ### Response Access Pattern
 OpenAI-compatible APIs return `ChatResponse` with `choices[].message.content`, not `message.content` directly:
@@ -55,6 +57,7 @@ Custom `Serialize`/`Deserialize` implementation using untagged enums for `Vec<u8
 - `R` = response type (default `String`, or user's typed response struct)
 
 `LlmRunner` itself is not generic. Type parameters live on each `chat` call.
+Streaming is also per-call via `LlmRunner::chat_stream<C, R>(...)`.
 
 ```rust
 // Default - string responses
@@ -74,6 +77,17 @@ impl TypedTool for MyTools {
 }
 ```
 
+### Request Knobs
+Provider-neutral request tuning uses explicit enums/newtypes instead of `Option`s:
+- `response_mode: ResponseMode` - `Buffered | Stream`
+- `token_limit: TokenLimit` - `ProviderDefault | Max(u32)`
+- `temperature: Temperature` - `ProviderDefault | Value(f32)`
+- `top_p: TopP` - `ProviderDefault | Value(Probability)`
+- `top_k: TopK` - `ProviderDefault | Value(u32)`
+- `tool_choice: ToolChoice` - `ProviderDefault | Auto | Required | Specific { name } | None`
+
+Only `Probability` validates a range (`0.0..=1.0`). Provider adapters are responsible for translating these neutral settings into provider-specific wire fields and defaults.
+
 ## Commands
 
 ```bash
@@ -83,8 +97,7 @@ cargo clippy -p borg-llm
 ```
 
 Shared test helpers live under `src/testing/` and real end-to-end cases live under `tests/`.
-Use `cargo test -p borg-llm --features testing` to compile/run the Docker-backed e2e target.
-Use `BORG_LLM_TEST_OLLAMA_MODEL=<model>` to override the Ollama model they pull.
+The Ollama helpers start one shared server container per test binary and pull models lazily per test.
 
 ## Adding a New Provider
 
