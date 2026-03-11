@@ -99,8 +99,8 @@ async fn next_event<M, C, T, R>(
     agent: &mut Agent<M, C, T, R>,
 ) -> LlmResult<Option<AgentEvent<C, T, R>>>
 where
-    M: Into<InputItem> + Send + 'static,
-    C: borg_llm::tools::TypedTool + Clone + Send + Sync + 'static,
+    M: Into<InputItem> + Send + Sync + 'static,
+    C: borg_llm::tools::TypedTool + Clone + Serialize + Send + Sync + 'static,
     T: Clone + Serialize + Send + Sync + 'static,
     R: Clone + Serialize + for<'de> Deserialize<'de> + JsonSchema + Send + Sync + 'static,
 {

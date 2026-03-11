@@ -16,6 +16,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 
+use crate::context::{
+    ContextChunk, ContextManager, ContextProvider, ContextStrategy, ContextWindow,
+};
 use crate::error::{AgentError, AgentResult};
 use crate::tools::{NoToolRunner, ToolCallEnvelope, ToolResultEnvelope, ToolRunner};
 
@@ -80,7 +83,9 @@ pub type AgentRunOutput<C, T, R> = mpsc::Receiver<AgentResult<AgentEvent<C, T, R
 const DEFAULT_RUN_CHANNEL_CAPACITY: usize = 64;
 
 pub struct AgentBuilder<M, C, T, R> {
-    llm: Option<LlmRunner>,
+    llm: Option<Arc<LlmRunner>>,
+    context_manager: ContextManager,
+    context_providers: Vec<Arc<dyn ContextProvider>>,
     execution_profile: ExecutionProfile,
     run_channel_capacity: usize,
     tool_runner: Option<Arc<dyn ToolRunner<C, T>>>,
@@ -92,6 +97,8 @@ impl AgentBuilder<InputItem, (), (), String> {
     pub fn new() -> Self {
         Self {
             llm: None,
+            context_manager: ContextManager::new(),
+            context_providers: Vec::new(),
             execution_profile: ExecutionProfile::default(),
             run_channel_capacity: DEFAULT_RUN_CHANNEL_CAPACITY,
             tool_runner: Some(Arc::new(NoToolRunner)),
@@ -113,12 +120,25 @@ where
     T: Clone + Serialize + Send + Sync + 'static,
 {
     pub fn with_llm_runner(mut self, llm: LlmRunner) -> Self {
-        self.llm = Some(llm);
+        self.llm = Some(Arc::new(llm));
         self
     }
 
     pub fn with_execution_profile(mut self, execution_profile: ExecutionProfile) -> Self {
         self.execution_profile = execution_profile;
+        self
+    }
+
+    pub fn with_context_manager(mut self, context_manager: ContextManager) -> Self {
+        self.context_manager = context_manager;
+        self
+    }
+
+    pub fn add_context_provider<Provider>(mut self, provider: Provider) -> Self
+    where
+        Provider: ContextProvider + 'static,
+    {
+        self.context_providers.push(Arc::new(provider));
         self
     }
 
@@ -130,6 +150,8 @@ where
     pub fn with_message_type<M2>(self) -> AgentBuilder<M2, C, T, R> {
         AgentBuilder {
             llm: self.llm,
+            context_manager: self.context_manager,
+            context_providers: self.context_providers,
             execution_profile: self.execution_profile,
             run_channel_capacity: self.run_channel_capacity,
             tool_runner: self.tool_runner,
@@ -141,6 +163,8 @@ where
     pub fn with_response_type<R2>(self) -> AgentBuilder<M, C, T, R2> {
         AgentBuilder {
             llm: self.llm,
+            context_manager: self.context_manager,
+            context_providers: self.context_providers,
             execution_profile: self.execution_profile,
             run_channel_capacity: self.run_channel_capacity,
             tool_runner: self.tool_runner,
@@ -157,6 +181,8 @@ where
     {
         AgentBuilder {
             llm: self.llm,
+            context_manager: self.context_manager,
+            context_providers: self.context_providers,
             execution_profile: self.execution_profile,
             run_channel_capacity: self.run_channel_capacity,
             tool_runner: Some(Arc::new(tool_runner)),
@@ -168,8 +194,8 @@ where
 
 impl<M, C, T, R> AgentBuilder<M, C, T, R>
 where
-    M: Into<InputItem> + Send + 'static,
-    C: TypedTool + Clone + Send + Sync + 'static,
+    M: Into<InputItem> + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
     T: Clone + Serialize + Send + Sync + 'static,
     R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
 {
@@ -180,13 +206,18 @@ where
         let tool_runner = self.tool_runner.ok_or(AgentError::Internal {
             message: "AgentBuilder requires a tool runner".to_string(),
         })?;
+        let mut context_manager = self.context_manager;
+        for provider in self.context_providers {
+            context_manager = context_manager.with_provider_arc(provider);
+        }
+        context_manager.attach_llm_runner(llm.clone());
 
         Ok(Agent {
             llm,
+            context_manager: Arc::new(context_manager),
             execution_profile: self.execution_profile,
             run_channel_capacity: self.run_channel_capacity,
             tool_runner,
-            transcript: Vec::new(),
             next_turn: 1,
             active_turn: None,
             queued_turns: VecDeque::new(),
@@ -197,11 +228,11 @@ where
 }
 
 pub struct Agent<M, C, T, R> {
-    llm: LlmRunner,
+    llm: Arc<LlmRunner>,
+    context_manager: Arc<ContextManager>,
     execution_profile: ExecutionProfile,
     run_channel_capacity: usize,
     tool_runner: Arc<dyn ToolRunner<C, T>>,
-    transcript: Vec<InputItem>,
     next_turn: u64,
     active_turn: Option<ActiveTurn<C, T, R>>,
     queued_turns: VecDeque<QueuedTurn>,
@@ -237,8 +268,8 @@ enum TurnState<C, T, R> {
 
 impl<M, C, T, R> Agent<M, C, T, R>
 where
-    M: Into<InputItem> + Send + 'static,
-    C: TypedTool + Clone + Send + Sync + 'static,
+    M: Into<InputItem> + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
     T: Clone + Serialize + Send + Sync + 'static,
     R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
 {
@@ -264,19 +295,21 @@ where
                 if self.active_turn.is_some() {
                     self.queue_turn(item, profile);
                 } else {
-                    self.start_turn(item, profile);
+                    self.start_turn(item, profile).await?;
                 }
                 Ok(())
             }
             AgentInput::Steer(message) => {
                 let item = message.into();
                 if self.active_turn.is_some() {
-                    self.transcript.push(item);
+                    self.context_manager
+                        .push(input_item_to_chunk(item, ContextStrategy::Compactable)?)
+                        .await?;
                     if let Some(active_turn) = self.active_turn.as_mut() {
                         active_turn.state = TurnState::NeedLlm;
                     }
                 } else {
-                    self.start_turn(item, profile);
+                    self.start_turn(item, profile).await?;
                 }
                 Ok(())
             }
@@ -287,7 +320,12 @@ where
         loop {
             if self.active_turn.is_none() {
                 if let Some(queued_turn) = self.queued_turns.pop_front() {
-                    self.transcript.push(queued_turn.item);
+                    self.context_manager
+                        .push(input_item_to_chunk(
+                            queued_turn.item,
+                            ContextStrategy::Compactable,
+                        )?)
+                        .await?;
                     self.active_turn = Some(ActiveTurn {
                         turn: queued_turn.turn,
                         profile: queued_turn.profile,
@@ -312,7 +350,7 @@ where
                     return Ok(Some(AgentEvent::Cancelled));
                 }
                 TurnState::NeedLlm => {
-                    let request = self.build_request(active_turn.profile.clone());
+                    let request = self.build_request(active_turn.profile.clone()).await?;
                     let response = self.llm.chat::<C, R>(request).await?;
                     active_turn.state = self.turn_state_from_response(response).await?;
                     self.active_turn = Some(active_turn);
@@ -322,8 +360,9 @@ where
                     mut remaining,
                 } => {
                     let result = self.tool_runner.run(current).await?;
-                    let tool_result_item = encode_tool_result(&result)?;
-                    self.transcript.push(tool_result_item);
+                    self.context_manager
+                        .push(tool_result_to_chunk(&result, ContextStrategy::Compactable)?)
+                        .await?;
 
                     active_turn.state = if let Some(next_call) = remaining.pop_front() {
                         TurnState::EmitQueue {
@@ -369,10 +408,10 @@ where
 
             loop {
                 while let Ok(input) = input_rx.try_recv() {
-                    if let Err(error) = self.send(input).await {
-                        if event_tx.send(Err(error)).await.is_err() {
-                            return;
-                        }
+                    if let Err(error) = self.send(input).await
+                        && event_tx.send(Err(error)).await.is_err()
+                    {
+                        return;
                     }
                 }
 
@@ -389,10 +428,10 @@ where
 
                         match input_rx.recv().await {
                             Some(input) => {
-                                if let Err(error) = self.send(input).await {
-                                    if event_tx.send(Err(error)).await.is_err() {
-                                        return;
-                                    }
+                                if let Err(error) = self.send(input).await
+                                    && event_tx.send(Err(error)).await.is_err()
+                                {
+                                    return;
                                 }
                             }
                             None => {
@@ -412,8 +451,8 @@ where
         Ok((input_tx, event_rx))
     }
 
-    pub fn transcript(&self) -> &[InputItem] {
-        &self.transcript
+    pub async fn transcript(&self) -> AgentResult<Vec<InputItem>> {
+        ContextWindow::new(self.context_manager.history().await?).to_input_items()
     }
 
     pub fn active_turn(&self) -> Option<u64> {
@@ -444,6 +483,12 @@ where
             })
             .collect::<VecDeque<_>>();
 
+        for call in &tool_calls {
+            self.context_manager
+                .push(tool_call_to_chunk(call, ContextStrategy::Compactable)?)
+                .await?;
+        }
+
         if let Some(current) = tool_calls.front().cloned() {
             let mut queue = VecDeque::from(non_tool_items);
             queue.push_back(AgentEvent::ToolCallRequested {
@@ -460,7 +505,9 @@ where
         }
 
         let reply = self.extract_reply(&response)?;
-        self.transcript.push(assistant_item_for_reply(&reply)?);
+        self.context_manager
+            .push(reply_to_chunk(&reply, ContextStrategy::Compactable)?)
+            .await?;
 
         let mut queue = VecDeque::from(non_tool_items);
         queue.push_back(AgentEvent::Completed { reply });
@@ -471,15 +518,18 @@ where
         })
     }
 
-    fn start_turn(&mut self, item: InputItem, profile: ExecutionProfile) {
+    async fn start_turn(&mut self, item: InputItem, profile: ExecutionProfile) -> AgentResult<()> {
         let turn = self.next_turn;
         self.next_turn += 1;
-        self.transcript.push(item);
+        self.context_manager
+            .push(input_item_to_chunk(item, ContextStrategy::Compactable)?)
+            .await?;
         self.active_turn = Some(ActiveTurn {
             turn,
             profile,
             state: TurnState::NeedLlm,
         });
+        Ok(())
     }
 
     fn queue_turn(&mut self, item: InputItem, profile: ExecutionProfile) {
@@ -492,8 +542,12 @@ where
         });
     }
 
-    fn build_request(&self, profile: ExecutionProfile) -> CompletionRequest<C, R> {
-        let mut request = CompletionRequest::new(self.transcript.clone(), profile.model_selector)
+    async fn build_request(
+        &self,
+        profile: ExecutionProfile,
+    ) -> AgentResult<CompletionRequest<C, R>> {
+        let window = self.context_manager.window().await?;
+        let mut request = CompletionRequest::new(window.to_input_items()?, profile.model_selector)
             .with_token_limit(profile.token_limit)
             .with_tool_choice(profile.tool_choice)
             .with_response_mode(ResponseMode::Buffered);
@@ -518,7 +572,7 @@ where
             request = request.with_typed_response(TypedResponse::new("agent_response"));
         }
 
-        request
+        Ok(request)
     }
 
     fn extract_reply(&self, response: &CompletionResponse<C, R>) -> AgentResult<R> {
@@ -592,15 +646,56 @@ where
     Ok(InputItem::assistant_text(text))
 }
 
-fn encode_tool_result<T>(result: &ToolResultEnvelope<T>) -> AgentResult<InputItem>
+fn input_item_to_chunk(item: InputItem, strategy: ContextStrategy) -> AgentResult<ContextChunk> {
+    ContextChunk::from_input_item(strategy, item).unwrap_or_else(|| {
+        Err(AgentError::InvalidInput {
+            reason: "unable to convert input item into context chunk".to_string(),
+        })
+    })
+}
+
+fn reply_to_chunk<R>(reply: &R, strategy: ContextStrategy) -> AgentResult<ContextChunk>
+where
+    R: Serialize + 'static,
+{
+    input_item_to_chunk(assistant_item_for_reply(reply)?, strategy)
+}
+
+fn tool_call_to_chunk<C>(
+    call: &ToolCallEnvelope<C>,
+    strategy: ContextStrategy,
+) -> AgentResult<ContextChunk>
+where
+    C: Serialize,
+{
+    let args = serde_json::to_value(&call.call).map_err(|error| AgentError::Internal {
+        message: error.to_string(),
+    })?;
+
+    Ok(ContextChunk::ToolCall {
+        strategy,
+        id: call.call_id.clone(),
+        name: "typed_tool".to_string(),
+        args,
+    })
+}
+
+fn tool_result_to_chunk<T>(
+    result: &ToolResultEnvelope<T>,
+    strategy: ContextStrategy,
+) -> AgentResult<ContextChunk>
 where
     T: Serialize,
 {
-    let content =
-        serde_json::to_string(result).map_err(|error| AgentError::ToolResultEncoding {
-            reason: error.to_string(),
-        })?;
-    Ok(InputItem::tool_result(result.call_id.clone(), content))
+    let value = serde_json::to_value(result).map_err(|error| AgentError::ToolResultEncoding {
+        reason: error.to_string(),
+    })?;
+
+    Ok(ContextChunk::ToolResult {
+        strategy,
+        id: result.call_id.clone(),
+        result: value,
+    })
 }
 
 #[cfg(test)]
@@ -620,6 +715,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::collections::VecDeque;
 
+    use crate::context::StaticContextProvider;
     use crate::tools::{CallbackToolRunner, ToolExecutionResult};
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -841,7 +937,39 @@ mod tests {
             Some(AgentEvent::Completed { reply }) if reply == "hello back"
         ));
         assert!(agent.next().await.expect("done").is_none());
-        assert_eq!(agent.transcript().len(), 2);
+        assert_eq!(agent.transcript().await.expect("transcript").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn static_context_provider_is_included_in_llm_request() {
+        let provider = Arc::new(FakeProvider::with_responses(vec![Ok(
+            assistant_text_response("hello back"),
+        )]));
+
+        let runner = LlmRunner::builder()
+            .add_provider(ArcBackedFakeProvider(provider.clone()))
+            .build();
+
+        let mut agent = Agent::builder()
+            .add_context_provider(StaticContextProvider::system_text("You are a test agent."))
+            .with_llm_runner(runner)
+            .build()
+            .expect("agent");
+
+        agent
+            .send(AgentInput::Message(InputItem::user_text("hello")))
+            .await
+            .expect("turn");
+        let _ = agent.next().await.expect("model output");
+        let _ = agent.next().await.expect("completed");
+
+        let requests = provider.take_requests();
+        assert_eq!(requests.len(), 1);
+        assert!(matches!(
+            requests[0].input.first(),
+            Some(RawInputItem::Message { role: Role::System, content })
+                if matches!(content.first(), Some(borg_llm::completion::RawInputContent::Text { text }) if text == "You are a test agent.")
+        ));
     }
 
     #[tokio::test]

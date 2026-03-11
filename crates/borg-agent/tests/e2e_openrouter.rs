@@ -91,8 +91,8 @@ async fn next_event<M, C, T, R>(
     agent: &mut Agent<M, C, T, R>,
 ) -> LlmResult<Option<AgentEvent<C, T, R>>>
 where
-    M: Into<InputItem> + Send + 'static,
-    C: TypedTool + Clone + Send + Sync + 'static,
+    M: Into<InputItem> + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
     T: Clone + Serialize + Send + Sync + 'static,
     R: Clone + Serialize + for<'de> Deserialize<'de> + JsonSchema + Send + Sync + 'static,
 {
@@ -108,8 +108,8 @@ async fn next_nonempty_event<M, C, T, R>(
     agent: &mut Agent<M, C, T, R>,
 ) -> LlmResult<Option<AgentEvent<C, T, R>>>
 where
-    M: Into<InputItem> + Send + 'static,
-    C: TypedTool + Clone + Send + Sync + 'static,
+    M: Into<InputItem> + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
     T: Clone + Serialize + Send + Sync + 'static,
     R: Clone + Serialize + for<'de> Deserialize<'de> + JsonSchema + Send + Sync + 'static,
 {
