@@ -10,9 +10,12 @@ use borg_llm::provider::LlmProvider;
 use borg_llm::response::TypedResponse;
 use borg_llm::testing::{openai_provider_for_model, optional_test_env, runner_with_openai_model};
 use borg_llm::tools::TypedToolSet;
+use borg_llm::transcription::{AudioSource, AudioTranscriptionRequest};
 use common::{
     EchoResponse, TestTools, assert_streamed_ping_tool_call, assert_streamed_typed_response,
 };
+
+const OPENAI_TRANSCRIPTION_AUDIO: &[u8] = include_bytes!("fixtures/1-2-3-hello-world.ogg");
 
 fn openai_model() -> String {
     optional_test_env("BORG_TEST_OPENAI_MODEL")
@@ -176,4 +179,33 @@ async fn openai_runner_streams_typed_tool_calls_long() -> LlmResult<()> {
         .await?;
 
     assert_streamed_ping_tool_call(&mut stream).await
+}
+
+#[tokio::test]
+async fn openai_runner_transcribes_audio_long() -> LlmResult<()> {
+    let model = openai_model();
+    let runner = runner_with_openai_model(&model)?;
+
+    let response = runner
+        .transcribe(
+            AudioTranscriptionRequest::new(AudioSource::Data(OPENAI_TRANSCRIPTION_AUDIO.to_vec()))
+                .with_language("en"),
+        )
+        .await?;
+
+    let transcript = response.text.trim().to_lowercase();
+    assert!(
+        !transcript.is_empty(),
+        "expected non-empty transcript, got {:?}",
+        response
+    );
+    assert!(
+        (transcript.contains("1") || transcript.contains("one"))
+            && (transcript.contains("2") || transcript.contains("two"))
+            && (transcript.contains("3") || transcript.contains("three"))
+            && (transcript.contains("hello") && transcript.contains("world")),
+        "expected transcript to mention hello and world, got {:?}",
+        response
+    );
+    Ok(())
 }

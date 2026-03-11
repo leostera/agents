@@ -19,7 +19,10 @@ use crate::model::Model;
 use crate::provider::LlmProvider;
 use crate::response::RawResponseFormat;
 use crate::tools::{RawToolCall, RawToolDefinition};
-use crate::transcription::{AudioSource, AudioTranscriptionRequest, AudioTranscriptionResponse};
+use crate::transcription::{
+    AudioSource, AudioTranscriptionRequest, AudioTranscriptionResponse, TranscriptionLanguage,
+    TranscriptionPrompt,
+};
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone)]
@@ -670,30 +673,65 @@ impl LlmProvider for OpenAI {
     ) -> LlmResult<AudioTranscriptionResponse> {
         let url = format!("{}/v1/audio/transcriptions", self.config.base_url);
 
-        let audio_data = match &req.audio {
-            AudioSource::Data(data) => data.clone(),
+        let model = match &req.model {
+            ModelSelector::Any | ModelSelector::Provider(_) => "whisper-1".to_string(),
+            ModelSelector::Specific { model, .. } => model.clone(),
+        };
+
+        let (audio_data, file_name, mime_type) = match &req.audio {
+            AudioSource::Data(data) => (
+                data.clone(),
+                "audio.wav".to_string(),
+                "audio/wav".to_string(),
+            ),
             AudioSource::Url(_) => {
                 return Err(Error::InvalidRequest {
                     reason: "URL audio not supported yet".to_string(),
                 });
             }
-            AudioSource::Path(path) => std::fs::read(path).map_err(|e| Error::InvalidRequest {
-                reason: e.to_string(),
-            })?,
+            AudioSource::Path(path) => (
+                std::fs::read(path).map_err(|e| Error::InvalidRequest {
+                    reason: e.to_string(),
+                })?,
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("audio")
+                    .to_string(),
+                match path.extension().and_then(|ext| ext.to_str()) {
+                    Some("ogg") => "audio/ogg",
+                    Some("mp3") => "audio/mpeg",
+                    Some("m4a") => "audio/mp4",
+                    Some("wav") => "audio/wav",
+                    Some("webm") => "audio/webm",
+                    Some("flac") => "audio/flac",
+                    _ => "application/octet-stream",
+                }
+                .to_string(),
+            ),
         };
 
         let part = reqwest::multipart::Part::bytes(audio_data)
-            .file_name("audio.wav")
-            .mime_str("audio/wav")
+            .file_name(file_name)
+            .mime_str(&mime_type)
             .map_err(|e| Error::InvalidRequest {
                 reason: e.to_string(),
             })?;
 
-        let form = reqwest::multipart::Form::new()
-            .text("model", "whisper-1")
-            .text("language", req.language.unwrap_or_default())
-            .text("prompt", req.prompt.unwrap_or_default())
+        let mut form = reqwest::multipart::Form::new()
+            .text("model", model.clone())
             .part("file", part);
+
+        if let TranscriptionLanguage::Explicit { language } = req.language {
+            form = form.text("language", language);
+        }
+
+        if let TranscriptionPrompt::Hint { text } = req.prompt {
+            form = form.text("prompt", text);
+        }
+
+        if let Some(response_format) = req.response_format.as_openai_str() {
+            form = form.text("response_format", response_format.to_string());
+        }
 
         let response = self
             .client
@@ -723,7 +761,7 @@ impl LlmProvider for OpenAI {
 
         Ok(AudioTranscriptionResponse {
             provider: ProviderType::OpenAI,
-            model: "whisper-1".to_string(),
+            model,
             text: parsed.text,
         })
     }

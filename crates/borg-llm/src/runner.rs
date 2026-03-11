@@ -1192,13 +1192,9 @@ mod tests {
             .build();
 
         let response = runner
-            .transcribe(AudioTranscriptionRequest {
-                audio: crate::transcription::AudioSource::Data(vec![]),
-                language: None,
-                prompt: None,
-                model: None,
-                response_format: None,
-            })
+            .transcribe(AudioTranscriptionRequest::new(
+                crate::transcription::AudioSource::Data(vec![]),
+            ))
             .await
             .expect("transcription should succeed");
 
@@ -1216,13 +1212,9 @@ mod tests {
             .build();
 
         let error = runner
-            .transcribe(AudioTranscriptionRequest {
-                audio: crate::transcription::AudioSource::Data(vec![]),
-                language: None,
-                prompt: None,
-                model: None,
-                response_format: None,
-            })
+            .transcribe(AudioTranscriptionRequest::new(
+                crate::transcription::AudioSource::Data(vec![]),
+            ))
             .await
             .expect_err("missing transcription provider should error");
 
