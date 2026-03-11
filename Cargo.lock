@@ -223,6 +223,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "borg-agent"
+version = "0.1.0"
+
+[[package]]
 name = "borg-llm"
 version = "0.1.0"
 dependencies = [
