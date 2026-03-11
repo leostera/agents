@@ -319,10 +319,10 @@ mod tests {
     use super::LlmRunner;
     use crate::capability::Capability;
     use crate::completion::{
-        CompletionEvent, CompletionRequest, FinishReason, InputItem, ModelSelector, OutputContent,
-        OutputItem, ProviderType, RawCompletionEvent, RawCompletionEventStream,
-        RawCompletionRequest, RawCompletionResponse, RawOutputContent, RawOutputItem, ResponseMode,
-        Role, Usage,
+        CompletionEvent, CompletionRequest, CompletionResponse, FinishReason, InputItem,
+        ModelSelector, OutputContent, OutputItem, ProviderType, RawCompletionEvent,
+        RawCompletionEventStream, RawCompletionRequest, RawCompletionResponse, RawOutputContent,
+        RawOutputItem, ResponseMode, Role, Usage,
     };
     use crate::error::{Error, LlmResult};
     use crate::model::Model;
@@ -378,6 +378,17 @@ mod tests {
     }
 
     struct StreamingTestProvider;
+    struct OpenAITestProvider;
+    struct AnthropicTestProvider;
+    struct StaticRawProvider {
+        provider_type: ProviderType,
+        raw_response: Option<RawCompletionResponse>,
+        raw_stream_events: Vec<RawCompletionEvent>,
+    }
+    struct TranscriptionTestProvider {
+        provider_type: ProviderType,
+        supports_transcription: bool,
+    }
 
     #[async_trait]
     impl LlmProvider for StreamingTestProvider {
@@ -471,6 +482,168 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl LlmProvider for OpenAITestProvider {
+        fn provider_type(&self) -> ProviderType {
+            ProviderType::OpenAI
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "openai-test"
+        }
+
+        fn capabilities(&self) -> &[Capability] {
+            &[Capability::ChatCompletion]
+        }
+
+        async fn available_models(&self) -> LlmResult<Vec<Model>> {
+            Ok(vec![Model::new("openai-test-model")])
+        }
+
+        async fn chat_raw(&self, _req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
+            Err(Error::Internal {
+                message: "unused in selection test".to_string(),
+            })
+        }
+
+        async fn transcribe(
+            &self,
+            _req: AudioTranscriptionRequest,
+        ) -> LlmResult<AudioTranscriptionResponse> {
+            Err(Error::NoMatchingProvider {
+                reason: "transcription not supported".to_string(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for AnthropicTestProvider {
+        fn provider_type(&self) -> ProviderType {
+            ProviderType::Anthropic
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "anthropic-test"
+        }
+
+        fn capabilities(&self) -> &[Capability] {
+            &[Capability::ChatCompletion]
+        }
+
+        async fn available_models(&self) -> LlmResult<Vec<Model>> {
+            Ok(vec![Model::new("anthropic-test-model")])
+        }
+
+        async fn chat_raw(&self, _req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
+            Err(Error::Internal {
+                message: "unused in selection test".to_string(),
+            })
+        }
+
+        async fn transcribe(
+            &self,
+            _req: AudioTranscriptionRequest,
+        ) -> LlmResult<AudioTranscriptionResponse> {
+            Err(Error::NoMatchingProvider {
+                reason: "transcription not supported".to_string(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for StaticRawProvider {
+        fn provider_type(&self) -> ProviderType {
+            self.provider_type
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "static-raw"
+        }
+
+        fn capabilities(&self) -> &[Capability] {
+            &[Capability::ChatCompletion]
+        }
+
+        async fn available_models(&self) -> LlmResult<Vec<Model>> {
+            Ok(vec![Model::new("static-model")])
+        }
+
+        async fn chat_raw(&self, _req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
+            self.raw_response.clone().ok_or(Error::Internal {
+                message: "missing raw_response".to_string(),
+            })
+        }
+
+        async fn chat_raw_stream(
+            &self,
+            _req: RawCompletionRequest,
+        ) -> LlmResult<RawCompletionEventStream> {
+            let (sender, receiver) = mpsc::channel(16);
+            for event in &self.raw_stream_events {
+                sender
+                    .send(Ok(event.clone()))
+                    .await
+                    .expect("receiver should be alive");
+            }
+            Ok(RawCompletionEventStream::new(receiver))
+        }
+
+        async fn transcribe(
+            &self,
+            _req: AudioTranscriptionRequest,
+        ) -> LlmResult<AudioTranscriptionResponse> {
+            Err(Error::NoMatchingProvider {
+                reason: "transcription not supported".to_string(),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for TranscriptionTestProvider {
+        fn provider_type(&self) -> ProviderType {
+            self.provider_type
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "transcription-test"
+        }
+
+        fn capabilities(&self) -> &[Capability] {
+            if self.supports_transcription {
+                &[Capability::AudioTranscription]
+            } else {
+                &[Capability::ChatCompletion]
+            }
+        }
+
+        async fn available_models(&self) -> LlmResult<Vec<Model>> {
+            Ok(vec![Model::new("transcription-test-model")])
+        }
+
+        async fn chat_raw(&self, _req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
+            Err(Error::Internal {
+                message: "chat not used in transcription test".to_string(),
+            })
+        }
+
+        async fn transcribe(
+            &self,
+            _req: AudioTranscriptionRequest,
+        ) -> LlmResult<AudioTranscriptionResponse> {
+            if self.supports_transcription {
+                Ok(AudioTranscriptionResponse {
+                    provider: self.provider_type,
+                    model: "whisper-test".to_string(),
+                    text: "decoded text".to_string(),
+                })
+            } else {
+                Err(Error::NoMatchingProvider {
+                    reason: "transcription not supported".to_string(),
+                })
+            }
+        }
+    }
+
     #[test]
     fn from_raw_response_decodes_typed_content_and_tool_calls() {
         let raw = RawCompletionResponse {
@@ -548,6 +721,515 @@ mod tests {
                 value: "typed-ok".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn find_provider_returns_first_provider_for_any_and_unqualified_specific_model() {
+        let runner = LlmRunner::builder()
+            .add_provider(OpenAITestProvider)
+            .add_provider(AnthropicTestProvider)
+            .build();
+
+        let any = runner
+            .find_provider(&ModelSelector::Any)
+            .expect("any should pick first provider");
+        assert_eq!(any.provider_type(), ProviderType::OpenAI);
+
+        let specific = runner
+            .find_provider(&ModelSelector::from_model("some-model"))
+            .expect("unqualified specific model should pick first provider");
+        assert_eq!(specific.provider_type(), ProviderType::OpenAI);
+    }
+
+    #[test]
+    fn find_provider_honors_explicit_provider_selection() {
+        let runner = LlmRunner::builder()
+            .add_provider(OpenAITestProvider)
+            .add_provider(AnthropicTestProvider)
+            .build();
+
+        let provider = runner
+            .find_provider(&ModelSelector::for_provider(ProviderType::Anthropic))
+            .expect("anthropic provider should be found");
+        assert_eq!(provider.provider_type(), ProviderType::Anthropic);
+
+        let specific = runner
+            .find_provider(&ModelSelector::Specific {
+                provider: Some(ProviderType::Anthropic),
+                model: "claude".to_string(),
+            })
+            .expect("explicit provider should be honored");
+        assert_eq!(specific.provider_type(), ProviderType::Anthropic);
+    }
+
+    #[test]
+    fn find_provider_returns_error_when_provider_is_missing() {
+        let runner = LlmRunner::builder()
+            .add_provider(OpenAITestProvider)
+            .build();
+
+        let error =
+            match runner.find_provider(&ModelSelector::for_provider(ProviderType::Anthropic)) {
+                Ok(_) => panic!("missing provider should error"),
+                Err(error) => error,
+            };
+
+        assert!(matches!(
+            error,
+            Error::NoMatchingProvider { reason } if reason.contains("Anthropic")
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_preserves_text_when_typed_response_decoding_fails() {
+        let runner = LlmRunner::builder()
+            .add_provider(StaticRawProvider {
+                provider_type: ProviderType::OpenAI,
+                raw_response: Some(RawCompletionResponse {
+                    provider: ProviderType::OpenAI,
+                    model: "static-model".to_string(),
+                    output: vec![RawOutputItem::Message {
+                        role: Role::Assistant,
+                        content: vec![RawOutputContent::Text {
+                            text: "not valid json".to_string(),
+                        }],
+                    }],
+                    usage: Usage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: FinishReason::Stop,
+                }),
+                raw_stream_events: vec![],
+            })
+            .build();
+
+        let response = runner
+            .chat::<(), TestResponse>(CompletionRequest::new(
+                vec![InputItem::user_text("hello")],
+                ModelSelector::for_provider(ProviderType::OpenAI),
+            ))
+            .await
+            .expect("chat should succeed");
+
+        assert!(matches!(
+            &response.output[0],
+            OutputItem::Message { content, .. }
+                if matches!(&content[0], OutputContent::Text { text } if text == "not valid json")
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_decodes_typed_response_from_raw_json_output() {
+        let runner = LlmRunner::builder()
+            .add_provider(StaticRawProvider {
+                provider_type: ProviderType::OpenAI,
+                raw_response: Some(RawCompletionResponse {
+                    provider: ProviderType::OpenAI,
+                    model: "static-model".to_string(),
+                    output: vec![RawOutputItem::Message {
+                        role: Role::Assistant,
+                        content: vec![RawOutputContent::Json {
+                            value: serde_json::json!({ "value": "typed-ok" }),
+                        }],
+                    }],
+                    usage: Usage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: FinishReason::Stop,
+                }),
+                raw_stream_events: vec![],
+            })
+            .build();
+
+        let response = runner
+            .chat::<(), TestResponse>(CompletionRequest::new(
+                vec![InputItem::user_text("hello")],
+                ModelSelector::for_provider(ProviderType::OpenAI),
+            ))
+            .await
+            .expect("chat should succeed");
+
+        assert!(matches!(
+            &response.output[0],
+            OutputItem::Message { content, .. }
+                if matches!(&content[0], OutputContent::Structured { value } if value == &TestResponse { value: "typed-ok".to_string() })
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_errors_when_tool_call_does_not_match_typed_tool() {
+        let runner = LlmRunner::builder()
+            .add_provider(StaticRawProvider {
+                provider_type: ProviderType::OpenAI,
+                raw_response: Some(RawCompletionResponse {
+                    provider: ProviderType::OpenAI,
+                    model: "static-model".to_string(),
+                    output: vec![RawOutputItem::ToolCall {
+                        call: RawToolCall {
+                            id: "call_1".to_string(),
+                            name: "unknown".to_string(),
+                            arguments: serde_json::json!({}),
+                        },
+                    }],
+                    usage: Usage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: FinishReason::ToolCalls,
+                }),
+                raw_stream_events: vec![],
+            })
+            .build();
+
+        let error = runner
+            .chat::<TestTools, String>(CompletionRequest::new(
+                vec![InputItem::user_text("hello")],
+                ModelSelector::for_provider(ProviderType::OpenAI),
+            ))
+            .await
+            .expect_err("invalid tool call should error");
+
+        assert!(matches!(
+            error,
+            Error::InvalidResponse { reason } if reason.contains("unexpected tool name")
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_errors_when_tool_call_arguments_do_not_match_typed_tool() {
+        let runner = LlmRunner::builder()
+            .add_provider(StaticRawProvider {
+                provider_type: ProviderType::OpenAI,
+                raw_response: Some(RawCompletionResponse {
+                    provider: ProviderType::OpenAI,
+                    model: "static-model".to_string(),
+                    output: vec![RawOutputItem::ToolCall {
+                        call: RawToolCall {
+                            id: "call_1".to_string(),
+                            name: "ping".to_string(),
+                            arguments: serde_json::json!({ "wrong": true }),
+                        },
+                    }],
+                    usage: Usage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: FinishReason::ToolCalls,
+                }),
+                raw_stream_events: vec![],
+            })
+            .build();
+
+        let error = runner
+            .chat::<TestTools, String>(CompletionRequest::new(
+                vec![InputItem::user_text("hello")],
+                ModelSelector::for_provider(ProviderType::OpenAI),
+            ))
+            .await
+            .expect_err("invalid tool arguments should error");
+
+        assert!(matches!(
+            error,
+            Error::InvalidResponse { reason } if reason.contains("missing ping.value")
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_decodes_multiple_tool_calls_in_order() {
+        let runner = LlmRunner::builder()
+            .add_provider(StaticRawProvider {
+                provider_type: ProviderType::OpenAI,
+                raw_response: Some(RawCompletionResponse {
+                    provider: ProviderType::OpenAI,
+                    model: "static-model".to_string(),
+                    output: vec![
+                        RawOutputItem::ToolCall {
+                            call: RawToolCall {
+                                id: "call_1".to_string(),
+                                name: "ping".to_string(),
+                                arguments: serde_json::json!({ "value": "first" }),
+                            },
+                        },
+                        RawOutputItem::ToolCall {
+                            call: RawToolCall {
+                                id: "call_2".to_string(),
+                                name: "ping".to_string(),
+                                arguments: serde_json::json!({ "value": "second" }),
+                            },
+                        },
+                    ],
+                    usage: Usage {
+                        prompt_tokens: 1,
+                        completion_tokens: 2,
+                        total_tokens: 3,
+                    },
+                    finish_reason: FinishReason::ToolCalls,
+                }),
+                raw_stream_events: vec![],
+            })
+            .build();
+
+        let response = runner
+            .chat::<TestTools, String>(CompletionRequest::new(
+                vec![InputItem::user_text("hello")],
+                ModelSelector::for_provider(ProviderType::OpenAI),
+            ))
+            .await
+            .expect("chat should succeed");
+
+        let tool_calls = response
+            .output
+            .iter()
+            .filter_map(|item| match item {
+                OutputItem::ToolCall { call } => Some(call),
+                OutputItem::Message { .. } | OutputItem::Reasoning { .. } => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(tool_calls.len(), 2);
+        assert!(matches!(tool_calls[0].tool, TestTools::Ping { ref value } if value == "first"));
+        assert!(matches!(tool_calls[1].tool, TestTools::Ping { ref value } if value == "second"));
+    }
+
+    #[tokio::test]
+    async fn chat_stream_surfaces_invalid_streamed_tool_calls() {
+        let runner = LlmRunner::builder()
+            .add_provider(StaticRawProvider {
+                provider_type: ProviderType::OpenAI,
+                raw_response: None,
+                raw_stream_events: vec![RawCompletionEvent::ToolCall {
+                    call: RawToolCall {
+                        id: "call_1".to_string(),
+                        name: "unknown".to_string(),
+                        arguments: serde_json::json!({}),
+                    },
+                }],
+            })
+            .build();
+
+        let mut stream = runner
+            .chat_stream::<TestTools, String>(
+                CompletionRequest::new(
+                    vec![InputItem::user_text("hello")],
+                    ModelSelector::for_provider(ProviderType::OpenAI),
+                )
+                .with_response_mode(ResponseMode::Stream),
+            )
+            .await
+            .expect("stream should start");
+
+        let event = stream.recv().await.expect("stream should yield");
+        assert!(matches!(
+            event,
+            Err(Error::InvalidResponse { reason }) if reason.contains("unexpected tool name")
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_stream_done_event_decodes_typed_response_from_final_output() {
+        let runner = LlmRunner::builder()
+            .add_provider(StaticRawProvider {
+                provider_type: ProviderType::OpenAI,
+                raw_response: None,
+                raw_stream_events: vec![
+                    RawCompletionEvent::TextDelta {
+                        text: "{\"value\":".to_string(),
+                    },
+                    RawCompletionEvent::Done(RawCompletionResponse {
+                        provider: ProviderType::OpenAI,
+                        model: "static-model".to_string(),
+                        output: vec![RawOutputItem::Message {
+                            role: Role::Assistant,
+                            content: vec![RawOutputContent::Text {
+                                text: "{\"value\":\"typed-ok\"}".to_string(),
+                            }],
+                        }],
+                        usage: Usage {
+                            prompt_tokens: 1,
+                            completion_tokens: 1,
+                            total_tokens: 2,
+                        },
+                        finish_reason: FinishReason::Stop,
+                    }),
+                ],
+            })
+            .build();
+
+        let mut stream = runner
+            .chat_stream::<(), TestResponse>(
+                CompletionRequest::new(
+                    vec![InputItem::user_text("hello")],
+                    ModelSelector::for_provider(ProviderType::OpenAI),
+                )
+                .with_response_mode(ResponseMode::Stream),
+            )
+            .await
+            .expect("stream should start");
+
+        let _ = stream.recv().await.expect("delta should exist");
+        let done = stream
+            .recv()
+            .await
+            .expect("done should exist")
+            .expect("done should decode");
+
+        assert!(matches!(
+            done,
+            CompletionEvent::Done(CompletionResponse { output, .. })
+                if matches!(&output[0], OutputItem::Message { content, .. }
+                    if matches!(&content[0], OutputContent::Structured { value } if value == &TestResponse { value: "typed-ok".to_string() }))
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_preserves_reasoning_items() {
+        let runner = LlmRunner::builder()
+            .add_provider(StaticRawProvider {
+                provider_type: ProviderType::OpenAI,
+                raw_response: Some(RawCompletionResponse {
+                    provider: ProviderType::OpenAI,
+                    model: "static-model".to_string(),
+                    output: vec![RawOutputItem::Reasoning {
+                        text: "chain of thought summary".to_string(),
+                    }],
+                    usage: Usage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: FinishReason::Stop,
+                }),
+                raw_stream_events: vec![],
+            })
+            .build();
+
+        let response = runner
+            .chat::<(), String>(CompletionRequest::new(
+                vec![InputItem::user_text("hello")],
+                ModelSelector::for_provider(ProviderType::OpenAI),
+            ))
+            .await
+            .expect("chat should succeed");
+
+        assert!(matches!(
+            &response.output[0],
+            OutputItem::Reasoning { text } if text == "chain of thought summary"
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_propagates_provider_errors_unchanged() {
+        let runner = LlmRunner::builder()
+            .add_provider(StaticRawProvider {
+                provider_type: ProviderType::OpenAI,
+                raw_response: None,
+                raw_stream_events: vec![],
+            })
+            .build();
+
+        let error = runner
+            .chat::<(), String>(CompletionRequest::new(
+                vec![InputItem::user_text("hello")],
+                ModelSelector::for_provider(ProviderType::OpenAI),
+            ))
+            .await
+            .expect_err("missing raw_response should error");
+
+        assert!(matches!(
+            error,
+            Error::Internal { message } if message.contains("missing raw_response")
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_supports_empty_output_without_panicking() {
+        let runner = LlmRunner::builder()
+            .add_provider(StaticRawProvider {
+                provider_type: ProviderType::OpenAI,
+                raw_response: Some(RawCompletionResponse {
+                    provider: ProviderType::OpenAI,
+                    model: "static-model".to_string(),
+                    output: vec![],
+                    usage: Usage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    finish_reason: FinishReason::Stop,
+                }),
+                raw_stream_events: vec![],
+            })
+            .build();
+
+        let response = runner
+            .chat::<(), String>(CompletionRequest::new(
+                vec![InputItem::user_text("hello")],
+                ModelSelector::for_provider(ProviderType::OpenAI),
+            ))
+            .await
+            .expect("empty output should still succeed");
+
+        assert!(response.output.is_empty());
+    }
+
+    #[tokio::test]
+    async fn transcribe_uses_first_provider_with_transcription_capability() {
+        let runner = LlmRunner::builder()
+            .add_provider(TranscriptionTestProvider {
+                provider_type: ProviderType::OpenAI,
+                supports_transcription: false,
+            })
+            .add_provider(TranscriptionTestProvider {
+                provider_type: ProviderType::Anthropic,
+                supports_transcription: true,
+            })
+            .build();
+
+        let response = runner
+            .transcribe(AudioTranscriptionRequest {
+                audio: crate::transcription::AudioSource::Data(vec![]),
+                language: None,
+                prompt: None,
+                model: None,
+                response_format: None,
+            })
+            .await
+            .expect("transcription should succeed");
+
+        assert_eq!(response.provider, ProviderType::Anthropic);
+        assert_eq!(response.text, "decoded text");
+    }
+
+    #[tokio::test]
+    async fn transcribe_returns_error_when_no_provider_supports_it() {
+        let runner = LlmRunner::builder()
+            .add_provider(TranscriptionTestProvider {
+                provider_type: ProviderType::OpenAI,
+                supports_transcription: false,
+            })
+            .build();
+
+        let error = runner
+            .transcribe(AudioTranscriptionRequest {
+                audio: crate::transcription::AudioSource::Data(vec![]),
+                language: None,
+                prompt: None,
+                model: None,
+                response_format: None,
+            })
+            .await
+            .expect_err("missing transcription provider should error");
+
+        assert!(matches!(
+            error,
+            Error::NoMatchingProvider { reason } if reason.contains("transcription")
+        ));
     }
 
     #[tokio::test]

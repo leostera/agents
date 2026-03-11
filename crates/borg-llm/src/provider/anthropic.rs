@@ -451,9 +451,7 @@ impl LlmProvider for Anthropic {
             .header("content-type", "application/json")
             .json(&chat_req)
             .eventsource()
-            .map_err(|error| Error::Internal {
-                message: error.to_string(),
-            })?;
+            .map_err(|error| Error::from_eventsource_builder("anthropic", error))?;
 
         let (sender, receiver) = mpsc::channel(32);
 
@@ -625,9 +623,7 @@ impl LlmProvider for Anthropic {
                     },
                     Err(error) => {
                         let _ = sender
-                            .send(Err(Error::Internal {
-                                message: error.to_string(),
-                            }))
+                            .send(Err(Error::from_eventsource("anthropic", error)))
                             .await;
                         let _ = event_source.close();
                         return;

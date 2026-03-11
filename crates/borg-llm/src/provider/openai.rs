@@ -499,9 +499,7 @@ impl LlmProvider for OpenAI {
         let event_source = req_builder
             .json(&responses_req)
             .eventsource()
-            .map_err(|error| Error::Internal {
-                message: error.to_string(),
-            })?;
+            .map_err(|error| Error::from_eventsource_builder("openai", error))?;
 
         let (sender, receiver) = mpsc::channel(32);
 
@@ -652,9 +650,7 @@ impl LlmProvider for OpenAI {
                     },
                     Err(error) => {
                         let _ = sender
-                            .send(Err(Error::Internal {
-                                message: error.to_string(),
-                            }))
+                            .send(Err(Error::from_eventsource("openai", error)))
                             .await;
                         let _ = event_source.close();
                         return;

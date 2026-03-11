@@ -269,10 +269,7 @@ impl Ollama {
                 temperature: req.temperature.as_option(),
                 top_p: req.top_p.as_option(),
                 top_k: req.top_k.as_option_i32(),
-                num_ctx: req
-                    .token_limit
-                    .as_option()
-                    .and_then(|value| i32::try_from(value).ok()),
+                num_ctx: None,
                 num_gpu: None,
                 repeat_penalty: None,
                 seed: None,

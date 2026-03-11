@@ -286,6 +286,54 @@ struct PartialToolCall {
     arguments: String,
 }
 
+fn apply_stream_tool_call_delta(
+    partial_tool_calls: &mut std::collections::BTreeMap<u32, PartialToolCall>,
+    call: StreamToolCallDelta,
+) {
+    let Some(index) = call.index else {
+        return;
+    };
+    let partial = partial_tool_calls.entry(index).or_default();
+    if let Some(id) = call.id {
+        partial.id = id;
+    }
+    if let Some(function) = call.function {
+        if let Some(name) = function.name {
+            partial.name = name;
+        }
+        if let Some(arguments) = function.arguments {
+            partial.arguments.push_str(&arguments);
+        }
+    }
+}
+
+fn finalize_partial_tool_calls(
+    partial_tool_calls: std::collections::BTreeMap<u32, PartialToolCall>,
+) -> LlmResult<Vec<RawToolCall>> {
+    let mut tool_calls = Vec::new();
+    for partial in partial_tool_calls.into_values() {
+        if partial.name.is_empty() {
+            continue;
+        }
+        let arguments = if partial.arguments.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(&partial.arguments)
+                .map_err(|error| Error::parse(partial.arguments, error))?
+        };
+        tool_calls.push(RawToolCall {
+            id: if partial.id.is_empty() {
+                partial.name.clone()
+            } else {
+                partial.id
+            },
+            name: partial.name,
+            arguments,
+        });
+    }
+    Ok(tool_calls)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum OutputItem {
@@ -565,9 +613,7 @@ impl LlmProvider for OpenRouter {
             .header("X-Title", "Borg")
             .json(&chat_req)
             .eventsource()
-            .map_err(|error| Error::Internal {
-                message: error.to_string(),
-            })?;
+            .map_err(|error| Error::from_eventsource_builder("openrouter", error))?;
 
         let (sender, receiver) = mpsc::channel(32);
 
@@ -611,22 +657,10 @@ impl LlmProvider for OpenRouter {
                                     if let Some(delta_tool_calls) = choice.delta.tool_calls.clone()
                                     {
                                         for call in delta_tool_calls {
-                                            let Some(index) = call.index else {
-                                                continue;
-                                            };
-                                            let partial =
-                                                partial_tool_calls.entry(index).or_default();
-                                            if let Some(id) = call.id {
-                                                partial.id = id;
-                                            }
-                                            if let Some(function) = call.function {
-                                                if let Some(name) = function.name {
-                                                    partial.name = name;
-                                                }
-                                                if let Some(arguments) = function.arguments {
-                                                    partial.arguments.push_str(&arguments);
-                                                }
-                                            }
+                                            apply_stream_tool_call_delta(
+                                                &mut partial_tool_calls,
+                                                call,
+                                            );
                                         }
                                     }
                                     if choice.finish_reason.is_some() {
@@ -644,9 +678,7 @@ impl LlmProvider for OpenRouter {
                     }
                     Err(error) => {
                         let _ = sender
-                            .send(Err(Error::Internal {
-                                message: error.to_string(),
-                            }))
+                            .send(Err(Error::from_eventsource("openrouter", error)))
                             .await;
                         let _ = event_source.close();
                         return;
@@ -655,32 +687,14 @@ impl LlmProvider for OpenRouter {
             }
 
             let _ = event_source.close();
-            for partial in partial_tool_calls.into_values() {
-                if partial.name.is_empty() {
-                    continue;
+            let finalized_tool_calls = match finalize_partial_tool_calls(partial_tool_calls) {
+                Ok(tool_calls) => tool_calls,
+                Err(error) => {
+                    let _ = sender.send(Err(error)).await;
+                    return;
                 }
-                let arguments = if partial.arguments.trim().is_empty() {
-                    serde_json::json!({})
-                } else {
-                    match serde_json::from_str(&partial.arguments) {
-                        Ok(arguments) => arguments,
-                        Err(error) => {
-                            let _ = sender
-                                .send(Err(Error::parse(partial.arguments, error)))
-                                .await;
-                            return;
-                        }
-                    }
-                };
-                let raw_call = RawToolCall {
-                    id: if partial.id.is_empty() {
-                        partial.name.clone()
-                    } else {
-                        partial.id
-                    },
-                    name: partial.name,
-                    arguments,
-                };
+            };
+            for raw_call in finalized_tool_calls {
                 tool_calls.push(raw_call.clone());
                 if sender
                     .send(Ok(RawCompletionEvent::ToolCall { call: raw_call }))
