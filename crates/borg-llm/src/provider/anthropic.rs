@@ -187,6 +187,8 @@ pub struct StreamMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentBlockDeltaEvent {
+    #[serde(default)]
+    pub index: u64,
     pub delta: ContentBlockDelta,
 }
 
@@ -207,6 +209,32 @@ pub struct MessageDeltaEvent {
 pub struct MessageDelta {
     pub stop_reason: Option<String>,
     pub stop_sequence: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContentBlockStartEvent {
+    #[serde(default)]
+    pub index: u64,
+    pub content_block: StreamContentBlock,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum StreamContentBlock {
+    ToolUse {
+        id: String,
+        name: String,
+        #[serde(default)]
+        input: Option<Value>,
+    },
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContentBlockStopEvent {
+    #[serde(default)]
+    pub index: u64,
 }
 
 impl Anthropic {
@@ -482,17 +510,7 @@ impl LlmProvider for Anthropic {
                             }
                         }
                         "content_block_delta" => {
-                            let parsed: Value = match serde_json::from_str(&message.data) {
-                                Ok(parsed) => parsed,
-                                Err(error) => {
-                                    let _ =
-                                        sender.send(Err(Error::parse(message.data, error))).await;
-                                    let _ = event_source.close();
-                                    return;
-                                }
-                            };
-                            let index = parsed.get("index").and_then(Value::as_u64).unwrap_or(0);
-                            match serde_json::from_value::<ContentBlockDeltaEvent>(parsed.clone()) {
+                            match serde_json::from_str::<ContentBlockDeltaEvent>(&message.data) {
                                 Ok(delta) => match delta.delta {
                                     ContentBlockDelta::TextDelta { text } => {
                                         content.push_str(&text);
@@ -507,7 +525,7 @@ impl LlmProvider for Anthropic {
                                     }
                                     ContentBlockDelta::InputJsonDelta { partial_json } => {
                                         if let Some((_, _, input)) =
-                                            pending_tool_calls.get_mut(&index)
+                                            pending_tool_calls.get_mut(&delta.index)
                                         {
                                             if input.trim() == "{}" {
                                                 input.clear();
@@ -525,35 +543,25 @@ impl LlmProvider for Anthropic {
                             }
                         }
                         "content_block_start" => {
-                            let parsed: Value = match serde_json::from_str(&message.data) {
-                                Ok(parsed) => parsed,
-                                Err(error) => {
-                                    let _ =
-                                        sender.send(Err(Error::parse(message.data, error))).await;
-                                    let _ = event_source.close();
-                                    return;
-                                }
-                            };
-                            let index = parsed.get("index").and_then(Value::as_u64).unwrap_or(0);
-                            if let Some(content_block) = parsed.get("content_block")
-                                && content_block.get("type").and_then(Value::as_str)
-                                    == Some("tool_use")
+                            let parsed: ContentBlockStartEvent =
+                                match serde_json::from_str(&message.data) {
+                                    Ok(parsed) => parsed,
+                                    Err(error) => {
+                                        let _ = sender
+                                            .send(Err(Error::parse(message.data, error)))
+                                            .await;
+                                        let _ = event_source.close();
+                                        return;
+                                    }
+                                };
+                            let index = parsed.index;
+                            if let StreamContentBlock::ToolUse { id, name, input } =
+                                parsed.content_block
                             {
-                                let id = content_block
-                                    .get("id")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_string();
-                                let name = content_block
-                                    .get("name")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_string();
-                                let initial_input = content_block
-                                    .get("input")
+                                let initial_input = input
                                     .map(|input| {
                                         if input.is_object() || input.is_array() {
-                                            serde_json::to_string(input).unwrap_or_default()
+                                            serde_json::to_string(&input).unwrap_or_default()
                                         } else {
                                             String::new()
                                         }
@@ -563,16 +571,18 @@ impl LlmProvider for Anthropic {
                             }
                         }
                         "content_block_stop" => {
-                            let parsed: Value = match serde_json::from_str(&message.data) {
-                                Ok(parsed) => parsed,
-                                Err(error) => {
-                                    let _ =
-                                        sender.send(Err(Error::parse(message.data, error))).await;
-                                    let _ = event_source.close();
-                                    return;
-                                }
-                            };
-                            let index = parsed.get("index").and_then(Value::as_u64).unwrap_or(0);
+                            let parsed: ContentBlockStopEvent =
+                                match serde_json::from_str(&message.data) {
+                                    Ok(parsed) => parsed,
+                                    Err(error) => {
+                                        let _ = sender
+                                            .send(Err(Error::parse(message.data, error)))
+                                            .await;
+                                        let _ = event_source.close();
+                                        return;
+                                    }
+                                };
+                            let index = parsed.index;
                             if let Some((id, name, input)) = pending_tool_calls.remove(&index) {
                                 let arguments = if input.trim().is_empty() {
                                     serde_json::json!({})

@@ -308,6 +308,40 @@ pub struct EvalListResponse {
     pub has_more: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct ResponseOutputTextDeltaEvent {
+    delta: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ResponseOutputItemEvent {
+    item: ResponseOutputItem,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ResponseOutputItem {
+    id: String,
+    #[serde(default)]
+    call_id: Option<String>,
+    #[serde(rename = "type")]
+    item_type: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ResponseFunctionCallArgumentsDeltaEvent {
+    item_id: String,
+    delta: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ResponseCompletedEvent {
+    response: Value,
+}
+
 impl OpenAI {
     pub fn new(config: OpenAIConfig) -> Self {
         let client = Client::builder()
@@ -516,60 +550,47 @@ impl LlmProvider for OpenAI {
                     Ok(Event::Open) => {}
                     Ok(Event::Message(message)) => match message.event.as_str() {
                         "response.output_text.delta" => {
-                            let parsed: Value = match serde_json::from_str(&message.data) {
-                                Ok(parsed) => parsed,
-                                Err(error) => {
-                                    let _ =
-                                        sender.send(Err(Error::parse(message.data, error))).await;
-                                    let _ = event_source.close();
-                                    return;
-                                }
-                            };
-                            if let Some(text) = parsed.get("delta").and_then(Value::as_str)
-                                && sender
-                                    .send(Ok(RawCompletionEvent::TextDelta {
-                                        text: text.to_string(),
-                                    }))
-                                    .await
-                                    .is_err()
+                            let parsed: ResponseOutputTextDeltaEvent =
+                                match serde_json::from_str(&message.data) {
+                                    Ok(parsed) => parsed,
+                                    Err(error) => {
+                                        let _ = sender
+                                            .send(Err(Error::parse(message.data, error)))
+                                            .await;
+                                        let _ = event_source.close();
+                                        return;
+                                    }
+                                };
+                            if sender
+                                .send(Ok(RawCompletionEvent::TextDelta { text: parsed.delta }))
+                                .await
+                                .is_err()
                             {
                                 let _ = event_source.close();
                                 return;
                             }
                         }
                         "response.output_item.added" | "response.output_item.done" => {
-                            let parsed: Value = match serde_json::from_str(&message.data) {
-                                Ok(parsed) => parsed,
-                                Err(error) => {
-                                    let _ =
-                                        sender.send(Err(Error::parse(message.data, error))).await;
-                                    let _ = event_source.close();
-                                    return;
-                                }
-                            };
-                            if let Some(item) = parsed.get("item")
-                                && item.get("type").and_then(Value::as_str) == Some("function_call")
-                            {
-                                let item_id = item
-                                    .get("id")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_string();
-                                let call_id = item
-                                    .get("call_id")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or(&item_id)
-                                    .to_string();
-                                let name = item
-                                    .get("name")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_string();
-                                let arguments = item
-                                    .get("arguments")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_string();
+                            let parsed: ResponseOutputItemEvent =
+                                match serde_json::from_str(&message.data) {
+                                    Ok(parsed) => parsed,
+                                    Err(error) => {
+                                        let _ = sender
+                                            .send(Err(Error::parse(message.data, error)))
+                                            .await;
+                                        let _ = event_source.close();
+                                        return;
+                                    }
+                                };
+                            if parsed.item.item_type == "function_call" {
+                                let item_id = parsed.item.id;
+                                let call_id = parsed
+                                    .item
+                                    .call_id
+                                    .clone()
+                                    .unwrap_or_else(|| item_id.clone());
+                                let name = parsed.item.name.unwrap_or_default();
+                                let arguments = parsed.item.arguments.unwrap_or_default();
                                 function_calls.insert(
                                     item_id.clone(),
                                     (call_id.clone(), name.clone(), arguments.clone()),
@@ -596,35 +617,35 @@ impl LlmProvider for OpenAI {
                             }
                         }
                         "response.function_call_arguments.delta" => {
-                            let parsed: Value = match serde_json::from_str(&message.data) {
-                                Ok(parsed) => parsed,
-                                Err(error) => {
-                                    let _ =
-                                        sender.send(Err(Error::parse(message.data, error))).await;
-                                    let _ = event_source.close();
-                                    return;
-                                }
-                            };
-                            if let (Some(item_id), Some(delta)) = (
-                                parsed.get("item_id").and_then(Value::as_str),
-                                parsed.get("delta").and_then(Value::as_str),
-                            ) && let Some((_, _, arguments)) = function_calls.get_mut(item_id)
+                            let parsed: ResponseFunctionCallArgumentsDeltaEvent =
+                                match serde_json::from_str(&message.data) {
+                                    Ok(parsed) => parsed,
+                                    Err(error) => {
+                                        let _ = sender
+                                            .send(Err(Error::parse(message.data, error)))
+                                            .await;
+                                        let _ = event_source.close();
+                                        return;
+                                    }
+                                };
+                            if let Some((_, _, arguments)) = function_calls.get_mut(&parsed.item_id)
                             {
-                                arguments.push_str(delta);
+                                arguments.push_str(&parsed.delta);
                             }
                         }
                         "response.completed" => {
-                            let parsed: Value = match serde_json::from_str(&message.data) {
-                                Ok(parsed) => parsed,
-                                Err(error) => {
-                                    let _ =
-                                        sender.send(Err(Error::parse(message.data, error))).await;
-                                    let _ = event_source.close();
-                                    return;
-                                }
-                            };
-                            let response = parsed.get("response").cloned().unwrap_or(parsed);
-                            let final_response = match parse_responses_response(response) {
+                            let parsed: ResponseCompletedEvent =
+                                match serde_json::from_str(&message.data) {
+                                    Ok(parsed) => parsed,
+                                    Err(error) => {
+                                        let _ = sender
+                                            .send(Err(Error::parse(message.data, error)))
+                                            .await;
+                                        let _ = event_source.close();
+                                        return;
+                                    }
+                                };
+                            let final_response = match parse_responses_response(parsed.response) {
                                 Ok(response) => response,
                                 Err(error) => {
                                     let _ = sender.send(Err(error)).await;
