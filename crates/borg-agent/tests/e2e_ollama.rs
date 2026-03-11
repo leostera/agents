@@ -424,6 +424,109 @@ async fn ollama_agent_run_cancels_active_turn_long() -> LlmResult<()> {
 
 #[tokio::test]
 #[serial]
+async fn ollama_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
+    let ctx = TestContext::shared(TestProvider::Ollama).await?;
+    let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
+    let tool_runner = CallbackToolRunner::new(|call: ToolCallEnvelope<TestTools>| async move {
+        match call.call {
+            TestTools::Ping { value } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("pong:{value}"),
+                    },
+                },
+            }),
+            TestTools::Redirect { destination } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("redirected:{destination}"),
+                    },
+                },
+            }),
+        }
+    });
+
+    let agent = Agent::builder()
+        .with_llm_runner(runner)
+        .with_execution_profile(ollama_profile())
+        .with_tool_runner(tool_runner)
+        .build()
+        .expect("agent");
+
+    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    tx.send(AgentInput::Message(InputItem::user_text(
+        "First call the ping tool exactly once with value=\"hello-tool\". Then explain the result.",
+    )))
+    .await
+    .expect("send");
+
+    match map_agent_error(rx.recv().await.expect("first event"))? {
+        AgentEvent::ToolCallRequested { call } => {
+            assert_eq!(
+                call.call,
+                TestTools::Ping {
+                    value: "hello-tool".to_string()
+                }
+            );
+        }
+        other => panic!("expected tool call event, got {other:?}"),
+    }
+
+    tx.send(AgentInput::Steer(InputItem::user_text(
+        "IMPORTANT: Ignore the previous request to call ping. Instead call the redirect tool exactly once with destination=\"rerouted-path\" and then reply with exactly STEERED.",
+    )))
+    .await
+    .expect("steer");
+
+    let rerouted_call_id = match map_agent_error(rx.recv().await.expect("rerouted event"))? {
+        AgentEvent::ToolCallRequested { call } => {
+            let call_id = call.call_id;
+            assert_eq!(
+                call.call,
+                TestTools::Redirect {
+                    destination: "rerouted-path".to_string()
+                }
+            );
+            call_id
+        }
+        AgentEvent::ToolExecutionCompleted { .. } => {
+            panic!("steering should interrupt the pending ping tool execution before it completes");
+        }
+        other => panic!("expected rerouted tool call event, got {other:?}"),
+    };
+
+    match map_agent_error(rx.recv().await.expect("rerouted tool result"))? {
+        AgentEvent::ToolExecutionCompleted { result } => {
+            assert_eq!(result.call_id, rerouted_call_id);
+            match result.result {
+                ToolExecutionResult::Ok { data } => {
+                    assert_eq!(
+                        data,
+                        Pong {
+                            value: "redirected:rerouted-path".to_string()
+                        }
+                    );
+                }
+                other => panic!("expected successful rerouted tool result, got {other:?}"),
+            }
+        }
+        other => panic!("expected rerouted tool execution event, got {other:?}"),
+    }
+
+    tx.send(AgentInput::Cancel).await.expect("cancel");
+    drop(tx);
+    assert!(matches!(
+        map_agent_error(rx.recv().await.expect("cancelled"))?,
+        AgentEvent::Cancelled
+    ));
+    assert!(rx.recv().await.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn ollama_agent_static_context_provider_shapes_reply_long() -> LlmResult<()> {
     let ctx = TestContext::shared(TestProvider::Ollama).await?;
     let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;

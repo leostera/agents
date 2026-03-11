@@ -558,6 +558,138 @@ async fn openai_agent_run_cancels_active_turn_long() -> LlmResult<()> {
 }
 
 #[tokio::test]
+async fn openai_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
+    let runner = runner_with_openai_model(&openai_model())?;
+    let tool_runner = CallbackToolRunner::new(|call: ToolCallEnvelope<TestTools>| async move {
+        match call.call {
+            TestTools::Ping { value } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("pong:{value}"),
+                    },
+                },
+            }),
+            TestTools::Redirect { destination } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("redirected:{destination}"),
+                    },
+                },
+            }),
+        }
+    });
+
+    let agent = Agent::builder()
+        .with_llm_runner(runner)
+        .with_tool_runner(tool_runner)
+        .build()
+        .expect("agent");
+
+    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    tx.send(AgentInput::Message(InputItem::user_text(
+        "First call the ping tool exactly once with value=\"hello-tool\". Then explain the result.",
+    )))
+    .await
+    .expect("send");
+
+    match map_agent_error(rx.recv().await.expect("first event"))? {
+        AgentEvent::ToolCallRequested { call } => {
+            assert_eq!(
+                call.call,
+                TestTools::Ping {
+                    value: "hello-tool".to_string()
+                }
+            );
+        }
+        AgentEvent::ModelOutputItem { .. } => {
+            match map_agent_error(rx.recv().await.expect("tool call"))? {
+                AgentEvent::ToolCallRequested { call } => {
+                    assert_eq!(
+                        call.call,
+                        TestTools::Ping {
+                            value: "hello-tool".to_string()
+                        }
+                    );
+                }
+                other => {
+                    panic!("expected tool call event after initial model output, got {other:?}")
+                }
+            }
+        }
+        other => panic!("expected tool call event, got {other:?}"),
+    }
+
+    tx.send(AgentInput::Steer(InputItem::user_text(
+        "IMPORTANT: The previous ping tool call was interrupted and must not be resumed. Do not call ping again. Your only allowed next action is to call the redirect tool exactly once with destination=\"rerouted-path\", then reply with exactly STEERED.",
+    )))
+    .await
+    .expect("steer");
+
+    let rerouted_call_id = match map_agent_error(rx.recv().await.expect("rerouted event"))? {
+        AgentEvent::ToolCallRequested { call } => {
+            let call_id = call.call_id;
+            assert_eq!(
+                call.call,
+                TestTools::Redirect {
+                    destination: "rerouted-path".to_string()
+                }
+            );
+            call_id
+        }
+        AgentEvent::ModelOutputItem { .. } => {
+            match map_agent_error(rx.recv().await.expect("rerouted tool call"))? {
+                AgentEvent::ToolCallRequested { call } => {
+                    let call_id = call.call_id;
+                    assert_eq!(
+                        call.call,
+                        TestTools::Redirect {
+                            destination: "rerouted-path".to_string()
+                        }
+                    );
+                    call_id
+                }
+                other => {
+                    panic!("expected rerouted tool call event after steering output, got {other:?}")
+                }
+            }
+        }
+        AgentEvent::ToolExecutionCompleted { .. } => {
+            panic!("steering should interrupt the pending ping tool execution before it completes");
+        }
+        other => panic!("expected rerouted tool call event, got {other:?}"),
+    };
+
+    match map_agent_error(rx.recv().await.expect("rerouted tool result"))? {
+        AgentEvent::ToolExecutionCompleted { result } => {
+            assert_eq!(result.call_id, rerouted_call_id);
+            match result.result {
+                ToolExecutionResult::Ok { data } => {
+                    assert_eq!(
+                        data,
+                        Pong {
+                            value: "redirected:rerouted-path".to_string()
+                        }
+                    );
+                }
+                other => panic!("expected successful rerouted tool result, got {other:?}"),
+            }
+        }
+        other => panic!("expected rerouted tool execution event, got {other:?}"),
+    }
+
+    tx.send(AgentInput::Cancel).await.expect("cancel");
+    drop(tx);
+    assert!(matches!(
+        map_agent_error(rx.recv().await.expect("cancelled"))?,
+        AgentEvent::Cancelled
+    ));
+    assert!(rx.recv().await.is_none());
+    Ok(())
+}
+
+#[tokio::test]
 async fn openai_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
     let runner = runner_with_openai_model(&openai_model())?;
     let tool_runner = CallbackToolRunner::new(|call: ToolCallEnvelope<TestTools>| async move {
