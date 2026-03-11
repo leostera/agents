@@ -1,10 +1,11 @@
 use std::any::TypeId;
+use std::collections::VecDeque;
+use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use borg_llm::completion::{
-    CompletionRequest, CompletionResponse, FinishReason, InputItem, ModelSelector, OutputContent,
-    OutputItem, ResponseMode, TokenLimit, TopK, TopP,
+    CompletionRequest, CompletionResponse, InputItem, ModelSelector, OutputContent, OutputItem,
+    ResponseMode, TokenLimit, TopK, TopP,
 };
 use borg_llm::response::TypedResponse;
 use borg_llm::runner::LlmRunner;
@@ -13,7 +14,6 @@ use borg_llm::{completion::Temperature, completion::ToolChoice};
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio::sync::Mutex;
 
 use crate::error::{AgentError, AgentResult};
 use crate::tools::{NoToolRunner, ToolCallEnvelope, ToolResultEnvelope, ToolRunner};
@@ -65,70 +65,40 @@ impl ExecutionProfile {
 
 #[derive(Debug, Clone)]
 pub enum AgentEvent<C, T, R> {
-    InputAccepted {
-        item: InputItem,
-    },
-    TurnStarted {
-        turn: u64,
-    },
-    ModelOutputItem {
-        item: OutputItem<C, R>,
-    },
-    ToolCallRequested {
-        call: ToolCallEnvelope<C>,
-    },
-    ToolExecutionStarted {
-        call: ToolCallEnvelope<C>,
-    },
-    ToolExecutionCompleted {
-        result: ToolResultEnvelope<T>,
-    },
-    TurnCompleted {
-        turn: u64,
-        finish_reason: FinishReason,
-    },
-    Completed {
-        reply: R,
-    },
-    Cancelled,
-}
-
-#[derive(Debug, Clone)]
-pub enum TurnOutcome<R> {
+    ModelOutputItem { item: OutputItem<C, R> },
+    ToolCallRequested { call: ToolCallEnvelope<C> },
+    ToolExecutionCompleted { result: ToolResultEnvelope<T> },
     Completed { reply: R },
     Cancelled,
 }
 
-#[derive(Debug, Clone)]
-pub struct TurnReport<C, T, R> {
-    pub turn: u64,
-    pub events: Vec<AgentEvent<C, T, R>>,
-    pub outcome: TurnOutcome<R>,
-}
-
-pub struct AgentBuilder<C, T> {
+pub struct AgentBuilder<M, C, T, R> {
     llm: Option<LlmRunner>,
     execution_profile: ExecutionProfile,
     tool_runner: Option<Arc<dyn ToolRunner<C, T>>>,
+    _message: PhantomData<M>,
+    _response: PhantomData<R>,
 }
 
-impl AgentBuilder<(), ()> {
+impl AgentBuilder<InputItem, (), (), String> {
     pub fn new() -> Self {
         Self {
             llm: None,
             execution_profile: ExecutionProfile::default(),
             tool_runner: Some(Arc::new(NoToolRunner)),
+            _message: PhantomData,
+            _response: PhantomData,
         }
     }
 }
 
-impl Default for AgentBuilder<(), ()> {
+impl Default for AgentBuilder<InputItem, (), (), String> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C, T> AgentBuilder<C, T>
+impl<M, C, T, R> AgentBuilder<M, C, T, R>
 where
     C: Clone + Send + Sync + 'static,
     T: Clone + Serialize + Send + Sync + 'static,
@@ -143,20 +113,50 @@ where
         self
     }
 
-    pub fn with_tool_runner<C2, T2, R>(self, tool_runner: R) -> AgentBuilder<C2, T2>
+    pub fn with_message_type<M2>(self) -> AgentBuilder<M2, C, T, R> {
+        AgentBuilder {
+            llm: self.llm,
+            execution_profile: self.execution_profile,
+            tool_runner: self.tool_runner,
+            _message: PhantomData,
+            _response: PhantomData,
+        }
+    }
+
+    pub fn with_response_type<R2>(self) -> AgentBuilder<M, C, T, R2> {
+        AgentBuilder {
+            llm: self.llm,
+            execution_profile: self.execution_profile,
+            tool_runner: self.tool_runner,
+            _message: PhantomData,
+            _response: PhantomData,
+        }
+    }
+
+    pub fn with_tool_runner<C2, T2, Runner>(self, tool_runner: Runner) -> AgentBuilder<M, C2, T2, R>
     where
         C2: Clone + Send + Sync + 'static,
         T2: Clone + Serialize + Send + Sync + 'static,
-        R: ToolRunner<C2, T2> + 'static,
+        Runner: ToolRunner<C2, T2> + 'static,
     {
         AgentBuilder {
             llm: self.llm,
             execution_profile: self.execution_profile,
             tool_runner: Some(Arc::new(tool_runner)),
+            _message: PhantomData,
+            _response: PhantomData,
         }
     }
+}
 
-    pub fn build(self) -> AgentResult<Agent<C, T>> {
+impl<M, C, T, R> AgentBuilder<M, C, T, R>
+where
+    M: Into<InputItem> + Send + 'static,
+    C: TypedTool + Clone + Send + Sync + 'static,
+    T: Clone + Serialize + Send + Sync + 'static,
+    R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
+{
+    pub fn build(self) -> AgentResult<Agent<M, C, T, R>> {
         let llm = self.llm.ok_or(AgentError::Internal {
             message: "AgentBuilder requires an llm runner".to_string(),
         })?;
@@ -168,148 +168,212 @@ where
             llm,
             execution_profile: self.execution_profile,
             tool_runner,
-            transcript: Mutex::new(Vec::new()),
-            next_turn: AtomicU64::new(1),
+            transcript: Vec::new(),
+            next_turn: 1,
+            active_turn: None,
+            _message: PhantomData,
+            _response: PhantomData,
         })
     }
 }
 
-pub struct Agent<C, T> {
+pub struct Agent<M, C, T, R> {
     llm: LlmRunner,
     execution_profile: ExecutionProfile,
     tool_runner: Arc<dyn ToolRunner<C, T>>,
-    transcript: Mutex<Vec<InputItem>>,
-    next_turn: AtomicU64,
+    transcript: Vec<InputItem>,
+    next_turn: u64,
+    active_turn: Option<ActiveTurn<C, T, R>>,
+    _message: PhantomData<M>,
+    _response: PhantomData<R>,
 }
 
-impl<C, T> Agent<C, T>
+struct ActiveTurn<C, T, R> {
+    turn: u64,
+    profile: ExecutionProfile,
+    state: TurnState<C, T, R>,
+}
+
+enum TurnState<C, T, R> {
+    CancelPending,
+    NeedLlm,
+    ExecuteTool {
+        current: ToolCallEnvelope<C>,
+        remaining: VecDeque<ToolCallEnvelope<C>>,
+    },
+    EmitQueue {
+        queue: VecDeque<AgentEvent<C, T, R>>,
+        next: Box<TurnState<C, T, R>>,
+    },
+    Done,
+}
+
+impl<M, C, T, R> Agent<M, C, T, R>
 where
+    M: Into<InputItem> + Send + 'static,
     C: TypedTool + Clone + Send + Sync + 'static,
     T: Clone + Serialize + Send + Sync + 'static,
+    R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
 {
-    pub async fn send<M, R>(&self, input: AgentInput<M>) -> AgentResult<TurnReport<C, T, R>>
-    where
-        M: Into<InputItem> + Send,
-        R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
-    {
-        self.run_turn(input, None).await
+    pub async fn send(&mut self, input: AgentInput<M>) -> AgentResult<()> {
+        let profile = self.execution_profile.clone();
+        self.send_with_profile(input, profile).await
     }
 
-    pub async fn send_with_profile<M, R>(
-        &self,
+    pub async fn send_with_profile(
+        &mut self,
         input: AgentInput<M>,
         profile: ExecutionProfile,
-    ) -> AgentResult<TurnReport<C, T, R>>
-    where
-        M: Into<InputItem> + Send,
-        R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
-    {
-        self.run_turn(input, Some(profile)).await
+    ) -> AgentResult<()> {
+        if self.active_turn.is_some() {
+            return Err(AgentError::InvalidInput {
+                reason: "cannot send a new input while a turn is in progress".to_string(),
+            });
+        }
+
+        let turn = self.next_turn;
+        self.next_turn += 1;
+
+        let state = match input {
+            AgentInput::Cancel => TurnState::CancelPending,
+            AgentInput::Message(message) => {
+                self.transcript.push(message.into());
+                TurnState::NeedLlm
+            }
+        };
+
+        self.active_turn = Some(ActiveTurn {
+            turn,
+            profile,
+            state,
+        });
+
+        Ok(())
     }
 
-    pub async fn run_turn<M, R>(
-        &self,
-        input: AgentInput<M>,
-        profile_override: Option<ExecutionProfile>,
-    ) -> AgentResult<TurnReport<C, T, R>>
-    where
-        M: Into<InputItem> + Send,
-        R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
-    {
-        let turn = self.next_turn.fetch_add(1, Ordering::SeqCst);
-        let mut events = vec![AgentEvent::TurnStarted { turn }];
+    pub async fn next(&mut self) -> AgentResult<Option<AgentEvent<C, T, R>>> {
+        loop {
+            let Some(mut active_turn) = self.active_turn.take() else {
+                return Ok(None);
+            };
 
-        let profile = profile_override.unwrap_or_else(|| self.execution_profile.clone());
+            let state = std::mem::replace(&mut active_turn.state, TurnState::Done);
 
-        match input {
-            AgentInput::Cancel => {
-                events.push(AgentEvent::Cancelled);
-                Ok(TurnReport {
-                    turn,
-                    events,
-                    outcome: TurnOutcome::Cancelled,
-                })
-            }
-            AgentInput::Message(message) => {
-                let item = message.into();
-                events.push(AgentEvent::InputAccepted { item: item.clone() });
-
-                {
-                    let mut transcript = self.transcript.lock().await;
-                    transcript.push(item);
+            match state {
+                TurnState::Done => {
+                    return Ok(None);
                 }
+                TurnState::CancelPending => {
+                    return Ok(Some(AgentEvent::Cancelled));
+                }
+                TurnState::NeedLlm => {
+                    let request =
+                        build_request::<C, R>(self.transcript.clone(), &active_turn.profile);
+                    let response = self.llm.chat::<C, R>(request).await?;
+                    active_turn.state = self.turn_state_from_response(response).await?;
+                    self.active_turn = Some(active_turn);
+                }
+                TurnState::ExecuteTool {
+                    current,
+                    mut remaining,
+                } => {
+                    let result = self.tool_runner.run(current).await?;
+                    let tool_result_item = encode_tool_result(&result)?;
+                    self.transcript.push(tool_result_item);
 
-                loop {
-                    let request = {
-                        let transcript = self.transcript.lock().await;
-                        build_request::<C, R>(transcript.clone(), &profile)
+                    active_turn.state = if let Some(next_call) = remaining.pop_front() {
+                        TurnState::EmitQueue {
+                            queue: VecDeque::from([AgentEvent::ToolCallRequested {
+                                call: next_call.clone(),
+                            }]),
+                            next: Box::new(TurnState::ExecuteTool {
+                                current: next_call,
+                                remaining,
+                            }),
+                        }
+                    } else {
+                        TurnState::NeedLlm
                     };
 
-                    let response = self.llm.chat::<C, R>(request).await?;
-
-                    for item in response.output.iter().cloned() {
-                        events.push(AgentEvent::ModelOutputItem { item });
+                    self.active_turn = Some(active_turn);
+                    return Ok(Some(AgentEvent::ToolExecutionCompleted { result }));
+                }
+                TurnState::EmitQueue { mut queue, next } => {
+                    if let Some(event) = queue.pop_front() {
+                        active_turn.state = if queue.is_empty() {
+                            *next
+                        } else {
+                            TurnState::EmitQueue { queue, next }
+                        };
+                        self.active_turn = Some(active_turn);
+                        return Ok(Some(event));
                     }
 
-                    let tool_calls = extract_tool_calls(&response);
-                    if !tool_calls.is_empty() {
-                        for call in tool_calls {
-                            let envelope = ToolCallEnvelope {
-                                call_id: call.id.clone(),
-                                call: call.tool,
-                            };
-                            events.push(AgentEvent::ToolCallRequested {
-                                call: envelope.clone(),
-                            });
-                            events.push(AgentEvent::ToolExecutionStarted {
-                                call: envelope.clone(),
-                            });
-
-                            let result = self.tool_runner.run(envelope).await?;
-                            let tool_result_item = encode_tool_result(&result)?;
-
-                            {
-                                let mut transcript = self.transcript.lock().await;
-                                transcript.push(tool_result_item);
-                            }
-
-                            events.push(AgentEvent::ToolExecutionCompleted { result });
-                        }
-
-                        continue;
-                    }
-
-                    let reply = extract_reply(&response)?;
-                    {
-                        let mut transcript = self.transcript.lock().await;
-                        transcript.push(assistant_item_for_reply(&reply)?);
-                    }
-
-                    events.push(AgentEvent::TurnCompleted {
-                        turn,
-                        finish_reason: response.finish_reason.clone(),
-                    });
-                    events.push(AgentEvent::Completed {
-                        reply: reply.clone(),
-                    });
-
-                    return Ok(TurnReport {
-                        turn,
-                        events,
-                        outcome: TurnOutcome::Completed { reply },
-                    });
+                    active_turn.state = *next;
+                    self.active_turn = Some(active_turn);
                 }
             }
         }
     }
 
-    pub async fn transcript(&self) -> Vec<InputItem> {
-        self.transcript.lock().await.clone()
+    pub fn transcript(&self) -> &[InputItem] {
+        &self.transcript
+    }
+
+    pub fn active_turn(&self) -> Option<u64> {
+        self.active_turn.as_ref().map(|turn| turn.turn)
+    }
+
+    async fn turn_state_from_response(
+        &mut self,
+        response: CompletionResponse<C, R>,
+    ) -> AgentResult<TurnState<C, T, R>> {
+        let non_tool_items = response
+            .output
+            .iter()
+            .filter(|item| !matches!(item, OutputItem::ToolCall { .. }))
+            .cloned()
+            .map(|item| AgentEvent::ModelOutputItem { item })
+            .collect::<Vec<_>>();
+
+        let tool_calls = extract_tool_calls(&response)
+            .into_iter()
+            .map(|call| ToolCallEnvelope {
+                call_id: call.id,
+                call: call.tool,
+            })
+            .collect::<VecDeque<_>>();
+
+        if let Some(current) = tool_calls.front().cloned() {
+            let mut queue = VecDeque::from(non_tool_items);
+            queue.push_back(AgentEvent::ToolCallRequested {
+                call: current.clone(),
+            });
+
+            let mut remaining = tool_calls;
+            let _ = remaining.pop_front();
+
+            return Ok(TurnState::EmitQueue {
+                queue,
+                next: Box::new(TurnState::ExecuteTool { current, remaining }),
+            });
+        }
+
+        let reply = extract_reply(&response)?;
+        self.transcript.push(assistant_item_for_reply(&reply)?);
+
+        let mut queue = VecDeque::from(non_tool_items);
+        queue.push_back(AgentEvent::Completed { reply });
+
+        Ok(TurnState::EmitQueue {
+            queue,
+            next: Box::new(TurnState::Done),
+        })
     }
 }
 
-impl Agent<(), ()> {
-    pub fn builder() -> AgentBuilder<(), ()> {
+impl Agent<InputItem, (), (), String> {
+    pub fn builder() -> AgentBuilder<InputItem, (), (), String> {
         AgentBuilder::new()
     }
 }
@@ -431,8 +495,8 @@ mod tests {
     use async_trait::async_trait;
     use borg_llm::capability::Capability;
     use borg_llm::completion::{
-        ProviderType, RawCompletionRequest, RawCompletionResponse, RawInputItem, RawOutputContent,
-        RawOutputItem, Role,
+        FinishReason, ProviderType, RawCompletionRequest, RawCompletionResponse, RawInputItem,
+        RawOutputContent, RawOutputItem, Role,
     };
     use borg_llm::error::{Error as LlmError, LlmResult};
     use borg_llm::model::Model;
@@ -494,20 +558,20 @@ mod tests {
     }
 
     struct FakeProvider {
-        responses: Mutex<VecDeque<LlmResult<RawCompletionResponse>>>,
-        requests: Mutex<Vec<RawCompletionRequest>>,
+        responses: std::sync::Mutex<VecDeque<LlmResult<RawCompletionResponse>>>,
+        requests: std::sync::Mutex<Vec<RawCompletionRequest>>,
     }
 
     impl FakeProvider {
         fn with_responses(responses: Vec<LlmResult<RawCompletionResponse>>) -> Self {
             Self {
-                responses: Mutex::new(VecDeque::from(responses)),
-                requests: Mutex::new(Vec::new()),
+                responses: std::sync::Mutex::new(VecDeque::from(responses)),
+                requests: std::sync::Mutex::new(Vec::new()),
             }
         }
 
-        async fn take_requests(&self) -> Vec<RawCompletionRequest> {
-            self.requests.lock().await.clone()
+        fn take_requests(&self) -> Vec<RawCompletionRequest> {
+            self.requests.lock().expect("requests").clone()
         }
     }
 
@@ -530,12 +594,16 @@ mod tests {
         }
 
         async fn chat_raw(&self, req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
-            self.requests.lock().await.push(req);
-            self.responses.lock().await.pop_front().unwrap_or_else(|| {
-                Err(LlmError::Internal {
-                    message: "no fake response queued".to_string(),
+            self.requests.lock().expect("requests").push(req);
+            self.responses
+                .lock()
+                .expect("responses")
+                .pop_front()
+                .unwrap_or_else(|| {
+                    Err(LlmError::Internal {
+                        message: "no fake response queued".to_string(),
+                    })
                 })
-            })
         }
 
         async fn transcribe(
@@ -635,7 +703,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_records_string_input_and_reply_in_transcript() {
-        let agent = Agent::builder()
+        let mut agent = Agent::builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(
@@ -646,23 +714,26 @@ mod tests {
             .build()
             .expect("agent");
 
-        let report = agent
-            .send::<_, String>(AgentInput::Message(InputItem::user_text("hello")))
+        agent
+            .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
-
         assert!(matches!(
-            report.outcome,
-            TurnOutcome::Completed { ref reply } if reply == "hello back"
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ModelOutputItem { .. })
         ));
-
-        let transcript = agent.transcript().await;
-        assert_eq!(transcript.len(), 2);
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::Completed { reply }) if reply == "hello back"
+        ));
+        assert!(agent.next().await.expect("done").is_none());
+        assert_eq!(agent.transcript().len(), 2);
     }
 
     #[tokio::test]
     async fn send_decodes_typed_response() {
-        let agent = Agent::builder()
+        let mut agent = Agent::builder()
+            .with_response_type::<EchoResponse>()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(
@@ -673,15 +744,19 @@ mod tests {
             .build()
             .expect("agent");
 
-        let report = agent
-            .send::<_, EchoResponse>(AgentInput::Message(InputItem::user_text("hello")))
+        agent
+            .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
-
         assert!(matches!(
-            report.outcome,
-            TurnOutcome::Completed { reply: EchoResponse { ref value } } if value == "typed-ok"
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ModelOutputItem { .. })
         ));
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::Completed { reply: EchoResponse { value } }) if value == "typed-ok"
+        ));
+        assert!(agent.next().await.expect("done").is_none());
     }
 
     #[tokio::test]
@@ -694,35 +769,36 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let agent = Agent::builder()
-            .with_llm_runner(runner)
+        let mut agent = Agent::builder()
             .with_tool_runner(ping_tool_runner())
+            .with_llm_runner(runner)
             .build()
             .expect("agent");
 
-        let report = agent
-            .send::<_, String>(AgentInput::Message(InputItem::user_text("ping please")))
+        agent
+            .send(AgentInput::Message(InputItem::user_text("ping please")))
             .await
             .expect("turn");
 
         assert!(matches!(
-            report.outcome,
-            TurnOutcome::Completed { ref reply } if reply == "all done"
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ToolCallRequested { call }) if call.call_id == "call_ping_1"
         ));
-        assert!(
-            report
-                .events
-                .iter()
-                .any(|event| matches!(event, AgentEvent::ToolCallRequested { .. }))
-        );
-        assert!(
-            report
-                .events
-                .iter()
-                .any(|event| matches!(event, AgentEvent::ToolExecutionCompleted { .. }))
-        );
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ToolExecutionCompleted { result }) if result.call_id == "call_ping_1"
+        ));
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ModelOutputItem { .. })
+        ));
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::Completed { reply }) if reply == "all done"
+        ));
+        assert!(agent.next().await.expect("done").is_none());
 
-        let requests = provider.take_requests().await;
+        let requests = provider.take_requests();
         assert_eq!(requests.len(), 2);
         assert!(matches!(
             requests[1].input.last(),
@@ -751,23 +827,36 @@ mod tests {
                 })
             });
 
-        let agent = Agent::builder()
-            .with_llm_runner(runner)
+        let mut agent = Agent::builder()
             .with_tool_runner(failing_runner)
+            .with_llm_runner(runner)
             .build()
             .expect("agent");
 
-        let report = agent
-            .send::<_, String>(AgentInput::Message(InputItem::user_text("ping please")))
+        agent
+            .send(AgentInput::Message(InputItem::user_text("ping please")))
             .await
             .expect("turn");
-
         assert!(matches!(
-            report.outcome,
-            TurnOutcome::Completed { ref reply } if reply == "tool error observed"
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ToolCallRequested { .. })
         ));
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ToolExecutionCompleted { result })
+                if matches!(result.result, ToolExecutionResult::Error { .. })
+        ));
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ModelOutputItem { .. })
+        ));
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::Completed { reply }) if reply == "tool error observed"
+        ));
+        assert!(agent.next().await.expect("done").is_none());
 
-        let requests = provider.take_requests().await;
+        let requests = provider.take_requests();
         assert!(matches!(
             requests[1].input.last(),
             Some(RawInputItem::ToolResult { content, .. }) if content.contains("ping failed")
@@ -776,7 +865,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancel_does_not_call_llm() {
-        let agent = Agent::builder()
+        let mut agent = Agent::builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![]))
@@ -785,12 +874,12 @@ mod tests {
             .build()
             .expect("agent");
 
-        let report = agent
-            .send::<InputItem, String>(AgentInput::Cancel)
-            .await
-            .expect("turn");
-
-        assert!(matches!(report.outcome, TurnOutcome::Cancelled));
+        agent.send(AgentInput::Cancel).await.expect("turn");
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::Cancelled)
+        ));
+        assert!(agent.next().await.expect("done").is_none());
     }
 
     #[tokio::test]
@@ -802,28 +891,61 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let agent = Agent::builder()
+        let mut agent = Agent::builder()
             .with_llm_runner(runner)
             .build()
             .expect("agent");
 
         agent
-            .send::<_, String>(AgentInput::Message(InputItem::user_text("first")))
+            .send(AgentInput::Message(InputItem::user_text("first")))
             .await
             .expect("first turn");
+        assert!(agent.next().await.expect("next").is_some());
+        assert!(agent.next().await.expect("next").is_some());
+        assert!(agent.next().await.expect("done").is_none());
+
         agent
-            .send::<_, String>(AgentInput::Message(InputItem::user_text("second")))
+            .send(AgentInput::Message(InputItem::user_text("second")))
             .await
             .expect("second turn");
+        assert!(agent.next().await.expect("next").is_some());
+        assert!(agent.next().await.expect("next").is_some());
+        assert!(agent.next().await.expect("done").is_none());
 
-        let requests = provider.take_requests().await;
+        let requests = provider.take_requests();
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].input.len(), 1);
         assert_eq!(requests[1].input.len(), 3);
     }
 
     #[tokio::test]
-    async fn run_turn_returns_error_when_model_returns_no_matching_reply_type() {
+    async fn send_errors_when_turn_already_in_progress() {
+        let mut agent = Agent::builder()
+            .with_llm_runner(
+                LlmRunner::builder()
+                    .add_provider(FakeProvider::with_responses(vec![Ok(
+                        assistant_text_response("hello"),
+                    )]))
+                    .build(),
+            )
+            .build()
+            .expect("agent");
+
+        agent
+            .send(AgentInput::Message(InputItem::user_text("first")))
+            .await
+            .expect("first send");
+
+        let error = agent
+            .send(AgentInput::Message(InputItem::user_text("second")))
+            .await
+            .expect_err("should fail");
+
+        assert!(matches!(error, AgentError::InvalidInput { .. }));
+    }
+
+    #[tokio::test]
+    async fn next_errors_when_model_returns_no_matching_reply_type() {
         let response = RawCompletionResponse {
             provider: ProviderType::OpenAI,
             model: "test-model".to_string(),
@@ -838,7 +960,7 @@ mod tests {
             finish_reason: FinishReason::Stop,
         };
 
-        let agent = Agent::builder()
+        let mut agent = Agent::builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(response)]))
@@ -847,10 +969,11 @@ mod tests {
             .build()
             .expect("agent");
 
-        let error = agent
-            .send::<_, String>(AgentInput::Message(InputItem::user_text("hello")))
+        agent
+            .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
-            .expect_err("should fail");
+            .expect("turn");
+        let error = agent.next().await.expect_err("should fail");
 
         assert!(matches!(error, AgentError::InvalidResponse { .. }));
     }
@@ -863,7 +986,7 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let agent = Agent::builder()
+        let mut agent = Agent::builder()
             .with_llm_runner(runner)
             .build()
             .expect("agent");
@@ -878,14 +1001,14 @@ mod tests {
         };
 
         agent
-            .send_with_profile::<_, String>(
-                AgentInput::Message(InputItem::user_text("hello")),
-                profile,
-            )
+            .send_with_profile(AgentInput::Message(InputItem::user_text("hello")), profile)
             .await
             .expect("turn");
+        assert!(agent.next().await.expect("next").is_some());
+        assert!(agent.next().await.expect("next").is_some());
+        assert!(agent.next().await.expect("done").is_none());
 
-        let requests = provider.take_requests().await;
+        let requests = provider.take_requests();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].token_limit, TokenLimit::Max(42));
     }
@@ -898,17 +1021,21 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let agent = Agent::builder()
+        let mut agent = Agent::builder()
+            .with_response_type::<EchoResponse>()
             .with_llm_runner(runner)
             .build()
             .expect("agent");
 
         agent
-            .send::<_, EchoResponse>(AgentInput::Message(InputItem::user_text("hello")))
+            .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
+        assert!(agent.next().await.expect("next").is_some());
+        assert!(agent.next().await.expect("next").is_some());
+        assert!(agent.next().await.expect("done").is_none());
 
-        let requests = provider.take_requests().await;
+        let requests = provider.take_requests();
         assert!(requests[0].response_format.is_some());
     }
 
@@ -920,23 +1047,26 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let agent = Agent::builder()
+        let mut agent = Agent::builder()
             .with_llm_runner(runner)
             .build()
             .expect("agent");
 
         agent
-            .send::<_, String>(AgentInput::Message(InputItem::user_text("hello")))
+            .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
+        assert!(agent.next().await.expect("next").is_some());
+        assert!(agent.next().await.expect("next").is_some());
+        assert!(agent.next().await.expect("done").is_none());
 
-        let requests = provider.take_requests().await;
+        let requests = provider.take_requests();
         assert!(requests[0].response_format.is_none());
     }
 
     #[tokio::test]
-    async fn turn_events_include_model_output_and_completion() {
-        let agent = Agent::builder()
+    async fn next_emits_model_output_before_completion() {
+        let mut agent = Agent::builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(
@@ -947,22 +1077,25 @@ mod tests {
             .build()
             .expect("agent");
 
-        let report = agent
-            .send::<_, String>(AgentInput::Message(InputItem::user_text("hello")))
+        agent
+            .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
 
-        assert!(
-            report
-                .events
-                .iter()
-                .any(|event| matches!(event, AgentEvent::ModelOutputItem { .. }))
-        );
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::ModelOutputItem { .. })
+        ));
+        assert!(matches!(
+            agent.next().await.expect("next"),
+            Some(AgentEvent::Completed { .. })
+        ));
+        assert!(agent.next().await.expect("done").is_none());
     }
 
     #[tokio::test]
-    async fn send_propagates_llm_errors() {
-        let agent = Agent::builder()
+    async fn next_propagates_llm_errors() {
+        let mut agent = Agent::builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Err(provider_error())]))
@@ -971,10 +1104,12 @@ mod tests {
             .build()
             .expect("agent");
 
-        let error = agent
-            .send::<_, String>(AgentInput::Message(InputItem::user_text("hello")))
+        agent
+            .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
-            .expect_err("should fail");
+            .expect("turn");
+
+        let error = agent.next().await.expect_err("should fail");
 
         match error {
             AgentError::Llm(inner) => {
