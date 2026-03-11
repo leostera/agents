@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod apple;
 pub mod lm_studio;
 pub mod ollama;
 pub mod openai;

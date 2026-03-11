@@ -8,6 +8,7 @@ async-trait.workspace = true
 derive_builder.workspace = true
 dotenvy.workspace = true
 futures-util = "0.3"
+infer.workspace = true
 reqwest.workspace = true
 reqwest-eventsource = "0.6"
 schemars.workspace = true
@@ -15,10 +16,14 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 testcontainers.workspace = true
+tempfile = "3"
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+swift-rs = { version = "1.0.7", features = ["build"] }
 
 [dev-dependencies]
 serial_test.workspace = true

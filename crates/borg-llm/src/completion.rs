@@ -13,6 +13,7 @@ pub enum ProviderType {
     OpenRouter,
     LmStudio,
     Ollama,
+    Apple,
 }
 
 impl ProviderType {
@@ -23,6 +24,7 @@ impl ProviderType {
             ProviderType::OpenRouter => "openrouter",
             ProviderType::LmStudio => "lm_studio",
             ProviderType::Ollama => "ollama",
+            ProviderType::Apple => "apple",
         }
     }
 }

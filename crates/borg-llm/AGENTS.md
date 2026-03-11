@@ -6,6 +6,7 @@ Multi-provider LLM abstraction layer with unified API for chat completions and a
 
 ```
 src/
+├── build.rs          # macOS Swift package linkage for Apple transcription provider
 ├── completion.rs    # Typed public API plus raw provider-neutral request/response types
 ├── transcription.rs  # AudioTranscriptionRequest, AudioTranscriptionResponse, AudioSource
 ├── runner.rs        # LlmRunner typed adapter over raw providers
@@ -16,12 +17,15 @@ src/
 ├── model.rs         # Model struct
 ├── testing/         # Shared Docker-backed test helpers (enabled via `testing` feature)
 └── provider/
+    ├── apple.rs     # Apple Speech transcription provider (macOS only)
     ├── mod.rs       # Object-safe raw provider trait
     ├── openai.rs    # OpenAI raw provider adapter
     ├── anthropic.rs # Anthropic raw provider adapter
     ├── openrouter.rs # OpenRouter raw provider adapter
     ├── lm_studio.rs # LM Studio raw provider adapter
     └── ollama.rs    # Ollama raw provider adapter
+swift/
+└── Sources/BorgLLMApple/apple_transcribe.swift # macOS Speech bridge
 ```
 
 ## Key Patterns
@@ -41,6 +45,7 @@ Each provider implements `LlmProvider` trait with:
 
 Providers do not deserialize user-defined tool/response Rust types. They only translate between raw provider-neutral types and provider wire formats.
 Native streaming parsers are provider-specific, but they must normalize into the shared `RawCompletionEvent` enum.
+The Apple provider is transcription-only and links a local Swift package on macOS via `build.rs`.
 
 ### Response Access Pattern
 OpenAI-compatible APIs return `ChatResponse` with `choices[].message.content`, not `message.content` directly:
