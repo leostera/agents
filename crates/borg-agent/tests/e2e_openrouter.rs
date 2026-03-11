@@ -1,6 +1,6 @@
 use borg_agent::{
-    Agent, AgentEvent, AgentInput, CallbackToolRunner, ToolCallEnvelope, ToolExecutionResult,
-    ToolResultEnvelope,
+    Agent, AgentEvent, AgentInput, AgentResult, CallbackToolRunner, ToolCallEnvelope,
+    ToolExecutionResult, ToolResultEnvelope,
 };
 use borg_llm::completion::InputItem;
 use borg_llm::error::LlmResult;
@@ -126,6 +126,12 @@ where
     }
 }
 
+fn map_agent_error<T>(result: AgentResult<T>) -> LlmResult<T> {
+    result.map_err(|error| borg_llm::error::Error::Internal {
+        message: error.to_string(),
+    })
+}
+
 #[tokio::test]
 async fn openrouter_agent_send_completes_text_turn_long() -> LlmResult<()> {
     let model = openrouter_model();
@@ -158,6 +164,42 @@ async fn openrouter_agent_send_completes_text_turn_long() -> LlmResult<()> {
         other => panic!("expected completed event, got {other:?}"),
     }
     assert!(next_event(&mut agent).await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn openrouter_agent_run_streams_text_turn_long() -> LlmResult<()> {
+    let model = openrouter_model();
+    let runner = runner_with_openrouter_model(&model)?;
+
+    let agent = Agent::builder()
+        .with_llm_runner(runner)
+        .build()
+        .expect("agent");
+
+    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    tx.send(AgentInput::Message(InputItem::user_text(
+        "Reply with a short plain-text acknowledgment. Do not return JSON.",
+    )))
+    .await
+    .expect("send");
+    drop(tx);
+
+    assert!(matches!(
+        map_agent_error(rx.recv().await.expect("model item"))?,
+        AgentEvent::ModelOutputItem { .. }
+    ));
+    match map_agent_error(rx.recv().await.expect("completed"))? {
+        AgentEvent::Completed { reply } => {
+            assert!(
+                !reply.trim().is_empty(),
+                "expected non-empty OpenRouter reply, got {:?}",
+                reply
+            );
+        }
+        other => panic!("expected completed event, got {other:?}"),
+    }
+    assert!(rx.recv().await.is_none());
     Ok(())
 }
 

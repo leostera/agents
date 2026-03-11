@@ -14,6 +14,7 @@ use borg_llm::{completion::Temperature, completion::ToolChoice};
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tokio::sync::mpsc;
 
 use crate::error::{AgentError, AgentResult};
 use crate::tools::{NoToolRunner, ToolCallEnvelope, ToolResultEnvelope, ToolRunner};
@@ -73,9 +74,15 @@ pub enum AgentEvent<C, T, R> {
     Cancelled,
 }
 
+pub type AgentRunInput<M> = mpsc::Sender<AgentInput<M>>;
+pub type AgentRunOutput<C, T, R> = mpsc::Receiver<AgentResult<AgentEvent<C, T, R>>>;
+
+const DEFAULT_RUN_CHANNEL_CAPACITY: usize = 64;
+
 pub struct AgentBuilder<M, C, T, R> {
     llm: Option<LlmRunner>,
     execution_profile: ExecutionProfile,
+    run_channel_capacity: usize,
     tool_runner: Option<Arc<dyn ToolRunner<C, T>>>,
     _message: PhantomData<M>,
     _response: PhantomData<R>,
@@ -86,6 +93,7 @@ impl AgentBuilder<InputItem, (), (), String> {
         Self {
             llm: None,
             execution_profile: ExecutionProfile::default(),
+            run_channel_capacity: DEFAULT_RUN_CHANNEL_CAPACITY,
             tool_runner: Some(Arc::new(NoToolRunner)),
             _message: PhantomData,
             _response: PhantomData,
@@ -114,10 +122,16 @@ where
         self
     }
 
+    pub fn with_run_channel_capacity(mut self, capacity: usize) -> Self {
+        self.run_channel_capacity = capacity.max(1);
+        self
+    }
+
     pub fn with_message_type<M2>(self) -> AgentBuilder<M2, C, T, R> {
         AgentBuilder {
             llm: self.llm,
             execution_profile: self.execution_profile,
+            run_channel_capacity: self.run_channel_capacity,
             tool_runner: self.tool_runner,
             _message: PhantomData,
             _response: PhantomData,
@@ -128,6 +142,7 @@ where
         AgentBuilder {
             llm: self.llm,
             execution_profile: self.execution_profile,
+            run_channel_capacity: self.run_channel_capacity,
             tool_runner: self.tool_runner,
             _message: PhantomData,
             _response: PhantomData,
@@ -143,6 +158,7 @@ where
         AgentBuilder {
             llm: self.llm,
             execution_profile: self.execution_profile,
+            run_channel_capacity: self.run_channel_capacity,
             tool_runner: Some(Arc::new(tool_runner)),
             _message: PhantomData,
             _response: PhantomData,
@@ -168,6 +184,7 @@ where
         Ok(Agent {
             llm,
             execution_profile: self.execution_profile,
+            run_channel_capacity: self.run_channel_capacity,
             tool_runner,
             transcript: Vec::new(),
             next_turn: 1,
@@ -182,6 +199,7 @@ where
 pub struct Agent<M, C, T, R> {
     llm: LlmRunner,
     execution_profile: ExecutionProfile,
+    run_channel_capacity: usize,
     tool_runner: Arc<dyn ToolRunner<C, T>>,
     transcript: Vec<InputItem>,
     next_turn: u64,
@@ -340,6 +358,58 @@ where
                 }
             }
         }
+    }
+
+    pub async fn run(mut self) -> AgentResult<(AgentRunInput<M>, AgentRunOutput<C, T, R>)> {
+        let (input_tx, mut input_rx) = mpsc::channel(self.run_channel_capacity);
+        let (event_tx, event_rx) = mpsc::channel(self.run_channel_capacity);
+
+        tokio::spawn(async move {
+            let mut input_closed = false;
+
+            loop {
+                while let Ok(input) = input_rx.try_recv() {
+                    if let Err(error) = self.send(input).await {
+                        if event_tx.send(Err(error)).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+
+                match self.next().await {
+                    Ok(Some(event)) => {
+                        if event_tx.send(Ok(event)).await.is_err() {
+                            return;
+                        }
+                    }
+                    Ok(None) => {
+                        if input_closed {
+                            return;
+                        }
+
+                        match input_rx.recv().await {
+                            Some(input) => {
+                                if let Err(error) = self.send(input).await {
+                                    if event_tx.send(Err(error)).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                            None => {
+                                input_closed = true;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        if event_tx.send(Err(error)).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok((input_tx, event_rx))
     }
 
     pub fn transcript(&self) -> &[InputItem] {
@@ -905,6 +975,143 @@ mod tests {
             requests[1].input.last(),
             Some(RawInputItem::ToolResult { content, .. }) if content.contains("ping failed")
         ));
+    }
+
+    #[tokio::test]
+    async fn run_streams_text_turn_events() {
+        let agent = Agent::builder()
+            .with_llm_runner(
+                LlmRunner::builder()
+                    .add_provider(FakeProvider::with_responses(vec![Ok(
+                        assistant_text_response("hello from run"),
+                    )]))
+                    .build(),
+            )
+            .build()
+            .expect("agent");
+
+        let (tx, mut rx) = agent.run().await.expect("run");
+        tx.send(AgentInput::Message(InputItem::user_text("hello")))
+            .await
+            .expect("send input");
+        drop(tx);
+
+        assert!(matches!(
+            rx.recv().await.expect("model item"),
+            Ok(AgentEvent::ModelOutputItem { .. })
+        ));
+        assert!(matches!(
+            rx.recv().await.expect("completed"),
+            Ok(AgentEvent::Completed { reply }) if reply == "hello from run"
+        ));
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn run_streams_tool_sequence() {
+        let agent = Agent::builder()
+            .with_tool_runner(ping_tool_runner())
+            .with_llm_runner(
+                LlmRunner::builder()
+                    .add_provider(FakeProvider::with_responses(vec![
+                        Ok(tool_call_response()),
+                        Ok(assistant_text_response("done after tool")),
+                    ]))
+                    .build(),
+            )
+            .build()
+            .expect("agent");
+
+        let (tx, mut rx) = agent.run().await.expect("run");
+        tx.send(AgentInput::Message(InputItem::user_text("ping please")))
+            .await
+            .expect("send input");
+        drop(tx);
+
+        assert!(matches!(
+            rx.recv().await.expect("tool call"),
+            Ok(AgentEvent::ToolCallRequested { call }) if call.call_id == "call_ping_1"
+        ));
+        assert!(matches!(
+            rx.recv().await.expect("tool result"),
+            Ok(AgentEvent::ToolExecutionCompleted { result }) if result.call_id == "call_ping_1"
+        ));
+        assert!(matches!(
+            rx.recv().await.expect("model item"),
+            Ok(AgentEvent::ModelOutputItem { .. })
+        ));
+        assert!(matches!(
+            rx.recv().await.expect("completed"),
+            Ok(AgentEvent::Completed { reply }) if reply == "done after tool"
+        ));
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn run_processes_multiple_inputs_in_order() {
+        let agent = Agent::builder()
+            .with_llm_runner(
+                LlmRunner::builder()
+                    .add_provider(FakeProvider::with_responses(vec![
+                        Ok(assistant_text_response("first")),
+                        Ok(assistant_text_response("second")),
+                    ]))
+                    .build(),
+            )
+            .build()
+            .expect("agent");
+
+        let (tx, mut rx) = agent.run().await.expect("run");
+        tx.send(AgentInput::Message(InputItem::user_text("one")))
+            .await
+            .expect("first input");
+        tx.send(AgentInput::Message(InputItem::user_text("two")))
+            .await
+            .expect("second input");
+        drop(tx);
+
+        assert!(matches!(
+            rx.recv().await.expect("first model item"),
+            Ok(AgentEvent::ModelOutputItem { .. })
+        ));
+        assert!(matches!(
+            rx.recv().await.expect("first completed"),
+            Ok(AgentEvent::Completed { reply }) if reply == "first"
+        ));
+        assert!(matches!(
+            rx.recv().await.expect("second model item"),
+            Ok(AgentEvent::ModelOutputItem { .. })
+        ));
+        assert!(matches!(
+            rx.recv().await.expect("second completed"),
+            Ok(AgentEvent::Completed { reply }) if reply == "second"
+        ));
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn run_surfaces_agent_errors() {
+        let agent = Agent::builder()
+            .with_llm_runner(
+                LlmRunner::builder()
+                    .add_provider(FakeProvider::with_responses(vec![Err(provider_error())]))
+                    .build(),
+            )
+            .build()
+            .expect("agent");
+
+        let (tx, mut rx) = agent.run().await.expect("run");
+        tx.send(AgentInput::Message(InputItem::user_text("hello")))
+            .await
+            .expect("input");
+        drop(tx);
+
+        assert!(matches!(
+            rx.recv().await.expect("error event"),
+            Err(AgentError::Llm(source))
+                if matches!(source, LlmError::Provider { status: 503, .. })
+        ));
+        assert!(rx.recv().await.is_none());
     }
 
     #[tokio::test]

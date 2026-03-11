@@ -1,6 +1,6 @@
 use borg_agent::{
-    Agent, AgentEvent, AgentInput, CallbackToolRunner, ExecutionProfile, ToolCallEnvelope,
-    ToolExecutionResult, ToolResultEnvelope,
+    Agent, AgentEvent, AgentInput, AgentResult, CallbackToolRunner, ExecutionProfile,
+    ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope,
 };
 use borg_llm::completion::Temperature;
 use borg_llm::completion::{InputItem, ModelSelector, TokenLimit};
@@ -112,6 +112,12 @@ where
         })
 }
 
+fn map_agent_error<T>(result: AgentResult<T>) -> LlmResult<T> {
+    result.map_err(|error| borg_llm::error::Error::Internal {
+        message: error.to_string(),
+    })
+}
+
 #[tokio::test]
 #[serial]
 async fn ollama_agent_send_completes_text_turn_long() -> LlmResult<()> {
@@ -148,6 +154,44 @@ async fn ollama_agent_send_completes_text_turn_long() -> LlmResult<()> {
         other => panic!("expected completed event, got {other:?}"),
     }
     assert!(next_event(&mut agent).await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn ollama_agent_run_streams_text_turn_long() -> LlmResult<()> {
+    let ctx = TestContext::shared(TestProvider::Ollama).await?;
+    let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
+
+    let agent = Agent::builder()
+        .with_llm_runner(runner)
+        .with_execution_profile(ollama_profile())
+        .build()
+        .expect("agent");
+
+    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    tx.send(AgentInput::Message(InputItem::user_text(
+        "Reply with a short plain-text acknowledgment. Do not return JSON.",
+    )))
+    .await
+    .expect("send");
+    drop(tx);
+
+    assert!(matches!(
+        map_agent_error(rx.recv().await.expect("model item"))?,
+        AgentEvent::ModelOutputItem { .. }
+    ));
+    match map_agent_error(rx.recv().await.expect("completed"))? {
+        AgentEvent::Completed { reply } => {
+            assert!(
+                !reply.trim().is_empty(),
+                "expected non-empty Ollama reply, got {:?}",
+                reply
+            );
+        }
+        other => panic!("expected completed event, got {other:?}"),
+    }
+    assert!(rx.recv().await.is_none());
     Ok(())
 }
 
