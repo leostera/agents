@@ -6,14 +6,22 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::capability::Capability;
+use crate::completion::{
+    FinishReason, Message, ModelSelector, ProviderType, RawCompletionRequest,
+    RawCompletionResponse, Role, Usage as CompletionUsage,
+};
 use crate::error::{Error, LlmResult, OpenRouterConfigError};
 use crate::model::Model;
 use crate::provider::LlmProvider;
+use crate::response::RawResponseFormat;
+use crate::tools::{RawToolCall, RawToolDefinition};
+use crate::transcription::{AudioTranscriptionRequest, AudioTranscriptionResponse};
 
 #[derive(Debug, Clone)]
 pub struct OpenRouterConfig {
     pub api_key: String,
     pub base_url: String,
+    pub default_model: String,
 }
 
 impl OpenRouterConfig {
@@ -25,7 +33,13 @@ impl OpenRouterConfig {
         Ok(Self {
             api_key,
             base_url: "https://openrouter.ai".to_string(),
+            default_model: "openai/o4-mini".to_string(),
         })
+    }
+
+    pub fn with_default_model(mut self, model: impl Into<String>) -> Self {
+        self.default_model = model.into();
+        self
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -43,8 +57,24 @@ pub struct OpenRouter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    pub content: Option<String>,
     pub name: Option<String>,
+    pub tool_calls: Option<Vec<ChatToolCall>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatToolCall {
+    pub id: String,
+    pub r#type: String,
+    pub function: ChatToolCallFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatToolCallFunction {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Clone, Builder, Serialize, Deserialize)]
@@ -154,8 +184,13 @@ pub struct ResponsesRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum InputItem {
-    Message { role: String, content: Vec<InputContent> },
-    Text { text: String },
+    Message {
+        role: String,
+        content: Vec<InputContent>,
+    },
+    Text {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,16 +227,34 @@ pub struct ResponsesResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum OutputItem {
-    Message { id: String, status: String, role: String, content: Vec<OutputContent> },
-    Reasoning { id: String, reasoning: String },
+    Message {
+        id: String,
+        status: String,
+        role: String,
+        content: Vec<OutputContent>,
+    },
+    Reasoning {
+        id: String,
+        reasoning: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum OutputContent {
-    OutputText { text: String, annotations: Vec<serde_json::Value> },
-    ToolUse { id: String, name: String, input: serde_json::Value },
-    ToolResult { tool_use_id: String, content: String },
+    OutputText {
+        text: String,
+        annotations: Vec<serde_json::Value>,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,7 +276,9 @@ pub struct CreditsData {
 
 impl OpenRouter {
     pub fn new(config: OpenRouterConfig) -> Self {
-        let client = Client::builder().build().expect("failed to build reqwest client");
+        let client = Client::builder()
+            .build()
+            .expect("failed to build reqwest client");
         Self {
             client,
             config,
@@ -256,8 +311,8 @@ impl OpenRouter {
         }
 
         let body = response.text().await?;
-        let parsed: ChatResponse = serde_json::from_str(&body)
-            .map_err(|e| Error::parse(body, e))?;
+        let parsed: ChatResponse =
+            serde_json::from_str(&body).map_err(|e| Error::parse(body, e))?;
         Ok(parsed)
     }
 
@@ -286,8 +341,8 @@ impl OpenRouter {
         }
 
         let body = response.text().await?;
-        let parsed: ResponsesResponse = serde_json::from_str(&body)
-            .map_err(|e| Error::parse(body, e))?;
+        let parsed: ResponsesResponse =
+            serde_json::from_str(&body).map_err(|e| Error::parse(body, e))?;
         Ok(parsed)
     }
 
@@ -312,14 +367,18 @@ impl OpenRouter {
         }
 
         let body = response.text().await?;
-        let parsed: CreditsResponse = serde_json::from_str(&body)
-            .map_err(|e| Error::parse(body, e))?;
+        let parsed: CreditsResponse =
+            serde_json::from_str(&body).map_err(|e| Error::parse(body, e))?;
         Ok(parsed)
     }
 }
 
 #[async_trait]
 impl LlmProvider for OpenRouter {
+    fn provider_type(&self) -> ProviderType {
+        ProviderType::OpenRouter
+    }
+
     fn provider_name(&self) -> &'static str {
         "openrouter"
     }
@@ -333,16 +392,123 @@ impl LlmProvider for OpenRouter {
         if let Some(ref models) = *cache {
             return Ok(models.clone());
         }
+        *cache = Some(Vec::new());
+        Ok(Vec::new())
+    }
 
-        let models = vec![
-            Model::new("openai/o4-mini"),
-            Model::new("anthropic/claude-4.5-sonnet"),
-            Model::new("google/gemini-2.5-pro"),
-            Model::new("meta-llama/llama-3.3-70b-instruct"),
-            Model::new("mistralai/mistral-large"),
-        ];
+    async fn chat_raw(&self, req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
+        let model = match req.model {
+            ModelSelector::Any => self.config.default_model.clone(),
+            ModelSelector::Provider(_) => self.config.default_model.clone(),
+            ModelSelector::Specific { model, .. } => model,
+        };
 
-        *cache = Some(models.clone());
-        Ok(models)
+        let messages: Vec<crate::provider::openrouter::ChatMessage> = req
+            .messages
+            .iter()
+            .map(|m| crate::provider::openrouter::ChatMessage {
+                role: match m.role {
+                    Role::System => "system".to_string(),
+                    Role::User => "user".to_string(),
+                    Role::Assistant => "assistant".to_string(),
+                    Role::Tool => "user".to_string(),
+                },
+                content: Some(m.content.clone()),
+                name: None,
+                tool_calls: None,
+            })
+            .collect();
+
+        let chat_req = crate::provider::openrouter::ChatRequest {
+            model: model.clone(),
+            messages,
+            temperature: req.temperature,
+            top_p: req.top_p,
+            max_tokens: req.max_tokens,
+            stream: req.stream,
+            stop: None,
+            tools: req.tools.map(map_tool_definitions),
+            tool_choice: req.tool_choice.map(|choice| ToolChoice {
+                r#type: choice.r#type,
+                function: choice.function.map(|function| ToolChoiceFunction {
+                    name: function.name,
+                }),
+            }),
+            response_format: req.response_format.map(map_response_format),
+            frequency_penalty: None,
+            presence_penalty: None,
+            seed: None,
+            logit_bias: None,
+        };
+
+        let chat_res = self.chat(&chat_req).await?;
+        let first_choice = chat_res.choices.first().ok_or(Error::InvalidResponse {
+            reason: "OpenRouter response had no choices".to_string(),
+        })?;
+        let tool_calls = first_choice
+            .message
+            .tool_calls
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|call| {
+                Ok(RawToolCall {
+                    id: call.id,
+                    name: call.function.name,
+                    arguments: serde_json::from_str(&call.function.arguments)
+                        .map_err(|e| Error::parse("tool arguments", e))?,
+                })
+            })
+            .collect::<LlmResult<Vec<_>>>()?;
+
+        Ok(RawCompletionResponse {
+            provider: ProviderType::OpenRouter,
+            model: chat_res.model,
+            message: Message {
+                role: Role::Assistant,
+                content: first_choice.message.content.clone().unwrap_or_default(),
+            },
+            tool_calls,
+            usage: CompletionUsage {
+                prompt_tokens: chat_res.usage.prompt_tokens,
+                completion_tokens: chat_res.usage.completion_tokens,
+                total_tokens: chat_res.usage.total_tokens,
+            },
+            finish_reason: FinishReason::from(first_choice.finish_reason.clone()),
+        })
+    }
+
+    async fn transcribe(
+        &self,
+        _req: AudioTranscriptionRequest,
+    ) -> LlmResult<AudioTranscriptionResponse> {
+        Err(Error::NoMatchingProvider {
+            reason: "OpenRouter does not support audio transcription".to_string(),
+        })
+    }
+}
+
+fn map_tool_definitions(tools: Vec<RawToolDefinition>) -> Vec<ToolDefinition> {
+    tools
+        .into_iter()
+        .map(|tool| ToolDefinition {
+            r#type: tool.r#type,
+            function: ToolFunction {
+                name: tool.function.name,
+                description: tool.function.description,
+                parameters: tool.function.parameters,
+            },
+        })
+        .collect()
+}
+
+fn map_response_format(format: RawResponseFormat) -> ResponseFormat {
+    ResponseFormat {
+        r#type: format.r#type,
+        json_schema: format.json_schema.map(|schema| JsonSchema {
+            name: schema.name,
+            strict: schema.strict,
+            schema: schema.schema,
+        }),
     }
 }

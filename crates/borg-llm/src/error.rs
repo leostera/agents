@@ -109,6 +109,12 @@ pub enum Error {
 
     #[error("Internal error: {message}")]
     Internal { message: String },
+
+    #[error("No provider found matching request: {reason}")]
+    NoMatchingProvider { reason: String },
+
+    #[error("All providers failed: {errors:?}")]
+    AllProvidersFailed { errors: Vec<Error> },
 }
 
 impl Error {

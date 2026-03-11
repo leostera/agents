@@ -6,15 +6,23 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::capability::Capability;
+use crate::completion::{
+    FinishReason, Message, ModelSelector, ProviderType, RawCompletionRequest,
+    RawCompletionResponse, Role, Usage as CompletionUsage,
+};
 use crate::error::{Error, LlmResult, OpenAIConfigError};
 use crate::model::Model;
 use crate::provider::LlmProvider;
+use crate::response::RawResponseFormat;
+use crate::tools::{RawToolCall, RawToolDefinition};
+use crate::transcription::{AudioSource, AudioTranscriptionRequest, AudioTranscriptionResponse};
 
 #[derive(Debug, Clone)]
 pub struct OpenAIConfig {
     pub api_key: String,
     pub base_url: String,
     pub organization: Option<String>,
+    pub default_model: String,
 }
 
 impl OpenAIConfig {
@@ -27,7 +35,13 @@ impl OpenAIConfig {
             api_key,
             base_url: "https://api.openai.com".to_string(),
             organization: None,
+            default_model: "gpt-4o-mini".to_string(),
         })
+    }
+
+    pub fn with_default_model(mut self, model: impl Into<String>) -> Self {
+        self.default_model = model.into();
+        self
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -50,8 +64,24 @@ pub struct OpenAI {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    pub content: Option<String>,
     pub name: Option<String>,
+    pub tool_calls: Option<Vec<ChatToolCall>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatToolCall {
+    pub id: String,
+    pub r#type: String,
+    pub function: ChatToolCallFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatToolCallFunction {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Debug, Clone, Builder, Serialize, Deserialize)]
@@ -154,8 +184,13 @@ pub struct ResponsesRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum ResponseInputItem {
-    Message { role: String, content: Vec<ResponseContent> },
-    Text { text: String },
+    Message {
+        role: String,
+        content: Vec<ResponseContent>,
+    },
+    Text {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,15 +220,28 @@ pub struct ResponsesResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum ResponseOutputItem {
-    Message { id: String, role: String, content: Vec<ResponseOutputContent> },
+    Message {
+        id: String,
+        role: String,
+        content: Vec<ResponseOutputContent>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum ResponseOutputContent {
-    OutputText { text: String },
-    ToolUse { id: String, name: String, input: serde_json::Value },
-    ToolResult { tool_use_id: String, content: String },
+    OutputText {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
 }
 
 #[derive(Debug, Clone, Builder, Serialize, Deserialize)]
@@ -233,7 +281,9 @@ pub struct EvalListResponse {
 
 impl OpenAI {
     pub fn new(config: OpenAIConfig) -> Self {
-        let client = Client::builder().build().expect("failed to build reqwest client");
+        let client = Client::builder()
+            .build()
+            .expect("failed to build reqwest client");
         Self {
             client,
             config,
@@ -272,8 +322,8 @@ impl OpenAI {
         }
 
         let body = response.text().await?;
-        let parsed: ChatResponse = serde_json::from_str(&body)
-            .map_err(|e| Error::parse(body, e))?;
+        let parsed: ChatResponse =
+            serde_json::from_str(&body).map_err(|e| Error::parse(body, e))?;
         Ok(parsed)
     }
 
@@ -301,8 +351,8 @@ impl OpenAI {
         }
 
         let body = response.text().await?;
-        let parsed: ResponsesResponse = serde_json::from_str(&body)
-            .map_err(|e| Error::parse(body, e))?;
+        let parsed: ResponsesResponse =
+            serde_json::from_str(&body).map_err(|e| Error::parse(body, e))?;
         Ok(parsed)
     }
 
@@ -330,8 +380,7 @@ impl OpenAI {
         }
 
         let body = response.text().await?;
-        let parsed: Eval = serde_json::from_str(&body)
-            .map_err(|e| Error::parse(body, e))?;
+        let parsed: Eval = serde_json::from_str(&body).map_err(|e| Error::parse(body, e))?;
         Ok(parsed)
     }
 
@@ -357,14 +406,18 @@ impl OpenAI {
         }
 
         let body = response.text().await?;
-        let parsed: EvalListResponse = serde_json::from_str(&body)
-            .map_err(|e| Error::parse(body, e))?;
+        let parsed: EvalListResponse =
+            serde_json::from_str(&body).map_err(|e| Error::parse(body, e))?;
         Ok(parsed)
     }
 }
 
 #[async_trait]
 impl LlmProvider for OpenAI {
+    fn provider_type(&self) -> ProviderType {
+        ProviderType::OpenAI
+    }
+
     fn provider_name(&self) -> &'static str {
         "openai"
     }
@@ -393,5 +446,169 @@ impl LlmProvider for OpenAI {
 
         *cache = Some(models.clone());
         Ok(models)
+    }
+
+    async fn chat_raw(&self, req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
+        let model = match req.model {
+            ModelSelector::Any => self.config.default_model.clone(),
+            ModelSelector::Provider(_) => self.config.default_model.clone(),
+            ModelSelector::Specific { model, .. } => model,
+        };
+
+        let messages: Vec<ChatMessage> = req
+            .messages
+            .iter()
+            .map(|m| ChatMessage {
+                role: match m.role {
+                    Role::System => "system".to_string(),
+                    Role::User => "user".to_string(),
+                    Role::Assistant => "assistant".to_string(),
+                    Role::Tool => "user".to_string(),
+                },
+                content: Some(m.content.clone()),
+                name: None,
+                tool_calls: None,
+            })
+            .collect();
+
+        let chat_req = ChatRequest {
+            model: model.clone(),
+            messages,
+            temperature: req.temperature,
+            top_p: req.top_p,
+            max_tokens: req.max_tokens,
+            stream: req.stream,
+            tools: req.tools.map(map_tool_definitions),
+            tool_choice: req.tool_choice.map(|tc| ToolChoice {
+                r#type: tc.r#type,
+                function: tc.function.map(|f| ToolChoiceFunction { name: f.name }),
+            }),
+            response_format: req.response_format.map(map_response_format),
+        };
+
+        let chat_res = self.chat(&chat_req).await?;
+        let first_choice = chat_res.choices.first().ok_or(Error::InvalidResponse {
+            reason: "OpenAI response had no choices".to_string(),
+        })?;
+        let tool_calls = first_choice
+            .message
+            .tool_calls
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|call| {
+                Ok(RawToolCall {
+                    id: call.id,
+                    name: call.function.name,
+                    arguments: serde_json::from_str(&call.function.arguments)
+                        .map_err(|e| Error::parse("tool arguments", e))?,
+                })
+            })
+            .collect::<LlmResult<Vec<_>>>()?;
+
+        Ok(RawCompletionResponse {
+            provider: ProviderType::OpenAI,
+            model: chat_res.model,
+            message: Message {
+                role: Role::Assistant,
+                content: first_choice.message.content.clone().unwrap_or_default(),
+            },
+            tool_calls,
+            usage: CompletionUsage {
+                prompt_tokens: chat_res.usage.prompt_tokens,
+                completion_tokens: chat_res.usage.completion_tokens,
+                total_tokens: chat_res.usage.total_tokens,
+            },
+            finish_reason: FinishReason::from(first_choice.finish_reason.clone()),
+        })
+    }
+
+    async fn transcribe(
+        &self,
+        req: AudioTranscriptionRequest,
+    ) -> LlmResult<AudioTranscriptionResponse> {
+        let url = format!("{}/v1/audio/transcriptions", self.config.base_url);
+
+        let audio_data = match &req.audio {
+            AudioSource::Data(data) => data.clone(),
+            AudioSource::Url(_) => {
+                return Err(Error::InvalidRequest {
+                    reason: "URL audio not supported yet".to_string(),
+                });
+            }
+            AudioSource::Path(path) => std::fs::read(path).map_err(|e| Error::InvalidRequest {
+                reason: e.to_string(),
+            })?,
+        };
+
+        let part = reqwest::multipart::Part::bytes(audio_data)
+            .file_name("audio.wav")
+            .mime_str("audio/wav")
+            .map_err(|e| Error::InvalidRequest {
+                reason: e.to_string(),
+            })?;
+
+        let form = reqwest::multipart::Form::new()
+            .text("model", "whisper-1")
+            .text("language", req.language.unwrap_or_default())
+            .text("prompt", req.prompt.unwrap_or_default())
+            .part("file", part);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", self.auth_header())
+            .multipart(form)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(Error::Provider {
+                provider: "openai".to_string(),
+                status: status.as_u16(),
+                message: body,
+            });
+        }
+
+        let body = response.text().await?;
+        #[derive(Deserialize)]
+        struct TranscriptionResponse {
+            text: String,
+        }
+        let parsed: TranscriptionResponse =
+            serde_json::from_str(&body).map_err(|e| Error::parse(body, e))?;
+
+        Ok(AudioTranscriptionResponse {
+            provider: ProviderType::OpenAI,
+            model: "whisper-1".to_string(),
+            text: parsed.text,
+        })
+    }
+}
+
+fn map_tool_definitions(tools: Vec<RawToolDefinition>) -> Vec<ToolDefinition> {
+    tools
+        .into_iter()
+        .map(|tool| ToolDefinition {
+            r#type: tool.r#type,
+            function: ToolFunction {
+                name: tool.function.name,
+                description: tool.function.description,
+                parameters: tool.function.parameters,
+            },
+        })
+        .collect()
+}
+
+fn map_response_format(format: RawResponseFormat) -> ResponseFormat {
+    ResponseFormat {
+        r#type: format.r#type,
+        json_schema: format.json_schema.map(|schema| JsonSchema {
+            name: schema.name,
+            strict: schema.strict,
+            schema: schema.schema,
+        }),
     }
 }

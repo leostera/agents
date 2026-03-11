@@ -1,4 +1,10 @@
-pub mod error;
-pub mod provider;
-pub mod model;
 pub mod capability;
+pub mod completion;
+pub mod error;
+pub mod model;
+pub mod provider;
+pub mod response;
+pub mod runner;
+pub mod testing;
+pub mod tools;
+pub mod transcription;

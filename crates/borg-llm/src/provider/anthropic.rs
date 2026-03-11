@@ -6,15 +6,22 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::capability::Capability;
-use crate::error::{Error, LlmResult, AnthropicConfigError};
+use crate::completion::{
+    FinishReason, Message, ModelSelector, ProviderType, RawCompletionRequest,
+    RawCompletionResponse, Role, Usage as CompletionUsage,
+};
+use crate::error::{AnthropicConfigError, Error, LlmResult};
 use crate::model::Model;
 use crate::provider::LlmProvider;
+use crate::tools::{RawToolCall, RawToolDefinition};
+use crate::transcription::{AudioTranscriptionRequest, AudioTranscriptionResponse};
 
 #[derive(Debug, Clone)]
 pub struct AnthropicConfig {
     pub api_key: String,
     pub version: String,
     pub base_url: String,
+    pub default_model: String,
 }
 
 impl AnthropicConfig {
@@ -27,7 +34,13 @@ impl AnthropicConfig {
             api_key,
             version: "2023-06-01".to_string(),
             base_url: "https://api.anthropic.com".to_string(),
+            default_model: "claude-sonnet-4-5-20250520".to_string(),
         })
+    }
+
+    pub fn with_default_model(mut self, model: impl Into<String>) -> Self {
+        self.default_model = model.into();
+        self
     }
 
     pub fn with_version(mut self, version: impl Into<String>) -> Self {
@@ -72,12 +85,23 @@ pub enum Content {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum ContentBlock {
-    Text { text: String },
-    Image { source: ImageSource },
+    Text {
+        text: String,
+    },
+    Image {
+        source: ImageSource,
+    },
     #[serde(rename_all = "camelCase")]
-    ToolUse { id: String, name: String, input: serde_json::Value },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
     #[serde(rename_all = "camelCase")]
-    ToolResult { tool_use_id: String, content: String },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,9 +150,15 @@ pub struct ChatResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum ResponseContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     #[serde(rename_all = "camelCase")]
-    ToolUse { id: String, name: String, input: serde_json::Value },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,7 +170,9 @@ pub struct Usage {
 
 impl Anthropic {
     pub fn new(config: AnthropicConfig) -> Self {
-        let client = Client::builder().build().expect("failed to build reqwest client");
+        let client = Client::builder()
+            .build()
+            .expect("failed to build reqwest client");
         Self {
             client,
             config,
@@ -172,14 +204,18 @@ impl Anthropic {
         }
 
         let body = response.text().await?;
-        let parsed: ChatResponse = serde_json::from_str(&body)
-            .map_err(|e| Error::parse(body, e))?;
+        let parsed: ChatResponse =
+            serde_json::from_str(&body).map_err(|e| Error::parse(body, e))?;
         Ok(parsed)
     }
 }
 
 #[async_trait]
 impl LlmProvider for Anthropic {
+    fn provider_type(&self) -> ProviderType {
+        ProviderType::Anthropic
+    }
+
     fn provider_name(&self) -> &'static str {
         "anthropic"
     }
@@ -194,16 +230,117 @@ impl LlmProvider for Anthropic {
             return Ok(models.clone());
         }
 
-        let models = vec![
-            Model::new("claude-opus-4-5-20250520"),
-            Model::new("claude-sonnet-4-5-20250520"),
-            Model::new("claude-haiku-3-5-20250520"),
-            Model::new("claude-3-opus-20240229"),
-            Model::new("claude-3-sonnet-20240229"),
-            Model::new("claude-3-haiku-20240307"),
-        ];
-
-        *cache = Some(models.clone());
-        Ok(models)
+        *cache = Some(Vec::new());
+        Ok(Vec::new())
     }
+
+    async fn chat_raw(&self, req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
+        let model = match req.model {
+            ModelSelector::Any => self.config.default_model.clone(),
+            ModelSelector::Provider(_) => self.config.default_model.clone(),
+            ModelSelector::Specific { model, .. } => model,
+        };
+
+        let messages: Vec<crate::provider::anthropic::ChatMessage> = req
+            .messages
+            .iter()
+            .map(|m| crate::provider::anthropic::ChatMessage {
+                role: match m.role {
+                    Role::System => crate::provider::anthropic::ChatRole::System,
+                    Role::User => crate::provider::anthropic::ChatRole::User,
+                    Role::Assistant => crate::provider::anthropic::ChatRole::Assistant,
+                    Role::Tool => crate::provider::anthropic::ChatRole::User,
+                },
+                content: crate::provider::anthropic::Content::Text(m.content.clone()),
+            })
+            .collect();
+
+        let system = req
+            .messages
+            .iter()
+            .find(|m| m.role == Role::System)
+            .map(|m| crate::provider::anthropic::Content::Text(m.content.clone()));
+
+        let chat_req = crate::provider::anthropic::ChatRequest {
+            model: model.clone(),
+            messages,
+            system,
+            max_tokens: req.max_tokens.unwrap_or(1024),
+            temperature: req.temperature,
+            top_p: req.top_p,
+            top_k: None,
+            tools: req.tools.map(map_tool_definitions),
+            stop_sequences: None,
+            stream: req.stream,
+        };
+
+        let chat_res = self.chat(&chat_req).await?;
+
+        let text = chat_res
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let crate::provider::anthropic::ResponseContentBlock::Text { text } = c {
+                    Some(text.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("");
+
+        let tool_calls = chat_res
+            .content
+            .iter()
+            .filter_map(|content| match content {
+                crate::provider::anthropic::ResponseContentBlock::ToolUse { id, name, input } => {
+                    Some(RawToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        arguments: input.clone(),
+                    })
+                }
+                crate::provider::anthropic::ResponseContentBlock::Text { .. } => None,
+            })
+            .collect::<Vec<_>>();
+
+        Ok(RawCompletionResponse {
+            provider: ProviderType::Anthropic,
+            model: chat_res.model,
+            message: Message {
+                role: Role::Assistant,
+                content: text,
+            },
+            tool_calls,
+            usage: CompletionUsage {
+                prompt_tokens: chat_res.usage.input_tokens,
+                completion_tokens: chat_res.usage.output_tokens,
+                total_tokens: chat_res.usage.input_tokens + chat_res.usage.output_tokens,
+            },
+            finish_reason: match chat_res.stop_reason.as_deref() {
+                Some("tool_use") => FinishReason::ToolCalls,
+                other => FinishReason::from(other.map(|value| value.to_string())),
+            },
+        })
+    }
+
+    async fn transcribe(
+        &self,
+        _req: AudioTranscriptionRequest,
+    ) -> LlmResult<AudioTranscriptionResponse> {
+        Err(Error::NoMatchingProvider {
+            reason: "Anthropic does not support audio transcription".to_string(),
+        })
+    }
+}
+
+fn map_tool_definitions(tools: Vec<RawToolDefinition>) -> Vec<ToolDefinition> {
+    tools
+        .into_iter()
+        .map(|tool| ToolDefinition {
+            name: tool.function.name,
+            description: tool.function.description,
+            input_schema: tool.function.parameters,
+        })
+        .collect()
 }

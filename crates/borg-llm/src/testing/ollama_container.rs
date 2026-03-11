@@ -6,7 +6,7 @@ use testcontainers::{ContainerAsync, GenericImage, ImageExt};
 use tokio::time::sleep;
 use tracing::{debug, error, info, trace};
 
-use crate::{LlmError, Result};
+use crate::error::{Error, LlmResult};
 
 const OLLAMA_IMAGE_NAME: &str = "ollama/ollama";
 const OLLAMA_IMAGE_TAG: &str = "latest";
@@ -24,16 +24,13 @@ const PULL_BACKOFF_MILLIS: u64 = 1000;
 pub struct LlmContainer {
     _container: ContainerAsync<GenericImage>,
     pub base_url: String,
-    pub model: String,
     pub api_key: String,
 }
 
 impl LlmContainer {
-    pub async fn start_ollama_with_model(model: impl Into<String>) -> Result<Self> {
-        let model = model.into();
+    pub async fn start_ollama() -> LlmResult<Self> {
         info!(
             target: "borg_llm_test",
-            model = model.as_str(),
             image = OLLAMA_IMAGE_NAME,
             tag = OLLAMA_IMAGE_TAG,
             "starting ollama test container"
@@ -54,13 +51,17 @@ impl LlmContainer {
             .with_mount(mount)
             .start()
             .await
-            .map_err(|err| LlmError::message(err.to_string()))?;
+            .map_err(|err| Error::Internal {
+                message: err.to_string(),
+            })?;
         info!(target: "borg_llm_test", "ollama container started");
 
         let host_port = container
             .get_host_port_ipv4(OLLAMA_PORT.tcp())
             .await
-            .map_err(|err| LlmError::message(err.to_string()))?;
+            .map_err(|err| Error::Internal {
+                message: err.to_string(),
+            })?;
         let base_url = format!("http://127.0.0.1:{host_port}");
         info!(
             target: "borg_llm_test",
@@ -68,30 +69,32 @@ impl LlmContainer {
             "resolved ollama container endpoint"
         );
         wait_until_ready(&base_url).await?;
-        pull_model(&base_url, &model).await?;
-        info!(
-            target: "borg_llm_test",
-            model = model.as_str(),
-            "ollama container ready with requested model"
-        );
+        info!(target: "borg_llm_test", "ollama container ready");
 
         Ok(Self {
             _container: container,
             base_url,
-            model,
             api_key: DEFAULT_TEST_API_KEY.to_string(),
         })
     }
+
+    pub async fn ensure_model(&self, model: &str) -> LlmResult<()> {
+        pull_model(&self.base_url, model).await
+    }
 }
 
-fn host_ollama_models_dir() -> Result<PathBuf> {
-    let cwd = std::env::current_dir()?;
+fn host_ollama_models_dir() -> LlmResult<PathBuf> {
+    let cwd = std::env::current_dir().map_err(|err| Error::Internal {
+        message: err.to_string(),
+    })?;
     let path = cwd.join(OLLAMA_MODELS_DIR_RELATIVE);
-    std::fs::create_dir_all(&path)?;
+    std::fs::create_dir_all(&path).map_err(|err| Error::Internal {
+        message: err.to_string(),
+    })?;
     Ok(path)
 }
 
-async fn wait_until_ready(base_url: &str) -> Result<()> {
+async fn wait_until_ready(base_url: &str) -> LlmResult<()> {
     let client = reqwest::Client::new();
     let url = format!("{base_url}{TAGS_PATH}");
     info!(
@@ -134,13 +137,12 @@ async fn wait_until_ready(base_url: &str) -> Result<()> {
         "ollama readiness timed out"
     );
 
-    Err(LlmError::message(format!(
-        "ollama container never became ready at {}",
-        url
-    )))
+    Err(Error::Internal {
+        message: format!("ollama container never became ready at {}", url),
+    })
 }
 
-async fn pull_model(base_url: &str, model: &str) -> Result<()> {
+async fn pull_model(base_url: &str, model: &str) -> LlmResult<()> {
     let client = reqwest::Client::new();
     let url = format!("{base_url}{PULL_PATH}");
     info!(
@@ -195,8 +197,7 @@ async fn pull_model(base_url: &str, model: &str) -> Result<()> {
         "ollama model pull timed out"
     );
 
-    Err(LlmError::message(format!(
-        "ollama model pull never completed for {} at {}",
-        model, url
-    )))
+    Err(Error::Internal {
+        message: format!("ollama model pull never completed for {} at {}", model, url),
+    })
 }
