@@ -188,6 +188,12 @@ impl ContextManager {
         ContextManagerBuilder::new()
     }
 
+    pub fn static_text(text: impl Into<String>) -> Self {
+        Self::builder()
+            .add_provider(StaticContextProvider::system_text(text))
+            .build()
+    }
+
     pub fn new() -> Self {
         Self::builder().build()
     }
@@ -264,6 +270,101 @@ fn flatten_input_content(content: Vec<InputContent>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AgentError;
+
+    struct FailingProvider;
+
+    #[async_trait]
+    impl ContextProvider for FailingProvider {
+        async fn provide(&self) -> AgentResult<Vec<ContextChunk>> {
+            Err(AgentError::Internal {
+                message: "provider failed".to_string(),
+            })
+        }
+    }
+
+    #[test]
+    fn from_input_item_maps_message_roles_and_flattens_text_parts() {
+        let item = InputItem::Message {
+            role: Role::Assistant,
+            content: vec![
+                InputContent::Text {
+                    text: "hello".to_string(),
+                },
+                InputContent::ImageUrl {
+                    url: "https://example.com/cat.png".to_string(),
+                },
+                InputContent::Text {
+                    text: "world".to_string(),
+                },
+            ],
+        };
+
+        let chunk = ContextChunk::from_input_item(ContextStrategy::Compactable, item)
+            .expect("chunk")
+            .expect("valid chunk");
+
+        assert_eq!(
+            chunk,
+            ContextChunk::assistant_text(ContextStrategy::Compactable, "hello\nworld")
+        );
+    }
+
+    #[test]
+    fn from_input_item_parses_json_tool_results() {
+        let chunk = ContextChunk::from_input_item(
+            ContextStrategy::Compactable,
+            InputItem::tool_result("call_1", r#"{"status":"ok"}"#),
+        )
+        .expect("chunk")
+        .expect("valid chunk");
+
+        assert_eq!(
+            chunk,
+            ContextChunk::ToolResult {
+                strategy: ContextStrategy::Compactable,
+                id: "call_1".to_string(),
+                result: serde_json::json!({ "status": "ok" }),
+            }
+        );
+    }
+
+    #[test]
+    fn from_input_item_falls_back_to_string_for_non_json_tool_results() {
+        let chunk = ContextChunk::from_input_item(
+            ContextStrategy::Compactable,
+            InputItem::tool_result("call_1", "plain text error"),
+        )
+        .expect("chunk")
+        .expect("valid chunk");
+
+        assert_eq!(
+            chunk,
+            ContextChunk::ToolResult {
+                strategy: ContextStrategy::Compactable,
+                id: "call_1".to_string(),
+                result: Value::String("plain text error".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn tool_result_chunk_round_trips_back_to_input_item() {
+        let item = ContextChunk::ToolResult {
+            strategy: ContextStrategy::Compactable,
+            id: "call_1".to_string(),
+            result: serde_json::json!({ "status": "ok" }),
+        }
+        .to_input_item()
+        .expect("tool result lowers")
+        .expect("valid item");
+
+        assert!(matches!(
+            item,
+            InputItem::ToolResult { tool_use_id, content }
+                if tool_use_id == "call_1" && content == r#"{"status":"ok"}"#
+        ));
+    }
 
     #[tokio::test]
     async fn static_provider_chunks_precede_history_in_window() {
@@ -319,5 +420,131 @@ mod tests {
             &items[1],
             InputItem::ToolResult { tool_use_id, .. } if tool_use_id == "call_1"
         ));
+    }
+
+    #[tokio::test]
+    async fn multiple_providers_preserve_builder_order_before_history() {
+        let manager = ContextManager::builder()
+            .add_provider(StaticContextProvider::new(vec![ContextChunk::system_text(
+                ContextStrategy::Pinnable,
+                "system one",
+            )]))
+            .add_provider(StaticContextProvider::new(vec![ContextChunk::system_text(
+                ContextStrategy::Pinnable,
+                "system two",
+            )]))
+            .build();
+
+        manager
+            .push(ContextChunk::user_text(
+                ContextStrategy::Compactable,
+                "hello from user",
+            ))
+            .await
+            .expect("push");
+
+        let window = manager.window().await.expect("window");
+        assert_eq!(
+            window.chunks,
+            vec![
+                ContextChunk::system_text(ContextStrategy::Pinnable, "system one"),
+                ContextChunk::system_text(ContextStrategy::Pinnable, "system two"),
+                ContextChunk::user_text(ContextStrategy::Compactable, "hello from user"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn push_preserves_history_order_and_window_is_non_destructive() {
+        let manager = ContextManager::new();
+        let first = ContextChunk::user_text(ContextStrategy::Compactable, "first");
+        let second = ContextChunk::assistant_text(ContextStrategy::Compactable, "second");
+
+        manager.push(first.clone()).await.expect("push first");
+        manager.push(second.clone()).await.expect("push second");
+
+        let history = manager.history().await.expect("history");
+        assert_eq!(history, vec![first.clone(), second.clone()]);
+
+        let window = manager.window().await.expect("window");
+        assert_eq!(window.chunks, vec![first.clone(), second.clone()]);
+
+        let history_again = manager.history().await.expect("history again");
+        assert_eq!(history_again, vec![first, second]);
+    }
+
+    #[tokio::test]
+    async fn static_text_builds_a_pinnable_system_message() {
+        let manager = ContextManager::static_text("hello system");
+        let window = manager.window().await.expect("window");
+
+        assert_eq!(
+            window.chunks,
+            vec![ContextChunk::system_text(
+                ContextStrategy::Pinnable,
+                "hello system",
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn history_returns_only_session_history_not_provider_chunks() {
+        let manager = ContextManager::builder()
+            .add_provider(StaticContextProvider::system_text("system prompt"))
+            .build();
+
+        manager
+            .push(ContextChunk::user_text(
+                ContextStrategy::Compactable,
+                "hello from user",
+            ))
+            .await
+            .expect("push");
+
+        let history = manager.history().await.expect("history");
+        assert_eq!(
+            history,
+            vec![ContextChunk::user_text(
+                ContextStrategy::Compactable,
+                "hello from user",
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn failing_provider_errors_window() {
+        let manager = ContextManager::builder()
+            .add_provider(FailingProvider)
+            .build();
+
+        let error = manager.window().await.expect_err("provider should fail");
+        assert!(matches!(error, AgentError::Internal { message } if message == "provider failed"));
+    }
+
+    #[tokio::test]
+    async fn tool_calls_are_preserved_in_history_but_skipped_when_lowering_window() {
+        let manager = ContextManager::new();
+
+        manager
+            .push(ContextChunk::ToolCall {
+                strategy: ContextStrategy::Compactable,
+                id: "call_1".to_string(),
+                name: "ping".to_string(),
+                args: serde_json::json!({ "value": "hello" }),
+            })
+            .await
+            .expect("push");
+
+        let history = manager.history().await.expect("history");
+        assert_eq!(history.len(), 1);
+        assert!(matches!(history[0], ContextChunk::ToolCall { .. }));
+
+        let input_items = manager
+            .window()
+            .await
+            .expect("window")
+            .to_input_items()
+            .expect("items");
+        assert!(input_items.is_empty());
     }
 }
