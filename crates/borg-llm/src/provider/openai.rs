@@ -525,17 +525,16 @@ impl LlmProvider for OpenAI {
                                     return;
                                 }
                             };
-                            if let Some(text) = parsed.get("delta").and_then(Value::as_str) {
-                                if sender
+                            if let Some(text) = parsed.get("delta").and_then(Value::as_str)
+                                && sender
                                     .send(Ok(RawCompletionEvent::TextDelta {
                                         text: text.to_string(),
                                     }))
                                     .await
                                     .is_err()
-                                {
-                                    let _ = event_source.close();
-                                    return;
-                                }
+                            {
+                                let _ = event_source.close();
+                                return;
                             }
                         }
                         "response.output_item.added" | "response.output_item.done" => {
@@ -548,50 +547,49 @@ impl LlmProvider for OpenAI {
                                     return;
                                 }
                             };
-                            if let Some(item) = parsed.get("item") {
-                                if item.get("type").and_then(Value::as_str) == Some("function_call")
-                                {
-                                    let item_id = item
-                                        .get("id")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or_default()
-                                        .to_string();
-                                    let call_id = item
-                                        .get("call_id")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or(&item_id)
-                                        .to_string();
-                                    let name = item
-                                        .get("name")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or_default()
-                                        .to_string();
-                                    let arguments = item
-                                        .get("arguments")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or_default()
-                                        .to_string();
-                                    function_calls.insert(
-                                        item_id.clone(),
-                                        (call_id.clone(), name.clone(), arguments.clone()),
-                                    );
-                                    if message.event == "response.output_item.done" {
-                                        match parse_function_call(&call_id, &name, &arguments) {
-                                            Ok(call) => {
-                                                if sender
-                                                    .send(Ok(RawCompletionEvent::ToolCall { call }))
-                                                    .await
-                                                    .is_err()
-                                                {
-                                                    let _ = event_source.close();
-                                                    return;
-                                                }
-                                            }
-                                            Err(error) => {
-                                                let _ = sender.send(Err(error)).await;
+                            if let Some(item) = parsed.get("item")
+                                && item.get("type").and_then(Value::as_str) == Some("function_call")
+                            {
+                                let item_id = item
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let call_id = item
+                                    .get("call_id")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or(&item_id)
+                                    .to_string();
+                                let name = item
+                                    .get("name")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let arguments = item
+                                    .get("arguments")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string();
+                                function_calls.insert(
+                                    item_id.clone(),
+                                    (call_id.clone(), name.clone(), arguments.clone()),
+                                );
+                                if message.event == "response.output_item.done" {
+                                    match parse_function_call(&call_id, &name, &arguments) {
+                                        Ok(call) => {
+                                            if sender
+                                                .send(Ok(RawCompletionEvent::ToolCall { call }))
+                                                .await
+                                                .is_err()
+                                            {
                                                 let _ = event_source.close();
                                                 return;
                                             }
+                                        }
+                                        Err(error) => {
+                                            let _ = sender.send(Err(error)).await;
+                                            let _ = event_source.close();
+                                            return;
                                         }
                                     }
                                 }
@@ -610,10 +608,9 @@ impl LlmProvider for OpenAI {
                             if let (Some(item_id), Some(delta)) = (
                                 parsed.get("item_id").and_then(Value::as_str),
                                 parsed.get("delta").and_then(Value::as_str),
-                            ) {
-                                if let Some((_, _, arguments)) = function_calls.get_mut(item_id) {
-                                    arguments.push_str(delta);
-                                }
+                            ) && let Some((_, _, arguments)) = function_calls.get_mut(item_id)
+                            {
+                                arguments.push_str(delta);
                             }
                         }
                         "response.completed" => {

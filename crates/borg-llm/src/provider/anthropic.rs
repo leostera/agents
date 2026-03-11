@@ -535,32 +535,31 @@ impl LlmProvider for Anthropic {
                                 }
                             };
                             let index = parsed.get("index").and_then(Value::as_u64).unwrap_or(0);
-                            if let Some(content_block) = parsed.get("content_block") {
-                                if content_block.get("type").and_then(Value::as_str)
+                            if let Some(content_block) = parsed.get("content_block")
+                                && content_block.get("type").and_then(Value::as_str)
                                     == Some("tool_use")
-                                {
-                                    let id = content_block
-                                        .get("id")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or_default()
-                                        .to_string();
-                                    let name = content_block
-                                        .get("name")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or_default()
-                                        .to_string();
-                                    let initial_input = content_block
-                                        .get("input")
-                                        .map(|input| {
-                                            if input.is_object() || input.is_array() {
-                                                serde_json::to_string(input).unwrap_or_default()
-                                            } else {
-                                                String::new()
-                                            }
-                                        })
-                                        .unwrap_or_default();
-                                    pending_tool_calls.insert(index, (id, name, initial_input));
-                                }
+                            {
+                                let id = content_block
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let name = content_block
+                                    .get("name")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let initial_input = content_block
+                                    .get("input")
+                                    .map(|input| {
+                                        if input.is_object() || input.is_array() {
+                                            serde_json::to_string(input).unwrap_or_default()
+                                        } else {
+                                            String::new()
+                                        }
+                                    })
+                                    .unwrap_or_default();
+                                pending_tool_calls.insert(index, (id, name, initial_input));
                             }
                         }
                         "content_block_stop" => {

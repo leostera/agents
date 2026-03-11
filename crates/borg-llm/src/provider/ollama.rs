@@ -214,7 +214,7 @@ impl Ollama {
         let messages: Vec<crate::provider::ollama::ChatMessage> = req
             .input
             .iter()
-            .filter_map(|item| match item {
+            .map(|item| match item {
                 RawInputItem::Message { role, content } => {
                     Some(crate::provider::ollama::ChatMessage {
                         role: match role {
@@ -253,6 +253,7 @@ impl Ollama {
                     tool_calls: None,
                 }),
             })
+            .flatten()
             .collect();
 
         let chat_req = crate::provider::ollama::ChatRequest {

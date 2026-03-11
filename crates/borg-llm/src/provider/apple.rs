@@ -98,7 +98,7 @@ impl Apple {
             AudioSource::Data(data) => {
                 let extension = infer_audio_extension(data);
                 let mut temp =
-                    NamedTempFile::with_suffix(&format!(".{extension}")).map_err(|error| {
+                    NamedTempFile::with_suffix(format!(".{extension}")).map_err(|error| {
                         Error::Internal {
                             message: format!("failed to create temporary audio file: {error}"),
                         }
