@@ -12,6 +12,12 @@ pub enum AgentError {
     #[error("Invalid response: {reason}")]
     InvalidResponse { reason: String },
 
+    #[error("Tool execution failed: {reason}")]
+    ToolExecution { reason: String },
+
+    #[error("Tool result encoding failed: {reason}")]
+    ToolResultEncoding { reason: String },
+
     #[error("Cancelled")]
     Cancelled,
 

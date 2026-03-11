@@ -1,8 +1,12 @@
-use borg_agent::{Agent, AgentInput, ExecutionProfile, TurnOutcome};
+use borg_agent::{
+    Agent, AgentInput, CallbackToolRunner, ExecutionProfile, ToolCallEnvelope, ToolExecutionResult,
+    ToolResultEnvelope, TurnOutcome,
+};
 use borg_llm::completion::Temperature;
 use borg_llm::completion::{InputItem, ModelSelector, TokenLimit};
 use borg_llm::error::LlmResult;
 use borg_llm::testing::{TestContext, TestProvider};
+use borg_llm::tools::{RawToolDefinition, TypedTool};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serial_test::serial;
@@ -11,6 +15,50 @@ const OLLAMA_TEXT_MODEL: &str = "qwen2.5:7b";
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 struct EchoResponse {
+    value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+enum TestTools {
+    Ping { value: String },
+}
+
+impl TypedTool for TestTools {
+    fn tool_definitions() -> Vec<RawToolDefinition> {
+        vec![RawToolDefinition::function(
+            "ping",
+            Some("Echo a value back to the caller"),
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "value": { "type": "string" }
+                },
+                "required": ["value"]
+            }),
+        )]
+    }
+
+    fn decode_tool_call(name: &str, arguments: serde_json::Value) -> LlmResult<Self> {
+        match name {
+            "ping" => {
+                #[derive(Deserialize)]
+                struct PingArgs {
+                    value: String,
+                }
+
+                let args: PingArgs = serde_json::from_value(arguments)
+                    .map_err(|error| borg_llm::error::Error::parse("tool arguments", error))?;
+                Ok(TestTools::Ping { value: args.value })
+            }
+            other => Err(borg_llm::error::Error::InvalidResponse {
+                reason: format!("unexpected tool name: {other}"),
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct Pong {
     value: String,
 }
 
@@ -134,6 +182,55 @@ async fn ollama_agent_send_decodes_typed_response_long() -> LlmResult<()> {
             assert!(
                 !reply.value.trim().is_empty(),
                 "expected non-empty typed Ollama reply, got {:?}",
+                reply
+            );
+        }
+        TurnOutcome::Cancelled => panic!("unexpected cancellation"),
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn ollama_agent_executes_ping_tool_and_finishes_long() -> LlmResult<()> {
+    let ctx = TestContext::shared(TestProvider::Ollama).await?;
+    let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
+
+    let tool_runner = CallbackToolRunner::new(|call: ToolCallEnvelope<TestTools>| async move {
+        match call.call {
+            TestTools::Ping { value } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("pong:{value}"),
+                    },
+                },
+            }),
+        }
+    });
+
+    let agent = Agent::builder()
+        .with_llm_runner(runner)
+        .with_tool_runner(tool_runner)
+        .build()
+        .expect("agent");
+
+    let report = agent
+        .send_with_profile::<_, String>(
+            AgentInput::Message(InputItem::user_text(
+                "First call the ping tool exactly once with value=\"hello-tool\". After receiving the tool result, reply in plain text and include the returned pong value.",
+            )),
+            ollama_profile(),
+        )
+        .await
+        .expect("turn");
+
+    match report.outcome {
+        TurnOutcome::Completed { reply } => {
+            assert!(
+                reply.to_lowercase().contains("pong:hello-tool"),
+                "expected final reply to include tool output, got {:?}",
                 reply
             );
         }
