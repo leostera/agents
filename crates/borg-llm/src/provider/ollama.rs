@@ -215,45 +215,42 @@ impl Ollama {
             .input
             .iter()
             .map(|item| match item {
-                RawInputItem::Message { role, content } => {
-                    Some(crate::provider::ollama::ChatMessage {
-                        role: match role {
-                            Role::System => "system".to_string(),
-                            Role::User => "user".to_string(),
-                            Role::Assistant => "assistant".to_string(),
-                        },
-                        content: content
+                RawInputItem::Message { role, content } => crate::provider::ollama::ChatMessage {
+                    role: match role {
+                        Role::System => "system".to_string(),
+                        Role::User => "user".to_string(),
+                        Role::Assistant => "assistant".to_string(),
+                    },
+                    content: content
+                        .iter()
+                        .filter_map(|content| match content {
+                            RawInputContent::Text { text } => Some(text.as_str()),
+                            RawInputContent::ImageUrl { .. } => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    images: Some(
+                        content
                             .iter()
                             .filter_map(|content| match content {
-                                RawInputContent::Text { text } => Some(text.as_str()),
-                                RawInputContent::ImageUrl { .. } => None,
+                                RawInputContent::ImageUrl { url } => Some(url.clone()),
+                                RawInputContent::Text { .. } => None,
                             })
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                        images: Some(
-                            content
-                                .iter()
-                                .filter_map(|content| match content {
-                                    RawInputContent::ImageUrl { url } => Some(url.clone()),
-                                    RawInputContent::Text { .. } => None,
-                                })
-                                .collect(),
-                        )
-                        .filter(|images: &Vec<String>| !images.is_empty()),
-                        tool_calls: None,
-                    })
-                }
+                            .collect(),
+                    )
+                    .filter(|images: &Vec<String>| !images.is_empty()),
+                    tool_calls: None,
+                },
                 RawInputItem::ToolResult {
                     tool_use_id,
                     content,
-                } => Some(crate::provider::ollama::ChatMessage {
+                } => crate::provider::ollama::ChatMessage {
                     role: "tool".to_string(),
                     content: format!("{tool_use_id}: {content}"),
                     images: None,
                     tool_calls: None,
-                }),
+                },
             })
-            .flatten()
             .collect();
 
         let chat_req = crate::provider::ollama::ChatRequest {
