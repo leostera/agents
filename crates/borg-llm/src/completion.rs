@@ -54,57 +54,72 @@ impl ModelSelector {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Message<Content = String> {
-    pub role: Role,
-    pub content: Content,
-}
-
-impl Message<String> {
-    pub fn user(content: impl Into<String>) -> Self {
-        Message {
-            role: Role::User,
-            content: content.into(),
-        }
-    }
-
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Message {
-            role: Role::Assistant,
-            content: content.into(),
-        }
-    }
-
-    pub fn system(content: impl Into<String>) -> Self {
-        Message {
-            role: Role::System,
-            content: content.into(),
-        }
-    }
-
-    pub fn tool(content: impl Into<String>) -> Self {
-        Message {
-            role: Role::Tool,
-            content: content.into(),
-        }
-    }
-}
-
-impl<Content> Message<Content> {
-    pub fn new(role: Role, content: Content) -> Self {
-        Message { role, content }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     System,
     User,
     Assistant,
-    #[serde(rename = "tool")]
-    Tool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum InputItem {
+    Message {
+        role: Role,
+        content: Vec<InputContent>,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
+}
+
+impl InputItem {
+    pub fn user_text(text: impl Into<String>) -> Self {
+        Self::Message {
+            role: Role::User,
+            content: vec![InputContent::text(text)],
+        }
+    }
+
+    pub fn assistant_text(text: impl Into<String>) -> Self {
+        Self::Message {
+            role: Role::Assistant,
+            content: vec![InputContent::text(text)],
+        }
+    }
+
+    pub fn system_text(text: impl Into<String>) -> Self {
+        Self::Message {
+            role: Role::System,
+            content: vec![InputContent::text(text)],
+        }
+    }
+
+    pub fn tool_result(tool_use_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self::ToolResult {
+            tool_use_id: tool_use_id.into(),
+            content: content.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum InputContent {
+    Text { text: String },
+    ImageUrl { url: String },
+}
+
+impl InputContent {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+
+    pub fn image_url(url: impl Into<String>) -> Self {
+        Self::ImageUrl { url: url.into() }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,7 +149,7 @@ impl From<Option<String>> for FinishReason {
 pub struct CompletionRequest<ToolType, ResponseType> {
     #[builder(default = "ModelSelector::Any")]
     pub model: ModelSelector,
-    pub messages: Vec<Message<String>>,
+    pub input: Vec<InputItem>,
     #[builder(default = "Temperature::ProviderDefault")]
     pub temperature: Temperature,
     #[builder(default = "TopP::ProviderDefault")]
@@ -154,10 +169,10 @@ pub struct CompletionRequest<ToolType, ResponseType> {
 }
 
 impl<ToolType, ResponseType> CompletionRequest<ToolType, ResponseType> {
-    pub fn new(messages: Vec<Message<String>>, model: ModelSelector) -> Self {
+    pub fn new(input: Vec<InputItem>, model: ModelSelector) -> Self {
         Self {
             model,
-            messages,
+            input,
             temperature: Temperature::ProviderDefault,
             top_p: TopP::ProviderDefault,
             top_k: TopK::ProviderDefault,
@@ -220,10 +235,31 @@ impl<ToolType, ResponseType> CompletionRequest<ToolType, ResponseType> {
 pub struct CompletionResponse<ToolType = (), ResponseType = String> {
     pub provider: ProviderType,
     pub model: String,
-    pub message: Message<ResponseType>,
-    pub tool_calls: Vec<ToolCall<ToolType>>,
+    pub output: Vec<OutputItem<ToolType, ResponseType>>,
     pub usage: Usage,
     pub finish_reason: FinishReason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum OutputItem<ToolType = (), ResponseType = String> {
+    Message {
+        role: Role,
+        content: Vec<OutputContent<ResponseType>>,
+    },
+    ToolCall {
+        call: ToolCall<ToolType>,
+    },
+    Reasoning {
+        text: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum OutputContent<ResponseType = String> {
+    Text { text: String },
+    Structured { value: ResponseType },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,6 +373,7 @@ pub enum ToolChoice {
 #[serde(rename_all = "camelCase")]
 pub enum CompletionEvent<ToolType, ResponseType> {
     TextDelta { text: String },
+    ReasoningDelta { text: String },
     ToolCall { call: ToolCall<ToolType> },
     Done(CompletionResponse<ToolType, ResponseType>),
 }
@@ -363,7 +400,7 @@ impl<ToolType, ResponseType> CompletionEventStream<ToolType, ResponseType> {
 #[serde(rename_all = "camelCase")]
 pub struct RawCompletionRequest {
     pub model: ModelSelector,
-    pub messages: Vec<Message<String>>,
+    pub input: Vec<RawInputItem>,
     pub temperature: Temperature,
     pub top_p: TopP,
     pub top_k: TopK,
@@ -379,16 +416,58 @@ pub struct RawCompletionRequest {
 pub struct RawCompletionResponse {
     pub provider: ProviderType,
     pub model: String,
-    pub message: Message<String>,
-    pub tool_calls: Vec<RawToolCall>,
+    pub output: Vec<RawOutputItem>,
     pub usage: Usage,
     pub finish_reason: FinishReason,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum RawInputItem {
+    Message {
+        role: Role,
+        content: Vec<RawInputContent>,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum RawInputContent {
+    Text { text: String },
+    ImageUrl { url: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum RawOutputItem {
+    Message {
+        role: Role,
+        content: Vec<RawOutputContent>,
+    },
+    ToolCall {
+        call: RawToolCall,
+    },
+    Reasoning {
+        text: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "type")]
+pub enum RawOutputContent {
+    Text { text: String },
+    Json { value: serde_json::Value },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RawCompletionEvent {
     TextDelta { text: String },
+    ReasoningDelta { text: String },
     ToolCall { call: RawToolCall },
     Done(RawCompletionResponse),
 }

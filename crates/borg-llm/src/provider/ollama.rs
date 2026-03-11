@@ -9,8 +9,9 @@ use tokio::sync::mpsc;
 
 use crate::capability::Capability;
 use crate::completion::{
-    FinishReason, Message, ModelSelector, ProviderType, RawCompletionEvent,
-    RawCompletionEventStream, RawCompletionRequest, RawCompletionResponse, Role, Usage,
+    FinishReason, ModelSelector, ProviderType, RawCompletionEvent, RawCompletionEventStream,
+    RawCompletionRequest, RawCompletionResponse, RawInputContent, RawInputItem, RawOutputContent,
+    RawOutputItem, Role, Usage,
 };
 use crate::error::{Error, LlmResult};
 use crate::model::Model;
@@ -211,18 +212,44 @@ impl Ollama {
         }
 
         let messages: Vec<crate::provider::ollama::ChatMessage> = req
-            .messages
+            .input
             .iter()
-            .map(|m| crate::provider::ollama::ChatMessage {
-                role: match m.role {
-                    Role::System => "system".to_string(),
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
-                    Role::Tool => "user".to_string(),
-                },
-                content: m.content.clone(),
-                images: None,
-                tool_calls: None,
+            .filter_map(|item| match item {
+                RawInputItem::Message { role, content } => Some(crate::provider::ollama::ChatMessage {
+                    role: match role {
+                        Role::System => "system".to_string(),
+                        Role::User => "user".to_string(),
+                        Role::Assistant => "assistant".to_string(),
+                    },
+                    content: content
+                        .iter()
+                        .filter_map(|content| match content {
+                            RawInputContent::Text { text } => Some(text.as_str()),
+                            RawInputContent::ImageUrl { .. } => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    images: Some(
+                        content
+                            .iter()
+                            .filter_map(|content| match content {
+                                RawInputContent::ImageUrl { url } => Some(url.clone()),
+                                RawInputContent::Text { .. } => None,
+                            })
+                            .collect(),
+                    )
+                    .filter(|images: &Vec<String>| !images.is_empty()),
+                    tool_calls: None,
+                }),
+                RawInputItem::ToolResult {
+                    tool_use_id,
+                    content,
+                } => Some(crate::provider::ollama::ChatMessage {
+                    role: "tool".to_string(),
+                    content: format!("{tool_use_id}: {content}"),
+                    images: None,
+                    tool_calls: None,
+                }),
             })
             .collect();
 
@@ -306,11 +333,20 @@ impl LlmProvider for Ollama {
     }
 
     async fn chat_raw(&self, req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
-        let (_, mut chat_req) = self.build_chat_request(req)?;
-        chat_req.stream = Some(false);
+        let mut stream = self.chat_raw_stream(req).await?;
 
-        let chat_res = self.chat(&chat_req).await?;
-        Ok(raw_response_from_chat(chat_res))
+        while let Some(event) = stream.recv().await {
+            match event? {
+                RawCompletionEvent::Done(response) => return Ok(response),
+                RawCompletionEvent::TextDelta { .. }
+                | RawCompletionEvent::ReasoningDelta { .. }
+                | RawCompletionEvent::ToolCall { .. } => {}
+            }
+        }
+
+        Err(Error::InvalidResponse {
+            reason: "Ollama stream ended without a final response".to_string(),
+        })
     }
 
     async fn chat_raw_stream(
@@ -494,11 +530,23 @@ fn raw_response_from_chat(chat_res: ChatResponse) -> RawCompletionResponse {
     RawCompletionResponse {
         provider: ProviderType::Ollama,
         model: chat_res.model,
-        message: Message {
-            role: Role::Assistant,
-            content: chat_res.message.content,
+        output: {
+            let mut output = Vec::new();
+            if !chat_res.message.content.is_empty() {
+                output.push(RawOutputItem::Message {
+                    role: Role::Assistant,
+                    content: vec![RawOutputContent::Text {
+                        text: chat_res.message.content,
+                    }],
+                });
+            }
+            output.extend(
+                tool_calls
+                    .into_iter()
+                    .map(|call| RawOutputItem::ToolCall { call }),
+            );
+            output
         },
-        tool_calls,
         usage: Usage {
             prompt_tokens: chat_res.prompt_eval_count.unwrap_or(0) as u32,
             completion_tokens: chat_res.eval_count.unwrap_or(0) as u32,

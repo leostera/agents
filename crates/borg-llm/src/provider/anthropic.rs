@@ -4,15 +4,16 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use reqwest_eventsource::{Event, RequestBuilderExt};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
 
 use crate::capability::Capability;
 use crate::completion::{
-    FinishReason, Message, ModelSelector, ProviderType, RawCompletionEvent,
-    RawCompletionEventStream, RawCompletionRequest, RawCompletionResponse, Role,
-    Usage as CompletionUsage,
+    FinishReason, ModelSelector, ProviderType, RawCompletionEvent, RawCompletionEventStream,
+    RawCompletionRequest, RawCompletionResponse, RawInputContent, RawInputItem, RawOutputContent,
+    RawOutputItem, Role, Usage as CompletionUsage,
 };
 use crate::error::{AnthropicConfigError, Error, LlmResult};
 use crate::model::Model;
@@ -281,25 +282,41 @@ impl LlmProvider for Anthropic {
             ModelSelector::Specific { model, .. } => model,
         };
 
+        let system = req.input.iter().find_map(|item| match item {
+            RawInputItem::Message { role: Role::System, content } => Some(build_content(content)),
+            RawInputItem::Message { .. } | RawInputItem::ToolResult { .. } => None,
+        });
+
         let messages: Vec<crate::provider::anthropic::ChatMessage> = req
-            .messages
+            .input
             .iter()
-            .map(|m| crate::provider::anthropic::ChatMessage {
-                role: match m.role {
-                    Role::System => crate::provider::anthropic::ChatRole::System,
-                    Role::User => crate::provider::anthropic::ChatRole::User,
-                    Role::Assistant => crate::provider::anthropic::ChatRole::Assistant,
-                    Role::Tool => crate::provider::anthropic::ChatRole::User,
-                },
-                content: crate::provider::anthropic::Content::Text(m.content.clone()),
+            .filter_map(|item| match item {
+                RawInputItem::Message { role, content } => {
+                    if *role == Role::System {
+                        None
+                    } else {
+                        Some(crate::provider::anthropic::ChatMessage {
+                            role: match role {
+                                Role::User => crate::provider::anthropic::ChatRole::User,
+                                Role::Assistant => crate::provider::anthropic::ChatRole::Assistant,
+                                Role::System => unreachable!(),
+                            },
+                            content: build_content(content),
+                        })
+                    }
+                }
+                RawInputItem::ToolResult {
+                    tool_use_id,
+                    content,
+                } => Some(crate::provider::anthropic::ChatMessage {
+                    role: crate::provider::anthropic::ChatRole::User,
+                    content: Content::Blocks(vec![ContentBlock::ToolResult {
+                        tool_use_id: tool_use_id.clone(),
+                        content: content.clone(),
+                    }]),
+                }),
             })
             .collect();
-
-        let system = req
-            .messages
-            .iter()
-            .find(|m| m.role == Role::System)
-            .map(|m| crate::provider::anthropic::Content::Text(m.content.clone()));
 
         let chat_req = crate::provider::anthropic::ChatRequest {
             model: model.clone(),
@@ -347,11 +364,7 @@ impl LlmProvider for Anthropic {
         Ok(RawCompletionResponse {
             provider: ProviderType::Anthropic,
             model: chat_res.model,
-            message: Message {
-                role: Role::Assistant,
-                content: text,
-            },
-            tool_calls,
+            output: raw_output_from_anthropic(text, tool_calls),
             usage: CompletionUsage {
                 prompt_tokens: chat_res.usage.input_tokens,
                 completion_tokens: chat_res.usage.output_tokens,
@@ -374,25 +387,41 @@ impl LlmProvider for Anthropic {
             ModelSelector::Specific { model, .. } => model,
         };
 
+        let system = req.input.iter().find_map(|item| match item {
+            RawInputItem::Message { role: Role::System, content } => Some(build_content(content)),
+            RawInputItem::Message { .. } | RawInputItem::ToolResult { .. } => None,
+        });
+
         let messages: Vec<crate::provider::anthropic::ChatMessage> = req
-            .messages
+            .input
             .iter()
-            .map(|m| crate::provider::anthropic::ChatMessage {
-                role: match m.role {
-                    Role::System => crate::provider::anthropic::ChatRole::System,
-                    Role::User => crate::provider::anthropic::ChatRole::User,
-                    Role::Assistant => crate::provider::anthropic::ChatRole::Assistant,
-                    Role::Tool => crate::provider::anthropic::ChatRole::User,
-                },
-                content: crate::provider::anthropic::Content::Text(m.content.clone()),
+            .filter_map(|item| match item {
+                RawInputItem::Message { role, content } => {
+                    if *role == Role::System {
+                        None
+                    } else {
+                        Some(crate::provider::anthropic::ChatMessage {
+                            role: match role {
+                                Role::User => crate::provider::anthropic::ChatRole::User,
+                                Role::Assistant => crate::provider::anthropic::ChatRole::Assistant,
+                                Role::System => unreachable!(),
+                            },
+                            content: build_content(content),
+                        })
+                    }
+                }
+                RawInputItem::ToolResult {
+                    tool_use_id,
+                    content,
+                } => Some(crate::provider::anthropic::ChatMessage {
+                    role: crate::provider::anthropic::ChatRole::User,
+                    content: Content::Blocks(vec![ContentBlock::ToolResult {
+                        tool_use_id: tool_use_id.clone(),
+                        content: content.clone(),
+                    }]),
+                }),
             })
             .collect();
-
-        let system = req
-            .messages
-            .iter()
-            .find(|m| m.role == Role::System)
-            .map(|m| crate::provider::anthropic::Content::Text(m.content.clone()));
 
         let chat_req = crate::provider::anthropic::ChatRequest {
             model,
@@ -426,6 +455,9 @@ impl LlmProvider for Anthropic {
             let mut event_source = event_source;
             let mut model = None;
             let mut content = String::new();
+            let mut tool_calls = Vec::new();
+            let mut pending_tool_calls: std::collections::HashMap<u64, (String, String, String)> =
+                std::collections::HashMap::new();
             let mut usage = Usage {
                 input_tokens: 0,
                 output_tokens: 0,
@@ -446,9 +478,20 @@ impl LlmProvider for Anthropic {
                             }
                         }
                         "content_block_delta" => {
-                            match serde_json::from_str::<ContentBlockDeltaEvent>(&message.data) {
-                                Ok(delta) => {
-                                    if let ContentBlockDelta::TextDelta { text } = delta.delta {
+                            let parsed: Value = match serde_json::from_str(&message.data) {
+                                Ok(parsed) => parsed,
+                                Err(error) => {
+                                    let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ = event_source.close();
+                                    return;
+                                }
+                            };
+                            let index = parsed.get("index").and_then(Value::as_u64).unwrap_or(0);
+                            match serde_json::from_value::<ContentBlockDeltaEvent>(
+                                parsed.clone(),
+                            ) {
+                                Ok(delta) => match delta.delta {
+                                    ContentBlockDelta::TextDelta { text } => {
                                         content.push_str(&text);
                                         if sender
                                             .send(Ok(RawCompletionEvent::TextDelta { text }))
@@ -459,10 +502,92 @@ impl LlmProvider for Anthropic {
                                             return;
                                         }
                                     }
-                                }
+                                    ContentBlockDelta::InputJsonDelta { partial_json } => {
+                                        if let Some((_, _, input)) =
+                                            pending_tool_calls.get_mut(&index)
+                                        {
+                                            if input.trim() == "{}" {
+                                                input.clear();
+                                            }
+                                            input.push_str(&partial_json);
+                                        }
+                                    }
+                                },
                                 Err(error) => {
-                                    let _ =
-                                        sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ = event_source.close();
+                                    return;
+                                }
+                            }
+                        }
+                        "content_block_start" => {
+                            let parsed: Value = match serde_json::from_str(&message.data) {
+                                Ok(parsed) => parsed,
+                                Err(error) => {
+                                    let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ = event_source.close();
+                                    return;
+                                }
+                            };
+                            let index = parsed.get("index").and_then(Value::as_u64).unwrap_or(0);
+                            if let Some(content_block) = parsed.get("content_block") {
+                                if content_block.get("type").and_then(Value::as_str)
+                                    == Some("tool_use")
+                                {
+                                    let id = content_block
+                                        .get("id")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_string();
+                                    let name = content_block
+                                        .get("name")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default()
+                                        .to_string();
+                                    let initial_input = content_block
+                                        .get("input")
+                                        .map(|input| {
+                                            if input.is_object() || input.is_array() {
+                                                serde_json::to_string(input).unwrap_or_default()
+                                            } else {
+                                                String::new()
+                                            }
+                                        })
+                                        .unwrap_or_default();
+                                    pending_tool_calls.insert(index, (id, name, initial_input));
+                                }
+                            }
+                        }
+                        "content_block_stop" => {
+                            let parsed: Value = match serde_json::from_str(&message.data) {
+                                Ok(parsed) => parsed,
+                                Err(error) => {
+                                    let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                    let _ = event_source.close();
+                                    return;
+                                }
+                            };
+                            let index = parsed.get("index").and_then(Value::as_u64).unwrap_or(0);
+                            if let Some((id, name, input)) = pending_tool_calls.remove(&index) {
+                                let arguments = if input.trim().is_empty() {
+                                    serde_json::json!({})
+                                } else {
+                                    match serde_json::from_str(&input) {
+                                        Ok(arguments) => arguments,
+                                        Err(error) => {
+                                            let _ = sender.send(Err(Error::parse(input, error))).await;
+                                            let _ = event_source.close();
+                                            return;
+                                        }
+                                    }
+                                };
+                                let call = RawToolCall { id, name, arguments };
+                                tool_calls.push(call.clone());
+                                if sender
+                                    .send(Ok(RawCompletionEvent::ToolCall { call }))
+                                    .await
+                                    .is_err()
+                                {
                                     let _ = event_source.close();
                                     return;
                                 }
@@ -502,8 +627,7 @@ impl LlmProvider for Anthropic {
                 .send(Ok(RawCompletionEvent::Done(RawCompletionResponse {
                     provider: ProviderType::Anthropic,
                     model: model.unwrap_or_else(|| "unknown".to_string()),
-                    message: Message::assistant(content),
-                    tool_calls: vec![],
+                    output: raw_output_from_anthropic(content, tool_calls),
                     usage: CompletionUsage {
                         prompt_tokens: usage.input_tokens,
                         completion_tokens: usage.output_tokens,
@@ -525,6 +649,38 @@ impl LlmProvider for Anthropic {
             reason: "Anthropic does not support audio transcription".to_string(),
         })
     }
+}
+
+fn build_content(content: &[RawInputContent]) -> Content {
+    let blocks = content
+        .iter()
+        .map(|content| match content {
+            RawInputContent::Text { text } => ContentBlock::Text { text: text.clone() },
+            RawInputContent::ImageUrl { url } => ContentBlock::Image {
+                source: ImageSource::Base64 {
+                    media_type: "text/plain".to_string(),
+                    data: url.clone(),
+                },
+            },
+        })
+        .collect::<Vec<_>>();
+
+    match blocks.as_slice() {
+        [ContentBlock::Text { text }] => Content::Text(text.clone()),
+        _ => Content::Blocks(blocks),
+    }
+}
+
+fn raw_output_from_anthropic(text: String, tool_calls: Vec<RawToolCall>) -> Vec<RawOutputItem> {
+    let mut output = Vec::new();
+    if !text.is_empty() {
+        output.push(RawOutputItem::Message {
+            role: Role::Assistant,
+            content: vec![RawOutputContent::Text { text }],
+        });
+    }
+    output.extend(tool_calls.into_iter().map(|call| RawOutputItem::ToolCall { call }));
+    output
 }
 
 fn map_tool_definitions(tools: Vec<RawToolDefinition>) -> Vec<ToolDefinition> {

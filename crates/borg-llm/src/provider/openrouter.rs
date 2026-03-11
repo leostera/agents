@@ -5,14 +5,15 @@ use reqwest::Client;
 use reqwest_eventsource::{Event, RequestBuilderExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
 
 use crate::capability::Capability;
 use crate::completion::{
-    FinishReason, Message, ModelSelector, ProviderType, RawCompletionEvent,
-    RawCompletionEventStream, RawCompletionRequest, RawCompletionResponse, Role,
-    ToolChoice as RawToolChoice, Usage as CompletionUsage,
+    FinishReason, ModelSelector, ProviderType, RawCompletionEvent, RawCompletionEventStream,
+    RawCompletionRequest, RawCompletionResponse, RawInputContent, RawInputItem, RawOutputContent,
+    RawOutputItem, Role, ToolChoice as RawToolChoice, Usage as CompletionUsage,
 };
 use crate::error::{Error, LlmResult, OpenRouterConfigError};
 use crate::model::Model;
@@ -54,6 +55,18 @@ pub struct OpenRouter {
     client: Client,
     config: OpenRouterConfig,
     cached_models: Arc<RwLock<Option<Vec<Model>>>>,
+}
+
+fn debug_openrouter_streaming() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("BORG_LLM_DEBUG_OPENROUTER_STREAM")
+            .map(|value| {
+                let value = value.trim().to_ascii_lowercase();
+                matches!(value.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false)
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,7 +166,7 @@ pub struct ChatResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct Choice {
     pub index: u32,
     pub message: ChatMessage,
@@ -235,7 +248,7 @@ pub struct ChatStreamChunk {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct StreamChoice {
     pub index: u32,
     pub delta: StreamDelta,
@@ -243,11 +256,34 @@ pub struct StreamChoice {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct StreamDelta {
     pub role: Option<String>,
     pub content: Option<String>,
-    pub tool_calls: Option<Vec<ChatToolCall>>,
+    pub tool_calls: Option<Vec<StreamToolCallDelta>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamToolCallDelta {
+    pub index: Option<u32>,
+    pub id: Option<String>,
+    pub r#type: Option<String>,
+    pub function: Option<StreamToolCallFunctionDelta>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamToolCallFunctionDelta {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PartialToolCall {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -430,16 +466,21 @@ impl LlmProvider for OpenRouter {
         };
 
         let messages: Vec<crate::provider::openrouter::ChatMessage> = req
-            .messages
+            .input
             .iter()
-            .map(|m| crate::provider::openrouter::ChatMessage {
-                role: match m.role {
-                    Role::System => "system".to_string(),
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
-                    Role::Tool => "user".to_string(),
+            .map(|item| crate::provider::openrouter::ChatMessage {
+                role: match item {
+                    RawInputItem::Message { role, .. } => match role {
+                        Role::System => "system".to_string(),
+                        Role::User => "user".to_string(),
+                        Role::Assistant => "assistant".to_string(),
+                    },
+                    RawInputItem::ToolResult { .. } => "tool".to_string(),
                 },
-                content: Some(m.content.clone()),
+                content: Some(match item {
+                    RawInputItem::Message { content, .. } => flatten_openrouter_content(content),
+                    RawInputItem::ToolResult { content, .. } => content.clone(),
+                }),
                 name: None,
                 tool_calls: None,
             })
@@ -463,40 +504,7 @@ impl LlmProvider for OpenRouter {
         };
 
         let chat_res = self.chat(&chat_req).await?;
-        let first_choice = chat_res.choices.first().ok_or(Error::InvalidResponse {
-            reason: "OpenRouter response had no choices".to_string(),
-        })?;
-        let tool_calls = first_choice
-            .message
-            .tool_calls
-            .clone()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|call| {
-                Ok(RawToolCall {
-                    id: call.id,
-                    name: call.function.name,
-                    arguments: serde_json::from_str(&call.function.arguments)
-                        .map_err(|e| Error::parse("tool arguments", e))?,
-                })
-            })
-            .collect::<LlmResult<Vec<_>>>()?;
-
-        Ok(RawCompletionResponse {
-            provider: ProviderType::OpenRouter,
-            model: chat_res.model,
-            message: Message {
-                role: Role::Assistant,
-                content: first_choice.message.content.clone().unwrap_or_default(),
-            },
-            tool_calls,
-            usage: CompletionUsage {
-                prompt_tokens: chat_res.usage.prompt_tokens,
-                completion_tokens: chat_res.usage.completion_tokens,
-                total_tokens: chat_res.usage.total_tokens,
-            },
-            finish_reason: FinishReason::from(first_choice.finish_reason.clone()),
-        })
+        raw_response_from_chat(chat_res)
     }
 
     async fn chat_raw_stream(
@@ -510,16 +518,21 @@ impl LlmProvider for OpenRouter {
         };
 
         let messages: Vec<crate::provider::openrouter::ChatMessage> = req
-            .messages
+            .input
             .iter()
-            .map(|m| crate::provider::openrouter::ChatMessage {
-                role: match m.role {
-                    Role::System => "system".to_string(),
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
-                    Role::Tool => "user".to_string(),
+            .map(|item| crate::provider::openrouter::ChatMessage {
+                role: match item {
+                    RawInputItem::Message { role, .. } => match role {
+                        Role::System => "system".to_string(),
+                        Role::User => "user".to_string(),
+                        Role::Assistant => "assistant".to_string(),
+                    },
+                    RawInputItem::ToolResult { .. } => "tool".to_string(),
                 },
-                content: Some(m.content.clone()),
+                content: Some(match item {
+                    RawInputItem::Message { content, .. } => flatten_openrouter_content(content),
+                    RawInputItem::ToolResult { content, .. } => content.clone(),
+                }),
                 name: None,
                 tool_calls: None,
             })
@@ -562,12 +575,20 @@ impl LlmProvider for OpenRouter {
             let mut event_source = event_source;
             let mut model = None;
             let mut content = String::new();
+            let mut tool_calls = Vec::new();
+            let mut partial_tool_calls = std::collections::BTreeMap::<u32, PartialToolCall>::new();
             let mut finish_reason = FinishReason::Unknown("stream_incomplete".to_string());
 
             while let Some(event) = event_source.next().await {
                 match event {
                     Ok(Event::Open) => {}
                     Ok(Event::Message(message)) => {
+                        if debug_openrouter_streaming() {
+                            eprintln!(
+                                "[openrouter-stream] event={} data={}",
+                                message.event, message.data
+                            );
+                        }
                         if message.data == "[DONE]" {
                             break;
                         }
@@ -585,6 +606,25 @@ impl LlmProvider for OpenRouter {
                                         {
                                             let _ = event_source.close();
                                             return;
+                                        }
+                                    }
+                                    if let Some(delta_tool_calls) = choice.delta.tool_calls.clone() {
+                                        for call in delta_tool_calls {
+                                            let Some(index) = call.index else {
+                                                continue;
+                                            };
+                                            let partial = partial_tool_calls.entry(index).or_default();
+                                            if let Some(id) = call.id {
+                                                partial.id = id;
+                                            }
+                                            if let Some(function) = call.function {
+                                                if let Some(name) = function.name {
+                                                    partial.name = name;
+                                                }
+                                                if let Some(arguments) = function.arguments {
+                                                    partial.arguments.push_str(&arguments);
+                                                }
+                                            }
                                         }
                                     }
                                     if choice.finish_reason.is_some() {
@@ -613,19 +653,54 @@ impl LlmProvider for OpenRouter {
             }
 
             let _ = event_source.close();
-            let _ = sender
-                .send(Ok(RawCompletionEvent::Done(RawCompletionResponse {
-                    provider: ProviderType::OpenRouter,
-                    model: model.unwrap_or_else(|| "unknown".to_string()),
-                    message: Message::assistant(content),
-                    tool_calls: vec![],
-                    usage: CompletionUsage {
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
+            for partial in partial_tool_calls.into_values() {
+                if partial.name.is_empty() {
+                    continue;
+                }
+                let arguments = if partial.arguments.trim().is_empty() {
+                    serde_json::json!({})
+                } else {
+                    match serde_json::from_str(&partial.arguments) {
+                        Ok(arguments) => arguments,
+                        Err(error) => {
+                            let _ = sender
+                                .send(Err(Error::parse(partial.arguments, error)))
+                                .await;
+                            return;
+                        }
+                    }
+                };
+                let raw_call = RawToolCall {
+                    id: if partial.id.is_empty() {
+                        partial.name.clone()
+                    } else {
+                        partial.id
                     },
-                    finish_reason,
-                })))
+                    name: partial.name,
+                    arguments,
+                };
+                tool_calls.push(raw_call.clone());
+                if sender
+                    .send(Ok(RawCompletionEvent::ToolCall { call: raw_call }))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            let final_response = RawCompletionResponse {
+                provider: ProviderType::OpenRouter,
+                model: model.unwrap_or_else(|| "unknown".to_string()),
+                output: raw_output_from_openrouter(Some(content), tool_calls),
+                usage: CompletionUsage {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                },
+                finish_reason,
+            };
+            let _ = sender
+                .send(Ok(RawCompletionEvent::Done(final_response)))
                 .await;
         });
 
@@ -640,6 +715,65 @@ impl LlmProvider for OpenRouter {
             reason: "OpenRouter does not support audio transcription".to_string(),
         })
     }
+}
+
+fn flatten_openrouter_content(content: &[RawInputContent]) -> String {
+    content
+        .iter()
+        .filter_map(|content| match content {
+            RawInputContent::Text { text } => Some(text.as_str()),
+            RawInputContent::ImageUrl { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn raw_output_from_openrouter(
+    content: Option<String>,
+    tool_calls: Vec<RawToolCall>,
+) -> Vec<RawOutputItem> {
+    let mut output = Vec::new();
+    if let Some(content) = content.filter(|content| !content.is_empty()) {
+        output.push(RawOutputItem::Message {
+            role: Role::Assistant,
+            content: vec![RawOutputContent::Text { text: content }],
+        });
+    }
+    output.extend(tool_calls.into_iter().map(|call| RawOutputItem::ToolCall { call }));
+    output
+}
+
+fn raw_response_from_chat(chat_res: ChatResponse) -> LlmResult<RawCompletionResponse> {
+    let first_choice = chat_res.choices.first().ok_or(Error::InvalidResponse {
+        reason: "OpenRouter response had no choices".to_string(),
+    })?;
+    let tool_calls = first_choice
+        .message
+        .tool_calls
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|call| {
+            Ok(RawToolCall {
+                id: call.id,
+                name: call.function.name,
+                arguments: serde_json::from_str(&call.function.arguments)
+                    .map_err(|e| Error::parse("tool arguments", e))?,
+            })
+        })
+        .collect::<LlmResult<Vec<_>>>()?;
+
+    Ok(RawCompletionResponse {
+        provider: ProviderType::OpenRouter,
+        model: chat_res.model,
+        output: raw_output_from_openrouter(first_choice.message.content.clone(), tool_calls),
+        usage: CompletionUsage {
+            prompt_tokens: chat_res.usage.prompt_tokens,
+            completion_tokens: chat_res.usage.completion_tokens,
+            total_tokens: chat_res.usage.total_tokens,
+        },
+        finish_reason: FinishReason::from(first_choice.finish_reason.clone()),
+    })
 }
 
 fn map_tool_choice(choice: RawToolChoice) -> Option<ToolChoice> {

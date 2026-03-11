@@ -1,4 +1,4 @@
-use borg_llm::completion::CompletionEvent;
+use borg_llm::completion::{CompletionEvent, OutputContent, OutputItem};
 use borg_llm::error::{Error, LlmResult};
 use borg_llm::tools::{RawToolDefinition, TypedTool};
 use schemars::JsonSchema;
@@ -61,9 +61,18 @@ pub async fn assert_non_empty_text_stream<C>(
                     saw_text_delta = true;
                 }
             }
+            CompletionEvent::ReasoningDelta { .. } => {}
             CompletionEvent::ToolCall { .. } => {}
             CompletionEvent::Done(response) => {
-                final_content = Some(response.message.content);
+                final_content = response.output.iter().find_map(|item| match item {
+                    OutputItem::Message { content, .. } => {
+                        content.iter().find_map(|content| match content {
+                            OutputContent::Text { text } => Some(text.clone()),
+                            OutputContent::Structured { .. } => None,
+                        })
+                    }
+                    OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
+                });
                 break;
             }
         }
@@ -94,9 +103,18 @@ pub async fn assert_streamed_typed_response(
                     saw_text_delta = true;
                 }
             }
+            CompletionEvent::ReasoningDelta { .. } => {}
             CompletionEvent::ToolCall { .. } => {}
             CompletionEvent::Done(response) => {
-                final_response = Some(response.message.content);
+                final_response = response.output.iter().find_map(|item| match item {
+                    OutputItem::Message { content, .. } => {
+                        content.iter().find_map(|content| match content {
+                            OutputContent::Structured { value } => Some(value.clone()),
+                            OutputContent::Text { .. } => None,
+                        })
+                    }
+                    OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
+                });
                 break;
             }
         }
@@ -125,13 +143,21 @@ pub async fn assert_streamed_ping_tool_call(
     while let Some(event) = stream.recv().await {
         match event? {
             CompletionEvent::TextDelta { .. } => {}
+            CompletionEvent::ReasoningDelta { .. } => {}
             CompletionEvent::ToolCall { call } => {
                 if matches!(call.tool, TestTools::Ping { ref value } if value == "hello-tool") {
                     saw_ping_event = true;
                 }
             }
             CompletionEvent::Done(response) => {
-                final_tool_calls = response.tool_calls;
+                final_tool_calls = response
+                    .output
+                    .into_iter()
+                    .filter_map(|item| match item {
+                        OutputItem::ToolCall { call } => Some(call),
+                        OutputItem::Message { .. } | OutputItem::Reasoning { .. } => None,
+                    })
+                    .collect();
                 break;
             }
         }

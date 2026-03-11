@@ -10,9 +10,9 @@ use tokio::sync::mpsc;
 
 use crate::capability::Capability;
 use crate::completion::{
-    FinishReason, Message, ModelSelector, ProviderType, RawCompletionEvent,
-    RawCompletionEventStream, RawCompletionRequest, RawCompletionResponse, Role,
-    ToolChoice as RawToolChoice, Usage as CompletionUsage,
+    FinishReason, ModelSelector, ProviderType, RawCompletionEvent, RawCompletionEventStream,
+    RawCompletionRequest, RawCompletionResponse, RawInputContent, RawInputItem, RawOutputContent,
+    RawOutputItem, Role, ToolChoice as RawToolChoice, Usage as CompletionUsage,
 };
 use crate::error::{Error, LlmResult, OpenAIConfigError};
 use crate::model::Model;
@@ -20,6 +20,7 @@ use crate::provider::LlmProvider;
 use crate::response::RawResponseFormat;
 use crate::tools::{RawToolCall, RawToolDefinition};
 use crate::transcription::{AudioSource, AudioTranscriptionRequest, AudioTranscriptionResponse};
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone)]
 pub struct OpenAIConfig {
@@ -68,6 +69,8 @@ pub struct ChatMessage {
     pub role: String,
     pub content: Option<String>,
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
     pub tool_calls: Option<Vec<ChatToolCall>>,
 }
 
@@ -195,80 +198,76 @@ pub struct Usage {
 }
 
 #[derive(Debug, Clone, Builder, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct ResponsesRequest {
     pub model: String,
     pub input: Vec<ResponseInputItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
-    pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
-    pub tools: Option<Vec<ToolDefinition>>,
-    pub tool_choice: Option<ToolChoice>,
-    pub response_format: Option<ResponseFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ResponseToolDefinition>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<ResponseTextConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
+#[serde(rename_all = "snake_case", tag = "type")]
 pub enum ResponseInputItem {
     Message {
         role: String,
         content: Vec<ResponseContent>,
     },
-    Text {
-        text: String,
+    FunctionCallOutput {
+        call_id: String,
+        output: String,
     },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
+#[serde(rename_all = "snake_case", tag = "type")]
 pub enum ResponseContent {
     InputText { text: String },
-    InputImage { image_url: ImageUrl },
+    InputImage { image_url: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImageUrl {
-    pub url: String,
+#[serde(rename_all = "snake_case")]
+pub struct ResponseToolDefinition {
+    pub r#type: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub parameters: serde_json::Value,
+    pub strict: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResponsesResponse {
-    pub id: String,
-    pub object: String,
-    pub created: u64,
-    pub model: String,
-    pub output: Vec<ResponseOutputItem>,
-    pub usage: Usage,
+#[serde(rename_all = "snake_case")]
+pub struct ResponseTextConfig {
+    pub format: ResponseTextFormat,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
-pub enum ResponseOutputItem {
-    Message {
-        id: String,
-        role: String,
-        content: Vec<ResponseOutputContent>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
-pub enum ResponseOutputContent {
-    OutputText {
-        text: String,
-    },
-    ToolUse {
-        id: String,
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum ResponseTextFormat {
+    Text,
+    JsonSchema {
         name: String,
-        input: serde_json::Value,
+        schema: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        strict: Option<bool>,
     },
-    ToolResult {
-        tool_use_id: String,
-        content: String,
-    },
+    JsonObject,
 }
 
 #[derive(Debug, Clone, Builder, Serialize, Deserialize)]
@@ -354,7 +353,7 @@ impl OpenAI {
         Ok(parsed)
     }
 
-    pub async fn responses(&self, request: &ResponsesRequest) -> LlmResult<ResponsesResponse> {
+    pub async fn responses(&self, request: &ResponsesRequest) -> LlmResult<Value> {
         let url = format!("{}/v1/responses", self.config.base_url);
         let auth = self.auth_header();
 
@@ -378,8 +377,7 @@ impl OpenAI {
         }
 
         let body = response.text().await?;
-        let parsed: ResponsesResponse =
-            serde_json::from_str(&body).map_err(|e| Error::parse(body, e))?;
+        let parsed: Value = serde_json::from_str(&body).map_err(|e| Error::parse(body, e))?;
         Ok(parsed)
     }
 
@@ -476,116 +474,17 @@ impl LlmProvider for OpenAI {
     }
 
     async fn chat_raw(&self, req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
-        let model = match req.model {
-            ModelSelector::Any => self.config.default_model.clone(),
-            ModelSelector::Provider(_) => self.config.default_model.clone(),
-            ModelSelector::Specific { model, .. } => model,
-        };
-
-        let messages: Vec<ChatMessage> = req
-            .messages
-            .iter()
-            .map(|m| ChatMessage {
-                role: match m.role {
-                    Role::System => "system".to_string(),
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
-                    Role::Tool => "user".to_string(),
-                },
-                content: Some(m.content.clone()),
-                name: None,
-                tool_calls: None,
-            })
-            .collect();
-
-        let chat_req = ChatRequest {
-            model: model.clone(),
-            messages,
-            temperature: req.temperature.as_option(),
-            top_p: req.top_p.as_option(),
-            max_tokens: req.token_limit.as_option(),
-            stream: Some(req.response_mode.is_streaming()),
-            tools: req.tools.map(map_tool_definitions),
-            tool_choice: map_tool_choice(req.tool_choice),
-            response_format: req.response_format.map(map_response_format),
-        };
-
-        let chat_res = self.chat(&chat_req).await?;
-        let first_choice = chat_res.choices.first().ok_or(Error::InvalidResponse {
-            reason: "OpenAI response had no choices".to_string(),
-        })?;
-        let tool_calls = first_choice
-            .message
-            .tool_calls
-            .clone()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|call| {
-                Ok(RawToolCall {
-                    id: call.id,
-                    name: call.function.name,
-                    arguments: serde_json::from_str(&call.function.arguments)
-                        .map_err(|e| Error::parse("tool arguments", e))?,
-                })
-            })
-            .collect::<LlmResult<Vec<_>>>()?;
-
-        Ok(RawCompletionResponse {
-            provider: ProviderType::OpenAI,
-            model: chat_res.model,
-            message: Message {
-                role: Role::Assistant,
-                content: first_choice.message.content.clone().unwrap_or_default(),
-            },
-            tool_calls,
-            usage: CompletionUsage {
-                prompt_tokens: chat_res.usage.prompt_tokens,
-                completion_tokens: chat_res.usage.completion_tokens,
-                total_tokens: chat_res.usage.total_tokens,
-            },
-            finish_reason: FinishReason::from(first_choice.finish_reason.clone()),
-        })
+        let responses_req = build_responses_request(&self.config.default_model, req)?;
+        let response = self.responses(&responses_req).await?;
+        parse_responses_response(response)
     }
 
     async fn chat_raw_stream(
         &self,
         req: RawCompletionRequest,
     ) -> LlmResult<RawCompletionEventStream> {
-        let model = match req.model {
-            ModelSelector::Any => self.config.default_model.clone(),
-            ModelSelector::Provider(_) => self.config.default_model.clone(),
-            ModelSelector::Specific { model, .. } => model,
-        };
-
-        let messages: Vec<ChatMessage> = req
-            .messages
-            .iter()
-            .map(|m| ChatMessage {
-                role: match m.role {
-                    Role::System => "system".to_string(),
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
-                    Role::Tool => "user".to_string(),
-                },
-                content: Some(m.content.clone()),
-                name: None,
-                tool_calls: None,
-            })
-            .collect();
-
-        let chat_req = ChatRequest {
-            model,
-            messages,
-            temperature: req.temperature.as_option(),
-            top_p: req.top_p.as_option(),
-            max_tokens: req.token_limit.as_option(),
-            stream: Some(true),
-            tools: req.tools.map(map_tool_definitions),
-            tool_choice: map_tool_choice(req.tool_choice),
-            response_format: req.response_format.map(map_response_format),
-        };
-
-        let url = format!("{}/v1/chat/completions", self.config.base_url);
+        let responses_req = build_responses_request(&self.config.default_model, req)?;
+        let url = format!("{}/v1/responses", self.config.base_url);
         let auth = self.auth_header();
         let mut req_builder = self
             .client
@@ -599,7 +498,7 @@ impl LlmProvider for OpenAI {
 
         let event_source =
             req_builder
-                .json(&chat_req)
+                .json(&responses_req)
                 .eventsource()
                 .map_err(|error| Error::Internal {
                     message: error.to_string(),
@@ -609,44 +508,119 @@ impl LlmProvider for OpenAI {
 
         tokio::spawn(async move {
             let mut event_source = event_source;
-            let mut model = None;
-            let mut content = String::new();
-            let mut finish_reason = FinishReason::Unknown("stream_incomplete".to_string());
+            let mut function_calls: std::collections::HashMap<String, (String, String, String)> =
+                std::collections::HashMap::new();
 
             while let Some(event) = event_source.next().await {
                 match event {
                     Ok(Event::Open) => {}
                     Ok(Event::Message(message)) => {
-                        if message.data == "[DONE]" {
-                            break;
-                        }
-
-                        match serde_json::from_str::<ChatStreamChunk>(&message.data) {
-                            Ok(chunk) => {
-                                model = Some(chunk.model.clone());
-                                if let Some(choice) = chunk.choices.first() {
-                                    if let Some(text) = choice.delta.content.clone() {
-                                        content.push_str(&text);
-                                        if sender
-                                            .send(Ok(RawCompletionEvent::TextDelta { text }))
-                                            .await
-                                            .is_err()
-                                        {
-                                            let _ = event_source.close();
-                                            return;
-                                        }
+                        match message.event.as_str() {
+                            "response.output_text.delta" => {
+                                let parsed: Value = match serde_json::from_str(&message.data) {
+                                    Ok(parsed) => parsed,
+                                    Err(error) => {
+                                        let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                        let _ = event_source.close();
+                                        return;
                                     }
-                                    if choice.finish_reason.is_some() {
-                                        finish_reason =
-                                            FinishReason::from(choice.finish_reason.clone());
+                                };
+                                if let Some(text) = parsed.get("delta").and_then(Value::as_str) {
+                                    if sender
+                                        .send(Ok(RawCompletionEvent::TextDelta {
+                                            text: text.to_string(),
+                                        }))
+                                        .await
+                                        .is_err()
+                                    {
+                                        let _ = event_source.close();
+                                        return;
                                     }
                                 }
                             }
-                            Err(error) => {
-                                let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                            "response.output_item.added" | "response.output_item.done" => {
+                                let parsed: Value = match serde_json::from_str(&message.data) {
+                                    Ok(parsed) => parsed,
+                                    Err(error) => {
+                                        let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                        let _ = event_source.close();
+                                        return;
+                                    }
+                                };
+                                if let Some(item) = parsed.get("item") {
+                                    if item.get("type").and_then(Value::as_str) == Some("function_call") {
+                                        let item_id = item.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+                                        let call_id = item.get("call_id").and_then(Value::as_str).unwrap_or(&item_id).to_string();
+                                        let name = item.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
+                                        let arguments = item.get("arguments").and_then(Value::as_str).unwrap_or_default().to_string();
+                                        function_calls.insert(item_id.clone(), (call_id.clone(), name.clone(), arguments.clone()));
+                                        if message.event == "response.output_item.done" {
+                                            match parse_function_call(&call_id, &name, &arguments) {
+                                                Ok(call) => {
+                                                    if sender.send(Ok(RawCompletionEvent::ToolCall { call })).await.is_err() {
+                                                        let _ = event_source.close();
+                                                        return;
+                                                    }
+                                                }
+                                                Err(error) => {
+                                                    let _ = sender.send(Err(error)).await;
+                                                    let _ = event_source.close();
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            "response.function_call_arguments.delta" => {
+                                let parsed: Value = match serde_json::from_str(&message.data) {
+                                    Ok(parsed) => parsed,
+                                    Err(error) => {
+                                        let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                        let _ = event_source.close();
+                                        return;
+                                    }
+                                };
+                                if let (Some(item_id), Some(delta)) = (
+                                    parsed.get("item_id").and_then(Value::as_str),
+                                    parsed.get("delta").and_then(Value::as_str),
+                                ) {
+                                    if let Some((_, _, arguments)) = function_calls.get_mut(item_id) {
+                                        arguments.push_str(delta);
+                                    }
+                                }
+                            }
+                            "response.completed" => {
+                                let parsed: Value = match serde_json::from_str(&message.data) {
+                                    Ok(parsed) => parsed,
+                                    Err(error) => {
+                                        let _ = sender.send(Err(Error::parse(message.data, error))).await;
+                                        let _ = event_source.close();
+                                        return;
+                                    }
+                                };
+                                let response = parsed.get("response").cloned().unwrap_or(parsed);
+                                let final_response = match parse_responses_response(response) {
+                                    Ok(response) => response,
+                                    Err(error) => {
+                                        let _ = sender.send(Err(error)).await;
+                                        let _ = event_source.close();
+                                        return;
+                                    }
+                                };
+                                let _ = sender.send(Ok(RawCompletionEvent::Done(final_response))).await;
+                                break;
+                            }
+                            "response.failed" => {
+                                let _ = sender
+                                    .send(Err(Error::InvalidResponse {
+                                        reason: format!("OpenAI stream failed: {}", message.data),
+                                    }))
+                                    .await;
                                 let _ = event_source.close();
                                 return;
                             }
+                            _ => {}
                         }
                     }
                     Err(error) => {
@@ -662,20 +636,6 @@ impl LlmProvider for OpenAI {
             }
 
             let _ = event_source.close();
-            let _ = sender
-                .send(Ok(RawCompletionEvent::Done(RawCompletionResponse {
-                    provider: ProviderType::OpenAI,
-                    model: model.unwrap_or_else(|| "unknown".to_string()),
-                    message: Message::assistant(content),
-                    tool_calls: vec![],
-                    usage: CompletionUsage {
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
-                    },
-                    finish_reason,
-                })))
-                .await;
         });
 
         Ok(RawCompletionEventStream::new(receiver))
@@ -746,6 +706,17 @@ impl LlmProvider for OpenAI {
     }
 }
 
+fn flatten_text_content(content: &[RawInputContent]) -> String {
+    content
+        .iter()
+        .filter_map(|content| match content {
+            RawInputContent::Text { text } => Some(text.as_str()),
+            RawInputContent::ImageUrl { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn map_tool_choice(choice: RawToolChoice) -> Option<ToolChoice> {
     match choice {
         RawToolChoice::ProviderDefault => None,
@@ -790,5 +761,282 @@ fn map_response_format(format: RawResponseFormat) -> ResponseFormat {
             strict: schema.strict,
             schema: schema.schema,
         }),
+    }
+}
+
+fn build_responses_request(
+    default_model: &str,
+    req: RawCompletionRequest,
+) -> LlmResult<ResponsesRequest> {
+    let model = match req.model {
+        ModelSelector::Any => default_model.to_string(),
+        ModelSelector::Provider(_) => default_model.to_string(),
+        ModelSelector::Specific { model, .. } => model,
+    };
+
+    let input = req
+        .input
+        .into_iter()
+        .map(|item| match item {
+            RawInputItem::Message { role, content } => ResponseInputItem::Message {
+                role: match role {
+                    Role::System => "system".to_string(),
+                    Role::User => "user".to_string(),
+                    Role::Assistant => "assistant".to_string(),
+                },
+                content: content
+                    .into_iter()
+                    .map(|content| match content {
+                        RawInputContent::Text { text } => ResponseContent::InputText { text },
+                        RawInputContent::ImageUrl { url } => ResponseContent::InputImage {
+                            image_url: url,
+                        },
+                    })
+                    .collect(),
+            },
+            RawInputItem::ToolResult {
+                tool_use_id,
+                content,
+            } => ResponseInputItem::FunctionCallOutput {
+                call_id: tool_use_id,
+                output: content,
+            },
+        })
+        .collect();
+
+    Ok(ResponsesRequest {
+        model,
+        input,
+        temperature: req.temperature.as_option(),
+        top_p: req.top_p.as_option(),
+        max_output_tokens: req.token_limit.as_option(),
+        stream: Some(req.response_mode.is_streaming()),
+        tools: req.tools.map(map_response_tools),
+        tool_choice: map_responses_tool_choice(req.tool_choice),
+        text: req.response_format.map(map_response_text_config),
+    })
+}
+
+fn map_response_tools(tools: Vec<RawToolDefinition>) -> Vec<ResponseToolDefinition> {
+    tools
+        .into_iter()
+        .map(|tool| ResponseToolDefinition {
+            r#type: tool.r#type,
+            name: tool.function.name,
+            description: tool.function.description,
+            parameters: normalize_openai_schema(tool.function.parameters),
+            strict: true,
+        })
+        .collect()
+}
+
+fn map_responses_tool_choice(choice: RawToolChoice) -> Option<Value> {
+    match choice {
+        RawToolChoice::ProviderDefault => None,
+        RawToolChoice::Auto => Some(json!("auto")),
+        RawToolChoice::Required => Some(json!("required")),
+        RawToolChoice::Specific { name } => Some(json!({
+            "type": "function",
+            "name": name,
+        })),
+        RawToolChoice::None => Some(json!("none")),
+    }
+}
+
+fn map_response_text_config(format: RawResponseFormat) -> ResponseTextConfig {
+    ResponseTextConfig {
+        format: match format.json_schema {
+            Some(schema) => ResponseTextFormat::JsonSchema {
+                name: schema.name,
+                schema: normalize_openai_schema(schema.schema),
+                description: None,
+                strict: schema.strict,
+            },
+            None if format.r#type == "json_object" => ResponseTextFormat::JsonObject,
+            None => ResponseTextFormat::Text,
+        },
+    }
+}
+
+fn parse_responses_response(value: Value) -> LlmResult<RawCompletionResponse> {
+    let model = value
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or(Error::InvalidResponse {
+            reason: "OpenAI responses payload missing model".to_string(),
+        })?
+        .to_string();
+
+    let output_values = value
+        .get("output")
+        .and_then(Value::as_array)
+        .ok_or(Error::InvalidResponse {
+            reason: "OpenAI responses payload missing output".to_string(),
+        })?;
+
+    let mut output = Vec::new();
+    let mut saw_tool_call = false;
+
+    for item in output_values {
+        match item.get("type").and_then(Value::as_str) {
+            Some("message") => {
+                let mut content = Vec::new();
+                if let Some(parts) = item.get("content").and_then(Value::as_array) {
+                    for part in parts {
+                        match part.get("type").and_then(Value::as_str) {
+                            Some("output_text") => {
+                                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                                    content.push(RawOutputContent::Text {
+                                        text: text.to_string(),
+                                    });
+                                }
+                            }
+                            Some("output_json") => {
+                                if let Some(json) = part.get("json") {
+                                    content.push(RawOutputContent::Json { value: json.clone() });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                if !content.is_empty() {
+                    output.push(RawOutputItem::Message {
+                        role: Role::Assistant,
+                        content,
+                    });
+                }
+            }
+            Some("function_call") => {
+                let call_id = item
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .or_else(|| item.get("id").and_then(Value::as_str))
+                    .ok_or(Error::InvalidResponse {
+                        reason: "OpenAI function_call missing call id".to_string(),
+                    })?;
+                let name = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or(Error::InvalidResponse {
+                        reason: "OpenAI function_call missing name".to_string(),
+                    })?;
+                let arguments = item
+                    .get("arguments")
+                    .and_then(Value::as_str)
+                    .ok_or(Error::InvalidResponse {
+                        reason: "OpenAI function_call missing arguments".to_string(),
+                    })?;
+                output.push(RawOutputItem::ToolCall {
+                    call: parse_function_call(call_id, name, arguments)?,
+                });
+                saw_tool_call = true;
+            }
+            Some("reasoning") => {
+                let summary = item
+                    .get("summary")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|part| part.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !summary.is_empty() {
+                    output.push(RawOutputItem::Reasoning { text: summary });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let usage = value.get("usage").cloned().unwrap_or_else(|| json!({}));
+    let prompt_tokens = usage
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    let completion_tokens = usage
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or((prompt_tokens + completion_tokens) as u64) as u32;
+
+    Ok(RawCompletionResponse {
+        provider: ProviderType::OpenAI,
+        model,
+        output,
+        usage: CompletionUsage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        },
+        finish_reason: if saw_tool_call {
+            FinishReason::ToolCalls
+        } else {
+            FinishReason::Stop
+        },
+    })
+}
+
+fn parse_function_call(call_id: &str, name: &str, arguments: &str) -> LlmResult<RawToolCall> {
+    Ok(RawToolCall {
+        id: call_id.to_string(),
+        name: name.to_string(),
+        arguments: serde_json::from_str(arguments).map_err(|e| Error::parse("tool arguments", e))?,
+    })
+}
+
+fn normalize_openai_schema(schema: Value) -> Value {
+    match schema {
+        Value::Object(mut map) => {
+            if map.get("type").and_then(Value::as_str) == Some("object") {
+                map.entry("additionalProperties".to_string())
+                    .or_insert(Value::Bool(false));
+            }
+
+            if let Some(Value::Object(properties)) = map.get_mut("properties") {
+                for value in properties.values_mut() {
+                    let normalized = normalize_openai_schema(std::mem::take(value));
+                    *value = normalized;
+                }
+            }
+
+            if let Some(items) = map.get_mut("items") {
+                let normalized = normalize_openai_schema(std::mem::take(items));
+                *items = normalized;
+            }
+
+            if let Some(Value::Array(any_of)) = map.get_mut("anyOf") {
+                for value in any_of.iter_mut() {
+                    let normalized = normalize_openai_schema(std::mem::take(value));
+                    *value = normalized;
+                }
+            }
+
+            if let Some(Value::Array(one_of)) = map.get_mut("oneOf") {
+                for value in one_of.iter_mut() {
+                    let normalized = normalize_openai_schema(std::mem::take(value));
+                    *value = normalized;
+                }
+            }
+
+            if let Some(Value::Array(all_of)) = map.get_mut("allOf") {
+                for value in all_of.iter_mut() {
+                    let normalized = normalize_openai_schema(std::mem::take(value));
+                    *value = normalized;
+                }
+            }
+
+            Value::Object(map)
+        }
+        Value::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(normalize_openai_schema)
+                .collect(),
+        ),
+        other => other,
     }
 }

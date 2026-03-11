@@ -1,16 +1,18 @@
 mod common;
 
 use borg_llm::completion::{
-    CompletionRequest, Message, ModelSelector, RawCompletionRequest, ResponseMode, Temperature,
-    TokenLimit, ToolChoice, TopK, TopP,
+    CompletionRequest, InputItem, ModelSelector, OutputContent, OutputItem, RawCompletionRequest,
+    RawInputContent, RawInputItem, RawOutputContent, RawOutputItem, ResponseMode, Temperature,
+    TokenLimit, ToolChoice, TopK, TopP, Role,
 };
 use borg_llm::error::LlmResult;
 use borg_llm::provider::LlmProvider;
 use borg_llm::response::TypedResponse;
 use borg_llm::testing::{openai_provider_for_model, optional_test_env, runner_with_openai_model};
 use borg_llm::tools::TypedToolSet;
-use common::{EchoResponse, TestTools, assert_streamed_typed_response};
-use serial_test::serial;
+use common::{
+    EchoResponse, TestTools, assert_streamed_ping_tool_call, assert_streamed_typed_response,
+};
 
 fn openai_model() -> String {
     optional_test_env("BORG_TEST_OPENAI_MODEL")
@@ -18,7 +20,6 @@ fn openai_model() -> String {
 }
 
 #[tokio::test]
-#[serial]
 async fn openai_provider_chat_raw_returns_text_long() -> LlmResult<()> {
     let model = openai_model();
     let provider = openai_provider_for_model(&model)?;
@@ -26,9 +27,13 @@ async fn openai_provider_chat_raw_returns_text_long() -> LlmResult<()> {
     let response = provider
         .chat_raw(RawCompletionRequest {
             model: ModelSelector::from_model(model),
-            messages: vec![Message::user(
-                "Reply with a short plain-text acknowledgment. Do not return JSON.",
-            )],
+            input: vec![RawInputItem::Message {
+                role: Role::User,
+                content: vec![RawInputContent::Text {
+                    text: "Reply with a short plain-text acknowledgment. Do not return JSON."
+                        .to_string(),
+                }],
+            }],
             temperature: Temperature::Value(0.0),
             top_p: TopP::ProviderDefault,
             top_k: TopK::ProviderDefault,
@@ -40,16 +45,25 @@ async fn openai_provider_chat_raw_returns_text_long() -> LlmResult<()> {
         })
         .await?;
 
+    let text = response.output.iter().find_map(|item| match item {
+        RawOutputItem::Message { content, .. } => {
+            content.iter().find_map(|content| match content {
+                RawOutputContent::Text { text } => Some(text.as_str()),
+                RawOutputContent::Json { .. } => None,
+            })
+        }
+        RawOutputItem::ToolCall { .. } | RawOutputItem::Reasoning { .. } => None,
+    });
+
     assert!(
-        !response.message.content.trim().is_empty(),
+        text.is_some_and(|text| !text.trim().is_empty()),
         "expected non-empty assistant text, got {:?}",
-        response.message.content
+        response.output
     );
     Ok(())
 }
 
 #[tokio::test]
-#[serial]
 async fn openai_runner_typed_response_round_trip_long() -> LlmResult<()> {
     let model = openai_model();
     let runner = runner_with_openai_model(&model)?;
@@ -57,7 +71,7 @@ async fn openai_runner_typed_response_round_trip_long() -> LlmResult<()> {
     let response = runner
         .chat::<(), EchoResponse>(
             CompletionRequest::new(
-                vec![Message::user(
+                vec![InputItem::user_text(
                     "Return valid JSON with a non-empty string field named value.",
                 )],
                 ModelSelector::from_model(model),
@@ -67,16 +81,23 @@ async fn openai_runner_typed_response_round_trip_long() -> LlmResult<()> {
         )
         .await?;
 
+    let structured = response.output.iter().find_map(|item| match item {
+        OutputItem::Message { content, .. } => content.iter().find_map(|content| match content {
+            OutputContent::Structured { value } => Some(value),
+            OutputContent::Text { .. } => None,
+        }),
+        OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
+    });
+
     assert!(
-        !response.message.content.value.trim().is_empty(),
+        structured.is_some_and(|response| !response.value.trim().is_empty()),
         "expected parsed EchoResponse.value to be non-empty, got {:?}",
-        response.message.content
+        response.output
     );
     Ok(())
 }
 
 #[tokio::test]
-#[serial]
 async fn openai_runner_decodes_typed_tool_calls_long() -> LlmResult<()> {
     let model = openai_model();
     let runner = runner_with_openai_model(&model)?;
@@ -84,7 +105,7 @@ async fn openai_runner_decodes_typed_tool_calls_long() -> LlmResult<()> {
     let response = runner
         .chat::<TestTools, String>(
             CompletionRequest::new(
-                vec![Message::user(
+                vec![InputItem::user_text(
                     "You must call the ping tool exactly once. Use the argument value=\"hello-tool\". Do not answer in natural language.",
                 )],
                 ModelSelector::from_model(model),
@@ -94,18 +115,26 @@ async fn openai_runner_decodes_typed_tool_calls_long() -> LlmResult<()> {
         )
         .await?;
 
+    let tool_calls = response
+        .output
+        .iter()
+        .filter_map(|item| match item {
+            OutputItem::ToolCall { call } => Some(call),
+            OutputItem::Message { .. } | OutputItem::Reasoning { .. } => None,
+        })
+        .collect::<Vec<_>>();
+
     assert!(
-        response.tool_calls.iter().any(
+        tool_calls.iter().any(
             |call| matches!(call.tool, TestTools::Ping { ref value } if value == "hello-tool")
         ),
         "expected at least one decoded ping tool call, got {:?}",
-        response.tool_calls
+        response.output
     );
     Ok(())
 }
 
 #[tokio::test]
-#[serial]
 async fn openai_runner_streams_typed_response_long() -> LlmResult<()> {
     let model = openai_model();
     let runner = runner_with_openai_model(&model)?;
@@ -113,7 +142,7 @@ async fn openai_runner_streams_typed_response_long() -> LlmResult<()> {
     let mut stream = runner
         .chat_stream::<(), EchoResponse>(
             CompletionRequest::new(
-                vec![Message::user(
+                vec![InputItem::user_text(
                     "Return valid JSON with a non-empty string field named value.",
                 )],
                 ModelSelector::from_model(model),
@@ -125,4 +154,26 @@ async fn openai_runner_streams_typed_response_long() -> LlmResult<()> {
         .await?;
 
     assert_streamed_typed_response(&mut stream).await
+}
+
+#[tokio::test]
+async fn openai_runner_streams_typed_tool_calls_long() -> LlmResult<()> {
+    let model = openai_model();
+    let runner = runner_with_openai_model(&model)?;
+
+    let mut stream = runner
+        .chat_stream::<TestTools, String>(
+            CompletionRequest::new(
+                vec![InputItem::user_text(
+                    "You must call the ping tool exactly once. Use the argument value=\"hello-tool\". Do not answer in natural language.",
+                )],
+                ModelSelector::from_model(model),
+            )
+            .with_max_tokens(128)
+            .with_response_mode(ResponseMode::Stream)
+            .with_tools(TypedToolSet::new()),
+        )
+        .await?;
+
+    assert_streamed_ping_tool_call(&mut stream).await
 }

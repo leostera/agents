@@ -6,8 +6,9 @@ use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 
 use crate::completion::{
-    CompletionEvent, CompletionEventStream, CompletionRequest, CompletionResponse, Message,
-    ModelSelector, RawCompletionEvent, RawCompletionRequest, RawCompletionResponse,
+    CompletionEvent, CompletionEventStream, CompletionRequest, CompletionResponse, InputItem,
+    ModelSelector, OutputContent, OutputItem, RawCompletionEvent, RawCompletionRequest,
+    RawCompletionResponse, RawInputContent, RawInputItem, RawOutputContent, RawOutputItem,
 };
 use crate::error::{Error, LlmResult};
 use crate::provider::LlmProvider;
@@ -98,7 +99,33 @@ impl LlmRunner {
     {
         RawCompletionRequest {
             model: req.model,
-            messages: req.messages,
+            input: req
+                .input
+                .into_iter()
+                .map(|item| match item {
+                    InputItem::Message { role, content } => RawInputItem::Message {
+                        role,
+                        content: content
+                            .into_iter()
+                            .map(|content| match content {
+                                crate::completion::InputContent::Text { text } => {
+                                    RawInputContent::Text { text }
+                                }
+                                crate::completion::InputContent::ImageUrl { url } => {
+                                    RawInputContent::ImageUrl { url }
+                                }
+                            })
+                            .collect(),
+                    },
+                    InputItem::ToolResult {
+                        tool_use_id,
+                        content,
+                    } => RawInputItem::ToolResult {
+                        tool_use_id,
+                        content,
+                    },
+                })
+                .collect(),
             temperature: req.temperature,
             top_p: req.top_p,
             top_k: req.top_k,
@@ -144,23 +171,53 @@ impl LlmRunner {
         C: TypedTool,
         R: DeserializeOwned + 'static,
     {
-        let tool_calls = raw
-            .tool_calls
+        let output = raw
+            .output
             .into_iter()
-            .map(|call| {
-                let tool = C::decode_tool_call(&call.name, call.arguments)?;
-                Ok(ToolCall { id: call.id, tool })
+            .map(|item| match item {
+                RawOutputItem::Message { role, content } => {
+                    let content = content
+                        .into_iter()
+                        .map(|content| match content {
+                            RawOutputContent::Text { text } => {
+                                if TypeId::of::<R>() == TypeId::of::<String>() {
+                                    Ok(OutputContent::Text { text })
+                                } else {
+                                    match Self::decode_response_content::<R>(text.clone()) {
+                                        Ok(value) => Ok(OutputContent::Structured { value }),
+                                        Err(_) => Ok(OutputContent::Text { text }),
+                                    }
+                                }
+                            }
+                            RawOutputContent::Json { value } => {
+                                let encoded = serde_json::to_string(&value).map_err(|error| {
+                                    Error::Internal {
+                                        message: error.to_string(),
+                                    }
+                                })?;
+                                Ok(OutputContent::Structured {
+                                    value: Self::decode_response_content::<R>(encoded)?,
+                                })
+                            }
+                        })
+                        .collect::<LlmResult<Vec<_>>>()?;
+
+                    Ok(OutputItem::Message { role, content })
+                }
+                RawOutputItem::ToolCall { call } => {
+                    let tool = C::decode_tool_call(&call.name, call.arguments)?;
+                    Ok(OutputItem::ToolCall {
+                        call: ToolCall { id: call.id, tool },
+                    })
+                }
+                RawOutputItem::Reasoning { text } => Ok(OutputItem::Reasoning { text }),
             })
             .collect::<LlmResult<Vec<_>>>()?;
 
         Ok(CompletionResponse {
             provider: raw.provider,
             model: raw.model,
-            message: Message {
-                role: raw.message.role,
-                content: Self::decode_response_content(raw.message.content)?,
-            },
-            tool_calls,
+            output,
             usage: raw.usage,
             finish_reason: raw.finish_reason,
         })
@@ -198,6 +255,9 @@ impl LlmRunner {
                 let mapped = match event {
                     Ok(RawCompletionEvent::TextDelta { text }) => {
                         Ok(CompletionEvent::TextDelta { text })
+                    }
+                    Ok(RawCompletionEvent::ReasoningDelta { text }) => {
+                        Ok(CompletionEvent::ReasoningDelta { text })
                     }
                     Ok(RawCompletionEvent::ToolCall { call }) => {
                         match C::decode_tool_call(&call.name, call.arguments) {
@@ -259,9 +319,10 @@ mod tests {
     use super::LlmRunner;
     use crate::capability::Capability;
     use crate::completion::{
-        CompletionEvent, CompletionRequest, FinishReason, Message, ModelSelector, ProviderType,
-        RawCompletionEvent, RawCompletionEventStream, RawCompletionRequest, RawCompletionResponse,
-        ResponseMode, Usage,
+        CompletionEvent, CompletionRequest, FinishReason, InputItem, ModelSelector, OutputContent,
+        OutputItem, ProviderType, RawCompletionEvent, RawCompletionEventStream,
+        RawCompletionRequest, RawCompletionResponse, RawOutputContent, RawOutputItem, ResponseMode,
+        Role, Usage,
     };
     use crate::error::{Error, LlmResult};
     use crate::model::Model;
@@ -373,12 +434,21 @@ mod tests {
                 .send(Ok(RawCompletionEvent::Done(RawCompletionResponse {
                     provider: ProviderType::Ollama,
                     model: "streaming-test-model".to_string(),
-                    message: Message::assistant(r#"{"value":"typed-ok"}"#),
-                    tool_calls: vec![RawToolCall {
-                        id: "call_1".to_string(),
-                        name: "ping".to_string(),
-                        arguments: serde_json::json!({ "value": "hello-tool" }),
-                    }],
+                    output: vec![
+                        RawOutputItem::Message {
+                            role: Role::Assistant,
+                            content: vec![RawOutputContent::Text {
+                                text: r#"{"value":"typed-ok"}"#.to_string(),
+                            }],
+                        },
+                        RawOutputItem::ToolCall {
+                            call: RawToolCall {
+                                id: "call_1".to_string(),
+                                name: "ping".to_string(),
+                                arguments: serde_json::json!({ "value": "hello-tool" }),
+                            },
+                        },
+                    ],
                     usage: Usage {
                         prompt_tokens: 1,
                         completion_tokens: 2,
@@ -406,12 +476,21 @@ mod tests {
         let raw = RawCompletionResponse {
             provider: ProviderType::Ollama,
             model: "test-model".to_string(),
-            message: Message::assistant(r#"{"value":"typed-ok"}"#),
-            tool_calls: vec![RawToolCall {
-                id: "call_1".to_string(),
-                name: "ping".to_string(),
-                arguments: serde_json::json!({ "value": "hello-tool" }),
-            }],
+            output: vec![
+                RawOutputItem::Message {
+                    role: Role::Assistant,
+                    content: vec![RawOutputContent::Text {
+                        text: r#"{"value":"typed-ok"}"#.to_string(),
+                    }],
+                },
+                RawOutputItem::ToolCall {
+                    call: RawToolCall {
+                        id: "call_1".to_string(),
+                        name: "ping".to_string(),
+                        arguments: serde_json::json!({ "value": "hello-tool" }),
+                    },
+                },
+            ],
             usage: Usage {
                 prompt_tokens: 1,
                 completion_tokens: 1,
@@ -423,15 +502,31 @@ mod tests {
         let response = LlmRunner::from_raw_response::<TestTools, TestResponse>(raw)
             .expect("raw response should decode into typed response");
 
+        let typed_response = response.output.iter().find_map(|item| match item {
+            OutputItem::Message { content, .. } => content.iter().find_map(|content| match content {
+                OutputContent::Structured { value } => Some(value),
+                OutputContent::Text { .. } => None,
+            }),
+            OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
+        });
+
         assert_eq!(
-            response.message.content,
-            TestResponse {
+            typed_response,
+            Some(&TestResponse {
                 value: "typed-ok".to_string(),
-            }
+            })
         );
-        assert_eq!(response.tool_calls.len(), 1);
+        let tool_calls = response
+            .output
+            .iter()
+            .filter_map(|item| match item {
+                OutputItem::ToolCall { call } => Some(call),
+                OutputItem::Message { .. } | OutputItem::Reasoning { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(tool_calls.len(), 1);
         assert_eq!(
-            response.tool_calls[0].tool,
+            tool_calls[0].tool,
             TestTools::Ping {
                 value: "hello-tool".to_string(),
             }
@@ -462,7 +557,7 @@ mod tests {
         let mut stream = runner
             .chat_stream::<TestTools, TestResponse>(
                 CompletionRequest::new(
-                    vec![Message::user("hello")],
+                    vec![InputItem::user_text("hello")],
                     ModelSelector::from_model("streaming-test-model"),
                 )
                 .with_response_mode(ResponseMode::Stream),
@@ -508,13 +603,30 @@ mod tests {
             .expect("done event should decode");
         match fourth {
             CompletionEvent::Done(response) => {
-                assert_eq!(
-                    response.message.content,
-                    TestResponse {
-                        value: "typed-ok".to_string(),
+                let typed_response = response.output.iter().find_map(|item| match item {
+                    OutputItem::Message { content, .. } => {
+                        content.iter().find_map(|content| match content {
+                            OutputContent::Structured { value } => Some(value),
+                            OutputContent::Text { .. } => None,
+                        })
                     }
+                    OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
+                });
+                assert_eq!(
+                    typed_response,
+                    Some(&TestResponse {
+                        value: "typed-ok".to_string(),
+                    })
                 );
-                assert_eq!(response.tool_calls.len(), 1);
+                let final_tool_calls = response
+                    .output
+                    .iter()
+                    .filter_map(|item| match item {
+                        OutputItem::ToolCall { call } => Some(call),
+                        OutputItem::Message { .. } | OutputItem::Reasoning { .. } => None,
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(final_tool_calls.len(), 1);
             }
             other => panic!("expected done event, got {other:?}"),
         }

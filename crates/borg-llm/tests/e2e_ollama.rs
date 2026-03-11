@@ -1,8 +1,9 @@
 mod common;
 
 use borg_llm::completion::{
-    CompletionRequest, Message, ModelSelector, RawCompletionRequest, ResponseMode, Temperature,
-    TokenLimit, ToolChoice, TopK, TopP,
+    CompletionRequest, InputItem, ModelSelector, OutputContent, OutputItem, RawCompletionRequest,
+    RawInputContent, RawInputItem, RawOutputContent, RawOutputItem, ResponseMode, Temperature,
+    TokenLimit, ToolChoice, TopK, TopP, Role,
 };
 use borg_llm::error::LlmResult;
 use borg_llm::provider::LlmProvider;
@@ -27,9 +28,13 @@ async fn ollama_provider_chat_raw_returns_text_long() -> LlmResult<()> {
     let response = provider
         .chat_raw(RawCompletionRequest {
             model: ModelSelector::from_model(OLLAMA_TEXT_MODEL),
-            messages: vec![Message::user(
-                "Reply with a short plain-text acknowledgment. Do not return JSON.",
-            )],
+            input: vec![RawInputItem::Message {
+                role: Role::User,
+                content: vec![RawInputContent::Text {
+                    text: "Reply with a short plain-text acknowledgment. Do not return JSON."
+                        .to_string(),
+                }],
+            }],
             temperature: Temperature::Value(0.0),
             top_p: TopP::ProviderDefault,
             top_k: TopK::ProviderDefault,
@@ -41,10 +46,20 @@ async fn ollama_provider_chat_raw_returns_text_long() -> LlmResult<()> {
         })
         .await?;
 
+    let text = response.output.iter().find_map(|item| match item {
+        RawOutputItem::Message { content, .. } => {
+            content.iter().find_map(|content| match content {
+                RawOutputContent::Text { text } => Some(text.as_str()),
+                RawOutputContent::Json { .. } => None,
+            })
+        }
+        RawOutputItem::ToolCall { .. } | RawOutputItem::Reasoning { .. } => None,
+    });
+
     assert!(
-        !response.message.content.trim().is_empty(),
+        text.is_some_and(|text| !text.trim().is_empty()),
         "expected non-empty assistant text, got: {:?}",
-        response.message.content
+        response.output
     );
     Ok(())
 }
@@ -58,7 +73,7 @@ async fn ollama_runner_typed_response_round_trip_long() -> LlmResult<()> {
     let response = runner
         .chat::<(), EchoResponse>(
             CompletionRequest::new(
-                vec![Message::user("Hello!")],
+                vec![InputItem::user_text("Hello!")],
                 ModelSelector::from_model(OLLAMA_STRUCTURED_OUTPUT_MODEL),
             )
             .with_max_tokens(64)
@@ -66,10 +81,18 @@ async fn ollama_runner_typed_response_round_trip_long() -> LlmResult<()> {
         )
         .await?;
 
+    let structured = response.output.iter().find_map(|item| match item {
+        OutputItem::Message { content, .. } => content.iter().find_map(|content| match content {
+            OutputContent::Structured { value } => Some(value),
+            OutputContent::Text { .. } => None,
+        }),
+        OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
+    });
+
     assert!(
-        !response.message.content.value.trim().is_empty(),
+        structured.is_some_and(|response| !response.value.trim().is_empty()),
         "expected parsed EchoResponse.value to be non-empty, got {:?}",
-        response.message.content
+        response.output
     );
     Ok(())
 }
@@ -83,7 +106,7 @@ async fn ollama_runner_decodes_typed_tool_calls_long() -> LlmResult<()> {
     let response = runner
         .chat::<TestTools, String>(
             CompletionRequest::new(
-                vec![Message::user(
+                vec![InputItem::user_text(
                     "You must call the ping tool exactly once. Use the argument value=\"hello-tool\". Do not answer in natural language.",
                 )],
                 ModelSelector::from_model(OLLAMA_TOOL_MODEL),
@@ -93,12 +116,21 @@ async fn ollama_runner_decodes_typed_tool_calls_long() -> LlmResult<()> {
         )
         .await?;
 
+    let tool_calls = response
+        .output
+        .iter()
+        .filter_map(|item| match item {
+            OutputItem::ToolCall { call } => Some(call),
+            OutputItem::Message { .. } | OutputItem::Reasoning { .. } => None,
+        })
+        .collect::<Vec<_>>();
+
     assert!(
-        response.tool_calls.iter().any(
+        tool_calls.iter().any(
             |call| matches!(call.tool, TestTools::Ping { ref value } if value == "hello-tool")
         ),
         "expected at least one decoded ping tool call, got {:?}",
-        response.tool_calls
+        response.output
     );
     Ok(())
 }
@@ -112,7 +144,7 @@ async fn ollama_runner_streams_typed_response_long() -> LlmResult<()> {
     let mut stream = runner
         .chat_stream::<(), EchoResponse>(
             CompletionRequest::new(
-                vec![Message::user("Hello!")],
+                vec![InputItem::user_text("Hello!")],
                 ModelSelector::from_model(OLLAMA_STRUCTURED_OUTPUT_MODEL),
             )
             .with_max_tokens(64)
@@ -133,7 +165,7 @@ async fn ollama_runner_streams_typed_tool_calls_long() -> LlmResult<()> {
     let mut stream = runner
         .chat_stream::<TestTools, String>(
             CompletionRequest::new(
-                vec![Message::user(
+                vec![InputItem::user_text(
                     "You must call the ping tool exactly once. Use the argument value=\"hello-tool\". Do not answer in natural language.",
                 )],
                 ModelSelector::from_model(OLLAMA_TOOL_MODEL),

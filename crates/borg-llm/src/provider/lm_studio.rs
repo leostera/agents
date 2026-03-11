@@ -7,8 +7,9 @@ use tokio::sync::RwLock;
 
 use crate::capability::Capability;
 use crate::completion::{
-    FinishReason, Message, ModelSelector, ProviderType, RawCompletionRequest,
-    RawCompletionResponse, Role, ToolChoice as RawToolChoice, Usage as CompletionUsage,
+    FinishReason, ModelSelector, ProviderType, RawCompletionRequest, RawCompletionResponse,
+    RawInputContent, RawInputItem, RawOutputContent, RawOutputItem, Role,
+    ToolChoice as RawToolChoice, Usage as CompletionUsage,
 };
 use crate::error::{Error, LlmResult};
 use crate::model::Model;
@@ -285,16 +286,21 @@ impl LlmProvider for LmStudio {
         }
 
         let messages: Vec<crate::provider::lm_studio::ChatMessage> = req
-            .messages
+            .input
             .iter()
-            .map(|m| crate::provider::lm_studio::ChatMessage {
-                role: match m.role {
-                    Role::System => "system".to_string(),
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
-                    Role::Tool => "user".to_string(),
+            .map(|item| crate::provider::lm_studio::ChatMessage {
+                role: match item {
+                    RawInputItem::Message { role, .. } => match role {
+                        Role::System => "system".to_string(),
+                        Role::User => "user".to_string(),
+                        Role::Assistant => "assistant".to_string(),
+                    },
+                    RawInputItem::ToolResult { .. } => "tool".to_string(),
                 },
-                content: Some(m.content.clone()),
+                content: Some(match item {
+                    RawInputItem::Message { content, .. } => flatten_lmstudio_content(content),
+                    RawInputItem::ToolResult { content, .. } => content.clone(),
+                }),
                 name: None,
                 tool_calls: None,
             })
@@ -341,11 +347,7 @@ impl LlmProvider for LmStudio {
         Ok(RawCompletionResponse {
             provider: ProviderType::LmStudio,
             model: chat_res.model,
-            message: Message {
-                role: Role::Assistant,
-                content: first_choice.message.content.clone().unwrap_or_default(),
-            },
-            tool_calls,
+            output: raw_output_from_lmstudio(first_choice.message.content.clone(), tool_calls),
             usage: CompletionUsage {
                 prompt_tokens: chat_res.usage.prompt_tokens.unwrap_or(0),
                 completion_tokens: chat_res.usage.completion_tokens.unwrap_or(0),
@@ -363,6 +365,32 @@ impl LlmProvider for LmStudio {
             reason: "LmStudio does not support audio transcription".to_string(),
         })
     }
+}
+
+fn flatten_lmstudio_content(content: &[RawInputContent]) -> String {
+    content
+        .iter()
+        .filter_map(|content| match content {
+            RawInputContent::Text { text } => Some(text.as_str()),
+            RawInputContent::ImageUrl { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn raw_output_from_lmstudio(
+    content: Option<String>,
+    tool_calls: Vec<RawToolCall>,
+) -> Vec<RawOutputItem> {
+    let mut output = Vec::new();
+    if let Some(content) = content.filter(|content| !content.is_empty()) {
+        output.push(RawOutputItem::Message {
+            role: Role::Assistant,
+            content: vec![RawOutputContent::Text { text: content }],
+        });
+    }
+    output.extend(tool_calls.into_iter().map(|call| RawOutputItem::ToolCall { call }));
+    output
 }
 
 fn map_tool_choice(choice: RawToolChoice) -> Option<ToolChoice> {
