@@ -1,6 +1,6 @@
 use borg_agent::{
-    Agent, AgentEvent, AgentInput, CallbackToolRunner, ToolCallEnvelope, ToolExecutionResult,
-    ToolResultEnvelope,
+    Agent, AgentEvent, AgentInput, AgentResult, CallbackToolRunner, ToolCallEnvelope,
+    ToolExecutionResult, ToolResultEnvelope,
 };
 use borg_llm::completion::InputItem;
 use borg_llm::error::LlmResult;
@@ -85,6 +85,12 @@ fn anthropic_model() -> String {
         .expect("BORG_TEST_ANTHROPIC_MODEL must be set for Anthropic agent e2e tests")
 }
 
+fn map_agent_error<T>(result: AgentResult<T>) -> LlmResult<T> {
+    result.map_err(|error| borg_llm::error::Error::Internal {
+        message: error.to_string(),
+    })
+}
+
 async fn next_event<M, C, T, R>(
     agent: &mut Agent<M, C, T, R>,
 ) -> LlmResult<Option<AgentEvent<C, T, R>>>
@@ -153,6 +159,39 @@ async fn anthropic_agent_send_completes_text_turn_long() -> LlmResult<()> {
         other => panic!("expected completed event, got {other:?}"),
     }
     assert!(next_event(&mut agent).await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn anthropic_agent_run_streams_text_turn_long() -> LlmResult<()> {
+    let runner = runner_with_anthropic_model(&anthropic_model())?;
+    let agent = Agent::builder()
+        .with_llm_runner(runner)
+        .build()
+        .expect("agent");
+
+    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    tx.send(AgentInput::Message(InputItem::user_text(
+        "Reply with a short plain-text acknowledgment. Do not return JSON.",
+    )))
+    .await
+    .expect("send");
+    drop(tx);
+
+    assert!(matches!(
+        map_agent_error(rx.recv().await.expect("model item"))?,
+        AgentEvent::ModelOutputItem { .. }
+    ));
+    match map_agent_error(rx.recv().await.expect("completed"))? {
+        AgentEvent::Completed { reply } => {
+            assert!(
+                !reply.trim().is_empty(),
+                "expected non-empty reply, got {reply:?}"
+            );
+        }
+        other => panic!("expected completed event, got {other:?}"),
+    }
+    assert!(rx.recv().await.is_none());
     Ok(())
 }
 
@@ -299,6 +338,107 @@ async fn anthropic_agent_executes_ping_tool_and_finishes_long() -> LlmResult<()>
         other => panic!("expected completed event, got {other:?}"),
     }
     assert!(next_event(&mut agent).await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn anthropic_agent_run_executes_ping_tool_and_finishes_long() -> LlmResult<()> {
+    let runner = runner_with_anthropic_model(&anthropic_model())?;
+    let tool_runner = CallbackToolRunner::new(|call: ToolCallEnvelope<TestTools>| async move {
+        match call.call {
+            TestTools::Ping { value } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("pong:{value}"),
+                    },
+                },
+            }),
+            TestTools::Redirect { destination } => Ok(ToolResultEnvelope {
+                call_id: call.call_id,
+                result: ToolExecutionResult::Ok {
+                    data: Pong {
+                        value: format!("redirected:{destination}"),
+                    },
+                },
+            }),
+        }
+    });
+
+    let agent = Agent::builder()
+        .with_llm_runner(runner)
+        .with_tool_runner(tool_runner)
+        .build()
+        .expect("agent");
+
+    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    tx.send(AgentInput::Message(InputItem::user_text(
+        "First call the ping tool exactly once with value=\"hello-tool\". Do not explain the plan before calling it, and do not call the tool more than once. After receiving the tool result, reply in plain text and include the returned pong value.",
+    )))
+    .await
+    .expect("send");
+    drop(tx);
+
+    let first = map_agent_error(rx.recv().await.expect("first event"))?;
+    let tool_call_id = match first {
+        AgentEvent::ToolCallRequested { call } => {
+            assert_eq!(
+                call.call,
+                TestTools::Ping {
+                    value: "hello-tool".to_string()
+                }
+            );
+            call.call_id
+        }
+        AgentEvent::ModelOutputItem { .. } => {
+            match map_agent_error(rx.recv().await.expect("tool call"))? {
+                AgentEvent::ToolCallRequested { call } => {
+                    assert_eq!(
+                        call.call,
+                        TestTools::Ping {
+                            value: "hello-tool".to_string()
+                        }
+                    );
+                    call.call_id
+                }
+                other => {
+                    panic!("expected tool call event after initial model output, got {other:?}")
+                }
+            }
+        }
+        other => panic!("expected tool call event, got {other:?}"),
+    };
+
+    match map_agent_error(rx.recv().await.expect("tool result"))? {
+        AgentEvent::ToolExecutionCompleted { result } => {
+            assert_eq!(result.call_id, tool_call_id);
+            match result.result {
+                ToolExecutionResult::Ok { data } => {
+                    assert_eq!(
+                        data,
+                        Pong {
+                            value: "pong:hello-tool".to_string()
+                        }
+                    );
+                }
+                other => panic!("expected successful tool result, got {other:?}"),
+            }
+        }
+        other => panic!("expected tool execution event, got {other:?}"),
+    }
+
+    let completed = loop {
+        match map_agent_error(rx.recv().await.expect("follow-up event"))? {
+            AgentEvent::ModelOutputItem { .. } => continue,
+            AgentEvent::Completed { reply } => break reply,
+            other => panic!("expected final reply after tool execution, got {other:?}"),
+        }
+    };
+    assert!(
+        completed.contains("pong:hello-tool"),
+        "expected final reply to include tool output, got {completed:?}"
+    );
+    assert!(rx.recv().await.is_none());
     Ok(())
 }
 
