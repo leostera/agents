@@ -241,6 +241,17 @@ impl Ollama {
                     .filter(|images: &Vec<String>| !images.is_empty()),
                     tool_calls: None,
                 },
+                RawInputItem::ToolCall { call } => crate::provider::ollama::ChatMessage {
+                    role: "assistant".to_string(),
+                    content: String::new(),
+                    images: None,
+                    tool_calls: Some(vec![ToolCall {
+                        function: ToolCallFunction {
+                            name: call.name.clone(),
+                            arguments: call.arguments.clone(),
+                        },
+                    }]),
+                },
                 RawInputItem::ToolResult {
                     tool_use_id,
                     content,

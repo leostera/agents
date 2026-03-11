@@ -228,6 +228,11 @@ pub enum ResponseInputItem {
         role: String,
         content: Vec<ResponseContent>,
     },
+    FunctionCall {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
     FunctionCallOutput {
         call_id: String,
         output: String,
@@ -798,32 +803,40 @@ fn build_responses_request(
     let input = req
         .input
         .into_iter()
-        .map(|item| match item {
-            RawInputItem::Message { role, content } => ResponseInputItem::Message {
-                role: match role {
-                    Role::System => "system".to_string(),
-                    Role::User => "user".to_string(),
-                    Role::Assistant => "assistant".to_string(),
+        .map(|item| -> LlmResult<ResponseInputItem> {
+            Ok(match item {
+                RawInputItem::Message { role, content } => ResponseInputItem::Message {
+                    role: match role {
+                        Role::System => "system".to_string(),
+                        Role::User => "user".to_string(),
+                        Role::Assistant => "assistant".to_string(),
+                    },
+                    content: content
+                        .into_iter()
+                        .map(|content| match content {
+                            RawInputContent::Text { text } => ResponseContent::InputText { text },
+                            RawInputContent::ImageUrl { url } => {
+                                ResponseContent::InputImage { image_url: url }
+                            }
+                        })
+                        .collect(),
                 },
-                content: content
-                    .into_iter()
-                    .map(|content| match content {
-                        RawInputContent::Text { text } => ResponseContent::InputText { text },
-                        RawInputContent::ImageUrl { url } => {
-                            ResponseContent::InputImage { image_url: url }
-                        }
-                    })
-                    .collect(),
-            },
-            RawInputItem::ToolResult {
-                tool_use_id,
-                content,
-            } => ResponseInputItem::FunctionCallOutput {
-                call_id: tool_use_id,
-                output: content,
-            },
+                RawInputItem::ToolCall { call } => ResponseInputItem::FunctionCall {
+                    call_id: call.id,
+                    name: call.name,
+                    arguments: serde_json::to_string(&call.arguments)
+                        .map_err(|error| Error::parse("tool call arguments", error))?,
+                },
+                RawInputItem::ToolResult {
+                    tool_use_id,
+                    content,
+                } => ResponseInputItem::FunctionCallOutput {
+                    call_id: tool_use_id,
+                    output: content,
+                },
+            })
         })
-        .collect();
+        .collect::<LlmResult<Vec<_>>>()?;
 
     Ok(ResponsesRequest {
         model,

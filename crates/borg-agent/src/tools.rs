@@ -10,6 +10,7 @@ use crate::error::{AgentError, AgentResult};
 #[derive(Debug, Clone)]
 pub struct ToolCallEnvelope<C> {
     pub call_id: String,
+    pub name: String,
     pub call: C,
 }
 

@@ -315,7 +315,9 @@ impl LlmProvider for Anthropic {
                 role: Role::System,
                 content,
             } => Some(build_content(content)),
-            RawInputItem::Message { .. } | RawInputItem::ToolResult { .. } => None,
+            RawInputItem::Message { .. }
+            | RawInputItem::ToolCall { .. }
+            | RawInputItem::ToolResult { .. } => None,
         });
 
         let messages: Vec<crate::provider::anthropic::ChatMessage> = req
@@ -336,6 +338,14 @@ impl LlmProvider for Anthropic {
                         })
                     }
                 }
+                RawInputItem::ToolCall { call } => Some(crate::provider::anthropic::ChatMessage {
+                    role: crate::provider::anthropic::ChatRole::Assistant,
+                    content: Content::Blocks(vec![ContentBlock::ToolUse {
+                        id: call.id.clone(),
+                        name: call.name.clone(),
+                        input: call.arguments.clone(),
+                    }]),
+                }),
                 RawInputItem::ToolResult {
                     tool_use_id,
                     content,
@@ -423,7 +433,9 @@ impl LlmProvider for Anthropic {
                 role: Role::System,
                 content,
             } => Some(build_content(content)),
-            RawInputItem::Message { .. } | RawInputItem::ToolResult { .. } => None,
+            RawInputItem::Message { .. }
+            | RawInputItem::ToolCall { .. }
+            | RawInputItem::ToolResult { .. } => None,
         });
 
         let messages: Vec<crate::provider::anthropic::ChatMessage> = req
@@ -444,6 +456,14 @@ impl LlmProvider for Anthropic {
                         })
                     }
                 }
+                RawInputItem::ToolCall { call } => Some(crate::provider::anthropic::ChatMessage {
+                    role: crate::provider::anthropic::ChatRole::Assistant,
+                    content: Content::Blocks(vec![ContentBlock::ToolUse {
+                        id: call.id.clone(),
+                        name: call.name.clone(),
+                        input: call.arguments.clone(),
+                    }]),
+                }),
                 RawInputItem::ToolResult {
                     tool_use_id,
                     content,

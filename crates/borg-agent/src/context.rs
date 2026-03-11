@@ -83,6 +83,12 @@ impl ContextChunk {
                     content: text,
                 }))
             }
+            InputItem::ToolCall { call } => Some(Ok(Self::ToolCall {
+                strategy,
+                id: call.id,
+                name: call.name,
+                args: call.arguments,
+            })),
             InputItem::ToolResult {
                 tool_use_id,
                 content,
@@ -108,7 +114,11 @@ impl ContextChunk {
                 ContextRole::User => InputItem::user_text(content.clone()),
                 ContextRole::Assistant => InputItem::assistant_text(content.clone()),
             })),
-            ContextChunk::ToolCall { .. } => None,
+            ContextChunk::ToolCall { id, name, args, .. } => Some(Ok(InputItem::tool_call(
+                id.clone(),
+                name.clone(),
+                args.clone(),
+            ))),
             ContextChunk::ToolResult { id, result, .. } => Some(
                 serde_json::to_string(result)
                     .map(|content| InputItem::tool_result(id.clone(), content))
@@ -391,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn context_window_lowers_messages_and_tool_results_but_not_tool_calls() {
+    fn context_window_lowers_messages_tool_calls_and_tool_results() {
         let window = ContextWindow::new(vec![
             ContextChunk::system_text(ContextStrategy::Pinnable, "system"),
             ContextChunk::ToolCall {
@@ -408,7 +418,7 @@ mod tests {
         ]);
 
         let items = window.to_input_items().expect("input items");
-        assert_eq!(items.len(), 2);
+        assert_eq!(items.len(), 3);
         assert!(matches!(
             &items[0],
             InputItem::Message {
@@ -418,6 +428,13 @@ mod tests {
         ));
         assert!(matches!(
             &items[1],
+            InputItem::ToolCall { call }
+                if call.id == "call_1"
+                    && call.name == "ping"
+                    && call.arguments == serde_json::json!({ "value": "hello" })
+        ));
+        assert!(matches!(
+            &items[2],
             InputItem::ToolResult { tool_use_id, .. } if tool_use_id == "call_1"
         ));
     }
@@ -522,7 +539,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tool_calls_are_preserved_in_history_but_skipped_when_lowering_window() {
+    async fn tool_calls_are_preserved_in_history_and_lowered_into_window() {
         let manager = ContextManager::new();
 
         manager
@@ -545,6 +562,13 @@ mod tests {
             .expect("window")
             .to_input_items()
             .expect("items");
-        assert!(input_items.is_empty());
+        assert_eq!(input_items.len(), 1);
+        assert!(matches!(
+            &input_items[0],
+            InputItem::ToolCall { call }
+                if call.id == "call_1"
+                    && call.name == "ping"
+                    && call.arguments == serde_json::json!({ "value": "hello" })
+        ));
     }
 }

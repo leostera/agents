@@ -16,9 +16,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 
-use crate::context::{
-    ContextChunk, ContextManager, ContextProvider, ContextStrategy, ContextWindow,
-};
+use crate::context::{ContextChunk, ContextManager, ContextStrategy, ContextWindow};
 use crate::error::{AgentError, AgentResult};
 use crate::tools::{NoToolRunner, ToolCallEnvelope, ToolResultEnvelope, ToolRunner};
 
@@ -85,7 +83,6 @@ const DEFAULT_RUN_CHANNEL_CAPACITY: usize = 64;
 pub struct AgentBuilder<M, C, T, R> {
     llm: Option<Arc<LlmRunner>>,
     context_manager: ContextManager,
-    context_providers: Vec<Arc<dyn ContextProvider>>,
     execution_profile: ExecutionProfile,
     run_channel_capacity: usize,
     tool_runner: Option<Arc<dyn ToolRunner<C, T>>>,
@@ -98,7 +95,6 @@ impl AgentBuilder<InputItem, (), (), String> {
         Self {
             llm: None,
             context_manager: ContextManager::new(),
-            context_providers: Vec::new(),
             execution_profile: ExecutionProfile::default(),
             run_channel_capacity: DEFAULT_RUN_CHANNEL_CAPACITY,
             tool_runner: Some(Arc::new(NoToolRunner)),
@@ -134,14 +130,6 @@ where
         self
     }
 
-    pub fn add_context_provider<Provider>(mut self, provider: Provider) -> Self
-    where
-        Provider: ContextProvider + 'static,
-    {
-        self.context_providers.push(Arc::new(provider));
-        self
-    }
-
     pub fn with_run_channel_capacity(mut self, capacity: usize) -> Self {
         self.run_channel_capacity = capacity.max(1);
         self
@@ -151,7 +139,6 @@ where
         AgentBuilder {
             llm: self.llm,
             context_manager: self.context_manager,
-            context_providers: self.context_providers,
             execution_profile: self.execution_profile,
             run_channel_capacity: self.run_channel_capacity,
             tool_runner: self.tool_runner,
@@ -164,7 +151,6 @@ where
         AgentBuilder {
             llm: self.llm,
             context_manager: self.context_manager,
-            context_providers: self.context_providers,
             execution_profile: self.execution_profile,
             run_channel_capacity: self.run_channel_capacity,
             tool_runner: self.tool_runner,
@@ -182,7 +168,6 @@ where
         AgentBuilder {
             llm: self.llm,
             context_manager: self.context_manager,
-            context_providers: self.context_providers,
             execution_profile: self.execution_profile,
             run_channel_capacity: self.run_channel_capacity,
             tool_runner: Some(Arc::new(tool_runner)),
@@ -206,10 +191,7 @@ where
         let tool_runner = self.tool_runner.ok_or(AgentError::Internal {
             message: "AgentBuilder requires a tool runner".to_string(),
         })?;
-        let mut context_manager = self.context_manager;
-        for provider in self.context_providers {
-            context_manager = context_manager.with_provider_arc(provider);
-        }
+        let context_manager = self.context_manager;
         context_manager.attach_llm_runner(llm.clone());
 
         Ok(Agent {
@@ -479,6 +461,7 @@ where
             .into_iter()
             .map(|call| ToolCallEnvelope {
                 call_id: call.id,
+                name: tool_name(&call.tool),
                 call: call.tool,
             })
             .collect::<VecDeque<_>>();
@@ -675,9 +658,38 @@ where
     Ok(ContextChunk::ToolCall {
         strategy,
         id: call.call_id.clone(),
-        name: "typed_tool".to_string(),
+        name: call.name.clone(),
         args,
     })
+}
+
+fn tool_name<C>(tool: &C) -> String
+where
+    C: TypedTool + Serialize,
+{
+    let value = serde_json::to_value(tool).unwrap_or(serde_json::Value::Null);
+    for definition in C::tool_definitions() {
+        if tool_matches_definition(&value, &definition.function.parameters) {
+            return definition.function.name;
+        }
+    }
+    "typed_tool".to_string()
+}
+
+fn tool_matches_definition(value: &serde_json::Value, parameters: &serde_json::Value) -> bool {
+    let Some(required) = parameters
+        .get("required")
+        .and_then(|value| value.as_array())
+    else {
+        return false;
+    };
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    required
+        .iter()
+        .filter_map(|value| value.as_str())
+        .all(|key| object.contains_key(key))
 }
 
 fn tool_result_to_chunk<T>(
@@ -715,7 +727,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::collections::VecDeque;
 
-    use crate::context::StaticContextProvider;
+    use crate::context::{ContextManager, StaticContextProvider};
     use crate::tools::{CallbackToolRunner, ToolExecutionResult};
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -951,7 +963,11 @@ mod tests {
             .build();
 
         let mut agent = Agent::builder()
-            .add_context_provider(StaticContextProvider::system_text("You are a test agent."))
+            .with_context_manager(
+                ContextManager::builder()
+                    .add_provider(StaticContextProvider::system_text("You are a test agent."))
+                    .build(),
+            )
             .with_llm_runner(runner)
             .build()
             .expect("agent");

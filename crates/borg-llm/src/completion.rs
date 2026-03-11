@@ -71,6 +71,9 @@ pub enum InputItem {
         role: Role,
         content: Vec<InputContent>,
     },
+    ToolCall {
+        call: RawToolCall,
+    },
     ToolResult {
         tool_use_id: String,
         content: String,
@@ -96,6 +99,20 @@ impl InputItem {
         Self::Message {
             role: Role::System,
             content: vec![InputContent::text(text)],
+        }
+    }
+
+    pub fn tool_call(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+    ) -> Self {
+        Self::ToolCall {
+            call: RawToolCall {
+                id: id.into(),
+                name: name.into(),
+                arguments,
+            },
         }
     }
 
@@ -429,6 +446,9 @@ pub enum RawInputItem {
     Message {
         role: Role,
         content: Vec<RawInputContent>,
+    },
+    ToolCall {
+        call: RawToolCall,
     },
     ToolResult {
         tool_use_id: String,

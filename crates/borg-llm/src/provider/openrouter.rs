@@ -74,6 +74,9 @@ pub struct ChatMessage {
     pub role: String,
     pub content: Option<String>,
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ChatToolCall>>,
 }
 
@@ -523,14 +526,31 @@ impl LlmProvider for OpenRouter {
                         Role::User => "user".to_string(),
                         Role::Assistant => "assistant".to_string(),
                     },
+                    RawInputItem::ToolCall { .. } => "assistant".to_string(),
                     RawInputItem::ToolResult { .. } => "tool".to_string(),
                 },
                 content: Some(match item {
                     RawInputItem::Message { content, .. } => flatten_openrouter_content(content),
+                    RawInputItem::ToolCall { .. } => String::new(),
                     RawInputItem::ToolResult { content, .. } => content.clone(),
                 }),
                 name: None,
-                tool_calls: None,
+                tool_call_id: match item {
+                    RawInputItem::ToolResult { tool_use_id, .. } => Some(tool_use_id.clone()),
+                    RawInputItem::Message { .. } | RawInputItem::ToolCall { .. } => None,
+                },
+                tool_calls: match item {
+                    RawInputItem::ToolCall { call } => Some(vec![ChatToolCall {
+                        id: call.id.clone(),
+                        r#type: "function".to_string(),
+                        function: ChatToolCallFunction {
+                            name: call.name.clone(),
+                            arguments: serde_json::to_string(&call.arguments)
+                                .expect("raw tool call arguments serialize"),
+                        },
+                    }]),
+                    RawInputItem::Message { .. } | RawInputItem::ToolResult { .. } => None,
+                },
             })
             .collect();
 
@@ -575,14 +595,31 @@ impl LlmProvider for OpenRouter {
                         Role::User => "user".to_string(),
                         Role::Assistant => "assistant".to_string(),
                     },
+                    RawInputItem::ToolCall { .. } => "assistant".to_string(),
                     RawInputItem::ToolResult { .. } => "tool".to_string(),
                 },
                 content: Some(match item {
                     RawInputItem::Message { content, .. } => flatten_openrouter_content(content),
+                    RawInputItem::ToolCall { .. } => String::new(),
                     RawInputItem::ToolResult { content, .. } => content.clone(),
                 }),
                 name: None,
-                tool_calls: None,
+                tool_call_id: match item {
+                    RawInputItem::ToolResult { tool_use_id, .. } => Some(tool_use_id.clone()),
+                    RawInputItem::Message { .. } | RawInputItem::ToolCall { .. } => None,
+                },
+                tool_calls: match item {
+                    RawInputItem::ToolCall { call } => Some(vec![ChatToolCall {
+                        id: call.id.clone(),
+                        r#type: "function".to_string(),
+                        function: ChatToolCallFunction {
+                            name: call.name.clone(),
+                            arguments: serde_json::to_string(&call.arguments)
+                                .expect("raw tool call arguments serialize"),
+                        },
+                    }]),
+                    RawInputItem::Message { .. } | RawInputItem::ToolResult { .. } => None,
+                },
             })
             .collect();
 

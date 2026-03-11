@@ -117,6 +117,7 @@ impl LlmRunner {
                             })
                             .collect(),
                     },
+                    InputItem::ToolCall { call } => RawInputItem::ToolCall { call },
                     InputItem::ToolResult {
                         tool_use_id,
                         content,
