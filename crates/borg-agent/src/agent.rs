@@ -199,11 +199,11 @@ impl Agent {
         match input {
             AgentInput::Cancel => {
                 events.push(AgentEvent::Cancelled);
-                return Ok(TurnReport {
+                Ok(TurnReport {
                     turn,
                     events,
                     outcome: TurnOutcome::Cancelled,
-                });
+                })
             }
             AgentInput::Message(message) => {
                 let item = message.into();
@@ -280,19 +280,18 @@ fn extract_reply(response: &CompletionResponse<(), String>) -> AgentResult<Strin
         .output
         .iter()
         .filter_map(|item| match item {
-            OutputItem::Message { role, content }
-                if matches!(role, borg_llm::completion::Role::Assistant) =>
-            {
-                Some(
-                    content
-                        .iter()
-                        .filter_map(|content| match content {
-                            OutputContent::Text { text } => Some(text.as_str()),
-                            OutputContent::Structured { .. } => None,
-                        })
-                        .collect::<String>(),
-                )
-            }
+            OutputItem::Message {
+                role: borg_llm::completion::Role::Assistant,
+                content,
+            } => Some(
+                content
+                    .iter()
+                    .filter_map(|content| match content {
+                        OutputContent::Text { text } => Some(text.as_str()),
+                        OutputContent::Structured { .. } => None,
+                    })
+                    .collect::<String>(),
+            ),
             _ => None,
         })
         .find(|reply| !reply.trim().is_empty());
