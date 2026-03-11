@@ -461,7 +461,7 @@ where
             .into_iter()
             .map(|call| ToolCallEnvelope {
                 call_id: call.id,
-                name: tool_name(&call.tool),
+                name: call.name,
                 call: call.tool,
             })
             .collect::<VecDeque<_>>();
@@ -661,35 +661,6 @@ where
         name: call.name.clone(),
         args,
     })
-}
-
-fn tool_name<C>(tool: &C) -> String
-where
-    C: TypedTool + Serialize,
-{
-    let value = serde_json::to_value(tool).unwrap_or(serde_json::Value::Null);
-    for definition in C::tool_definitions() {
-        if tool_matches_definition(&value, &definition.function.parameters) {
-            return definition.function.name;
-        }
-    }
-    "typed_tool".to_string()
-}
-
-fn tool_matches_definition(value: &serde_json::Value, parameters: &serde_json::Value) -> bool {
-    let Some(required) = parameters
-        .get("required")
-        .and_then(|value| value.as_array())
-    else {
-        return false;
-    };
-    let Some(object) = value.as_object() else {
-        return false;
-    };
-    required
-        .iter()
-        .filter_map(|value| value.as_str())
-        .all(|key| object.contains_key(key))
 }
 
 fn tool_result_to_chunk<T>(

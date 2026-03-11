@@ -1,6 +1,6 @@
 use borg_agent::{
-    Agent, AgentEvent, AgentInput, AgentResult, CallbackToolRunner, ExecutionProfile,
-    ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope,
+    Agent, AgentEvent, AgentInput, AgentResult, CallbackToolRunner, ContextManager,
+    ExecutionProfile, ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope,
 };
 use borg_llm::completion::Temperature;
 use borg_llm::completion::{InputItem, ModelSelector, TokenLimit};
@@ -21,7 +21,7 @@ struct EchoResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 enum TestTools {
     Ping { value: String },
-    Pong { value: String },
+    Redirect { destination: String },
 }
 
 impl TypedTool for TestTools {
@@ -39,14 +39,14 @@ impl TypedTool for TestTools {
                 }),
             ),
             RawToolDefinition::function(
-                "pong",
-                Some("Return a pong-flavored value back to the caller"),
+                "redirect",
+                Some("Redirect work toward a destination"),
                 serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "value": { "type": "string" }
+                        "destination": { "type": "string" }
                     },
-                    "required": ["value"]
+                    "required": ["destination"]
                 }),
             ),
         ]
@@ -64,15 +64,17 @@ impl TypedTool for TestTools {
                     .map_err(|error| borg_llm::error::Error::parse("tool arguments", error))?;
                 Ok(TestTools::Ping { value: args.value })
             }
-            "pong" => {
+            "redirect" => {
                 #[derive(Deserialize)]
-                struct PongArgs {
-                    value: String,
+                struct RedirectArgs {
+                    destination: String,
                 }
 
-                let args: PongArgs = serde_json::from_value(arguments)
+                let args: RedirectArgs = serde_json::from_value(arguments)
                     .map_err(|error| borg_llm::error::Error::parse("tool arguments", error))?;
-                Ok(TestTools::Pong { value: args.value })
+                Ok(TestTools::Redirect {
+                    destination: args.destination,
+                })
             }
             other => Err(borg_llm::error::Error::InvalidResponse {
                 reason: format!("unexpected tool name: {other}"),
@@ -197,6 +199,45 @@ async fn ollama_agent_run_streams_text_turn_long() -> LlmResult<()> {
 
 #[tokio::test]
 #[serial]
+async fn ollama_agent_static_context_provider_shapes_reply_long() -> LlmResult<()> {
+    let ctx = TestContext::shared(TestProvider::Ollama).await?;
+    let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
+
+    let mut agent = Agent::builder()
+        .with_context_manager(ContextManager::static_text(
+            "Every final answer must start with the exact prefix CTX-OLLAMA: ",
+        ))
+        .with_llm_runner(runner)
+        .build()
+        .expect("agent");
+
+    agent
+        .send_with_profile(
+            AgentInput::Message(InputItem::user_text(
+                "Reply with a short plain-text acknowledgment.",
+            )),
+            ollama_profile(),
+        )
+        .await
+        .expect("turn");
+
+    let _ = next_event(&mut agent).await?;
+    match next_event(&mut agent).await? {
+        Some(AgentEvent::Completed { reply }) => {
+            assert!(
+                reply.trim_start().starts_with("CTX-OLLAMA:"),
+                "expected reply shaped by static context, got {:?}",
+                reply
+            );
+        }
+        other => panic!("expected completed event, got {other:?}"),
+    }
+    assert!(next_event(&mut agent).await?.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
 async fn ollama_agent_send_twice_reuses_transcript_long() -> LlmResult<()> {
     let ctx = TestContext::shared(TestProvider::Ollama).await?;
     let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
@@ -312,11 +353,11 @@ async fn ollama_agent_executes_ping_tool_and_finishes_long() -> LlmResult<()> {
                     },
                 },
             }),
-            TestTools::Pong { value } => Ok(ToolResultEnvelope {
+            TestTools::Redirect { destination } => Ok(ToolResultEnvelope {
                 call_id: call.call_id,
                 result: ToolExecutionResult::Ok {
                     data: Pong {
-                        value: format!("alt-pong:{value}"),
+                        value: format!("redirected:{destination}"),
                     },
                 },
             }),
@@ -498,11 +539,11 @@ async fn ollama_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
                     },
                 },
             }),
-            TestTools::Pong { value } => Ok(ToolResultEnvelope {
+            TestTools::Redirect { destination } => Ok(ToolResultEnvelope {
                 call_id: call.call_id,
                 result: ToolExecutionResult::Ok {
                     data: Pong {
-                        value: format!("alt-pong:{value}"),
+                        value: format!("redirected:{destination}"),
                     },
                 },
             }),
@@ -540,7 +581,7 @@ async fn ollama_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
     agent
         .send_with_profile(
             AgentInput::Steer(InputItem::user_text(
-                "IMPORTANT: Ignore the previous request to call ping. Instead call the pong tool exactly once with value=\"rerouted\" and then reply with exactly STEERED.",
+                "IMPORTANT: Ignore the previous request to call ping. Instead call the redirect tool exactly once with destination=\"rerouted-path\" and then reply with exactly STEERED.",
             )),
             ollama_profile(),
         )
@@ -552,8 +593,8 @@ async fn ollama_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
             let call_id = call.call_id;
             assert_eq!(
                 call.call,
-                TestTools::Pong {
-                    value: "rerouted".to_string()
+                TestTools::Redirect {
+                    destination: "rerouted-path".to_string()
                 }
             );
             call_id
@@ -571,7 +612,7 @@ async fn ollama_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
                     assert_eq!(
                         data,
                         Pong {
-                            value: "alt-pong:rerouted".to_string()
+                            value: "redirected:rerouted-path".to_string()
                         }
                     );
                 }
@@ -611,11 +652,11 @@ async fn ollama_agent_cancel_during_active_turn_long() -> LlmResult<()> {
                     },
                 },
             }),
-            TestTools::Pong { value } => Ok(ToolResultEnvelope {
+            TestTools::Redirect { destination } => Ok(ToolResultEnvelope {
                 call_id: call.call_id,
                 result: ToolExecutionResult::Ok {
                     data: Pong {
-                        value: format!("alt-pong:{value}"),
+                        value: format!("redirected:{destination}"),
                     },
                 },
             }),

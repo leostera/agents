@@ -66,6 +66,7 @@ impl TypedTool for () {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ToolCall<C> {
     pub id: String,
+    pub name: String,
     pub tool: C,
 }
 
@@ -73,6 +74,7 @@ impl<C: fmt::Debug> fmt::Debug for ToolCall<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ToolCall")
             .field("id", &self.id)
+            .field("name", &self.name)
             .field("tool", &self.tool)
             .finish()
     }
