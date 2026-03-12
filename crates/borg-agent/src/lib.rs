@@ -1,6 +1,7 @@
 mod agent;
 mod context;
 mod error;
+mod storage;
 mod tools;
 
 pub use agent::{
@@ -11,6 +12,10 @@ pub use context::{
     ContextStrategy, ContextWindow, StaticContextProvider,
 };
 pub use error::{AgentError, AgentResult};
+pub use storage::{
+    InMemoryStorageAdapter, NoopStorageAdapter, StorageAdapter, StorageEvent, StorageInput,
+    StorageRecord,
+};
 pub use tools::{
     CallbackToolRunner, NoToolRunner, ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope,
     ToolRunner,

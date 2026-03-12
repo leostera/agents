@@ -19,6 +19,9 @@ use tokio::sync::mpsc;
 
 use crate::context::{ContextChunk, ContextManager, ContextStrategy, ContextWindow};
 use crate::error::{AgentError, AgentResult};
+use crate::storage::{
+    NoopStorageAdapter, StorageAdapter, StorageEvent, StorageInput, StorageRecord,
+};
 use crate::tools::{
     NoToolRunner, ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope, ToolRunner,
 };
@@ -88,6 +91,7 @@ pub struct AgentBuilder<M, C, T, R> {
     context_manager: ContextManager,
     execution_profile: ExecutionProfile,
     run_channel_capacity: usize,
+    storage_adapter: Arc<dyn StorageAdapter>,
     tool_runner: Option<Arc<dyn ToolRunner<C, T>>>,
     _message: PhantomData<M>,
     _response: PhantomData<R>,
@@ -100,6 +104,7 @@ impl AgentBuilder<InputItem, (), (), String> {
             context_manager: ContextManager::new(),
             execution_profile: ExecutionProfile::default(),
             run_channel_capacity: DEFAULT_RUN_CHANNEL_CAPACITY,
+            storage_adapter: Arc::new(NoopStorageAdapter),
             tool_runner: Some(Arc::new(NoToolRunner)),
             _message: PhantomData,
             _response: PhantomData,
@@ -138,12 +143,26 @@ where
         self
     }
 
+    pub fn with_storage_adapter<Adapter>(mut self, storage_adapter: Adapter) -> Self
+    where
+        Adapter: StorageAdapter + 'static,
+    {
+        self.storage_adapter = Arc::new(storage_adapter);
+        self
+    }
+
+    pub fn with_storage_adapter_arc(mut self, storage_adapter: Arc<dyn StorageAdapter>) -> Self {
+        self.storage_adapter = storage_adapter;
+        self
+    }
+
     pub fn with_message_type<M2>(self) -> AgentBuilder<M2, C, T, R> {
         AgentBuilder {
             llm: self.llm,
             context_manager: self.context_manager,
             execution_profile: self.execution_profile,
             run_channel_capacity: self.run_channel_capacity,
+            storage_adapter: self.storage_adapter,
             tool_runner: self.tool_runner,
             _message: PhantomData,
             _response: PhantomData,
@@ -156,6 +175,7 @@ where
             context_manager: self.context_manager,
             execution_profile: self.execution_profile,
             run_channel_capacity: self.run_channel_capacity,
+            storage_adapter: self.storage_adapter,
             tool_runner: self.tool_runner,
             _message: PhantomData,
             _response: PhantomData,
@@ -173,6 +193,7 @@ where
             context_manager: self.context_manager,
             execution_profile: self.execution_profile,
             run_channel_capacity: self.run_channel_capacity,
+            storage_adapter: self.storage_adapter,
             tool_runner: Some(Arc::new(tool_runner)),
             _message: PhantomData,
             _response: PhantomData,
@@ -202,6 +223,7 @@ where
             context_manager: Arc::new(context_manager),
             execution_profile: self.execution_profile,
             run_channel_capacity: self.run_channel_capacity,
+            storage_adapter: self.storage_adapter,
             tool_runner,
             next_turn: 1,
             active_turn: None,
@@ -217,6 +239,7 @@ pub struct Agent<M, C, T, R> {
     context_manager: Arc<ContextManager>,
     execution_profile: ExecutionProfile,
     run_channel_capacity: usize,
+    storage_adapter: Arc<dyn StorageAdapter>,
     tool_runner: Arc<dyn ToolRunner<C, T>>,
     next_turn: u64,
     active_turn: Option<ActiveTurn<C, T, R>>,
@@ -270,6 +293,16 @@ where
     ) -> AgentResult<()> {
         match input {
             AgentInput::Cancel => {
+                let turn = self
+                    .active_turn
+                    .as_ref()
+                    .map(|active_turn| active_turn.turn);
+                self.storage_adapter
+                    .record(StorageRecord::InputReceived {
+                        turn,
+                        input: StorageInput::Cancel,
+                    })
+                    .await?;
                 if let Some(active_turn) = self.active_turn.as_mut() {
                     for result in abandoned_tool_results(&active_turn.state, "cancelled") {
                         self.context_manager
@@ -283,9 +316,29 @@ where
             AgentInput::Message(message) => {
                 let item = message.into();
                 if self.active_turn.is_some() {
-                    self.queue_turn(item, profile);
+                    let turn = self.reserve_turn();
+                    self.storage_adapter
+                        .record(StorageRecord::InputReceived {
+                            turn: Some(turn),
+                            input: StorageInput::Message(input_item_to_chunk(
+                                item.clone(),
+                                ContextStrategy::Compactable,
+                            )?),
+                        })
+                        .await?;
+                    self.queue_turn(turn, item, profile).await?;
                 } else {
-                    self.start_turn(item, profile).await?;
+                    let turn = self.reserve_turn();
+                    self.storage_adapter
+                        .record(StorageRecord::InputReceived {
+                            turn: Some(turn),
+                            input: StorageInput::Message(input_item_to_chunk(
+                                item.clone(),
+                                ContextStrategy::Compactable,
+                            )?),
+                        })
+                        .await?;
+                    self.start_turn(turn, item, profile).await?;
                 }
                 Ok(())
             }
@@ -293,6 +346,15 @@ where
                 let item = message.into();
                 if self.active_turn.is_some() {
                     if let Some(active_turn) = self.active_turn.as_mut() {
+                        self.storage_adapter
+                            .record(StorageRecord::InputReceived {
+                                turn: Some(active_turn.turn),
+                                input: StorageInput::Steer(input_item_to_chunk(
+                                    item.clone(),
+                                    ContextStrategy::Compactable,
+                                )?),
+                            })
+                            .await?;
                         for result in
                             abandoned_tool_results(&active_turn.state, "interrupted by steering")
                         {
@@ -306,7 +368,17 @@ where
                         .push(input_item_to_chunk(item, ContextStrategy::Compactable)?)
                         .await?;
                 } else {
-                    self.start_turn(item, profile).await?;
+                    let turn = self.reserve_turn();
+                    self.storage_adapter
+                        .record(StorageRecord::InputReceived {
+                            turn: Some(turn),
+                            input: StorageInput::Steer(input_item_to_chunk(
+                                item.clone(),
+                                ContextStrategy::Compactable,
+                            )?),
+                        })
+                        .await?;
+                    self.start_turn(turn, item, profile).await?;
                 }
                 Ok(())
             }
@@ -317,17 +389,8 @@ where
         loop {
             if self.active_turn.is_none() {
                 if let Some(queued_turn) = self.queued_turns.pop_front() {
-                    self.context_manager
-                        .push(input_item_to_chunk(
-                            queued_turn.item,
-                            ContextStrategy::Compactable,
-                        )?)
+                    self.start_turn(queued_turn.turn, queued_turn.item, queued_turn.profile)
                         .await?;
-                    self.active_turn = Some(ActiveTurn {
-                        turn: queued_turn.turn,
-                        profile: queued_turn.profile,
-                        state: TurnState::NeedLlm,
-                    });
                 } else {
                     return Ok(None);
                 }
@@ -344,7 +407,9 @@ where
                     continue;
                 }
                 TurnState::CancelPending => {
-                    return Ok(Some(AgentEvent::Cancelled));
+                    let event = AgentEvent::Cancelled;
+                    self.record_event(active_turn.turn, &event).await?;
+                    return Ok(Some(event));
                 }
                 TurnState::NeedLlm => {
                     let request = self.build_request(active_turn.profile.clone()).await?;
@@ -376,7 +441,10 @@ where
                     };
 
                     self.active_turn = Some(active_turn);
-                    return Ok(Some(AgentEvent::ToolExecutionCompleted { result }));
+                    let event = AgentEvent::ToolExecutionCompleted { result };
+                    let turn = self.active_turn.as_ref().expect("active turn").turn;
+                    self.record_event(turn, &event).await?;
+                    return Ok(Some(event));
                 }
                 TurnState::EmitQueue { mut queue, next } => {
                     if let Some(event) = queue.pop_front() {
@@ -386,6 +454,8 @@ where
                             TurnState::EmitQueue { queue, next }
                         };
                         self.active_turn = Some(active_turn);
+                        let turn = self.active_turn.as_ref().expect("active turn").turn;
+                        self.record_event(turn, &event).await?;
                         return Ok(Some(event));
                     }
 
@@ -537,11 +607,17 @@ where
         })
     }
 
-    async fn start_turn(&mut self, item: InputItem, profile: ExecutionProfile) -> AgentResult<()> {
-        let turn = self.next_turn;
-        self.next_turn += 1;
+    async fn start_turn(
+        &mut self,
+        turn: u64,
+        item: InputItem,
+        profile: ExecutionProfile,
+    ) -> AgentResult<()> {
         self.context_manager
             .push(input_item_to_chunk(item, ContextStrategy::Compactable)?)
+            .await?;
+        self.storage_adapter
+            .record(StorageRecord::TurnStarted { turn })
             .await?;
         self.active_turn = Some(ActiveTurn {
             turn,
@@ -551,14 +627,27 @@ where
         Ok(())
     }
 
-    fn queue_turn(&mut self, item: InputItem, profile: ExecutionProfile) {
-        let turn = self.next_turn;
-        self.next_turn += 1;
+    async fn queue_turn(
+        &mut self,
+        turn: u64,
+        item: InputItem,
+        profile: ExecutionProfile,
+    ) -> AgentResult<()> {
+        self.storage_adapter
+            .record(StorageRecord::TurnQueued { turn })
+            .await?;
         self.queued_turns.push_back(QueuedTurn {
             turn,
             profile,
             item,
         });
+        Ok(())
+    }
+
+    fn reserve_turn(&mut self) -> u64 {
+        let turn = self.next_turn;
+        self.next_turn += 1;
+        turn
     }
 
     async fn build_request(
@@ -623,6 +712,15 @@ where
             reason: "model returned no assistant reply matching expected response type".to_string(),
         })
     }
+
+    async fn record_event(&self, turn: u64, event: &AgentEvent<C, T, R>) -> AgentResult<()> {
+        self.storage_adapter
+            .record(StorageRecord::EventEmitted {
+                turn,
+                event: storage_event_from_agent_event(event)?,
+            })
+            .await
+    }
 }
 
 impl Agent<InputItem, (), (), String> {
@@ -671,6 +769,40 @@ fn input_item_to_chunk(item: InputItem, strategy: ContextStrategy) -> AgentResul
             reason: "unable to convert input item into context chunk".to_string(),
         })
     })
+}
+
+fn storage_event_from_agent_event<C, T, R>(event: &AgentEvent<C, T, R>) -> AgentResult<StorageEvent>
+where
+    C: Serialize,
+    T: Serialize,
+    R: Serialize,
+{
+    match event {
+        AgentEvent::ModelOutputItem { item } => Ok(StorageEvent::ModelOutputItem {
+            item: serde_json::to_value(item).map_err(|error| AgentError::Internal {
+                message: error.to_string(),
+            })?,
+        }),
+        AgentEvent::ToolCallRequested { call } => Ok(StorageEvent::ToolCallRequested {
+            call_id: call.call_id.clone(),
+            name: call.name.clone(),
+            args: serde_json::to_value(&call.call).map_err(|error| AgentError::Internal {
+                message: error.to_string(),
+            })?,
+        }),
+        AgentEvent::ToolExecutionCompleted { result } => Ok(StorageEvent::ToolExecutionCompleted {
+            call_id: result.call_id.clone(),
+            result: serde_json::to_value(result).map_err(|error| AgentError::Internal {
+                message: error.to_string(),
+            })?,
+        }),
+        AgentEvent::Completed { reply } => Ok(StorageEvent::Completed {
+            reply: serde_json::to_value(reply).map_err(|error| AgentError::Internal {
+                message: error.to_string(),
+            })?,
+        }),
+        AgentEvent::Cancelled => Ok(StorageEvent::Cancelled),
+    }
 }
 
 fn reply_to_chunk<R>(reply: &R, strategy: ContextStrategy) -> AgentResult<ContextChunk>
@@ -782,7 +914,8 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::collections::VecDeque;
 
-    use crate::context::{ContextManager, StaticContextProvider};
+    use crate::context::{ContextManager, ContextStrategy, StaticContextProvider};
+    use crate::storage::{InMemoryStorageAdapter, StorageEvent, StorageInput, StorageRecord};
     use crate::tools::{CallbackToolRunner, ToolExecutionResult};
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -1286,6 +1419,148 @@ mod tests {
             Ok(AgentEvent::Completed { reply }) if reply == "second"
         ));
         assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn storage_adapter_records_started_turn_inputs_and_events() {
+        let storage = InMemoryStorageAdapter::shared();
+        let mut agent = Agent::builder()
+            .with_storage_adapter_arc(storage.clone())
+            .with_llm_runner(
+                LlmRunner::builder()
+                    .add_provider(FakeProvider::with_responses(vec![Ok(
+                        assistant_text_response("stored hello"),
+                    )]))
+                    .build(),
+            )
+            .build()
+            .expect("agent");
+
+        agent
+            .send(AgentInput::Message(InputItem::user_text("hello")))
+            .await
+            .expect("turn");
+        let _ = agent.next().await.expect("model item");
+        let _ = agent.next().await.expect("completed");
+
+        let records = storage.records();
+        assert!(matches!(
+            &records[0],
+            StorageRecord::InputReceived {
+                turn: Some(1),
+                input: StorageInput::Message(ContextChunk::Message {
+                    strategy: ContextStrategy::Compactable,
+                    role: crate::context::ContextRole::User,
+                    content,
+                }),
+            } if content == "hello"
+        ));
+        assert!(matches!(
+            &records[1],
+            StorageRecord::TurnStarted { turn: 1 }
+        ));
+        assert!(matches!(
+            &records[2],
+            StorageRecord::EventEmitted {
+                turn: 1,
+                event: StorageEvent::ModelOutputItem { .. }
+            }
+        ));
+        assert!(matches!(
+            &records[3],
+            StorageRecord::EventEmitted {
+                turn: 1,
+                event: StorageEvent::Completed { reply }
+            } if reply == "stored hello"
+        ));
+    }
+
+    #[tokio::test]
+    async fn storage_adapter_records_queued_turns_and_activation() {
+        let storage = InMemoryStorageAdapter::shared();
+        let agent = Agent::builder()
+            .with_storage_adapter_arc(storage.clone())
+            .with_llm_runner(
+                LlmRunner::builder()
+                    .add_provider(FakeProvider::with_responses(vec![
+                        Ok(assistant_text_response("first")),
+                        Ok(assistant_text_response("second")),
+                    ]))
+                    .build(),
+            )
+            .build()
+            .expect("agent");
+
+        let (tx, mut rx) = agent.run().await.expect("run");
+        tx.send(AgentInput::Message(InputItem::user_text("one")))
+            .await
+            .expect("first input");
+        tx.send(AgentInput::Message(InputItem::user_text("two")))
+            .await
+            .expect("second input");
+        drop(tx);
+
+        while rx.recv().await.is_some() {}
+
+        let records = storage.records();
+        assert!(
+            records
+                .iter()
+                .any(|record| matches!(record, StorageRecord::TurnQueued { turn: 2 }))
+        );
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| matches!(record, StorageRecord::TurnStarted { turn: 1 | 2 }))
+                .count(),
+            2
+        );
+        assert!(records.iter().any(|record| matches!(
+            record,
+            StorageRecord::EventEmitted {
+                turn: 2,
+                event: StorageEvent::Completed { reply }
+            } if reply == "second"
+        )));
+    }
+
+    #[tokio::test]
+    async fn storage_adapter_records_cancel_for_active_turn() {
+        let storage = InMemoryStorageAdapter::shared();
+        let mut agent = Agent::builder()
+            .with_storage_adapter_arc(storage.clone())
+            .with_tool_runner(ping_tool_runner())
+            .with_llm_runner(
+                LlmRunner::builder()
+                    .add_provider(FakeProvider::with_responses(vec![Ok(tool_call_response())]))
+                    .build(),
+            )
+            .build()
+            .expect("agent");
+
+        agent
+            .send(AgentInput::Message(InputItem::user_text("ping please")))
+            .await
+            .expect("turn");
+        let _ = agent.next().await.expect("tool call");
+        agent.send(AgentInput::Cancel).await.expect("cancel");
+        let _ = agent.next().await.expect("cancelled");
+
+        let records = storage.records();
+        assert!(records.iter().any(|record| matches!(
+            record,
+            StorageRecord::InputReceived {
+                turn: Some(1),
+                input: StorageInput::Cancel
+            }
+        )));
+        assert!(records.iter().any(|record| matches!(
+            record,
+            StorageRecord::EventEmitted {
+                turn: 1,
+                event: StorageEvent::Cancelled
+            }
+        )));
     }
 
     #[tokio::test]

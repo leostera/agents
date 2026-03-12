@@ -3,24 +3,25 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use borg_llm::completion::{InputContent, InputItem, Role};
 use borg_llm::runner::LlmRunner;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::AgentResult;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContextStrategy {
     Pinnable,
     Compactable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContextRole {
     System,
     User,
     Assistant,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ContextChunk {
     Message {
         strategy: ContextStrategy,
