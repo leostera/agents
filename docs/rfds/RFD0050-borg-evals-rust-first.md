@@ -16,6 +16,8 @@ The first version should be intentionally narrow:
 - exposed as a library API only
 - producing versioned JSON and Markdown artifacts from day one
 - supporting repeated stochastic trials, deterministic graders, and suite-level baseline comparison
+- persisting each completed trial immediately so partial runs remain durable
+- executing against explicit provider/model targets rather than assuming a single local model matrix
 
 `cargo-evals`, proc-macro discovery, and even a dedicated CLI should come later. The first milestone is to make evals useful as code and durable as data.
 
@@ -184,6 +186,28 @@ The framework should make that explicit:
 - results should report pass rate, mean score, variance-related signals later, and grader-level breakdowns
 
 The first implementation does not need advanced statistics, but it must model “the same case can be run multiple times” from the beginning.
+
+### Execution targets, not just model strings
+
+Real eval runs need to compare behavior across multiple execution environments:
+
+- local Ollama models
+- hosted OpenRouter models
+- hosted Anthropic models
+- hosted OpenAI models
+
+So the unit of execution should not just be a model string. It should be an explicit execution target carrying, at minimum:
+
+- provider
+- model
+- a human-friendly label
+- concurrency policy
+
+This matters because local and hosted targets have different runtime constraints:
+
+- local targets are constrained by local machine resources and should default to sequential execution
+- hosted targets are constrained more by network latency and quotas and should default to bounded concurrency
+- hosted targets should be allowed to overlap with local targets rather than waiting behind them
 
 ## Reference-level explanation
 
@@ -379,6 +403,17 @@ The exact struct names may evolve, but the persisted trial model should preserve
 
 This should be enough for deterministic transcript-aware graders in v1.
 
+One concrete lesson from the first prototype is that tool-using agent evals must preserve provider-faithful replay state.
+
+For follow-up turns after tool execution, valid replay may require:
+
+- the original raw tool-call payload returned by the provider
+- the typed Rust tool value used for execution
+- the associated tool result
+- provider-specific replay metadata such as tool names or exact argument shapes
+
+It is not sufficient to only preserve typed Rust tool values and later reserialize them. Some providers require the exact original raw JSON arguments to successfully replay tool history.
+
 ## `Grader`
 
 Graders should operate over typed outputs and return structured evidence.
@@ -438,6 +473,29 @@ This keeps the grading contract small:
 - explicit evidence
 
 If multiple dimensions are needed, they should be represented as multiple graders.
+
+### Future `judge(...)` graders
+
+V1 should remain deterministic and programmatic, but the grading abstraction should leave room for judge-based grading later.
+
+The likely future shape is:
+
+- a `judge(...)` helper layered on top of the same `Grader` abstraction
+- a typed `JudgeResult` produced by a `borg-agent` agent or direct `borg-llm` runner
+- a fold from `JudgeResult` into the stable persisted `GradeResult`
+
+This is especially useful for dimensions that are awkward to grade with brittle string checks, such as:
+
+- pleasantness
+- tone or sentiment
+- explanation quality
+- clarity
+
+Judge-based grading should remain auditable. Future persisted results should therefore record judge metadata such as:
+
+- provider/model
+- prompt or rubric version
+- raw judge output when safe to persist
 
 ## Typed execution, normalized persistence
 
@@ -505,6 +563,14 @@ The exact filenames are not final, but the persisted object model should include
 
 All of these should be versioned from day one.
 
+Another requirement proven by the prototype is incremental persistence:
+
+- each completed trial should be written to disk immediately
+- manifests and artifact indexes should be created early and updated as the run progresses
+- final summaries can still be written at the end
+
+This avoids losing a large run when a later trial crashes, the process exits unexpectedly, or a provider becomes unavailable partway through the suite.
+
 ### Minimal schema sketches
 
 The exact fields can evolve, but the v1 objects should look roughly like this:
@@ -517,6 +583,7 @@ pub struct RunManifest {
     pub git_sha: Option<String>,
     pub started_at: String,
     pub finished_at: String,
+    pub targets: Vec<ExecutionTarget>,
     pub case_ids: Vec<String>,
 }
 
@@ -547,8 +614,13 @@ pub struct CaseAggregate {
 pub struct TrialRecord {
     pub schema_version: String,
     pub run_id: String,
+    pub suite_id: String,
+    pub target: ExecutionTarget,
     pub case_id: String,
     pub trial_id: String,
+    pub started_at: String,
+    pub finished_at: String,
+    pub duration_ms: u64,
     pub passed: bool,
     pub score: f32,
     pub output: Value,
@@ -559,9 +631,21 @@ pub struct TrialRecord {
 pub struct ArtifactIndex {
     pub schema_version: String,
     pub run_id: String,
+    pub target_label: String,
     pub case_id: String,
     pub trial_id: String,
     pub artifacts: Vec<ArtifactRef>,
+}
+```
+
+`ExecutionTarget` should be explicit rather than implied:
+
+```rust
+pub struct ExecutionTarget {
+    pub label: String,
+    pub provider: String,
+    pub model: String,
+    pub max_in_flight: usize,
 }
 ```
 
@@ -607,6 +691,13 @@ Suite comparisons should include at least:
 
 Per-case and per-trial comparison can be future work, but the stored data should be rich enough to support them later.
 
+The first prototype also established a concrete concurrency rule:
+
+- local targets should default to sequential execution
+- hosted targets should default to bounded concurrent execution
+- hosted targets should be allowed to overlap with local targets
+- concurrency should apply across both cases and trials, with deterministic output ordering restored during persistence and reporting
+
 ## Initial implementation plan
 
 The implementation should proceed in this order:
@@ -628,6 +719,8 @@ The goal of this phase is to prove:
 - typed outputs and transcript-aware graders are sufficient
 - artifacts are useful to inspect
 - repeated trials and baselineable summaries are workable
+- provider-faithful tool replay requirements are understood for tool-using agents
+- incremental per-trial persistence is sufficient for long-running suites
 
 No CLI or proc-macro support is required in this phase.
 
@@ -639,12 +732,15 @@ No CLI or proc-macro support is required in this phase.
 - `compare`
 - `inspect`
 - `bless`
+- better local progress output
 
 ### Phase 2: ergonomics
 
 - proc-macro registration
 - `cargo-evals`
 - richer built-in graders
+- retry/skip semantics for transient provider failures and rate limits
+- `judge(...)` grading support
 
 The important constraint is:
 
@@ -727,9 +823,10 @@ The important lesson from these systems is:
 - proc-macro registration like `#[evals]`
 - `cargo-evals` subcommand integration
 - a dedicated runner crate and CLI once the library surface stabilizes
-- LLM-as-a-judge graders behind feature flags
+- `judge(...)` graders behind feature flags
 - per-case and per-trial baseline comparison
 - richer local inspection tools and HTML reports
+- web-based explorer over `.evals/` trajectories and comparisons
 - optional declarative adapters later, if code-first authoring proves too verbose for repetitive suites
 - storage/indexing crates if local artifact volumes become large
 

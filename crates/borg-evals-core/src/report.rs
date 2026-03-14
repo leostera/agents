@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,8 +18,8 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub struct RunManifest {
     pub schema_version: u32,
     pub run_id: String,
-    pub started_at_ms: u128,
-    pub finished_at_ms: u128,
+    pub started_at: Duration,
+    pub finished_at: Duration,
     pub suites: Vec<String>,
     pub targets: Vec<ExecutionTarget>,
 }
@@ -41,6 +41,7 @@ pub struct SuiteSummary {
     pub passed_trials: usize,
     pub pass_rate: f32,
     pub mean_score: f32,
+    pub mean_duration: Duration,
     pub cases: Vec<CaseAggregate>,
 }
 
@@ -51,6 +52,7 @@ pub struct CaseAggregate {
     pub passed_trials: usize,
     pub pass_rate: f32,
     pub mean_score: f32,
+    pub mean_duration: Duration,
     pub grader_means: Vec<GraderAggregate>,
 }
 
@@ -69,6 +71,9 @@ pub struct TrialRecord {
     pub target: ExecutionTarget,
     pub case_id: String,
     pub trial_index: usize,
+    pub started_at: Duration,
+    pub finished_at: Duration,
+    pub duration: Duration,
     pub passed: bool,
     pub mean_score: f32,
     pub trial: Option<AgentTrial>,
@@ -182,12 +187,13 @@ impl IncrementalSuiteWriter {
 impl SuiteRunReport {
     pub fn summary_markdown(&self) -> String {
         format!(
-            "# {} ({})\n\n- total trials: {}\n- pass rate: {:.0}%\n- mean score: {:.2}\n",
+            "# {} ({})\n\n- total trials: {}\n- pass rate: {:.0}%\n- mean score: {:.2}\n- mean duration: {:.0} ms\n",
             self.suite.suite_id,
             self.suite.target.display_label(),
             self.suite.total_trials,
             self.suite.pass_rate * 100.0,
-            self.suite.mean_score
+            self.suite.mean_score,
+            self.suite.mean_duration.as_millis()
         )
     }
 
@@ -304,6 +310,13 @@ impl EvalRunReport {
                 case_icon(&case_id)
             ));
             sections.push(String::new());
+            if let Some((_, case)) = case_rows.first() {
+                sections.push(format!(
+                    "avg duration ⏱  {} ms",
+                    case.mean_duration.as_millis()
+                ));
+                sections.push(String::new());
+            }
             sections.push("final 🏁".to_string());
             let provider_width = ranked_rows
                 .iter()
@@ -400,15 +413,14 @@ impl EvalRunReport {
     }
 }
 
-pub(crate) fn now_ms() -> u128 {
+pub(crate) fn now_since_epoch() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis()
 }
 
 pub(crate) fn run_id() -> String {
-    format!("run-{}", now_ms())
+    format!("run-{}", now_since_epoch().as_millis())
 }
 
 pub(crate) fn build_summary(
@@ -420,6 +432,7 @@ pub(crate) fn build_summary(
     let total_trials = trials.len();
     let passed_trials = trials.iter().filter(|trial| trial.passed).count();
     let mean_score = mean(trials.iter().map(|trial| trial.mean_score));
+    let mean_duration = mean_duration(trials.iter().map(|trial| trial.duration));
 
     let cases = suite
         .cases()
@@ -437,6 +450,7 @@ pub(crate) fn build_summary(
         passed_trials,
         pass_rate: ratio(passed_trials, total_trials),
         mean_score,
+        mean_duration,
         cases,
     }
 }
@@ -486,6 +500,7 @@ fn build_case_aggregate(case: &Case, trials: &[TrialRecord]) -> CaseAggregate {
         passed_trials,
         pass_rate: ratio(passed_trials, case_trials.len()),
         mean_score: mean(case_trials.iter().map(|trial| trial.mean_score)),
+        mean_duration: mean_duration(case_trials.iter().map(|trial| trial.duration)),
         grader_means,
     }
 }
@@ -501,6 +516,19 @@ fn mean(values: impl IntoIterator<Item = f32>) -> f32 {
         return 0.0;
     }
     total / count as f32
+}
+
+fn mean_duration(values: impl IntoIterator<Item = Duration>) -> Duration {
+    let mut count = 0usize;
+    let mut total = Duration::ZERO;
+    for value in values {
+        count += 1;
+        total += value;
+    }
+    if count == 0 {
+        return Duration::ZERO;
+    }
+    total / count as u32
 }
 
 fn ratio(numerator: usize, denominator: usize) -> f32 {

@@ -1,12 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::case::{Case, TrialContext};
 use crate::config::{ExecutionTarget, RunConfig};
 use crate::error::EvalResult;
 use crate::report::{
     EvalRunReport, IncrementalSuiteWriter, RunManifest, SCHEMA_VERSION, SuiteRunReport,
-    TrialRecord, build_summary, now_ms, run_id,
+    TrialRecord, build_summary, now_since_epoch, run_id,
 };
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -87,7 +88,7 @@ impl<'a> SuiteRunner<'a> {
     }
 
     pub async fn run(self) -> EvalResult<EvalRunReport> {
-        let started_at_ms = now_ms();
+        let started_at = now_since_epoch();
         let run_id = run_id();
         let mut variants = Vec::new();
         let local_target_semaphore = Arc::new(Semaphore::new(1));
@@ -129,12 +130,12 @@ impl<'a> SuiteRunner<'a> {
 
         variants.sort_by(|left, right| left.suite.target.label.cmp(&right.suite.target.label));
 
-        let finished_at_ms = now_ms();
+        let finished_at = now_since_epoch();
         let manifest = RunManifest {
             schema_version: SCHEMA_VERSION,
             run_id,
-            started_at_ms,
-            finished_at_ms,
+            started_at,
+            finished_at,
             suites: vec![self.suite.id().to_string()],
             targets: self.config.targets,
         };
@@ -156,7 +157,7 @@ async fn run_single_target(
     default_trials: usize,
     artifact_root: Option<&Path>,
 ) -> EvalResult<SuiteRunReport> {
-    let started_at_ms = now_ms();
+    let started_at = now_since_epoch();
     let mut trial_records = Vec::new();
 
     info!(
@@ -172,8 +173,8 @@ async fn run_single_target(
     let initial_manifest = RunManifest {
         schema_version: SCHEMA_VERSION,
         run_id: run_id.clone(),
-        started_at_ms,
-        finished_at_ms: started_at_ms,
+        started_at,
+        finished_at: started_at,
         suites: vec![suite.id().to_string()],
         targets: vec![target.clone()],
     };
@@ -227,7 +228,7 @@ async fn run_single_target(
             .then(left.trial_index.cmp(&right.trial_index))
     });
 
-    let finished_at_ms = now_ms();
+    let finished_at = now_since_epoch();
     let summary = build_summary(suite, &run_id, target, &trial_records);
     info!(
         suite = %suite.id(),
@@ -240,8 +241,8 @@ async fn run_single_target(
     let manifest = RunManifest {
         schema_version: SCHEMA_VERSION,
         run_id,
-        started_at_ms,
-        finished_at_ms,
+        started_at,
+        finished_at,
         suites: vec![suite.id().to_string()],
         targets: vec![target.clone()],
     };
@@ -266,6 +267,8 @@ async fn execute_trial(
     case: Case,
     trial_index: usize,
 ) -> TrialRecord {
+    let started_at_wall = now_since_epoch();
+    let started_at_instant = Instant::now();
     let ctx = TrialContext {
         suite_id: suite_id.clone(),
         case_id: case.id().to_string(),
@@ -329,6 +332,8 @@ async fn execute_trial(
                 );
             }
 
+            let finished_at_wall = now_since_epoch();
+
             TrialRecord {
                 schema_version: SCHEMA_VERSION,
                 run_id,
@@ -336,6 +341,9 @@ async fn execute_trial(
                 target,
                 case_id: case.id().to_string(),
                 trial_index,
+                started_at: started_at_wall,
+                finished_at: finished_at_wall,
+                duration: started_at_instant.elapsed(),
                 passed,
                 mean_score,
                 trial: Some((*trial).clone()),
@@ -352,6 +360,7 @@ async fn execute_trial(
                 error = %error,
                 "trial execution failed"
             );
+            let finished_at_wall = now_since_epoch();
             TrialRecord {
                 schema_version: SCHEMA_VERSION,
                 run_id,
@@ -359,6 +368,9 @@ async fn execute_trial(
                 target,
                 case_id: case.id().to_string(),
                 trial_index,
+                started_at: started_at_wall,
+                finished_at: finished_at_wall,
+                duration: started_at_instant.elapsed(),
                 passed: false,
                 mean_score: 0.0,
                 trial: None,
