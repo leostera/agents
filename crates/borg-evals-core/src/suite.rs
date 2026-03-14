@@ -1,11 +1,12 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::case::{Case, TrialContext};
 use crate::config::{ExecutionTarget, RunConfig};
 use crate::error::EvalResult;
 use crate::report::{
-    EvalRunReport, RunManifest, SCHEMA_VERSION, SuiteRunReport, TrialRecord, build_summary,
-    now_ms, run_id,
+    EvalRunReport, IncrementalSuiteWriter, RunManifest, SCHEMA_VERSION, SuiteRunReport,
+    TrialRecord, build_summary, now_ms, run_id,
 };
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -29,6 +30,7 @@ pub struct Suite {
 pub struct SuiteRunner<'a> {
     suite: &'a Suite,
     config: RunConfig,
+    artifact_root: Option<PathBuf>,
 }
 
 impl Suite {
@@ -66,97 +68,24 @@ impl Suite {
 
     pub async fn run(&self) -> EvalResult<SuiteRunReport> {
         let run_id = run_id();
-        self.run_single_target(run_id, &ExecutionTarget::default(), self.trials)
-            .await
+        run_single_target(self, run_id, &ExecutionTarget::default(), self.trials, None).await
     }
 
     pub fn run_with(&self, config: RunConfig) -> SuiteRunner<'_> {
-        SuiteRunner { suite: self, config }
-    }
-
-    async fn run_single_target(
-        &self,
-        run_id: String,
-        target: &ExecutionTarget,
-        default_trials: usize,
-    ) -> EvalResult<SuiteRunReport> {
-        let started_at_ms = now_ms();
-        let mut trial_records = Vec::new();
-
-        info!(
-            suite = %self.id(),
-            target_label = %target.label,
-            provider = %target.provider,
-            model = %target.model,
-            default_trials,
-            max_in_flight = target.max_in_flight,
-            "starting suite target"
-        );
-
-        let semaphore = Arc::new(Semaphore::new(target.max_in_flight.max(1)));
-        let mut jobs = JoinSet::new();
-
-        for case in &self.cases {
-            let trial_count = case.configured_trials().unwrap_or(default_trials);
-            info!(
-                suite = %self.id(),
-                target_label = %target.label,
-                case = %case.id(),
-                trials = trial_count,
-                "starting case"
-            );
-            for trial_index in 0..trial_count {
-                let semaphore = semaphore.clone();
-                let suite_id = self.id().to_string();
-                let target = target.clone();
-                let case = case.clone();
-                let run_id = run_id.clone();
-
-                jobs.spawn(async move {
-                    let _permit = semaphore.acquire_owned().await.expect("semaphore permit");
-                    execute_trial(run_id, suite_id, target, case, trial_index).await
-                });
-            }
+        SuiteRunner {
+            suite: self,
+            config,
+            artifact_root: None,
         }
-
-        while let Some(result) = jobs.join_next().await {
-            trial_records.push(result.expect("trial task panicked"));
-        }
-
-        trial_records.sort_by(|left, right| {
-            left.case_id
-                .cmp(&right.case_id)
-                .then(left.trial_index.cmp(&right.trial_index))
-        });
-
-        let finished_at_ms = now_ms();
-        let summary = build_summary(self, &run_id, target, &trial_records);
-        info!(
-            suite = %self.id(),
-            target_label = %target.label,
-            pass_rate = summary.pass_rate,
-            mean_score = summary.mean_score,
-            total_trials = summary.total_trials,
-            "finished suite target"
-        );
-        let manifest = RunManifest {
-            schema_version: SCHEMA_VERSION,
-            run_id,
-            started_at_ms,
-            finished_at_ms,
-            suites: vec![self.id().to_string()],
-            targets: vec![target.clone()],
-        };
-
-        Ok(SuiteRunReport {
-            manifest,
-            suite: summary,
-            trials: trial_records,
-        })
     }
 }
 
 impl<'a> SuiteRunner<'a> {
+    pub fn persist_to(mut self, root: impl AsRef<Path>) -> Self {
+        self.artifact_root = Some(root.as_ref().to_path_buf());
+        self
+    }
+
     pub async fn run(self) -> EvalResult<EvalRunReport> {
         let started_at_ms = now_ms();
         let run_id = run_id();
@@ -178,6 +107,7 @@ impl<'a> SuiteRunner<'a> {
             let run_id = run_id.clone();
             let trials = self.config.trials;
             let local_target_semaphore = local_target_semaphore.clone();
+            let artifact_root = self.artifact_root.clone();
             jobs.spawn(async move {
                 let _local_permit = if target.provider == "ollama" {
                     Some(
@@ -189,7 +119,7 @@ impl<'a> SuiteRunner<'a> {
                 } else {
                     None
                 };
-                suite.run_single_target(run_id, &target, trials).await
+                run_single_target(&suite, run_id, &target, trials, artifact_root.as_deref()).await
             });
         }
 
@@ -217,6 +147,116 @@ impl<'a> SuiteRunner<'a> {
 
         Ok(EvalRunReport { manifest, variants })
     }
+}
+
+async fn run_single_target(
+    suite: &Suite,
+    run_id: String,
+    target: &ExecutionTarget,
+    default_trials: usize,
+    artifact_root: Option<&Path>,
+) -> EvalResult<SuiteRunReport> {
+    let started_at_ms = now_ms();
+    let mut trial_records = Vec::new();
+
+    info!(
+        suite = %suite.id(),
+        target_label = %target.label,
+        provider = %target.provider,
+        model = %target.model,
+        default_trials,
+        max_in_flight = target.max_in_flight,
+        "starting suite target"
+    );
+
+    let initial_manifest = RunManifest {
+        schema_version: SCHEMA_VERSION,
+        run_id: run_id.clone(),
+        started_at_ms,
+        finished_at_ms: started_at_ms,
+        suites: vec![suite.id().to_string()],
+        targets: vec![target.clone()],
+    };
+    let mut incremental_writer = match artifact_root {
+        Some(root) => Some(IncrementalSuiteWriter::new(
+            root,
+            suite.id(),
+            target,
+            &initial_manifest,
+        )?),
+        None => None,
+    };
+
+    let semaphore = Arc::new(Semaphore::new(target.max_in_flight.max(1)));
+    let mut jobs = JoinSet::new();
+
+    for case in suite.cases() {
+        let trial_count = case.configured_trials().unwrap_or(default_trials);
+        info!(
+            suite = %suite.id(),
+            target_label = %target.label,
+            case = %case.id(),
+            trials = trial_count,
+            "starting case"
+        );
+        for trial_index in 0..trial_count {
+            let semaphore = semaphore.clone();
+            let suite_id = suite.id().to_string();
+            let target = target.clone();
+            let case = case.clone();
+            let run_id = run_id.clone();
+
+            jobs.spawn(async move {
+                let _permit = semaphore.acquire_owned().await.expect("semaphore permit");
+                execute_trial(run_id, suite_id, target, case, trial_index).await
+            });
+        }
+    }
+
+    while let Some(result) = jobs.join_next().await {
+        let trial_record = result.expect("trial task panicked");
+        if let Some(writer) = incremental_writer.as_mut() {
+            writer.write_trial(&trial_record)?;
+        }
+        trial_records.push(trial_record);
+    }
+
+    trial_records.sort_by(|left, right| {
+        left.case_id
+            .cmp(&right.case_id)
+            .then(left.trial_index.cmp(&right.trial_index))
+    });
+
+    let finished_at_ms = now_ms();
+    let summary = build_summary(suite, &run_id, target, &trial_records);
+    info!(
+        suite = %suite.id(),
+        target_label = %target.label,
+        pass_rate = summary.pass_rate,
+        mean_score = summary.mean_score,
+        total_trials = summary.total_trials,
+        "finished suite target"
+    );
+    let manifest = RunManifest {
+        schema_version: SCHEMA_VERSION,
+        run_id,
+        started_at_ms,
+        finished_at_ms,
+        suites: vec![suite.id().to_string()],
+        targets: vec![target.clone()],
+    };
+
+    let report = SuiteRunReport {
+        manifest,
+        suite: summary,
+        trials: trial_records,
+    };
+
+    if let Some(writer) = incremental_writer.as_mut() {
+        writer.finish(&report)?;
+    }
+
+    Ok(report)
 }
 
 async fn execute_trial(

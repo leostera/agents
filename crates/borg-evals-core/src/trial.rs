@@ -60,4 +60,3 @@ pub struct RecordedToolCall {
     pub result: Option<Value>,
     pub error: Option<String>,
 }
-

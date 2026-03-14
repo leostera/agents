@@ -1,5 +1,5 @@
-mod config;
 mod case;
+mod config;
 mod error;
 mod grade;
 mod report;
@@ -19,18 +19,18 @@ pub use trial::{AgentTrial, RecordedEvent, RecordedMessageRole, RecordedToolCall
 
 pub mod prelude {
     pub use crate::{
-        AgentTrial, ArtifactIndex, Case, EvalError, EvalResult, GradeResult, Grader,
-        ExecutionTarget, RecordedEvent, RecordedMessageRole, RecordedToolCall, RunConfig, Suite,
-        SuiteKind, SuiteRunReport, TrialContext, grade,
+        AgentTrial, ArtifactIndex, Case, EvalError, EvalResult, ExecutionTarget, GradeResult,
+        Grader, RecordedEvent, RecordedMessageRole, RecordedToolCall, RunConfig, Suite, SuiteKind,
+        SuiteRunReport, TrialContext, grade,
     };
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use serde_json::json;
     use tokio::time::{Duration, Instant};
@@ -39,30 +39,28 @@ mod tests {
 
     #[tokio::test]
     async fn suite_runs_trials_and_aggregates_scores() {
-        let suite = Suite::new("calendar")
-            .trials(2)
-            .case(
-                Case::new("happy-path")
-                    .run(|ctx| async move {
-                        Ok(AgentTrial {
-                            transcript: vec![RecordedEvent::Message {
-                                role: RecordedMessageRole::User,
-                                content: format!("trial {}", ctx.trial_index),
-                            }],
-                            final_reply: "done".to_string(),
-                            tool_trace: Vec::new(),
-                            metadata: json!({ "trial_index": ctx.trial_index }),
-                        })
+        let suite = Suite::new("calendar").trials(2).case(
+            Case::new("happy-path")
+                .run(|ctx| async move {
+                    Ok(AgentTrial {
+                        transcript: vec![RecordedEvent::Message {
+                            role: RecordedMessageRole::User,
+                            content: format!("trial {}", ctx.trial_index),
+                        }],
+                        final_reply: "done".to_string(),
+                        tool_trace: Vec::new(),
+                        metadata: json!({ "trial_index": ctx.trial_index }),
                     })
-                    .grade(grade("reply-is-done", |trial| async move {
-                        Ok(GradeResult::pass_if(
-                            "reply-is-done",
-                            trial.final_reply == "done",
-                            "reply should equal done",
-                            json!({ "reply": trial.final_reply }),
-                        ))
-                    })),
-            );
+                })
+                .grade(grade("reply-is-done", |trial| async move {
+                    Ok(GradeResult::pass_if(
+                        "reply-is-done",
+                        trial.final_reply == "done",
+                        "reply should equal done",
+                        json!({ "reply": trial.final_reply }),
+                    ))
+                })),
+        );
 
         let report = suite.run().await.expect("suite to run");
         assert_eq!(report.suite.total_trials, 2);
@@ -74,15 +72,16 @@ mod tests {
 
     #[tokio::test]
     async fn suite_runner_expands_model_matrix() {
-        let suite = Suite::new("calendar").case(
+        let suite =
+            Suite::new("calendar").case(
                 Case::new("matrix")
-                .run(|ctx| async move {
-                    Ok(AgentTrial::new(format!("target={}", ctx.target.label)))
-                })
-                .grade(grade("always", |_| async move {
-                    Ok(GradeResult::pass("always", "always"))
-                })),
-        );
+                    .run(|ctx| async move {
+                        Ok(AgentTrial::new(format!("target={}", ctx.target.label)))
+                    })
+                    .grade(grade("always", |_| async move {
+                        Ok(GradeResult::pass("always", "always"))
+                    })),
+            );
 
         let report = suite
             .run_with(
@@ -100,6 +99,70 @@ mod tests {
         assert_eq!(report.variants[0].suite.target.label, "qwen2.5");
         assert_eq!(report.variants[1].suite.target.label, "qwen3.5");
         assert_eq!(report.manifest.targets.len(), 2);
+    }
+
+    #[test]
+    fn summary_markdown_prefixes_non_local_providers() {
+        let hosted_target = ExecutionTarget::openrouter("kimi-k2.5", "moonshotai/kimi-k2.5");
+        let local_target = ExecutionTarget::ollama("qwen3.5", "qwen3.5");
+
+        assert_eq!(hosted_target.display_label(), "openrouter:kimi-k2.5");
+        assert_eq!(local_target.display_label(), "qwen3.5");
+    }
+
+    #[tokio::test]
+    async fn summary_table_groups_rows_by_case() {
+        let suite = Suite::new("calendar").case(
+            Case::new("compress-day")
+                .run(|_| async move { Ok(AgentTrial::new("ok")) })
+                .grade(grade("free-block", |_| async move {
+                    Ok(GradeResult::pass("free-block", "always"))
+                })),
+        );
+
+        let report = suite
+            .run_with(
+                RunConfig::single(ExecutionTarget::openrouter(
+                    "kimi-k2.5",
+                    "moonshotai/kimi-k2.5",
+                ))
+                .with_trials(2),
+            )
+            .run()
+            .await
+            .expect("table report");
+
+        let table = report.summary_table();
+        assert!(table.contains("== Case: compress-day (~2 trials)"));
+        assert!(table.contains("final 🏁"));
+        assert!(table.contains("grades 🔎"));
+        assert!(table.contains("openrouter:kimi-k2.5"));
+        assert!(table.contains("free-block"));
+        assert!(table.contains("1.00"));
+        assert!(table.contains("🥇"));
+    }
+
+    #[tokio::test]
+    async fn grader_means_count_failed_trials_as_zero_score() {
+        let suite = Suite::new("calendar").trials(2).case(
+            Case::new("compress-day")
+                .run(|ctx| async move {
+                    if ctx.trial_index == 0 {
+                        Err(EvalError::message("trial failed"))
+                    } else {
+                        Ok(AgentTrial::new("ok"))
+                    }
+                })
+                .grade(grade("free-block", |_| async move {
+                    Ok(GradeResult::pass("free-block", "always"))
+                })),
+        );
+
+        let report = suite.run().await.expect("report");
+        let case = &report.suite.cases[0];
+        assert_eq!(case.mean_score, 0.5);
+        assert_eq!(case.grader_means[0].mean_score, 0.5);
+        assert_eq!(case.grader_means[0].pass_rate, 0.5);
     }
 
     #[tokio::test]
@@ -124,10 +187,12 @@ mod tests {
         let report = suite.run().await.expect("suite should not abort");
         assert_eq!(report.trials.len(), 4);
         assert!(report.trials.iter().any(|trial| trial.error.is_some()));
-        assert!(report
-            .trials
-            .iter()
-            .any(|trial| trial.case_id == "still-runs" && trial.passed));
+        assert!(
+            report
+                .trials
+                .iter()
+                .any(|trial| trial.case_id == "still-runs" && trial.passed)
+        );
     }
 
     #[tokio::test]
@@ -252,6 +317,60 @@ mod tests {
         assert_eq!(report.variants.len(), 3);
         assert_eq!(local_peak.load(Ordering::SeqCst), 1);
         assert!(hosted_saw_local_running.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn persisted_runs_flush_trial_records_before_completion() {
+        let root = unique_test_dir("borg-evals-core-incremental");
+        let suite = Suite::new("calendar").case(
+            Case::new("incremental")
+                .run(|ctx| async move {
+                    if ctx.trial_index == 0 {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    } else {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    }
+                    Ok(AgentTrial::new("ok"))
+                })
+                .grade(grade("always", |_| async move {
+                    Ok(GradeResult::pass("always", "always"))
+                })),
+        );
+
+        let run = suite
+            .run_with(
+                RunConfig::single(
+                    ExecutionTarget::openai("gpt", "gpt-5.3-codex").with_max_in_flight(1),
+                )
+                .with_trials(2),
+            )
+            .persist_to(&root)
+            .run();
+
+        let check_persisted_trial = async {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            let results_dir = root.join("results").join("calendar");
+            let run_dir = fs::read_dir(&results_dir)
+                .expect("results dir should exist")
+                .next()
+                .expect("run dir entry")
+                .expect("run dir");
+            let trial_path = run_dir
+                .path()
+                .join("gpt")
+                .join("trial-001__incremental.json");
+            assert!(
+                trial_path.exists(),
+                "expected first trial artifact to exist before full run completed: {}",
+                trial_path.display()
+            );
+        };
+
+        let (report, ()) = tokio::join!(run, check_persisted_trial);
+        let report = report.expect("persisted run");
+        assert_eq!(report.variants[0].trials.len(), 2);
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 
     fn unique_test_dir(prefix: &str) -> PathBuf {

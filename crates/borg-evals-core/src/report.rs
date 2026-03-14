@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use schemars::JsonSchema;
@@ -92,12 +92,99 @@ pub struct SuiteRunReport {
     pub trials: Vec<TrialRecord>,
 }
 
+pub(crate) struct IncrementalSuiteWriter {
+    root: PathBuf,
+    suite_dir: PathBuf,
+    manifest_path: PathBuf,
+    summary_path: PathBuf,
+    markdown_path: PathBuf,
+    artifact_index_path: PathBuf,
+    files: Vec<String>,
+    run_id: String,
+    suite_id: String,
+    target_label: String,
+}
+
+impl IncrementalSuiteWriter {
+    pub(crate) fn new(
+        root: impl AsRef<Path>,
+        suite_id: &str,
+        target: &ExecutionTarget,
+        manifest: &RunManifest,
+    ) -> EvalResult<Self> {
+        let root = root.as_ref().to_path_buf();
+        let suite_dir = root
+            .join("results")
+            .join(suite_id)
+            .join(&manifest.run_id)
+            .join(&target.label);
+        fs::create_dir_all(&suite_dir)?;
+
+        let manifest_path = suite_dir.join("manifest.json");
+        let summary_path = suite_dir.join("suite-summary.json");
+        let markdown_path = suite_dir.join("suite-summary.md");
+        let artifact_index_path = suite_dir.join("artifact-index.json");
+        write_json(&manifest_path, manifest)?;
+
+        let mut writer = Self {
+            root,
+            suite_dir,
+            manifest_path,
+            summary_path,
+            markdown_path,
+            artifact_index_path,
+            files: Vec::new(),
+            run_id: manifest.run_id.clone(),
+            suite_id: suite_id.to_string(),
+            target_label: target.display_label(),
+        };
+        writer
+            .files
+            .push(relative_file(&writer.root, &writer.manifest_path));
+        writer.write_index()?;
+        Ok(writer)
+    }
+
+    pub(crate) fn write_trial(&mut self, trial: &TrialRecord) -> EvalResult<()> {
+        let trial_path = self.suite_dir.join(format!(
+            "trial-{:03}__{}.json",
+            trial.trial_index + 1,
+            trial.case_id
+        ));
+        write_json(&trial_path, trial)?;
+        self.files.push(relative_file(&self.root, &trial_path));
+        self.write_index().map(|_| ())
+    }
+
+    pub(crate) fn finish(&mut self, report: &SuiteRunReport) -> EvalResult<ArtifactIndex> {
+        write_json(&self.summary_path, &report.suite)?;
+        fs::write(&self.markdown_path, report.summary_markdown())?;
+        self.files
+            .push(relative_file(&self.root, &self.summary_path));
+        self.files
+            .push(relative_file(&self.root, &self.markdown_path));
+        self.write_index()
+    }
+
+    fn write_index(&self) -> EvalResult<ArtifactIndex> {
+        let index = ArtifactIndex {
+            schema_version: SCHEMA_VERSION,
+            run_id: self.run_id.clone(),
+            suite_id: self.suite_id.clone(),
+            target_label: Some(self.target_label.clone()),
+            files: self.files.clone(),
+        };
+        write_json(&self.artifact_index_path, &index)?;
+        Ok(index)
+    }
+}
+
 impl SuiteRunReport {
     pub fn summary_markdown(&self) -> String {
         format!(
             "# {} ({})\n\n- total trials: {}\n- pass rate: {:.0}%\n- mean score: {:.2}\n",
             self.suite.suite_id,
-            self.suite.target.label,
+            self.suite.target.display_label(),
             self.suite.total_trials,
             self.suite.pass_rate * 100.0,
             self.suite.mean_score
@@ -141,7 +228,7 @@ impl SuiteRunReport {
             schema_version: SCHEMA_VERSION,
             run_id: self.manifest.run_id.clone(),
             suite_id: self.suite.suite_id.clone(),
-            target_label: Some(self.suite.target.label.clone()),
+            target_label: Some(self.suite.target.display_label()),
             files,
         };
 
@@ -157,6 +244,119 @@ impl EvalRunReport {
             .map(SuiteRunReport::summary_markdown)
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    pub fn summary_table(&self) -> String {
+        let mut case_ids = self
+            .variants
+            .iter()
+            .flat_map(|variant| variant.suite.cases.iter().map(|case| case.case_id.clone()))
+            .collect::<Vec<_>>();
+        case_ids.sort();
+        case_ids.dedup();
+
+        let mut sections = Vec::new();
+
+        for case_id in case_ids {
+            let case_rows = self
+                .variants
+                .iter()
+                .filter_map(|variant| {
+                    variant
+                        .suite
+                        .cases
+                        .iter()
+                        .find(|case| case.case_id == case_id)
+                        .map(|case| (variant, case))
+                })
+                .collect::<Vec<_>>();
+
+            if case_rows.is_empty() {
+                continue;
+            }
+
+            let trial_count = case_rows
+                .iter()
+                .map(|(_, case)| case.trial_count)
+                .max()
+                .unwrap_or(0);
+
+            let mut ranked_rows = case_rows
+                .iter()
+                .map(|(variant, case)| {
+                    (
+                        variant.suite.target.display_label(),
+                        case.mean_score,
+                        case.grader_means.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            ranked_rows.sort_by(|left, right| {
+                right
+                    .1
+                    .partial_cmp(&left.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(left.0.cmp(&right.0))
+            });
+
+            sections.push(format!(
+                "== Case: {case_id} (~{trial_count} trials) {} ==",
+                case_icon(&case_id)
+            ));
+            sections.push(String::new());
+            sections.push("final 🏁".to_string());
+            let provider_width = ranked_rows
+                .iter()
+                .map(|(provider, _, _)| provider.len())
+                .max()
+                .unwrap_or(0);
+            let mut current_rank = 1usize;
+            let mut previous_score: Option<f32> = None;
+            for (index, (provider, score, _)) in ranked_rows.iter().enumerate() {
+                if let Some(previous) = previous_score {
+                    if (previous - score).abs() >= f32::EPSILON {
+                        current_rank = index + 1;
+                    }
+                }
+                sections.push(format!(
+                    "  {provider:<provider_width$}  {score:.2}  {}",
+                    medal_for_rank(current_rank),
+                    provider_width = provider_width,
+                ));
+                previous_score = Some(*score);
+            }
+
+            sections.push(String::new());
+            sections.push("grades 🔎".to_string());
+            for (provider, _, graders) in &ranked_rows {
+                sections.push(format!("  {provider}"));
+                if graders.is_empty() {
+                    sections.push("    overall  0.00".to_string());
+                    sections.push(String::new());
+                    continue;
+                }
+
+                let grade_width = graders
+                    .iter()
+                    .map(|grader| grader.name.len())
+                    .max()
+                    .unwrap_or(0);
+                for grader in graders {
+                    sections.push(format!(
+                        "    {grade:<grade_width$}  {score:.2}",
+                        grade = grader.name,
+                        score = grader.mean_score,
+                        grade_width = grade_width,
+                    ));
+                }
+                sections.push(String::new());
+            }
+        }
+
+        while sections.last().is_some_and(|line| line.is_empty()) {
+            sections.pop();
+        }
+        sections.join("\n")
     }
 
     pub fn write_to(&self, root: impl AsRef<Path>) -> EvalResult<ArtifactIndex> {
@@ -252,16 +452,30 @@ fn build_case_aggregate(case: &Case, trials: &[TrialRecord]) -> CaseAggregate {
         .graders()
         .iter()
         .map(|grader| {
-            let grades: Vec<&GradeResult> = case_trials
+            let scores = case_trials.iter().map(|trial| {
+                trial
+                    .grades
+                    .iter()
+                    .find(|grade| grade.name == grader.name())
+                    .map(|grade| grade.score)
+                    .unwrap_or(0.0)
+            });
+            let passed_trials_for_grader = case_trials
                 .iter()
-                .flat_map(|trial| trial.grades.iter())
-                .filter(|grade| grade.name == grader.name())
-                .collect();
+                .filter(|trial| {
+                    trial
+                        .grades
+                        .iter()
+                        .find(|grade| grade.name == grader.name())
+                        .map(|grade| grade.passed)
+                        .unwrap_or(false)
+                })
+                .count();
 
             GraderAggregate {
                 name: grader.name().to_string(),
-                mean_score: mean(grades.iter().map(|grade| grade.score)),
-                pass_rate: ratio(grades.iter().filter(|grade| grade.passed).count(), grades.len()),
+                mean_score: mean(scores),
+                pass_rate: ratio(passed_trials_for_grader, case_trials.len()),
             }
         })
         .collect();
@@ -307,4 +521,23 @@ fn relative_file(root: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .to_string()
+}
+
+fn case_icon(case_id: &str) -> &'static str {
+    if case_id.contains("compress") || case_id.contains("meeting") || case_id.contains("calendar") {
+        "📅"
+    } else if case_id.contains("impossible") || case_id.contains("refuse") {
+        "🚫"
+    } else {
+        "🧪"
+    }
+}
+
+fn medal_for_rank(rank: usize) -> &'static str {
+    match rank {
+        1 => "🥇",
+        2 => "🥈",
+        3 => "🥉",
+        _ => "",
+    }
 }

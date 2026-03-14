@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
 
-const DEFAULT_TRIALS: usize = 10;
+const DEFAULT_TRIALS: usize = 20;
 const DEFAULT_OLLAMA_MODELS: &[(&str, &str)] = &[
     ("qwen2.5-7b", "qwen2.5:7b"),
     ("qwen3.5", "qwen3.5"),
@@ -710,6 +710,7 @@ async fn main() -> Result<()> {
     let targets = default_targets();
     let report = suite
         .run_with(RunConfig::new(targets).with_trials(default_trials()))
+        .persist_to(".evals")
         .run()
         .await?;
     let index = report.write_to(".evals")?;
@@ -720,7 +721,7 @@ async fn main() -> Result<()> {
         files = index.files.len(),
         "wrote eval artifacts"
     );
-    println!("{}", report.summary_markdown());
+    println!("{}", report.summary_table());
     println!("wrote {} artifacts", index.files.len());
 
     Ok(())
@@ -757,10 +758,12 @@ fn default_targets() -> Vec<ExecutionTarget> {
         }
     }
 
-    let mut targets = DEFAULT_OLLAMA_MODELS
-        .iter()
-        .map(|(label, model)| ExecutionTarget::ollama(*label, *model))
-        .collect::<Vec<_>>();
+    let mut targets = vec![];
+    /* DEFAULT_OLLAMA_MODELS
+            .iter()
+            .map(|(label, model)| ExecutionTarget::ollama(*label, *model))
+            .collect::<Vec<_>>();
+    */
 
     if optional_test_env("BORG_TEST_OPENROUTER_API_KEY").is_some() {
         targets.extend(

@@ -44,6 +44,13 @@ impl ExecutionTarget {
         self.max_in_flight = max_in_flight.max(1);
         self
     }
+
+    pub fn display_label(&self) -> String {
+        match self.provider.as_str() {
+            "ollama" | "default" => self.label.clone(),
+            provider => format!("{provider}:{}", self.label),
+        }
+    }
 }
 
 impl Default for ExecutionTarget {
@@ -76,7 +83,7 @@ impl RunConfig {
 fn default_max_in_flight(provider: &str) -> usize {
     match provider {
         "ollama" => 1,
-        _ => 20,
+        _ => 5,
     }
 }
 

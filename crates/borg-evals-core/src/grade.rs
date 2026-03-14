@@ -98,4 +98,3 @@ where
 {
     Grader::new(name, f)
 }
-
