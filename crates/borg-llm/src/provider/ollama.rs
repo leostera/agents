@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use derive_builder::Builder;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
@@ -60,6 +60,8 @@ pub struct ChatMessage {
     pub content: String,
     pub images: Option<Vec<String>>,
     pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -211,6 +213,7 @@ impl Ollama {
             });
         }
 
+        let mut tool_names = HashMap::new();
         let messages: Vec<crate::provider::ollama::ChatMessage> = req
             .input
             .iter()
@@ -240,26 +243,32 @@ impl Ollama {
                     )
                     .filter(|images: &Vec<String>| !images.is_empty()),
                     tool_calls: None,
+                    tool_name: None,
                 },
-                RawInputItem::ToolCall { call } => crate::provider::ollama::ChatMessage {
-                    role: "assistant".to_string(),
-                    content: String::new(),
-                    images: None,
-                    tool_calls: Some(vec![ToolCall {
-                        function: ToolCallFunction {
-                            name: call.name.clone(),
-                            arguments: call.arguments.clone(),
-                        },
-                    }]),
-                },
+                RawInputItem::ToolCall { call } => {
+                    tool_names.insert(call.id.clone(), call.name.clone());
+                    crate::provider::ollama::ChatMessage {
+                        role: "assistant".to_string(),
+                        content: String::new(),
+                        images: None,
+                        tool_calls: Some(vec![ToolCall {
+                            function: ToolCallFunction {
+                                name: call.name.clone(),
+                                arguments: call.arguments.clone(),
+                            },
+                        }]),
+                        tool_name: None,
+                    }
+                }
                 RawInputItem::ToolResult {
                     tool_use_id,
                     content,
                 } => crate::provider::ollama::ChatMessage {
                     role: "tool".to_string(),
-                    content: format!("{tool_use_id}: {content}"),
+                    content: content.clone(),
                     images: None,
                     tool_calls: None,
+                    tool_name: tool_names.get(tool_use_id).cloned(),
                 },
             })
             .collect();
@@ -676,6 +685,7 @@ fn parse_chat_response_body(body: &str) -> LlmResult<ChatResponse> {
             content,
             images: None,
             tool_calls,
+            tool_name: None,
         },
         done: last.done,
         total_duration: last.total_duration,
