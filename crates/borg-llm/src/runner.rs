@@ -206,11 +206,13 @@ impl LlmRunner {
                     Ok(OutputItem::Message { role, content })
                 }
                 RawOutputItem::ToolCall { call } => {
-                    let tool = C::decode_tool_call(&call.name, call.arguments)?;
+                    let arguments = call.arguments;
+                    let tool = C::decode_tool_call(&call.name, arguments.clone())?;
                     Ok(OutputItem::ToolCall {
                         call: ToolCall {
                             id: call.id,
                             name: call.name,
+                            arguments,
                             tool,
                         },
                     })
@@ -265,11 +267,13 @@ impl LlmRunner {
                         Ok(CompletionEvent::ReasoningDelta { text })
                     }
                     Ok(RawCompletionEvent::ToolCall { call }) => {
-                        match C::decode_tool_call(&call.name, call.arguments) {
+                        let arguments = call.arguments;
+                        match C::decode_tool_call(&call.name, arguments.clone()) {
                             Ok(tool) => Ok(CompletionEvent::ToolCall {
                                 call: crate::tools::ToolCall {
                                     id: call.id,
                                     name: call.name,
+                                    arguments,
                                     tool,
                                 },
                             }),

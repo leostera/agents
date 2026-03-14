@@ -568,6 +568,7 @@ where
             .map(|call| ToolCallEnvelope {
                 call_id: call.id,
                 name: call.name,
+                arguments: call.arguments,
                 call: call.tool,
             })
             .collect::<VecDeque<_>>();
@@ -819,15 +820,11 @@ fn tool_call_to_chunk<C>(
 where
     C: Serialize,
 {
-    let args = serde_json::to_value(&call.call).map_err(|error| AgentError::Internal {
-        message: error.to_string(),
-    })?;
-
     Ok(ContextChunk::ToolCall {
         strategy,
         id: call.call_id.clone(),
         name: call.name.clone(),
-        args,
+        args: call.arguments.clone(),
     })
 }
 
@@ -928,6 +925,11 @@ mod tests {
         Ping { value: String },
     }
 
+    #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+    enum UnitTools {
+        ListEvents,
+    }
+
     impl TypedTool for TestTools {
         fn tool_definitions() -> Vec<RawToolDefinition> {
             vec![RawToolDefinition::function(
@@ -954,6 +956,34 @@ mod tests {
                     let args: PingArgs = serde_json::from_value(arguments)
                         .map_err(|error| LlmError::parse("tool arguments", error))?;
                     Ok(TestTools::Ping { value: args.value })
+                }
+                other => Err(LlmError::InvalidResponse {
+                    reason: format!("unknown tool {other}"),
+                }),
+            }
+        }
+    }
+
+    impl TypedTool for UnitTools {
+        fn tool_definitions() -> Vec<RawToolDefinition> {
+            vec![RawToolDefinition::function(
+                "list_events",
+                Some("List events"),
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }),
+            )]
+        }
+
+        fn decode_tool_call(name: &str, arguments: serde_json::Value) -> LlmResult<Self> {
+            match name {
+                "list_events" => {
+                    let _args: std::collections::HashMap<String, serde_json::Value> =
+                        serde_json::from_value(arguments)
+                            .map_err(|error| LlmError::parse("tool arguments", error))?;
+                    Ok(UnitTools::ListEvents)
                 }
                 other => Err(LlmError::InvalidResponse {
                     reason: format!("unknown tool {other}"),
@@ -1082,6 +1112,26 @@ mod tests {
         }
     }
 
+    fn unit_tool_call_response() -> RawCompletionResponse {
+        RawCompletionResponse {
+            provider: ProviderType::OpenAI,
+            model: "test-model".to_string(),
+            output: vec![RawOutputItem::ToolCall {
+                call: RawToolCall {
+                    id: "call_list_events_1".to_string(),
+                    name: "list_events".to_string(),
+                    arguments: serde_json::json!({}),
+                },
+            }],
+            usage: borg_llm::completion::Usage {
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                total_tokens: 2,
+            },
+            finish_reason: FinishReason::ToolCalls,
+        }
+    }
+
     fn provider_error() -> LlmError {
         LlmError::Provider {
             provider: "openrouter".to_string(),
@@ -1099,6 +1149,19 @@ mod tests {
                         data: Pong {
                             value: format!("pong:{value}"),
                         },
+                    },
+                }),
+            }
+        })
+    }
+
+    fn unit_tool_runner() -> CallbackToolRunner<UnitTools, serde_json::Value> {
+        CallbackToolRunner::new(|call| async move {
+            match call.call {
+                UnitTools::ListEvents => Ok(ToolResultEnvelope {
+                    call_id: call.call_id,
+                    result: ToolExecutionResult::Ok {
+                        data: serde_json::json!({ "events": [] }),
                     },
                 }),
             }
@@ -1307,6 +1370,46 @@ mod tests {
             requests[1].input.last(),
             Some(RawInputItem::ToolResult { content, .. }) if content.contains("ping failed")
         ));
+    }
+
+    #[tokio::test]
+    async fn send_replays_original_tool_arguments_for_unit_variants() {
+        let provider = Arc::new(FakeProvider::with_responses(vec![
+            Ok(unit_tool_call_response()),
+            Ok(assistant_text_response("listed")),
+        ]));
+
+        let runner = LlmRunner::builder()
+            .add_provider(ArcBackedFakeProvider(provider.clone()))
+            .build();
+        let mut agent = Agent::builder()
+            .with_tool_runner(unit_tool_runner())
+            .with_llm_runner(runner)
+            .build()
+            .expect("agent");
+
+        agent
+            .send(AgentInput::Message(InputItem::user_text("list events")))
+            .await
+            .expect("turn");
+
+        let _ = agent.next().await.expect("tool call");
+        let _ = agent.next().await.expect("tool result");
+        let _ = agent.next().await.expect("model output");
+        let _ = agent.next().await.expect("completed");
+
+        let requests = provider.take_requests();
+        assert_eq!(requests.len(), 2);
+        let replayed_tool_call = requests[1]
+            .input
+            .iter()
+            .find_map(|item| match item {
+                RawInputItem::ToolCall { call } => Some(call),
+                RawInputItem::Message { .. } | RawInputItem::ToolResult { .. } => None,
+            })
+            .expect("replayed tool call");
+        assert_eq!(replayed_tool_call.name, "list_events");
+        assert_eq!(replayed_tool_call.arguments, serde_json::json!({}));
     }
 
     #[tokio::test]

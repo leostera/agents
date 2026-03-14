@@ -67,6 +67,7 @@ impl TypedTool for () {
 pub struct ToolCall<C> {
     pub id: String,
     pub name: String,
+    pub arguments: serde_json::Value,
     pub tool: C,
 }
 
@@ -75,6 +76,7 @@ impl<C: fmt::Debug> fmt::Debug for ToolCall<C> {
         f.debug_struct("ToolCall")
             .field("id", &self.id)
             .field("name", &self.name)
+            .field("arguments", &self.arguments)
             .field("tool", &self.tool)
             .finish()
     }

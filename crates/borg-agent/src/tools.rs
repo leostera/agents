@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::error::{AgentError, AgentResult};
 
@@ -11,6 +12,7 @@ use crate::error::{AgentError, AgentResult};
 pub struct ToolCallEnvelope<C> {
     pub call_id: String,
     pub name: String,
+    pub arguments: Value,
     pub call: C,
 }
 
