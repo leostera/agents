@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/borg-agent",
+  "crates/borg-evals-core",
   "crates/borg-llm",
   # "crates/borg-agent",
   # "crates/borg-cli",

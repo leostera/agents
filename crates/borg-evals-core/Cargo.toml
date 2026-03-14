@@ -1,0 +1,16 @@
+[package]
+name = "borg-evals-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+borg-agent = { path = "../borg-agent" }
+borg-llm = { path = "../borg-llm" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

@@ -9,7 +9,8 @@ use borg_llm::error::LlmResult;
 use borg_llm::provider::LlmProvider;
 use borg_llm::response::TypedResponse;
 use borg_llm::testing::{TestContext, TestProvider};
-use borg_llm::tools::TypedToolSet;
+use borg_llm::tools::{RawToolDefinition, TypedToolSet};
+use serde_json::json;
 use common::{
     EchoResponse, TestTools, assert_streamed_ping_tool_call, assert_streamed_typed_response,
 };
@@ -177,4 +178,73 @@ async fn ollama_runner_streams_typed_tool_calls_long() -> LlmResult<()> {
         .await?;
 
     assert_streamed_ping_tool_call(&mut stream).await
+}
+
+#[tokio::test]
+#[serial]
+async fn ollama_provider_replays_completed_tool_exchange_long() -> LlmResult<()> {
+    let ctx = TestContext::shared(TestProvider::Ollama).await?;
+    let provider = ctx.ollama_provider_for_model(OLLAMA_TOOL_MODEL).await?;
+
+    let response = provider
+        .chat_raw(RawCompletionRequest {
+            model: ModelSelector::from_model(OLLAMA_TOOL_MODEL),
+            input: vec![
+                RawInputItem::Message {
+                    role: Role::User,
+                    content: vec![RawInputContent::Text {
+                        text: "After the completed tool exchange, reply with exactly the tool result and nothing else."
+                            .to_string(),
+                    }],
+                },
+                RawInputItem::ToolCall {
+                    call: borg_llm::tools::RawToolCall {
+                        id: "call_ping_1".to_string(),
+                        name: "ping".to_string(),
+                        arguments: json!({ "value": "hello-tool" }),
+                    },
+                },
+                RawInputItem::ToolResult {
+                    tool_use_id: "call_ping_1".to_string(),
+                    content: "pong:hello-tool".to_string(),
+                },
+            ],
+            temperature: Temperature::Value(0.0),
+            top_p: TopP::ProviderDefault,
+            top_k: TopK::ProviderDefault,
+            token_limit: TokenLimit::Max(64),
+            response_mode: ResponseMode::Buffered,
+            tools: Some(vec![RawToolDefinition::function(
+                "ping",
+                Some("Echoes a value as pong:<value>."),
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "value": { "type": "string" }
+                    },
+                    "required": ["value"],
+                    "additionalProperties": false
+                }),
+            )]),
+            tool_choice: ToolChoice::ProviderDefault,
+            response_format: None,
+        })
+        .await?;
+
+    let text = response.output.iter().find_map(|item| match item {
+        RawOutputItem::Message { content, .. } => {
+            content.iter().find_map(|content| match content {
+                RawOutputContent::Text { text } => Some(text.as_str()),
+                RawOutputContent::Json { .. } => None,
+            })
+        }
+        RawOutputItem::ToolCall { .. } | RawOutputItem::Reasoning { .. } => None,
+    });
+
+    assert!(
+        text.is_some_and(|text| text.contains("pong:hello-tool")),
+        "expected final reply to include replayed tool result, got {:?}",
+        response.output
+    );
+    Ok(())
 }

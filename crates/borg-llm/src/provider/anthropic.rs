@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use reqwest_eventsource::{Event, RequestBuilderExt};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
@@ -96,7 +96,7 @@ pub enum ContentBlock {
     ToolUse {
         id: String,
         name: String,
-        input: serde_json::Value,
+        input: Map<String, Value>,
     },
     ToolResult {
         tool_use_id: String,
@@ -343,7 +343,7 @@ impl LlmProvider for Anthropic {
                     content: Content::Blocks(vec![ContentBlock::ToolUse {
                         id: call.id.clone(),
                         name: call.name.clone(),
-                        input: call.arguments.clone(),
+                        input: normalize_tool_use_input(call.arguments.clone()),
                     }]),
                 }),
                 RawInputItem::ToolResult {
@@ -461,7 +461,7 @@ impl LlmProvider for Anthropic {
                     content: Content::Blocks(vec![ContentBlock::ToolUse {
                         id: call.id.clone(),
                         name: call.name.clone(),
-                        input: call.arguments.clone(),
+                        input: normalize_tool_use_input(call.arguments.clone()),
                     }]),
                 }),
                 RawInputItem::ToolResult {
@@ -723,6 +723,18 @@ fn raw_output_from_anthropic(text: String, tool_calls: Vec<RawToolCall>) -> Vec<
             .map(|call| RawOutputItem::ToolCall { call }),
     );
     output
+}
+
+fn normalize_tool_use_input(input: Value) -> Map<String, Value> {
+    match input {
+        Value::Object(map) => map,
+        Value::Null => Map::new(),
+        other => {
+            let mut map = Map::new();
+            map.insert("_input".to_string(), other);
+            map
+        }
+    }
 }
 
 fn map_tool_definitions(tools: Vec<RawToolDefinition>) -> Vec<ToolDefinition> {
