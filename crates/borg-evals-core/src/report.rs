@@ -293,6 +293,7 @@ impl EvalRunReport {
                     (
                         variant.suite.target.display_label(),
                         case.mean_score,
+                        case.mean_duration,
                         case.grader_means.clone(),
                     )
                 })
@@ -320,28 +321,35 @@ impl EvalRunReport {
             sections.push("final 🏁".to_string());
             let provider_width = ranked_rows
                 .iter()
-                .map(|(provider, _, _)| provider.len())
+                .map(|(provider, _, _, _)| provider.len())
+                .max()
+                .unwrap_or(0);
+            let duration_width = ranked_rows
+                .iter()
+                .map(|(_, _, duration, _)| format!("{} ms", duration.as_millis()).len())
                 .max()
                 .unwrap_or(0);
             let mut current_rank = 1usize;
             let mut previous_score: Option<f32> = None;
-            for (index, (provider, score, _)) in ranked_rows.iter().enumerate() {
-                if let Some(previous) = previous_score {
-                    if (previous - score).abs() >= f32::EPSILON {
-                        current_rank = index + 1;
-                    }
+            for (index, (provider, score, duration, _)) in ranked_rows.iter().enumerate() {
+                if let Some(previous) = previous_score
+                    && (previous - score).abs() >= f32::EPSILON
+                {
+                    current_rank = index + 1;
                 }
+                let duration = format!("{} ms", duration.as_millis());
                 sections.push(format!(
-                    "  {provider:<provider_width$}  {score:.2}  {}",
+                    "  {provider:<provider_width$}  {score:.2}  {duration:>duration_width$}  {}",
                     medal_for_rank(current_rank),
                     provider_width = provider_width,
+                    duration_width = duration_width,
                 ));
                 previous_score = Some(*score);
             }
 
             sections.push(String::new());
             sections.push("grades 🔎".to_string());
-            for (provider, _, graders) in &ranked_rows {
+            for (provider, _, _, graders) in &ranked_rows {
                 sections.push(format!("  {provider}"));
                 if graders.is_empty() {
                     sections.push("    overall  0.00".to_string());

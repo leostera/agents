@@ -13,12 +13,32 @@ use borg_llm::tools::{RawToolDefinition, TypedToolSet};
 use common::{
     EchoResponse, TestTools, assert_streamed_ping_tool_call, assert_streamed_typed_response,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serial_test::serial;
 
 const OLLAMA_TEXT_MODEL: &str = "qwen2.5:7b";
 const OLLAMA_STRUCTURED_OUTPUT_MODEL: &str = "qwen2.5:7b";
 const OLLAMA_TOOL_MODEL: &str = "qwen2.5:7b";
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DefaultedJudgeResponse {
+    passed: bool,
+    score: f32,
+    summary: String,
+    evidence: DefaultedJudgeEvidence,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DefaultedJudgeEvidence {
+    #[serde(default)]
+    strengths: Vec<String>,
+    #[serde(default)]
+    concerns: Vec<String>,
+}
 
 #[tokio::test]
 #[serial]
@@ -244,6 +264,41 @@ async fn ollama_provider_replays_completed_tool_exchange_long() -> LlmResult<()>
     assert!(
         text.is_some_and(|text| text.contains("pong:hello-tool")),
         "expected final reply to include replayed tool result, got {:?}",
+        response.output
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[serial]
+async fn ollama_runner_typed_response_with_defaulted_nested_fields_long() -> LlmResult<()> {
+    let ctx = TestContext::shared(TestProvider::Ollama).await?;
+    let runner = ctx.runner_for_model(OLLAMA_STRUCTURED_OUTPUT_MODEL).await?;
+
+    let response = runner
+        .chat::<(), DefaultedJudgeResponse>(
+            CompletionRequest::new(
+                vec![InputItem::user_text(
+                    "Return valid JSON with fields passed, score, summary, and nested evidence containing strengths and concerns arrays.",
+                )],
+                ModelSelector::from_model(OLLAMA_STRUCTURED_OUTPUT_MODEL),
+            )
+            .with_max_tokens(128)
+            .with_typed_response(TypedResponse::new("agent_response")),
+        )
+        .await?;
+
+    let structured = response.output.iter().find_map(|item| match item {
+        OutputItem::Message { content, .. } => content.iter().find_map(|content| match content {
+            OutputContent::Structured { value } => Some(value),
+            OutputContent::Text { .. } => None,
+        }),
+        OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
+    });
+
+    assert!(
+        structured.is_some(),
+        "expected defaulted nested structured response, got {:?}",
         response.output
     );
     Ok(())

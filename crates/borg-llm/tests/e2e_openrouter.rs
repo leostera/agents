@@ -15,10 +15,30 @@ use borg_llm::tools::TypedToolSet;
 use common::{
     EchoResponse, TestTools, assert_streamed_ping_tool_call, assert_streamed_typed_response,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 fn openrouter_model() -> String {
     optional_test_env("BORG_TEST_OPENROUTER_MODEL")
         .expect("BORG_TEST_OPENROUTER_MODEL must be set for OpenRouter e2e tests")
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DefaultedJudgeResponse {
+    passed: bool,
+    score: f32,
+    summary: String,
+    evidence: DefaultedJudgeEvidence,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DefaultedJudgeEvidence {
+    #[serde(default)]
+    strengths: Vec<String>,
+    #[serde(default)]
+    concerns: Vec<String>,
 }
 
 #[tokio::test]
@@ -178,4 +198,38 @@ async fn openrouter_runner_streams_typed_tool_calls_long() -> LlmResult<()> {
         .await?;
 
     assert_streamed_ping_tool_call(&mut stream).await
+}
+
+#[tokio::test]
+async fn openrouter_runner_typed_response_with_defaulted_nested_fields_long() -> LlmResult<()> {
+    let model = openrouter_model();
+    let runner = runner_with_openrouter_model(&model)?;
+
+    let response = runner
+        .chat::<(), DefaultedJudgeResponse>(
+            CompletionRequest::new(
+                vec![InputItem::user_text(
+                    "Return valid JSON with fields passed, score, summary, and nested evidence containing strengths and concerns arrays.",
+                )],
+                ModelSelector::from_model(model),
+            )
+            .with_max_tokens(128)
+            .with_typed_response(TypedResponse::new("agent_response")),
+        )
+        .await?;
+
+    let structured = response.output.iter().find_map(|item| match item {
+        OutputItem::Message { content, .. } => content.iter().find_map(|content| match content {
+            OutputContent::Structured { value } => Some(value),
+            OutputContent::Text { .. } => None,
+        }),
+        OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
+    });
+
+    assert!(
+        structured.is_some(),
+        "expected defaulted nested structured response, got {:?}",
+        response.output
+    );
+    Ok(())
 }

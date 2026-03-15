@@ -14,12 +14,48 @@ use borg_llm::transcription::{AudioSource, AudioTranscriptionRequest};
 use common::{
     EchoResponse, TestTools, assert_streamed_ping_tool_call, assert_streamed_typed_response,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 const OPENAI_TRANSCRIPTION_AUDIO: &[u8] = include_bytes!("fixtures/1-2-3-hello-world.ogg");
 
 fn openai_model() -> String {
     optional_test_env("BORG_TEST_OPENAI_MODEL")
         .expect("BORG_TEST_OPENAI_MODEL must be set for OpenAI e2e tests")
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct NestedJudgeResponse {
+    passed: bool,
+    score: f32,
+    summary: String,
+    evidence: NestedJudgeEvidence,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct NestedJudgeEvidence {
+    strengths: Vec<String>,
+    concerns: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DefaultedJudgeResponse {
+    passed: bool,
+    score: f32,
+    summary: String,
+    evidence: DefaultedJudgeEvidence,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DefaultedJudgeEvidence {
+    #[serde(default)]
+    strengths: Vec<String>,
+    #[serde(default)]
+    concerns: Vec<String>,
 }
 
 #[tokio::test]
@@ -206,6 +242,74 @@ async fn openai_runner_transcribes_audio_long() -> LlmResult<()> {
             && (transcript.contains("hello") && transcript.contains("world")),
         "expected transcript to mention hello and world, got {:?}",
         response
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn openai_runner_typed_response_accepts_nested_object_schema_long() -> LlmResult<()> {
+    let model = openai_model();
+    let runner = runner_with_openai_model(&model)?;
+
+    let response = runner
+        .chat::<(), NestedJudgeResponse>(
+            CompletionRequest::new(
+                vec![InputItem::user_text(
+                    "Return valid JSON with fields passed, score, summary, and nested evidence containing strengths and concerns arrays.",
+                )],
+                ModelSelector::from_model(model),
+            )
+            .with_max_tokens(128)
+            .with_typed_response(TypedResponse::new("agent_response")),
+        )
+        .await?;
+
+    let structured = response.output.iter().find_map(|item| match item {
+        OutputItem::Message { content, .. } => content.iter().find_map(|content| match content {
+            OutputContent::Structured { value } => Some(value),
+            OutputContent::Text { .. } => None,
+        }),
+        OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
+    });
+
+    assert!(
+        structured.is_some(),
+        "expected nested structured response, got {:?}",
+        response.output
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn openai_runner_typed_response_with_defaulted_nested_fields_long() -> LlmResult<()> {
+    let model = openai_model();
+    let runner = runner_with_openai_model(&model)?;
+
+    let response = runner
+        .chat::<(), DefaultedJudgeResponse>(
+            CompletionRequest::new(
+                vec![InputItem::user_text(
+                    "Return valid JSON with fields passed, score, summary, and nested evidence containing strengths and concerns arrays.",
+                )],
+                ModelSelector::from_model(model),
+            )
+            .with_max_tokens(128)
+            .with_typed_response(TypedResponse::new("agent_response")),
+        )
+        .await?;
+
+    let structured = response.output.iter().find_map(|item| match item {
+        OutputItem::Message { content, .. } => content.iter().find_map(|content| match content {
+            OutputContent::Structured { value } => Some(value),
+            OutputContent::Text { .. } => None,
+        }),
+        OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
+    });
+
+    assert!(
+        structured.is_some(),
+        "expected defaulted nested structured response, got {:?}",
+        response.output
     );
     Ok(())
 }

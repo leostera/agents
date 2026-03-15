@@ -138,6 +138,7 @@ mod tests {
         assert!(table.contains("final 🏁"));
         assert!(table.contains("grades 🔎"));
         assert!(table.contains("openrouter:kimi-k2.5"));
+        assert!(table.contains("ms  🥇") || table.contains("ms  🥈") || table.contains("ms  🥉"));
         assert!(table.contains("free-block"));
         assert!(table.contains("1.00"));
         assert!(table.contains("🥇"));
@@ -198,17 +199,27 @@ mod tests {
 
     #[tokio::test]
     async fn trial_records_capture_timing_and_summary_averages() {
-        let suite = Suite::new("calendar").trials(2).case(
-            Case::new("timed").run(|_| async move {
+        let suite = Suite::new("calendar")
+            .trials(2)
+            .case(Case::new("timed").run(|_| async move {
                 tokio::time::sleep(Duration::from_millis(20)).await;
                 Ok(AgentTrial::new("ok"))
-            }),
-        );
+            }));
 
         let report = suite.run().await.expect("timed suite to run");
         assert_eq!(report.trials.len(), 2);
-        assert!(report.trials.iter().all(|trial| trial.finished_at >= trial.started_at));
-        assert!(report.trials.iter().all(|trial| trial.duration > Duration::ZERO));
+        assert!(
+            report
+                .trials
+                .iter()
+                .all(|trial| trial.finished_at >= trial.started_at)
+        );
+        assert!(
+            report
+                .trials
+                .iter()
+                .all(|trial| trial.duration > Duration::ZERO)
+        );
         assert!(report.suite.mean_duration > Duration::ZERO);
         assert!(report.suite.cases[0].mean_duration > Duration::ZERO);
         assert!(report.summary_markdown().contains("mean duration:"));

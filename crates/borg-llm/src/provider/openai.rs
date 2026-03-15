@@ -1,3 +1,5 @@
+mod json_normalizer;
+
 use async_trait::async_trait;
 use derive_builder::Builder;
 use futures_util::StreamExt;
@@ -23,6 +25,7 @@ use crate::transcription::{
     AudioSource, AudioTranscriptionRequest, AudioTranscriptionResponse, TranscriptionLanguage,
     TranscriptionPrompt,
 };
+use json_normalizer::normalize_openai_schema;
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone)]
@@ -1027,54 +1030,4 @@ fn parse_function_call(call_id: &str, name: &str, arguments: &str) -> LlmResult<
         arguments: serde_json::from_str(arguments)
             .map_err(|e| Error::parse("tool arguments", e))?,
     })
-}
-
-fn normalize_openai_schema(schema: Value) -> Value {
-    match schema {
-        Value::Object(mut map) => {
-            if map.get("type").and_then(Value::as_str) == Some("object") {
-                map.entry("additionalProperties".to_string())
-                    .or_insert(Value::Bool(false));
-            }
-
-            if let Some(Value::Object(properties)) = map.get_mut("properties") {
-                for value in properties.values_mut() {
-                    let normalized = normalize_openai_schema(std::mem::take(value));
-                    *value = normalized;
-                }
-            }
-
-            if let Some(items) = map.get_mut("items") {
-                let normalized = normalize_openai_schema(std::mem::take(items));
-                *items = normalized;
-            }
-
-            if let Some(Value::Array(any_of)) = map.get_mut("anyOf") {
-                for value in any_of.iter_mut() {
-                    let normalized = normalize_openai_schema(std::mem::take(value));
-                    *value = normalized;
-                }
-            }
-
-            if let Some(Value::Array(one_of)) = map.get_mut("oneOf") {
-                for value in one_of.iter_mut() {
-                    let normalized = normalize_openai_schema(std::mem::take(value));
-                    *value = normalized;
-                }
-            }
-
-            if let Some(Value::Array(all_of)) = map.get_mut("allOf") {
-                for value in all_of.iter_mut() {
-                    let normalized = normalize_openai_schema(std::mem::take(value));
-                    *value = normalized;
-                }
-            }
-
-            Value::Object(map)
-        }
-        Value::Array(values) => {
-            Value::Array(values.into_iter().map(normalize_openai_schema).collect())
-        }
-        other => other,
-    }
 }

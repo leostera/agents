@@ -20,13 +20,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
 
-const DEFAULT_TRIALS: usize = 20;
+const DEFAULT_TRIALS: usize = 2;
 const DEFAULT_OLLAMA_MODELS: &[(&str, &str)] = &[
-    ("qwen2.5-7b", "qwen2.5:7b"),
-    ("qwen3.5", "qwen3.5"),
-    ("gpt-oss-20b", "gpt-oss:20b"),
-    ("gemma3-27b", "gemma3:27b"),
-    ("mistral-small-24b", "mistral-small:24b"),
+    ("llama3.2:1b", "llama3.2:1b"),
+    ("qwen3.5:0.8b", "qwen3.5:0.8b"),
+    //("llama3.2:3b", "llama3.2:3b"),
+    //("llama3.1:8b", "llama3.1:8b"),
+    //("llama3.2-vision:11b", "llama3.2-vision:11b"),
+    //("qwen3.5:2b", "qwen3.5:2b"),
+    //("qwen3.5:4b", "qwen3.5:4b"),
+    //("qwen3.5:9b", "qwen3.5:9b"),
+    //("mistral", "mistral"),
+    //("mistral-nemo", "mistral-nemo"),
+    //("gemma3:1b", "gemma3:1b"),
+    //("tinyllama", "tinyllama"),
+    //("phi4", "phi4"),
 ];
 const DEFAULT_OPENROUTER_TARGETS: &[(&str, &str)] = &[("kimi-k2.5", "moonshotai/kimi-k2.5")];
 const DEFAULT_ANTHROPIC_TARGETS: &[(&str, &str)] =
@@ -101,6 +109,144 @@ impl CalendarFixture {
                 },
                 CalendarEvent {
                     title: "Recruiting".to_string(),
+                    start_minute: 15 * 60,
+                    end_minute: 17 * 60,
+                    locked: true,
+                },
+            ],
+        }
+    }
+
+    fn anchored_day() -> Self {
+        Self {
+            working_day_start: 9 * 60,
+            working_day_end: 18 * 60,
+            events: vec![
+                CalendarEvent {
+                    title: "Staff sync".to_string(),
+                    start_minute: 9 * 60,
+                    end_minute: 9 * 60 + 30,
+                    locked: false,
+                },
+                CalendarEvent {
+                    title: "Customer follow-up".to_string(),
+                    start_minute: 11 * 60,
+                    end_minute: 11 * 60 + 30,
+                    locked: false,
+                },
+                CalendarEvent {
+                    title: "Architecture review".to_string(),
+                    start_minute: 14 * 60,
+                    end_minute: 15 * 60,
+                    locked: true,
+                },
+                CalendarEvent {
+                    title: "Mentoring".to_string(),
+                    start_minute: 16 * 60 + 30,
+                    end_minute: 17 * 60,
+                    locked: false,
+                },
+            ],
+        }
+    }
+
+    fn already_good_day() -> Self {
+        Self {
+            working_day_start: 9 * 60,
+            working_day_end: 17 * 60,
+            events: vec![
+                CalendarEvent {
+                    title: "Daily sync".to_string(),
+                    start_minute: 9 * 60,
+                    end_minute: 9 * 60 + 30,
+                    locked: true,
+                },
+                CalendarEvent {
+                    title: "Planning".to_string(),
+                    start_minute: 10 * 60,
+                    end_minute: 11 * 60,
+                    locked: false,
+                },
+                CalendarEvent {
+                    title: "Weekly review".to_string(),
+                    start_minute: 15 * 60 + 30,
+                    end_minute: 16 * 60,
+                    locked: true,
+                },
+            ],
+        }
+    }
+
+    fn dense_mixed_day() -> Self {
+        Self {
+            working_day_start: 9 * 60,
+            working_day_end: 18 * 60,
+            events: vec![
+                CalendarEvent {
+                    title: "Standup".to_string(),
+                    start_minute: 9 * 60 + 30,
+                    end_minute: 10 * 60,
+                    locked: false,
+                },
+                CalendarEvent {
+                    title: "Design pairing".to_string(),
+                    start_minute: 10 * 60 + 30,
+                    end_minute: 11 * 60,
+                    locked: false,
+                },
+                CalendarEvent {
+                    title: "Lunch".to_string(),
+                    start_minute: 12 * 60,
+                    end_minute: 13 * 60,
+                    locked: true,
+                },
+                CalendarEvent {
+                    title: "Project sync".to_string(),
+                    start_minute: 13 * 60 + 30,
+                    end_minute: 14 * 60,
+                    locked: false,
+                },
+                CalendarEvent {
+                    title: "Customer review".to_string(),
+                    start_minute: 16 * 60,
+                    end_minute: 16 * 60 + 30,
+                    locked: true,
+                },
+                CalendarEvent {
+                    title: "Interview debrief".to_string(),
+                    start_minute: 17 * 60,
+                    end_minute: 17 * 60 + 30,
+                    locked: false,
+                },
+            ],
+        }
+    }
+
+    fn constrained_partial_day() -> Self {
+        Self {
+            working_day_start: 9 * 60,
+            working_day_end: 17 * 60,
+            events: vec![
+                CalendarEvent {
+                    title: "Executive sync".to_string(),
+                    start_minute: 9 * 60,
+                    end_minute: 10 * 60,
+                    locked: true,
+                },
+                CalendarEvent {
+                    title: "Weekly 1:1".to_string(),
+                    start_minute: 11 * 60,
+                    end_minute: 11 * 60 + 30,
+                    locked: false,
+                },
+                CalendarEvent {
+                    title: "Planning block".to_string(),
+                    start_minute: 13 * 60,
+                    end_minute: 15 * 60,
+                    locked: true,
+                },
+                CalendarEvent {
+                    title: "Hiring panel".to_string(),
                     start_minute: 15 * 60,
                     end_minute: 17 * 60,
                     locked: true,
@@ -252,6 +398,36 @@ struct CalendarSnapshot {
     current_events: Vec<CalendarEvent>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct JudgeVerdict {
+    passed: bool,
+    score: f32,
+    summary: String,
+    evidence: JudgeEvidence,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct JudgeEvidence {
+    strengths: Vec<String>,
+    concerns: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TrialJudgmentRequest {
+    rubric: String,
+    trial: AgentTrial,
+}
+
+impl From<TrialJudgmentRequest> for InputItem {
+    fn from(value: TrialJudgmentRequest) -> Self {
+        InputItem::user_text(
+            serde_json::to_string_pretty(&value).expect("serialize trial judgment request"),
+        )
+    }
+}
+
 fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Suite {
     Suite::new("calendar-rescheduler")
         .kind(SuiteKind::Regression)
@@ -311,7 +487,12 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                         "agent should inspect and then optimize the calendar",
                         json!({ "tool_names": tool_names }),
                     ))
-                })),
+                }))
+                .grade(judge_grade(
+                    "communicates_plan_clearly",
+                    harness.clone(),
+                    "Decide whether the assistant clearly and honestly explained what changed, avoided inventing calendar state, and communicated the resulting free-time improvement in a useful way.",
+                )),
         )
         .case(
             Case::new("refuses-impossible-reorganization")
@@ -333,17 +514,6 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                         }
                     }
                 })
-                .grade(grade("admits_constraints", |trial| async move {
-                    let final_reply = trial.final_reply.to_lowercase();
-                    Ok(GradeResult::pass_if(
-                        "admits_constraints",
-                        final_reply.contains("cannot")
-                            || final_reply.contains("not possible")
-                            || final_reply.contains("impossible"),
-                        "agent should state that the request is impossible",
-                        json!({ "final_reply": trial.final_reply }),
-                    ))
-                }))
                 .grade(grade("does_not_move_locked_day", |trial| async move {
                     let moved_events = trial.metadata["moved_events"].as_u64().unwrap_or(u64::MAX);
                     Ok(GradeResult::pass_if(
@@ -352,7 +522,209 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                         "fully locked day should not be changed",
                         json!({ "moved_events": moved_events }),
                     ))
-                })),
+                }))
+                .grade(judge_grade(
+                    "communicates_impossibility_honestly",
+                    harness.clone(),
+                    "Decide whether the assistant clearly stated that the request was impossible without moving locked events, avoided claiming changes it did not make, and remained helpful and respectful.",
+                )),
+        )
+        .case(
+            Case::new("packs_meetings_around_a_locked_anchor")
+                .tag("calendar")
+                .tag("free-time")
+                .tag("anchored")
+                .run({
+                    let harness = harness.clone();
+                    move |ctx| {
+                        let harness = harness.clone();
+                        async move {
+                            run_calendar_agent_trial(
+                                harness,
+                                ctx.target().clone(),
+                                CalendarFixture::anchored_day(),
+                                "Reorganize tomorrow to maximize uninterrupted free time. Inspect the calendar first, preserve any locked meetings, and explain the new shape of the day clearly.",
+                            )
+                            .await
+                            .map_err(|error| EvalError::message(error.to_string()))
+                        }
+                    }
+                })
+                .grade(grade("creates_a_two_hour_block", |trial| async move {
+                    let free_block = trial.metadata["longest_free_block_minutes"]
+                        .as_u64()
+                        .unwrap_or_default();
+                    Ok(GradeResult::pass_if(
+                        "creates_a_two_hour_block",
+                        free_block >= 120,
+                        "agent should create at least one uninterrupted two-hour block",
+                        json!({ "longest_free_block_minutes": free_block }),
+                    ))
+                }))
+                .grade(grade("preserves_locked_anchor", |trial| async move {
+                    let locked_preserved = trial.metadata["locked_events_preserved"]
+                        .as_bool()
+                        .unwrap_or(false);
+                    Ok(GradeResult::pass_if(
+                        "preserves_locked_anchor",
+                        locked_preserved,
+                        "locked anchor meeting should not move",
+                        json!({ "locked_events_preserved": locked_preserved }),
+                    ))
+                }))
+                .grade(judge_grade(
+                    "explains_anchor_tradeoffs",
+                    harness.clone(),
+                    "Decide whether the assistant clearly described how it worked around the locked anchor meeting and whether the explanation would make sense to a calendar user.",
+                )),
+        )
+        .case(
+            Case::new("avoids_unnecessary_changes_when_day_is_already_good")
+                .tag("calendar")
+                .tag("stability")
+                .run({
+                    let harness = harness.clone();
+                    move |ctx| {
+                        let harness = harness.clone();
+                        async move {
+                            run_calendar_agent_trial(
+                                harness,
+                                ctx.target().clone(),
+                                CalendarFixture::already_good_day(),
+                                "Maximize my uninterrupted free time tomorrow, but do not make unnecessary changes. Inspect the calendar first and explain whether any move is actually worth making.",
+                            )
+                            .await
+                            .map_err(|error| EvalError::message(error.to_string()))
+                        }
+                    }
+                })
+                .grade(grade("keeps_changes_minimal", |trial| async move {
+                    let moved_events = trial.metadata["moved_events"].as_u64().unwrap_or(u64::MAX);
+                    Ok(GradeResult::pass_if(
+                        "keeps_changes_minimal",
+                        moved_events <= 1,
+                        "agent should avoid unnecessary churn when the day already has a large free block",
+                        json!({ "moved_events": moved_events }),
+                    ))
+                }))
+                .grade(grade("preserves_existing_focus_block", |trial| async move {
+                    let original = trial.metadata["original_free_block_minutes"]
+                        .as_u64()
+                        .unwrap_or_default();
+                    let current = trial.metadata["longest_free_block_minutes"]
+                        .as_u64()
+                        .unwrap_or_default();
+                    Ok(GradeResult::pass_if(
+                        "preserves_existing_focus_block",
+                        current >= original,
+                        "agent should not reduce the best existing free block",
+                        json!({
+                            "original_free_block_minutes": original,
+                            "longest_free_block_minutes": current,
+                        }),
+                    ))
+                }))
+                .grade(judge_grade(
+                    "explains_when_no_major_change_is_needed",
+                    harness.clone(),
+                    "Decide whether the assistant clearly explained that the calendar was already in reasonably good shape or that only minimal adjustments were worthwhile, without overselling changes.",
+                )),
+        )
+        .case(
+            Case::new("salvages_a_dense_mixed_day")
+                .tag("calendar")
+                .tag("dense")
+                .tag("tradeoffs")
+                .run({
+                    let harness = harness.clone();
+                    move |ctx| {
+                        let harness = harness.clone();
+                        async move {
+                            run_calendar_agent_trial(
+                                harness,
+                                ctx.target().clone(),
+                                CalendarFixture::dense_mixed_day(),
+                                "Tomorrow is packed and fragmented. Maximize uninterrupted free time without moving any locked events, and explain the tradeoffs in plain language.",
+                            )
+                            .await
+                            .map_err(|error| EvalError::message(error.to_string()))
+                        }
+                    }
+                })
+                .grade(grade("creates_a_ninety_minute_block", |trial| async move {
+                    let free_block = trial.metadata["longest_free_block_minutes"]
+                        .as_u64()
+                        .unwrap_or_default();
+                    Ok(GradeResult::pass_if(
+                        "creates_a_ninety_minute_block",
+                        free_block >= 90,
+                        "agent should create at least a ninety minute uninterrupted block",
+                        json!({ "longest_free_block_minutes": free_block }),
+                    ))
+                }))
+                .grade(grade("preserves_locked_lunch_and_review", |trial| async move {
+                    let locked_preserved = trial.metadata["locked_events_preserved"]
+                        .as_bool()
+                        .unwrap_or(false);
+                    Ok(GradeResult::pass_if(
+                        "preserves_locked_lunch_and_review",
+                        locked_preserved,
+                        "locked lunch and review should not move",
+                        json!({ "locked_events_preserved": locked_preserved }),
+                    ))
+                }))
+                .grade(judge_grade(
+                    "explains_dense_day_tradeoffs",
+                    harness.clone(),
+                    "Decide whether the assistant gave a realistic explanation of the improvements and limitations for a crowded day with several fixed commitments.",
+                )),
+        )
+        .case(
+            Case::new("acknowledges_only_partial_improvement_is_possible")
+                .tag("calendar")
+                .tag("constraints")
+                .tag("partial")
+                .run({
+                    let harness = harness.clone();
+                    move |ctx| {
+                        let harness = harness.clone();
+                        async move {
+                            run_calendar_agent_trial(
+                                harness,
+                                ctx.target().clone(),
+                                CalendarFixture::constrained_partial_day(),
+                                "Try to maximize my free time tomorrow, but be honest if only limited improvement is possible. Keep all locked events fixed and explain what you could or could not improve.",
+                            )
+                            .await
+                            .map_err(|error| EvalError::message(error.to_string()))
+                        }
+                    }
+                })
+                .grade(grade("preserves_locked_constraints", |trial| async move {
+                    let locked_preserved = trial.metadata["locked_events_preserved"]
+                        .as_bool()
+                        .unwrap_or(false);
+                    Ok(GradeResult::pass_if(
+                        "preserves_locked_constraints",
+                        locked_preserved,
+                        "locked constraints should remain fixed",
+                        json!({ "locked_events_preserved": locked_preserved }),
+                    ))
+                }))
+                .grade(grade("keeps_changes_small", |trial| async move {
+                    let moved_events = trial.metadata["moved_events"].as_u64().unwrap_or(u64::MAX);
+                    Ok(GradeResult::pass_if(
+                        "keeps_changes_small",
+                        moved_events <= 1,
+                        "agent should make at most one change in the constrained partial-improvement case",
+                        json!({ "moved_events": moved_events }),
+                    ))
+                }))
+                .grade(judge_grade(
+                    "communicates_partial_limits_honestly",
+                    harness.clone(),
+                    "Decide whether the assistant clearly communicated that only partial improvement was possible, without pretending it fully solved the problem.",
+                )),
         )
 }
 
@@ -391,6 +763,101 @@ impl CalendarHarness {
             )),
         }
     }
+}
+
+fn judge_grade(name: &'static str, harness: Arc<CalendarHarness>, rubric: &'static str) -> Grader {
+    grade(name, move |trial| {
+        let harness = harness.clone();
+        async move {
+            let target =
+                trial_target(&trial).map_err(|error| EvalError::message(error.to_string()))?;
+            let verdict = run_judge(harness, target, rubric.to_string(), trial.as_ref().clone())
+                .await
+                .map_err(|error| EvalError::message(error.to_string()))?;
+            Ok(GradeResult {
+                name: name.to_string(),
+                passed: verdict.passed,
+                score: verdict.score.clamp(0.0, 1.0),
+                summary: verdict.summary,
+                evidence: json!(verdict.evidence),
+            })
+        }
+    })
+}
+
+async fn run_judge(
+    harness: Arc<CalendarHarness>,
+    target: ExecutionTarget,
+    rubric: String,
+    trial: AgentTrial,
+) -> Result<JudgeVerdict> {
+    let judge_target = preferred_judge_target(&target);
+    let runner = harness.runner_for(&judge_target).await?;
+    let context = ContextManager::static_text(
+        "You are an evaluation judge for agentic calendar scheduling tasks. Read the provided rubric and trial record carefully. Return valid JSON that matches the response schema exactly. The score must be between 0.0 and 1.0. Be strict about factual accuracy and honesty, but do not penalize wording differences that preserve meaning.",
+    );
+
+    let mut agent = Agent::builder()
+        .with_message_type::<TrialJudgmentRequest>()
+        .with_response_type::<JudgeVerdict>()
+        .with_llm_runner(runner)
+        .with_context_manager(context)
+        .with_execution_profile(judge_profile(&judge_target))
+        .build()
+        .context("build judge agent")?;
+
+    agent
+        .send(AgentInput::Message(TrialJudgmentRequest { rubric, trial }))
+        .await
+        .context("send trial to judge")?;
+
+    while let Some(event) = agent.next().await.map_err(|error| {
+        anyhow::anyhow!(
+            "poll judge agent on {} failed: {}",
+            judge_target.display_label(),
+            error
+        )
+    })? {
+        if let AgentEvent::Completed { reply } = event {
+            return Ok(reply);
+        }
+    }
+
+    Err(anyhow::anyhow!("judge agent finished without a verdict"))
+}
+
+fn preferred_judge_target(fallback: &ExecutionTarget) -> ExecutionTarget {
+    if let (Ok(provider), Ok(model)) = (
+        std::env::var("BORG_EVALS_JUDGE_PROVIDER"),
+        std::env::var("BORG_EVALS_JUDGE_MODEL"),
+    ) {
+        let label = std::env::var("BORG_EVALS_JUDGE_LABEL")
+            .unwrap_or_else(|_| model.replace(['/', ':'], "-"));
+        return ExecutionTarget::new(label, provider, model);
+    }
+
+    if optional_test_env("BORG_TEST_OPENAI_API_KEY").is_some() {
+        return ExecutionTarget::openai("judge-gpt-5.3-codex", "gpt-5.3-codex");
+    }
+    if optional_test_env("BORG_TEST_ANTHROPIC_API_KEY").is_some() {
+        return ExecutionTarget::anthropic("judge-claude-sonnet-4", "claude-sonnet-4-20250514");
+    }
+    if optional_test_env("BORG_TEST_OPENROUTER_API_KEY").is_some() {
+        return ExecutionTarget::openrouter("judge-kimi-k2.5", "moonshotai/kimi-k2.5");
+    }
+
+    fallback.clone()
+}
+
+fn trial_target(trial: &AgentTrial) -> Result<ExecutionTarget> {
+    serde_json::from_value(
+        trial
+            .metadata
+            .get("target")
+            .cloned()
+            .context("trial metadata missing target")?,
+    )
+    .context("decode execution target from trial metadata")
 }
 
 async fn run_calendar_agent_trial(
@@ -445,6 +912,7 @@ async fn run_calendar_agent_trial(
         final_reply,
         tool_trace,
         metadata: json!({
+            "target": target,
             "fixture": fixture,
             "current_events": snapshot.current_events,
             "original_free_block_minutes": longest_free_block_minutes(
@@ -520,10 +988,7 @@ fn record_event(
             borg_llm::completion::OutputItem::ToolCall { .. } => {}
         },
         AgentEvent::ToolCallRequested { call } => {
-            let arguments = match &call.call {
-                CalendarTools::ListEvents => json!({}),
-                CalendarTools::OptimizeDay => json!({}),
-            };
+            let arguments = call.arguments.clone();
             transcript.push(RecordedEvent::ToolCallRequested {
                 id: call.call_id.clone(),
                 name: call.name.clone(),
@@ -573,6 +1038,15 @@ fn target_profile(target: &ExecutionTarget) -> ExecutionProfile {
         model_selector: ModelSelector::from_model(target.model.clone()),
         temperature: Temperature::Value(0.0),
         token_limit: TokenLimit::Max(256),
+        ..ExecutionProfile::default()
+    }
+}
+
+fn judge_profile(target: &ExecutionTarget) -> ExecutionProfile {
+    ExecutionProfile {
+        model_selector: ModelSelector::from_model(target.model.clone()),
+        temperature: Temperature::Value(0.0),
+        token_limit: TokenLimit::Max(384),
         ..ExecutionProfile::default()
     }
 }
@@ -758,36 +1232,34 @@ fn default_targets() -> Vec<ExecutionTarget> {
         }
     }
 
-    let mut targets = vec![];
-    /* DEFAULT_OLLAMA_MODELS
-            .iter()
-            .map(|(label, model)| ExecutionTarget::ollama(*label, *model))
-            .collect::<Vec<_>>();
-    */
+    let mut targets = DEFAULT_OLLAMA_MODELS
+        .iter()
+        .map(|(label, model)| ExecutionTarget::ollama(*label, *model))
+        .collect::<Vec<_>>();
 
-    if optional_test_env("BORG_TEST_OPENROUTER_API_KEY").is_some() {
-        targets.extend(
-            DEFAULT_OPENROUTER_TARGETS
-                .iter()
-                .map(|(label, model)| ExecutionTarget::new(*label, "openrouter", *model)),
-        );
-    }
+    // if optional_test_env("BORG_TEST_OPENROUTER_API_KEY").is_some() {
+    //     targets.extend(
+    //         DEFAULT_OPENROUTER_TARGETS
+    //             .iter()
+    //             .map(|(label, model)| ExecutionTarget::new(*label, "openrouter", *model)),
+    //     );
+    // }
 
-    if optional_test_env("BORG_TEST_ANTHROPIC_API_KEY").is_some() {
-        targets.extend(
-            DEFAULT_ANTHROPIC_TARGETS
-                .iter()
-                .map(|(label, model)| ExecutionTarget::new(*label, "anthropic", *model)),
-        );
-    }
+    // if optional_test_env("BORG_TEST_ANTHROPIC_API_KEY").is_some() {
+    //     targets.extend(
+    //         DEFAULT_ANTHROPIC_TARGETS
+    //             .iter()
+    //             .map(|(label, model)| ExecutionTarget::new(*label, "anthropic", *model)),
+    //     );
+    // }
 
-    if optional_test_env("BORG_TEST_OPENAI_API_KEY").is_some() {
-        targets.extend(
-            DEFAULT_OPENAI_TARGETS
-                .iter()
-                .map(|(label, model)| ExecutionTarget::new(*label, "openai", *model)),
-        );
-    }
+    // if optional_test_env("BORG_TEST_OPENAI_API_KEY").is_some() {
+    //     targets.extend(
+    //         DEFAULT_OPENAI_TARGETS
+    //             .iter()
+    //             .map(|(label, model)| ExecutionTarget::new(*label, "openai", *model)),
+    //     );
+    // }
 
     targets
 }
