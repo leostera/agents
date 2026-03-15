@@ -15,26 +15,27 @@ use borg_llm::testing::{
     runner_with_openai_model, runner_with_openrouter_model,
 };
 use borg_llm::tools::{RawToolDefinition, TypedTool};
+use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
 
-const DEFAULT_TRIALS: usize = 2;
+const DEFAULT_TRIALS: usize = 20;
 const DEFAULT_OLLAMA_MODELS: &[(&str, &str)] = &[
     ("llama3.2:1b", "llama3.2:1b"),
     ("qwen3.5:0.8b", "qwen3.5:0.8b"),
-    //("llama3.2:3b", "llama3.2:3b"),
-    //("llama3.1:8b", "llama3.1:8b"),
-    //("llama3.2-vision:11b", "llama3.2-vision:11b"),
-    //("qwen3.5:2b", "qwen3.5:2b"),
-    //("qwen3.5:4b", "qwen3.5:4b"),
-    //("qwen3.5:9b", "qwen3.5:9b"),
-    //("mistral", "mistral"),
-    //("mistral-nemo", "mistral-nemo"),
-    //("gemma3:1b", "gemma3:1b"),
-    //("tinyllama", "tinyllama"),
-    //("phi4", "phi4"),
+    ("llama3.2:3b", "llama3.2:3b"),
+    ("llama3.1:8b", "llama3.1:8b"),
+    ("llama3.2-vision:11b", "llama3.2-vision:11b"),
+    ("qwen3.5:2b", "qwen3.5:2b"),
+    ("qwen3.5:4b", "qwen3.5:4b"),
+    ("qwen3.5:9b", "qwen3.5:9b"),
+    ("mistral", "mistral"),
+    ("mistral-nemo", "mistral-nemo"),
+    ("gemma3:1b", "gemma3:1b"),
+    ("tinyllama", "tinyllama"),
+    ("phi4", "phi4"),
 ];
 const DEFAULT_OPENROUTER_TARGETS: &[(&str, &str)] = &[("kimi-k2.5", "moonshotai/kimi-k2.5")];
 const DEFAULT_ANTHROPIC_TARGETS: &[(&str, &str)] =
@@ -44,40 +45,40 @@ const DEFAULT_OPENAI_TARGETS: &[(&str, &str)] = &[("gpt-5.3-codex", "gpt-5.3-cod
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CalendarEvent {
     title: String,
-    start_minute: u32,
-    end_minute: u32,
+    start_at: DateTime<Utc>,
+    end_at: DateTime<Utc>,
     locked: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CalendarFixture {
-    working_day_start: u32,
-    working_day_end: u32,
+    working_day_start: DateTime<Utc>,
+    working_day_end: DateTime<Utc>,
     events: Vec<CalendarEvent>,
 }
 
 impl CalendarFixture {
     fn scattered_day() -> Self {
         Self {
-            working_day_start: 9 * 60,
-            working_day_end: 17 * 60,
+            working_day_start: at_minute(9 * 60),
+            working_day_end: at_minute(17 * 60),
             events: vec![
                 CalendarEvent {
                     title: "1:1 with Alex".to_string(),
-                    start_minute: 9 * 60,
-                    end_minute: 9 * 60 + 30,
+                    start_at: at_minute(9 * 60),
+                    end_at: at_minute(9 * 60 + 30),
                     locked: false,
                 },
                 CalendarEvent {
                     title: "Design review".to_string(),
-                    start_minute: 11 * 60,
-                    end_minute: 12 * 60,
+                    start_at: at_minute(11 * 60),
+                    end_at: at_minute(12 * 60),
                     locked: false,
                 },
                 CalendarEvent {
                     title: "Hiring sync".to_string(),
-                    start_minute: 15 * 60,
-                    end_minute: 15 * 60 + 30,
+                    start_at: at_minute(15 * 60),
+                    end_at: at_minute(15 * 60 + 30),
                     locked: true,
                 },
             ],
@@ -86,31 +87,31 @@ impl CalendarFixture {
 
     fn fully_booked() -> Self {
         Self {
-            working_day_start: 9 * 60,
-            working_day_end: 17 * 60,
+            working_day_start: at_minute(9 * 60),
+            working_day_end: at_minute(17 * 60),
             events: vec![
                 CalendarEvent {
                     title: "Planning".to_string(),
-                    start_minute: 9 * 60,
-                    end_minute: 10 * 60,
+                    start_at: at_minute(9 * 60),
+                    end_at: at_minute(10 * 60),
                     locked: true,
                 },
                 CalendarEvent {
                     title: "Design".to_string(),
-                    start_minute: 10 * 60,
-                    end_minute: 12 * 60,
+                    start_at: at_minute(10 * 60),
+                    end_at: at_minute(12 * 60),
                     locked: true,
                 },
                 CalendarEvent {
                     title: "Lunch and 1:1s".to_string(),
-                    start_minute: 12 * 60,
-                    end_minute: 15 * 60,
+                    start_at: at_minute(12 * 60),
+                    end_at: at_minute(15 * 60),
                     locked: true,
                 },
                 CalendarEvent {
                     title: "Recruiting".to_string(),
-                    start_minute: 15 * 60,
-                    end_minute: 17 * 60,
+                    start_at: at_minute(15 * 60),
+                    end_at: at_minute(17 * 60),
                     locked: true,
                 },
             ],
@@ -119,31 +120,31 @@ impl CalendarFixture {
 
     fn anchored_day() -> Self {
         Self {
-            working_day_start: 9 * 60,
-            working_day_end: 18 * 60,
+            working_day_start: at_minute(9 * 60),
+            working_day_end: at_minute(18 * 60),
             events: vec![
                 CalendarEvent {
                     title: "Staff sync".to_string(),
-                    start_minute: 9 * 60,
-                    end_minute: 9 * 60 + 30,
+                    start_at: at_minute(9 * 60),
+                    end_at: at_minute(9 * 60 + 30),
                     locked: false,
                 },
                 CalendarEvent {
                     title: "Customer follow-up".to_string(),
-                    start_minute: 11 * 60,
-                    end_minute: 11 * 60 + 30,
+                    start_at: at_minute(11 * 60),
+                    end_at: at_minute(11 * 60 + 30),
                     locked: false,
                 },
                 CalendarEvent {
                     title: "Architecture review".to_string(),
-                    start_minute: 14 * 60,
-                    end_minute: 15 * 60,
+                    start_at: at_minute(14 * 60),
+                    end_at: at_minute(15 * 60),
                     locked: true,
                 },
                 CalendarEvent {
                     title: "Mentoring".to_string(),
-                    start_minute: 16 * 60 + 30,
-                    end_minute: 17 * 60,
+                    start_at: at_minute(16 * 60 + 30),
+                    end_at: at_minute(17 * 60),
                     locked: false,
                 },
             ],
@@ -152,25 +153,25 @@ impl CalendarFixture {
 
     fn already_good_day() -> Self {
         Self {
-            working_day_start: 9 * 60,
-            working_day_end: 17 * 60,
+            working_day_start: at_minute(9 * 60),
+            working_day_end: at_minute(17 * 60),
             events: vec![
                 CalendarEvent {
                     title: "Daily sync".to_string(),
-                    start_minute: 9 * 60,
-                    end_minute: 9 * 60 + 30,
+                    start_at: at_minute(9 * 60),
+                    end_at: at_minute(9 * 60 + 30),
                     locked: true,
                 },
                 CalendarEvent {
                     title: "Planning".to_string(),
-                    start_minute: 10 * 60,
-                    end_minute: 11 * 60,
+                    start_at: at_minute(10 * 60),
+                    end_at: at_minute(11 * 60),
                     locked: false,
                 },
                 CalendarEvent {
                     title: "Weekly review".to_string(),
-                    start_minute: 15 * 60 + 30,
-                    end_minute: 16 * 60,
+                    start_at: at_minute(15 * 60 + 30),
+                    end_at: at_minute(16 * 60),
                     locked: true,
                 },
             ],
@@ -179,43 +180,43 @@ impl CalendarFixture {
 
     fn dense_mixed_day() -> Self {
         Self {
-            working_day_start: 9 * 60,
-            working_day_end: 18 * 60,
+            working_day_start: at_minute(9 * 60),
+            working_day_end: at_minute(18 * 60),
             events: vec![
                 CalendarEvent {
                     title: "Standup".to_string(),
-                    start_minute: 9 * 60 + 30,
-                    end_minute: 10 * 60,
+                    start_at: at_minute(9 * 60 + 30),
+                    end_at: at_minute(10 * 60),
                     locked: false,
                 },
                 CalendarEvent {
                     title: "Design pairing".to_string(),
-                    start_minute: 10 * 60 + 30,
-                    end_minute: 11 * 60,
+                    start_at: at_minute(10 * 60 + 30),
+                    end_at: at_minute(11 * 60),
                     locked: false,
                 },
                 CalendarEvent {
                     title: "Lunch".to_string(),
-                    start_minute: 12 * 60,
-                    end_minute: 13 * 60,
+                    start_at: at_minute(12 * 60),
+                    end_at: at_minute(13 * 60),
                     locked: true,
                 },
                 CalendarEvent {
                     title: "Project sync".to_string(),
-                    start_minute: 13 * 60 + 30,
-                    end_minute: 14 * 60,
+                    start_at: at_minute(13 * 60 + 30),
+                    end_at: at_minute(14 * 60),
                     locked: false,
                 },
                 CalendarEvent {
                     title: "Customer review".to_string(),
-                    start_minute: 16 * 60,
-                    end_minute: 16 * 60 + 30,
+                    start_at: at_minute(16 * 60),
+                    end_at: at_minute(16 * 60 + 30),
                     locked: true,
                 },
                 CalendarEvent {
                     title: "Interview debrief".to_string(),
-                    start_minute: 17 * 60,
-                    end_minute: 17 * 60 + 30,
+                    start_at: at_minute(17 * 60),
+                    end_at: at_minute(17 * 60 + 30),
                     locked: false,
                 },
             ],
@@ -224,31 +225,31 @@ impl CalendarFixture {
 
     fn constrained_partial_day() -> Self {
         Self {
-            working_day_start: 9 * 60,
-            working_day_end: 17 * 60,
+            working_day_start: at_minute(9 * 60),
+            working_day_end: at_minute(17 * 60),
             events: vec![
                 CalendarEvent {
                     title: "Executive sync".to_string(),
-                    start_minute: 9 * 60,
-                    end_minute: 10 * 60,
+                    start_at: at_minute(9 * 60),
+                    end_at: at_minute(10 * 60),
                     locked: true,
                 },
                 CalendarEvent {
                     title: "Weekly 1:1".to_string(),
-                    start_minute: 11 * 60,
-                    end_minute: 11 * 60 + 30,
+                    start_at: at_minute(11 * 60),
+                    end_at: at_minute(11 * 60 + 30),
                     locked: false,
                 },
                 CalendarEvent {
                     title: "Planning block".to_string(),
-                    start_minute: 13 * 60,
-                    end_minute: 15 * 60,
+                    start_at: at_minute(13 * 60),
+                    end_at: at_minute(15 * 60),
                     locked: true,
                 },
                 CalendarEvent {
                     title: "Hiring panel".to_string(),
-                    start_minute: 15 * 60,
-                    end_minute: 17 * 60,
+                    start_at: at_minute(15 * 60),
+                    end_at: at_minute(17 * 60),
                     locked: true,
                 },
             ],
@@ -259,7 +260,7 @@ impl CalendarFixture {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 enum CalendarTools {
     ListEvents,
-    OptimizeDay,
+    MoveEvent { title: String, start_at: String },
 }
 
 impl TypedTool for CalendarTools {
@@ -275,11 +276,21 @@ impl TypedTool for CalendarTools {
                 }),
             ),
             RawToolDefinition::function(
-                "optimize_day",
-                Some("Move only flexible meetings to maximize uninterrupted free time."),
+                "move_event",
+                Some(
+                    "Move one flexible meeting to a new RFC3339 UTC start time like 2026-03-16T09:00:00Z. Use this repeatedly to rearrange the day.",
+                ),
                 json!({
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "title": { "type": "string" },
+                        "start_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "RFC3339 UTC datetime, for example 2026-03-16T09:00:00Z"
+                        }
+                    },
+                    "required": ["title", "start_at"],
                     "additionalProperties": false
                 }),
             ),
@@ -292,9 +303,25 @@ impl TypedTool for CalendarTools {
                 ensure_object_like(name, arguments)?;
                 Ok(Self::ListEvents)
             }
-            "optimize_day" => {
-                ensure_object_like(name, arguments)?;
-                Ok(Self::OptimizeDay)
+            "move_event" => {
+                #[derive(Deserialize)]
+                struct MoveEventArgs {
+                    title: String,
+                    start_at: String,
+                }
+
+                let args: MoveEventArgs = serde_json::from_value(arguments).map_err(|error| {
+                    LlmError::InvalidResponse {
+                        reason: format!("invalid move_event arguments: {error}"),
+                    }
+                })?;
+                parse_datetime(&args.start_at).map_err(|error| LlmError::InvalidResponse {
+                    reason: format!("invalid move_event start_at: {error}"),
+                })?;
+                Ok(Self::MoveEvent {
+                    title: args.title,
+                    start_at: args.start_at,
+                })
             }
             other => Err(LlmError::InvalidResponse {
                 reason: format!("unexpected tool name: {other}"),
@@ -310,22 +337,26 @@ enum CalendarToolResult {
         events: Vec<CalendarEvent>,
         longest_free_block_minutes: u32,
     },
-    Optimized {
+    Moved {
         events: Vec<CalendarEvent>,
         moved_events: usize,
         longest_free_block_minutes: u32,
         locked_events_preserved: bool,
+        moved_title: String,
+        new_start_at: DateTime<Utc>,
     },
     Impossible {
         reason: String,
+        conflicting_event: Option<String>,
+        events: Vec<CalendarEvent>,
         longest_free_block_minutes: u32,
     },
 }
 
 #[derive(Debug)]
 struct InMemoryCalendar {
-    working_day_start: u32,
-    working_day_end: u32,
+    working_day_start: DateTime<Utc>,
+    working_day_end: DateTime<Utc>,
     original_events: Vec<CalendarEvent>,
     current_events: Vec<CalendarEvent>,
 }
@@ -347,28 +378,75 @@ impl InMemoryCalendar {
         }
     }
 
-    fn optimize_day(&mut self) -> CalendarToolResult {
-        if self.current_events.iter().all(|event| event.locked) {
+    fn move_event(&mut self, title: &str, start_at: DateTime<Utc>) -> CalendarToolResult {
+        let Some(index) = self
+            .current_events
+            .iter()
+            .position(|event| event.title == title)
+        else {
             return CalendarToolResult::Impossible {
-                reason: "every event is locked".to_string(),
+                reason: format!("event not found: {title}"),
+                conflicting_event: None,
+                events: self.current_events.clone(),
+                longest_free_block_minutes: self.longest_free_block_minutes(),
+            };
+        };
+        if self.current_events[index].locked {
+            return CalendarToolResult::Impossible {
+                reason: format!("event is locked: {title}"),
+                conflicting_event: None,
+                events: self.current_events.clone(),
                 longest_free_block_minutes: self.longest_free_block_minutes(),
             };
         }
 
-        let optimized = replan_events(
-            &self.current_events,
-            self.working_day_start,
-            self.working_day_end,
-        );
-        let moved_events = count_moved_events(&self.current_events, &optimized);
-        let locked_events_preserved = locked_events_match(&self.original_events, &optimized);
-        self.current_events = optimized.clone();
+        let duration = self.current_events[index]
+            .end_at
+            .signed_duration_since(self.current_events[index].start_at);
+        let end_at = start_at + duration;
+        if start_at < self.working_day_start || end_at > self.working_day_end {
+            return CalendarToolResult::Impossible {
+                reason: format!("event would move outside working hours: {title}"),
+                conflicting_event: None,
+                events: self.current_events.clone(),
+                longest_free_block_minutes: self.longest_free_block_minutes(),
+            };
+        }
 
-        CalendarToolResult::Optimized {
-            events: optimized,
+        let conflicting_event = self
+            .current_events
+            .iter()
+            .enumerate()
+            .find(|(other_index, event)| {
+                *other_index != index && start_at < event.end_at && end_at > event.start_at
+            })
+            .map(|(_, event)| event.title.clone());
+        if let Some(conflicting_event) = conflicting_event {
+            return CalendarToolResult::Impossible {
+                reason: format!(
+                    "event would overlap another event: {title} overlaps {conflicting_event}"
+                ),
+                conflicting_event: Some(conflicting_event),
+                events: self.current_events.clone(),
+                longest_free_block_minutes: self.longest_free_block_minutes(),
+            };
+        }
+
+        self.current_events[index].start_at = start_at;
+        self.current_events[index].end_at = end_at;
+        self.current_events.sort_by_key(|event| event.start_at);
+
+        let moved_events = count_moved_events(&self.original_events, &self.current_events);
+        let locked_events_preserved =
+            locked_events_match(&self.original_events, &self.current_events);
+
+        CalendarToolResult::Moved {
+            events: self.current_events.clone(),
             moved_events,
             longest_free_block_minutes: self.longest_free_block_minutes(),
             locked_events_preserved,
+            moved_title: title.to_string(),
+            new_start_at: start_at,
         }
     }
 
@@ -392,8 +470,8 @@ impl InMemoryCalendar {
 
 #[derive(Clone, Debug, Serialize)]
 struct CalendarSnapshot {
-    working_day_start: u32,
-    working_day_end: u32,
+    working_day_start: DateTime<Utc>,
+    working_day_end: DateTime<Utc>,
     original_events: Vec<CalendarEvent>,
     current_events: Vec<CalendarEvent>,
 }
@@ -480,11 +558,11 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                         .map(|tool| tool.name.clone())
                         .collect::<Vec<_>>();
                     let used_list = tool_names.iter().any(|name| name == "list_events");
-                    let used_optimize = tool_names.iter().any(|name| name == "optimize_day");
+                    let used_move = tool_names.iter().any(|name| name == "move_event");
                     Ok(GradeResult::pass_if(
                         "uses_calendar_tools",
-                        used_list && used_optimize,
-                        "agent should inspect and then optimize the calendar",
+                        used_list && used_move,
+                        "agent should inspect the calendar and then move at least one event",
                         json!({ "tool_names": tool_names }),
                     ))
                 }))
@@ -870,7 +948,7 @@ async fn run_calendar_agent_trial(
     let calendar = Arc::new(Mutex::new(InMemoryCalendar::new(fixture.clone())));
     let tool_runner = build_calendar_tool_runner(calendar.clone());
     let context = ContextManager::static_text(
-        "You are a calendar optimization assistant. Always call list_events first before making claims about the day. If the day can be improved, call optimize_day exactly once and then summarize the outcome in plain text. If the day cannot be improved without moving locked events, say that plainly. Do not invent calendar state.",
+        "You are a calendar optimization assistant. Always call list_events first before making claims about the day. The calendar day in this scenario is 2026-03-16 in UTC. If the day can be improved, use move_event one event at a time to rearrange flexible meetings, then summarize the outcome in plain text. If the day cannot be improved without moving locked events, say that plainly. Do not invent calendar state.",
     );
 
     let agent = Agent::builder()
@@ -935,7 +1013,21 @@ fn build_calendar_tool_runner(
         async move {
             let result = match call.call {
                 CalendarTools::ListEvents => calendar.lock().expect("calendar").list_events(),
-                CalendarTools::OptimizeDay => calendar.lock().expect("calendar").optimize_day(),
+                CalendarTools::MoveEvent { title, start_at } => match parse_datetime(&start_at) {
+                    Ok(start_at) => calendar
+                        .lock()
+                        .expect("calendar")
+                        .move_event(&title, start_at),
+                    Err(error) => CalendarToolResult::Impossible {
+                        reason: format!("invalid start_at datetime: {error}"),
+                        conflicting_event: None,
+                        events: calendar.lock().expect("calendar").current_events.clone(),
+                        longest_free_block_minutes: calendar
+                            .lock()
+                            .expect("calendar")
+                            .longest_free_block_minutes(),
+                    },
+                },
             };
 
             Ok(ToolResultEnvelope {
@@ -1069,94 +1161,82 @@ fn ensure_object_like(name: &str, arguments: serde_json::Value) -> LlmResult<()>
     }
 }
 
-fn replan_events(
-    events: &[CalendarEvent],
-    _working_day_start: u32,
-    _working_day_end: u32,
-) -> Vec<CalendarEvent> {
-    let mut replanned = Vec::new();
-    let mut next_start = 13 * 60;
-
-    for event in events {
-        if event.locked {
-            replanned.push(event.clone());
-            continue;
-        }
-
-        let duration = event.end_minute - event.start_minute;
-        replanned.push(CalendarEvent {
-            title: event.title.clone(),
-            start_minute: next_start,
-            end_minute: next_start + duration,
-            locked: false,
-        });
-        next_start += duration;
-    }
-
-    replanned.sort_by_key(|event| event.start_minute);
-    replanned
-}
-
 fn longest_free_block_minutes(
     events: &[CalendarEvent],
-    working_day_start: u32,
-    working_day_end: u32,
+    working_day_start: DateTime<Utc>,
+    working_day_end: DateTime<Utc>,
 ) -> u32 {
     if events.is_empty() {
-        return working_day_end - working_day_start;
+        return minutes_between(working_day_start, working_day_end);
     }
 
     let mut sorted = events.to_vec();
-    sorted.sort_by_key(|event| event.start_minute);
-    let mut longest = sorted[0].start_minute.saturating_sub(working_day_start);
+    sorted.sort_by_key(|event| event.start_at);
+    let mut longest = minutes_between(working_day_start, sorted[0].start_at);
     let mut prev_end = working_day_start;
 
     for event in sorted {
-        longest = longest.max(event.start_minute.saturating_sub(prev_end));
-        prev_end = prev_end.max(event.end_minute);
+        longest = longest.max(minutes_between(prev_end, event.start_at));
+        prev_end = prev_end.max(event.end_at);
     }
 
-    longest.max(working_day_end.saturating_sub(prev_end))
+    longest.max(minutes_between(prev_end, working_day_end))
 }
 
 fn count_moved_events(original: &[CalendarEvent], current: &[CalendarEvent]) -> usize {
-    let original_by_title: HashMap<&str, (&u32, &u32)> = original
+    let original_by_title: HashMap<&str, (&DateTime<Utc>, &DateTime<Utc>)> = original
         .iter()
-        .map(|event| {
-            (
-                event.title.as_str(),
-                (&event.start_minute, &event.end_minute),
-            )
-        })
+        .map(|event| (event.title.as_str(), (&event.start_at, &event.end_at)))
         .collect();
 
     current
         .iter()
         .filter(|event| match original_by_title.get(event.title.as_str()) {
-            Some((start, end)) => **start != event.start_minute || **end != event.end_minute,
+            Some((start, end)) => **start != event.start_at || **end != event.end_at,
             None => false,
         })
         .count()
 }
 
 fn locked_events_match(original: &[CalendarEvent], replanned: &[CalendarEvent]) -> bool {
-    let original_locked: HashMap<&str, (&u32, &u32)> = original
+    let original_locked: HashMap<&str, (&DateTime<Utc>, &DateTime<Utc>)> = original
         .iter()
         .filter(|event| event.locked)
-        .map(|event| {
-            (
-                event.title.as_str(),
-                (&event.start_minute, &event.end_minute),
-            )
-        })
+        .map(|event| (event.title.as_str(), (&event.start_at, &event.end_at)))
         .collect();
 
     replanned.iter().filter(|event| event.locked).all(|event| {
         match original_locked.get(event.title.as_str()) {
-            Some((start, end)) => **start == event.start_minute && **end == event.end_minute,
+            Some((start, end)) => **start == event.start_at && **end == event.end_at,
             None => false,
         }
     })
+}
+
+fn parse_datetime(value: &str) -> Result<DateTime<Utc>> {
+    if let Ok(value) = DateTime::parse_from_rfc3339(value) {
+        return Ok(value.with_timezone(&Utc));
+    }
+
+    if let Ok(value) = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S") {
+        return Ok(Utc.from_utc_datetime(&value));
+    }
+
+    anyhow::bail!("expected RFC3339 datetime like 2026-03-16T09:00:00Z, got {value}")
+}
+
+fn at_minute(minute_of_day: u32) -> DateTime<Utc> {
+    base_day() + ChronoDuration::minutes(i64::from(minute_of_day))
+}
+
+fn base_day() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 3, 16, 0, 0, 0)
+        .single()
+        .expect("valid calendar base day")
+}
+
+fn minutes_between(start: DateTime<Utc>, end: DateTime<Utc>) -> u32 {
+    end.signed_duration_since(start).num_minutes().max(0) as u32
 }
 
 #[tokio::main]
@@ -1232,7 +1312,7 @@ fn default_targets() -> Vec<ExecutionTarget> {
         }
     }
 
-    let mut targets = DEFAULT_OLLAMA_MODELS
+    let targets = DEFAULT_OLLAMA_MODELS
         .iter()
         .map(|(label, model)| ExecutionTarget::ollama(*label, *model))
         .collect::<Vec<_>>();
