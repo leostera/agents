@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::context::{ContextChunk, ContextStrategy};
 use crate::error::{AgentError, AgentResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +15,17 @@ pub struct ToolCallEnvelope<C> {
     pub name: String,
     pub arguments: Value,
     pub call: C,
+}
+
+impl<C> ToolCallEnvelope<C> {
+    pub fn to_context_chunk(&self, strategy: ContextStrategy) -> ContextChunk {
+        ContextChunk::ToolCall {
+            strategy,
+            id: self.call_id.clone(),
+            name: self.name.clone(),
+            args: self.arguments.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +40,23 @@ pub struct ToolResultEnvelope<T> {
     pub call_id: String,
     #[serde(flatten)]
     pub result: ToolExecutionResult<T>,
+}
+
+impl<T> ToolResultEnvelope<T>
+where
+    T: Serialize,
+{
+    pub fn to_context_chunk(&self, strategy: ContextStrategy) -> AgentResult<ContextChunk> {
+        let value = serde_json::to_value(self).map_err(|error| AgentError::ToolResultEncoding {
+            reason: error.to_string(),
+        })?;
+
+        Ok(ContextChunk::ToolResult {
+            strategy,
+            id: self.call_id.clone(),
+            result: value,
+        })
+    }
 }
 
 #[async_trait]

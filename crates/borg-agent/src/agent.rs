@@ -203,7 +203,10 @@ where
         }
     }
 
-    pub fn build(self) -> AgentResult<Agent<M, C, T, R>> {
+    pub fn build(self) -> AgentResult<Agent<M, C, T, R>>
+    where
+        M: Into<InputItem>,
+    {
         let llm = self.llm.ok_or(AgentError::Internal {
             message: "AgentBuilder requires an llm runner".to_string(),
         })?;
@@ -229,7 +232,13 @@ where
     }
 }
 
-pub struct Agent<M, C, T, R> {
+pub struct Agent<M, C, T, R>
+where
+    M: Into<InputItem> + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
+    T: Clone + Serialize + Send + Sync + 'static,
+    R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
+{
     llm: Arc<LlmRunner>,
     context_manager: Arc<ContextManager>,
     execution_profile: ExecutionProfile,
@@ -269,6 +278,53 @@ enum TurnState<C, T, R> {
     Done,
 }
 
+impl<C, T, R> TurnState<C, T, R> {
+    fn abandoned_tool_results(&self, reason: &str) -> Vec<ToolResultEnvelope<T>> {
+        let mut call_ids = Vec::new();
+        let mut seen = HashSet::new();
+        self.collect_pending_tool_call_ids(&mut call_ids, &mut seen);
+        call_ids
+            .into_iter()
+            .map(|call_id| ToolResultEnvelope {
+                call_id,
+                result: ToolExecutionResult::Error {
+                    message: reason.to_string(),
+                },
+            })
+            .collect()
+    }
+
+    fn collect_pending_tool_call_ids(
+        &self,
+        call_ids: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) {
+        match self {
+            TurnState::ExecuteTool { current, remaining } => {
+                if seen.insert(current.call_id.clone()) {
+                    call_ids.push(current.call_id.clone());
+                }
+                for call in remaining {
+                    if seen.insert(call.call_id.clone()) {
+                        call_ids.push(call.call_id.clone());
+                    }
+                }
+            }
+            TurnState::EmitQueue { queue, next } => {
+                for event in queue {
+                    if let AgentEvent::ToolCallRequested { call } = event
+                        && seen.insert(call.call_id.clone())
+                    {
+                        call_ids.push(call.call_id.clone());
+                    }
+                }
+                next.collect_pending_tool_call_ids(call_ids, seen);
+            }
+            TurnState::CancelPending | TurnState::NeedLlm | TurnState::Done => {}
+        }
+    }
+}
+
 impl<M, C, T, R> Agent<M, C, T, R>
 where
     M: Into<InputItem> + Send + Sync + 'static,
@@ -299,9 +355,9 @@ where
                     })
                     .await?;
                 if let Some(active_turn) = self.active_turn.as_mut() {
-                    for result in abandoned_tool_results(&active_turn.state, "cancelled") {
+                    for result in active_turn.state.abandoned_tool_results("cancelled") {
                         self.context_manager
-                            .push(tool_result_to_chunk(&result, ContextStrategy::Compactable)?)
+                            .push(result.to_context_chunk(ContextStrategy::Compactable)?)
                             .await?;
                     }
                     active_turn.state = TurnState::CancelPending;
@@ -350,11 +406,12 @@ where
                                 )?),
                             })
                             .await?;
-                        for result in
-                            abandoned_tool_results(&active_turn.state, "interrupted by steering")
+                        for result in active_turn
+                            .state
+                            .abandoned_tool_results("interrupted by steering")
                         {
                             self.context_manager
-                                .push(tool_result_to_chunk(&result, ContextStrategy::Compactable)?)
+                                .push(result.to_context_chunk(ContextStrategy::Compactable)?)
                                 .await?;
                         }
                         active_turn.state = TurnState::NeedLlm;
@@ -418,7 +475,7 @@ where
                 } => {
                     let result = self.tool_runner.run(current).await?;
                     self.context_manager
-                        .push(tool_result_to_chunk(&result, ContextStrategy::Compactable)?)
+                        .push(result.to_context_chunk(ContextStrategy::Compactable)?)
                         .await?;
 
                     active_turn.state = if let Some(next_call) = remaining.pop_front() {
@@ -570,7 +627,7 @@ where
 
         for call in &tool_calls {
             self.context_manager
-                .push(tool_call_to_chunk(call, ContextStrategy::Compactable)?)
+                .push(call.to_context_chunk(ContextStrategy::Compactable))
                 .await?;
         }
 
@@ -806,87 +863,6 @@ where
     R: Serialize + 'static,
 {
     input_item_to_chunk(assistant_item_for_reply(reply)?, strategy)
-}
-
-fn tool_call_to_chunk<C>(
-    call: &ToolCallEnvelope<C>,
-    strategy: ContextStrategy,
-) -> AgentResult<ContextChunk>
-where
-    C: Serialize,
-{
-    Ok(ContextChunk::ToolCall {
-        strategy,
-        id: call.call_id.clone(),
-        name: call.name.clone(),
-        args: call.arguments.clone(),
-    })
-}
-
-fn tool_result_to_chunk<T>(
-    result: &ToolResultEnvelope<T>,
-    strategy: ContextStrategy,
-) -> AgentResult<ContextChunk>
-where
-    T: Serialize,
-{
-    let value = serde_json::to_value(result).map_err(|error| AgentError::ToolResultEncoding {
-        reason: error.to_string(),
-    })?;
-
-    Ok(ContextChunk::ToolResult {
-        strategy,
-        id: result.call_id.clone(),
-        result: value,
-    })
-}
-
-fn abandoned_tool_results<C, T, R>(
-    state: &TurnState<C, T, R>,
-    reason: &str,
-) -> Vec<ToolResultEnvelope<T>> {
-    let mut call_ids = Vec::new();
-    let mut seen = HashSet::new();
-    collect_pending_tool_call_ids(state, &mut call_ids, &mut seen);
-    call_ids
-        .into_iter()
-        .map(|call_id| ToolResultEnvelope {
-            call_id,
-            result: ToolExecutionResult::Error {
-                message: reason.to_string(),
-            },
-        })
-        .collect()
-}
-
-fn collect_pending_tool_call_ids<C, T, R>(
-    state: &TurnState<C, T, R>,
-    call_ids: &mut Vec<String>,
-    seen: &mut HashSet<String>,
-) {
-    match state {
-        TurnState::ExecuteTool { current, remaining } => {
-            if seen.insert(current.call_id.clone()) {
-                call_ids.push(current.call_id.clone());
-            }
-            for call in remaining {
-                if seen.insert(call.call_id.clone()) {
-                    call_ids.push(call.call_id.clone());
-                }
-            }
-        }
-        TurnState::EmitQueue { queue, next } => {
-            for event in queue {
-                if let AgentEvent::ToolCallRequested { call } = event
-                    && seen.insert(call.call_id.clone())
-                {
-                    call_ids.push(call.call_id.clone());
-                }
-            }
-            collect_pending_tool_call_ids(next, call_ids, seen);
-        }
-        TurnState::CancelPending | TurnState::NeedLlm | TurnState::Done => {}
-    }
 }
 
 #[cfg(test)]
