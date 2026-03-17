@@ -305,14 +305,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "borg-evals-core"
+name = "borg-evals"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "borg-agent",
- "borg-evals-macros",
  "borg-llm",
+ "borg-macros",
  "chrono",
  "prettyplease",
  "proc-macro2",
@@ -327,17 +327,6 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "walkdir",
-]
-
-[[package]]
-name = "borg-evals-macros"
-version = "0.1.0"
-dependencies = [
- "insta",
- "prettyplease",
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -363,6 +352,17 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "borg-macros"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -2732,8 +2732,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "borg-agent",
- "borg-evals-core",
- "borg-evals-macros",
+ "borg-evals",
+ "borg-macros",
  "serde",
  "serde_json",
  "tokio",

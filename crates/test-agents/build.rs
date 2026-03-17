@@ -1,4 +1,4 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    borg_evals_core::build()?;
+    borg_evals::build()?;
     Ok(())
 }

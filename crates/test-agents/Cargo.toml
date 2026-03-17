@@ -6,11 +6,11 @@ edition = "2024"
 [dependencies]
 anyhow.workspace = true
 borg-agent = { path = "../borg-agent" }
-borg-evals-core = { path = "../borg-evals-core" }
-borg-evals-macros = { path = "../borg-evals-macros" }
+borg-evals = { path = "../borg-evals" }
+borg-macros = { path = "../borg-macros" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
 [build-dependencies]
-borg-evals-core = { path = "../borg-evals-core" }
+borg-evals = { path = "../borg-evals" }

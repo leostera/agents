@@ -227,7 +227,7 @@ That narrower scope should influence the design:
 
 The full family may eventually include:
 
-### `borg-evals-core` (v0)
+### `borg-evals` (v0)
 
 Core data model and eval authoring API.
 
@@ -737,7 +737,7 @@ The implementation should proceed in this order:
 
 ### Phase 0: smallest usable library
 
-- `borg-evals-core`
+- `borg-evals`
 - explicit Rust suite registration
 - deterministic graders
 - JSON and Markdown artifacts
@@ -769,7 +769,7 @@ No CLI or proc-macro support is required in this phase.
 
 ### Phase 1.5: ergonomics and discovery
 
-- `borg-evals-macros`
+- `borg-macros`
 - thin proc-macro sugar for cases and suites
 - convention-based suite discovery
 - installable `cargo-evals` cargo subcommand
@@ -988,7 +988,7 @@ But these should still compile down to the same core model:
 
 The prototype also made one architectural split clearer than the original draft:
 
-- `borg-evals-core` currently mixes:
+- `borg-evals` currently mixes:
   - authoring
   - execution scheduling
   - artifact persistence
@@ -997,7 +997,7 @@ That is acceptable for v0, but it is not the desired long-term boundary.
 
 The recommended next split is:
 
-- `borg-evals-core`
+- `borg-evals`
   - authoring API
   - artifact/result schemas
   - metadata/registry types

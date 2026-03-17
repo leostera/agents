@@ -1,5 +1,5 @@
 [package]
-name = "borg-evals-core"
+name = "borg-evals"
 version = "0.1.0"
 edition = "2024"
 
@@ -7,7 +7,7 @@ edition = "2024"
 anyhow.workspace = true
 async-trait.workspace = true
 borg-agent = { path = "../borg-agent" }
-borg-evals-macros = { path = "../borg-evals-macros" }
+borg-macros = { path = "../borg-macros" }
 borg-llm = { path = "../borg-llm" }
 chrono.workspace = true
 prettyplease.workspace = true

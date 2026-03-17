@@ -176,14 +176,14 @@ fn expand_eval(args: &EvalArgs, input: &ItemFn) -> Result<TokenStream> {
     Ok(quote! {
         #input
 
-        pub async fn #wrapper_ident() -> ::anyhow::Result<::borg_evals_core::Eval<#state_ty, #agent_ty>> {
+        pub async fn #wrapper_ident() -> ::anyhow::Result<::borg_evals::Eval<#state_ty, #agent_ty>> {
             Ok(
-                ::borg_evals_core::Eval::new(#eval_id)
+                ::borg_evals::Eval::new(#eval_id)
                     .tags([#(#tags),*])
                     .run(|ctx, agent| async move {
                         let trajectory = #fn_ident(ctx.clone())
                             .await
-                            .map_err(|error| ::borg_evals_core::EvalError::message(error.to_string()))?;
+                            .map_err(|error| ::borg_evals::EvalError::message(error.to_string()))?;
                         trajectory.runner()(ctx, agent).await
                     })
             )
@@ -227,15 +227,15 @@ mod tests {
             todo!()
         }
         pub async fn __evals_make_eval_echoes_plain_text() -> ::anyhow::Result<
-            ::borg_evals_core::Eval<EchoHarness, EchoAgent>,
+            ::borg_evals::Eval<EchoHarness, EchoAgent>,
         > {
             Ok(
-                ::borg_evals_core::Eval::new("echoes_plain_text")
+                ::borg_evals::Eval::new("echoes_plain_text")
                     .tags(["echo", "baseline"])
                     .run(|ctx, agent| async move {
                         let trajectory = echoes_plain_text(ctx.clone())
                             .await
-                            .map_err(|error| ::borg_evals_core::EvalError::message(
+                            .map_err(|error| ::borg_evals::EvalError::message(
                                 error.to_string(),
                             ))?;
                         trajectory.runner()(ctx, agent).await

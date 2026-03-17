@@ -1,3 +1,3 @@
-borg_evals_core::setup!();
+borg_evals::setup!();
 
 pub mod echo;

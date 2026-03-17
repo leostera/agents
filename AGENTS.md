@@ -1,41 +1,32 @@
 # AGENTS Router
 
 This file is the entrypoint for project-specific agent guidance.
-The `.agents/*` files are Codex-maintained project memory and should be updated by Codex periodically as behavior/contracts evolve.
 
-Use it as a router: pick the most relevant sub-agent doc below before making changes.
+The `AGENTS.md` files in this repo are maintained alongside the code and should be updated when behavior or contracts change.
+
+Use it as a router: pick the most relevant existing AGENTS file before making changes.
 
 ## Routing Table
 
-1. Runtime + backend orchestration:
-   - [`.agents/runtime/AGENTS.md`](/Users/leostera/Developer/github.com/leostera/borg/.agents/runtime/AGENTS.md)
-2. Onboarding chat UX + web packages:
-   - [`.agents/onboarding-ui/AGENTS.md`](/Users/leostera/Developer/github.com/leostera/borg/.agents/onboarding-ui/AGENTS.md)
-3. Build, workspace, and release workflow:
-   - [`.agents/build-release/AGENTS.md`](/Users/leostera/Developer/github.com/leostera/borg/.agents/build-release/AGENTS.md)
-4. Product spec + architecture consistency:
-   - [`.agents/spec/AGENTS.md`](/Users/leostera/Developer/github.com/leostera/borg/.agents/spec/AGENTS.md)
-5. Maintenance protocol for keeping all AGENTS docs current:
-   - [`.agents/maintenance/AGENTS.md`](/Users/leostera/Developer/github.com/leostera/borg/.agents/maintenance/AGENTS.md)
+1. Agent runtime, sessions, and event model:
+   - [`crates/borg-agent/AGENTS.md`](crates/borg-agent/AGENTS.md)
+2. LLM providers, typed tools, and model-facing APIs:
+   - [`crates/borg-llm/AGENTS.md`](crates/borg-llm/AGENTS.md)
+3. Workspace-wide changes without a more specific AGENTS file:
+   - use this root file and inspect nearby crate code directly
 
 ## Global Rules (Apply Everywhere)
 
 - Keep Rust code idiomatic and struct-oriented.
-- Keep `borg-cli` as the only binary crate.
 - Prefer named constants over magic values.
 - Initialize tracing before other app logic.
 - Prefer error propagation with `?` where possible.
-- Runtime model is session-first:
-  - ports feed long-lived sessions directly
-  - tasks are explicit and separate from normal chat ingress
-- Run both builds after substantial changes:
-  - `bun run build:web`
-  - `cargo build`
+- When updating paths in documentation never use absolute paths -- always use paths relative to the repository root
 
 ## Fast Start Checklist
 
-1. Identify domain area (runtime / onboarding UI / build / spec).
-2. Read the matching AGENTS subfile.
+1. Identify the domain area.
+2. Read the matching AGENTS file if one exists.
 3. Implement changes.
 4. Run required builds.
-5. Update affected AGENTS subfiles if behavior/contracts changed.
+5. Update affected AGENTS files if behavior or contracts changed.

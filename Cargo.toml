@@ -1,8 +1,8 @@
 [workspace]
 members = [
   "crates/borg-agent",
-  "crates/borg-evals-core", 
-  "crates/borg-evals-macros",
+  "crates/borg-evals",
+  "crates/borg-macros",
   "crates/borg-llm", 
   "crates/cargo-evals", 
   "crates/test-agents",

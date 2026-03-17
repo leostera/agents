@@ -51,9 +51,9 @@ fn render_manifest(workspace_root: &Path, crates: &[EvalCrate]) -> String {
     out.push_str("anyhow = \"1\"\n");
     out.push_str("tokio = { version = \"1\", features = [\"macros\", \"rt-multi-thread\"] }\n");
     out.push_str(&format!(
-        "borg-evals-core = {{ path = {:?} }}\n",
+        "borg-evals = {{ path = {:?} }}\n",
         workspace_root
-            .join("crates/borg-evals-core")
+            .join("crates/borg-evals")
             .display()
             .to_string()
     ));
@@ -114,7 +114,7 @@ fn render_main(config: &EvalsFile, crates: &[EvalCrate]) -> Result<String> {
         let model = &target.model;
         let concurrency = target.concurrency.unwrap_or(1);
         quote! {
-            borg_evals_core::ExecutionTarget::new(#label, #provider, #model)
+            borg_evals::ExecutionTarget::new(#label, #provider, #model)
                 .with_max_in_flight(#concurrency)
         }
     });
@@ -136,7 +136,7 @@ fn render_main(config: &EvalsFile, crates: &[EvalCrate]) -> Result<String> {
                     #(#list_lines)*
                 }
                 "run" => {
-                    let run_config = borg_evals_core::RunConfig::new(vec![#(#targets),*]).with_trials(#trials);
+                    let run_config = borg_evals::RunConfig::new(vec![#(#targets),*]).with_trials(#trials);
                     let output_dir = #output_dir;
                     let mut reports = Vec::new();
                     #(#run_lines)*

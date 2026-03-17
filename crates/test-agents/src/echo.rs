@@ -1,6 +1,6 @@
 use anyhow::Result;
 use borg_agent::{AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
-use borg_evals_core::{EvalAgent, EvalResult, async_trait};
+use borg_evals::{EvalAgent, EvalResult, async_trait};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 

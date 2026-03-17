@@ -256,15 +256,15 @@ fn render_registry(suites: &[SuiteSource]) -> Result<String> {
                 mod #module_ident {
                     include!(#include_path);
 
-                    pub fn descriptor() -> ::borg_evals_core::SuiteDescriptor {
-                        ::borg_evals_core::SuiteDescriptor::new(
+                    pub fn descriptor() -> ::borg_evals::SuiteDescriptor {
+                        ::borg_evals::SuiteDescriptor::new(
                             #suite_id,
                             &[#(#eval_ids),*],
                             || Box::pin(async {
                                 let mut suite = #suite_wrapper().await?
                                     .agent(|ctx| async move { #agent_builder(ctx).await });
                                 #(#eval_lines)*
-                                Ok(Box::new(suite) as Box<dyn ::borg_evals_core::RunnableSuite>)
+                                Ok(Box::new(suite) as Box<dyn ::borg_evals::RunnableSuite>)
                             }),
                         )
                     }
@@ -283,7 +283,7 @@ fn render_registry(suites: &[SuiteSource]) -> Result<String> {
     let file: syn::File = parse_quote! {
         #(#modules)*
 
-        pub fn registry() -> Vec<::borg_evals_core::SuiteDescriptor> {
+        pub fn registry() -> Vec<::borg_evals::SuiteDescriptor> {
             vec![#(#descriptors),*]
         }
     };

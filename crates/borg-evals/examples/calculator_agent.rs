@@ -6,7 +6,7 @@ use borg_agent::{
     Agent, AgentResult, ContextManager, ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope,
     ToolRunner,
 };
-use borg_evals_core::prelude::*;
+use borg_evals::prelude::*;
 use borg_llm::completion::InputItem;
 use borg_llm::error::{Error, LlmResult};
 use borg_llm::runner::LlmRunner;
@@ -211,7 +211,7 @@ fn init_tracing() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             std::env::var("RUST_LOG")
-                .unwrap_or_else(|_| "borg_evals_core=info,borg_llm_test=info".to_string()),
+                .unwrap_or_else(|_| "borg_evals=info,borg_llm_test=info".to_string()),
         )
         .with_target(false)
         .compact()

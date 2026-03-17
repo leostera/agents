@@ -56,15 +56,15 @@ fn expand_suite(args: &SuiteArgs, item: &ItemFn) -> Result<TokenStream> {
     let suite_id = fn_ident.to_string();
     let state_ty = extract_result_inner_type(&item.sig.output)?;
     let suite_ctor = match args.kind.value().as_str() {
-        "capability" => quote!(::borg_evals_core::Suite::capability),
-        _ => quote!(::borg_evals_core::Suite::regression),
+        "capability" => quote!(::borg_evals::Suite::capability),
+        _ => quote!(::borg_evals::Suite::regression),
     };
     let _ = &args.agent_builder;
 
     Ok(quote! {
         #item
 
-        pub async fn #wrapper_ident() -> ::anyhow::Result<::borg_evals_core::Suite<#state_ty>> {
+        pub async fn #wrapper_ident() -> ::anyhow::Result<::borg_evals::Suite<#state_ty>> {
             Ok(
                 #suite_ctor(#suite_id)
                     .state(#fn_ident().await?)

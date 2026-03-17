@@ -10,7 +10,7 @@ mod trial;
 
 pub use crate as core;
 pub use async_trait::async_trait;
-pub use borg_evals_macros::{eval, suite};
+pub use borg_macros::{eval, suite};
 pub use config::{ExecutionTarget, RunConfig};
 pub use error::{EvalError, EvalResult};
 pub use eval::{Eval, EvalAgent, EvalContext};
@@ -404,7 +404,7 @@ mod tests {
         );
 
         let report = suite.run().await.expect("suite to run");
-        let root = unique_test_dir("borg-evals-core");
+        let root = unique_test_dir("borg-evals");
         let index = report.write_to(&root).expect("artifacts to write");
 
         assert!(root.join(&index.files[0]).exists());
@@ -519,7 +519,7 @@ mod tests {
 
     #[tokio::test]
     async fn persisted_runs_flush_trial_records_before_completion() {
-        let root = unique_test_dir("borg-evals-core-incremental");
+        let root = unique_test_dir("borg-evals-incremental");
         let suite = suite_with_dummy_agent("calendar").eval(
             Eval::new("incremental")
                 .grading(grade("always", |_, _ctx| async move {
