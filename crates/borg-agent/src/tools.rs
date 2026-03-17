@@ -3,12 +3,12 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{AgentError, AgentResult};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallEnvelope<C> {
     pub call_id: String,
     pub name: String,
@@ -16,14 +16,14 @@ pub struct ToolCallEnvelope<C> {
     pub call: C,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ToolExecutionResult<T> {
     Ok { data: T },
     Error { message: String },
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResultEnvelope<T> {
     pub call_id: String,
     #[serde(flatten)]

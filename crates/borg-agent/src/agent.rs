@@ -13,6 +13,7 @@ use borg_llm::runner::LlmRunner;
 use borg_llm::tools::{ToolCall, TypedTool, TypedToolSet};
 use borg_llm::{completion::Temperature, completion::ToolChoice};
 use schemars::JsonSchema;
+use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
@@ -72,7 +73,7 @@ impl ExecutionProfile {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEvent<C, T, R> {
     ModelOutputItem { item: OutputItem<C, R> },
     ToolCallRequested { call: ToolCallEnvelope<C> },
@@ -120,8 +121,10 @@ impl Default for AgentBuilder<InputItem, (), (), String> {
 
 impl<M, C, T, R> AgentBuilder<M, C, T, R>
 where
-    C: Clone + Send + Sync + 'static,
+    M: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
     T: Clone + Serialize + Send + Sync + 'static,
+    R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
 {
     pub fn with_llm_runner(mut self, llm: LlmRunner) -> Self {
         self.llm = Some(Arc::new(llm));
@@ -199,15 +202,7 @@ where
             _response: PhantomData,
         }
     }
-}
 
-impl<M, C, T, R> AgentBuilder<M, C, T, R>
-where
-    M: Into<InputItem> + Send + Sync + 'static,
-    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
-    T: Clone + Serialize + Send + Sync + 'static,
-    R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
-{
     pub fn build(self) -> AgentResult<Agent<M, C, T, R>> {
         let llm = self.llm.ok_or(AgentError::Internal {
             message: "AgentBuilder requires an llm runner".to_string(),

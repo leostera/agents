@@ -8,9 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::ExecutionTarget;
 use crate::error::EvalResult;
 use crate::eval::Eval;
-use crate::grade::GradeResult;
+use crate::grade::{GradeResult, GraderFailure};
 use crate::suite::Suite;
-use crate::trial::AgentTrial;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -66,6 +65,7 @@ pub struct GraderAggregate {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TrialRecord {
     pub schema_version: u32,
+    pub trial_id: String,
     pub run_id: String,
     pub suite_id: String,
     pub target: ExecutionTarget,
@@ -76,9 +76,11 @@ pub struct TrialRecord {
     pub duration: Duration,
     pub passed: bool,
     pub mean_score: f32,
-    pub trial: Option<AgentTrial>,
+    pub trial: Option<serde_json::Value>,
     pub error: Option<String>,
     pub grades: Vec<GradeResult>,
+    #[serde(default)]
+    pub grader_failures: Vec<GraderFailure>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -152,9 +154,10 @@ impl IncrementalSuiteWriter {
 
     pub(crate) fn write_trial(&mut self, trial: &TrialRecord) -> EvalResult<()> {
         let trial_path = self.suite_dir.join(format!(
-            "trial-{:03}__{}.json",
+            "trial-{:03}__{}__{}.json",
             trial.trial_index + 1,
-            trial.eval_id
+            trial.eval_id,
+            trial.trial_id
         ));
         write_json(&trial_path, trial)?;
         self.files.push(relative_file(&self.root, &trial_path));
@@ -222,9 +225,10 @@ impl SuiteRunReport {
 
         for trial in &self.trials {
             let trial_path = suite_dir.join(format!(
-                "trial-{:03}__{}.json",
+                "trial-{:03}__{}__{}.json",
                 trial.trial_index + 1,
-                trial.eval_id
+                trial.eval_id,
+                trial.trial_id
             ));
             write_json(&trial_path, trial)?;
             files.push(relative_file(root, &trial_path));
@@ -428,12 +432,16 @@ pub(crate) fn run_id() -> String {
     format!("run-{}", now_since_epoch().as_millis())
 }
 
-pub(crate) fn build_summary(
-    suite: &Suite,
+pub(crate) fn build_summary<State, A>(
+    suite: &Suite<State, A>,
     run_id: &str,
     target: &ExecutionTarget,
     trials: &[TrialRecord],
-) -> SuiteSummary {
+) -> SuiteSummary
+where
+    State: Send + Sync + 'static,
+    A: crate::eval::EvalAgent,
+{
     let total_trials = trials.len();
     let passed_trials = trials.iter().filter(|trial| trial.passed).count();
     let mean_score = mean(trials.iter().map(|trial| trial.mean_score));
@@ -460,7 +468,11 @@ pub(crate) fn build_summary(
     }
 }
 
-fn build_eval_aggregate(eval: &Eval, trials: &[TrialRecord]) -> EvalAggregate {
+fn build_eval_aggregate<State, A>(eval: &Eval<State, A>, trials: &[TrialRecord]) -> EvalAggregate
+where
+    State: Send + Sync + 'static,
+    A: crate::eval::EvalAgent,
+{
     let eval_trials: Vec<&TrialRecord> = trials
         .iter()
         .filter(|trial| trial.eval_id == eval.id())

@@ -18,7 +18,7 @@ pub enum EvalError {
     #[error("eval failed: {message}")]
     MessageWithTrial {
         message: String,
-        trial: Box<AgentTrial>,
+        trial: Box<serde_json::Value>,
     },
 }
 
@@ -29,14 +29,17 @@ impl EvalError {
         }
     }
 
-    pub fn message_with_trial(message: impl Into<String>, trial: AgentTrial) -> Self {
+    pub fn message_with_trial<Output>(message: impl Into<String>, trial: AgentTrial<Output>) -> Self
+    where
+        Output: serde::Serialize,
+    {
         Self::MessageWithTrial {
             message: message.into(),
-            trial: Box::new(trial),
+            trial: Box::new(serde_json::to_value(trial).expect("serialize partial trial")),
         }
     }
 
-    pub fn partial_trial(&self) -> Option<&AgentTrial> {
+    pub fn partial_trial_json(&self) -> Option<&serde_json::Value> {
         match self {
             Self::MessageWithTrial { trial, .. } => Some(trial.as_ref()),
             Self::Io(_) | Self::Serde(_) | Self::Message { .. } => None,

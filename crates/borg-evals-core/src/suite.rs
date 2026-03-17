@@ -2,16 +2,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
+
 use crate::config::{ExecutionTarget, RunConfig};
-use crate::error::EvalResult;
-use crate::eval::{Eval, EvalContext};
+use crate::error::{EvalError, EvalResult};
+use crate::eval::{Eval, EvalAgent, EvalContext, NoAgent};
 use crate::report::{
     EvalRunReport, IncrementalSuiteWriter, RunManifest, SCHEMA_VERSION, SuiteRunReport,
     TrialRecord, build_summary, now_since_epoch, run_id,
 };
-use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
-use tracing::{debug, error, info, warn};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub enum SuiteKind {
@@ -20,32 +22,115 @@ pub enum SuiteKind {
     Capability,
 }
 
-#[derive(Clone, Debug)]
-pub struct Suite {
-    id: Arc<str>,
+type AgentFactory<State, A> =
+    Arc<dyn Fn(EvalContext<State>) -> BoxFuture<EvalResult<A>> + Send + Sync>;
+type BoxFuture<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'static>>;
+
+pub struct Suite<State = (), A = NoAgent>
+where
+    A: EvalAgent,
+{
+    id: String,
     kind: SuiteKind,
     trials: usize,
-    evals: Vec<Eval>,
+    state: Arc<State>,
+    agent_factory: Option<AgentFactory<State, A>>,
+    evals: Vec<Eval<State, A>>,
 }
 
-pub struct SuiteRunner<'a> {
-    suite: &'a Suite,
+impl<State, A> Clone for Suite<State, A>
+where
+    A: EvalAgent,
+{
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            kind: self.kind,
+            trials: self.trials,
+            state: self.state.clone(),
+            agent_factory: self.agent_factory.clone(),
+            evals: self.evals.clone(),
+        }
+    }
+}
+
+impl<State, A> std::fmt::Debug for Suite<State, A>
+where
+    A: EvalAgent,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Suite")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("trials", &self.trials)
+            .field("evals", &self.evals)
+            .finish()
+    }
+}
+
+pub struct SuiteRunner<'a, State = (), A = NoAgent>
+where
+    A: EvalAgent,
+{
+    suite: &'a Suite<State, A>,
     config: RunConfig,
     artifact_root: Option<PathBuf>,
 }
 
-impl Suite {
+impl Suite<(), NoAgent> {
     pub fn new(id: impl Into<String>) -> Self {
         Self {
-            id: Arc::from(id.into()),
+            id: id.into(),
             kind: SuiteKind::Regression,
             trials: 1,
+            state: Arc::new(()),
+            agent_factory: None,
             evals: Vec::new(),
         }
     }
 
+    pub fn regression_suite(id: impl Into<String>) -> Self {
+        Self::new(id)
+    }
+
+    pub fn regression(id: impl Into<String>) -> Self {
+        Self::regression_suite(id)
+    }
+
+    pub fn capability_suite(id: impl Into<String>) -> Self {
+        Self::new(id).kind(SuiteKind::Capability)
+    }
+
+    pub fn capability(id: impl Into<String>) -> Self {
+        Self::capability_suite(id)
+    }
+}
+
+impl<State, A> Suite<State, A>
+where
+    A: EvalAgent,
+{
+    pub fn with_state<NewState>(self, state: NewState) -> Suite<NewState, A> {
+        Suite {
+            id: self.id,
+            kind: self.kind,
+            trials: self.trials,
+            state: Arc::new(state),
+            agent_factory: None,
+            evals: Vec::new(),
+        }
+    }
+
+    pub fn state<NewState>(self, state: NewState) -> Suite<NewState, A> {
+        self.with_state(state)
+    }
+
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    pub fn shared_state(&self) -> &Arc<State> {
+        &self.state
     }
 
     pub fn kind(mut self, kind: SuiteKind) -> Self {
@@ -58,13 +143,51 @@ impl Suite {
         self
     }
 
-    pub fn eval(mut self, eval: Eval) -> Self {
+    pub fn eval(mut self, eval: Eval<State, A>) -> Self {
         self.evals.push(eval);
         self
     }
 
-    pub fn evals(&self) -> &[Eval] {
+    pub fn evals(&self) -> &[Eval<State, A>] {
         &self.evals
+    }
+}
+
+impl<State, A> Suite<State, A>
+where
+    State: Send + Sync + 'static,
+    A: EvalAgent,
+{
+    pub fn agent<NewA, F, Fut, E>(self, factory: F) -> Suite<State, NewA>
+    where
+        NewA: EvalAgent,
+        F: Fn(EvalContext<State>) -> Fut + Send + Sync + Clone + 'static,
+        Fut: std::future::Future<Output = Result<NewA, E>> + Send + 'static,
+        E: ToString + Send + 'static,
+    {
+        Suite {
+            id: self.id,
+            kind: self.kind,
+            trials: self.trials,
+            state: self.state,
+            agent_factory: Some(Arc::new(move |ctx| {
+                let factory = factory.clone();
+                Box::pin(async move {
+                    debug!(
+                        suite_id = %ctx.suite_id,
+                        eval_id = %ctx.eval_id,
+                        trial_id = %ctx.trial_id,
+                        trial_index = ctx.trial_index,
+                        target_label = %ctx.target.label,
+                        "building agent"
+                    );
+                    factory(ctx)
+                        .await
+                        .map_err(|error| EvalError::message(error.to_string()))
+                })
+            })),
+            evals: Vec::new(),
+        }
     }
 
     pub async fn run(&self) -> EvalResult<SuiteRunReport> {
@@ -72,7 +195,7 @@ impl Suite {
         run_single_target(self, run_id, &ExecutionTarget::default(), self.trials, None).await
     }
 
-    pub fn run_with(&self, config: RunConfig) -> SuiteRunner<'_> {
+    pub fn run_with(&self, config: RunConfig) -> SuiteRunner<'_, State, A> {
         SuiteRunner {
             suite: self,
             config,
@@ -81,7 +204,11 @@ impl Suite {
     }
 }
 
-impl<'a> SuiteRunner<'a> {
+impl<'a, State, A> SuiteRunner<'a, State, A>
+where
+    State: Send + Sync + 'static,
+    A: EvalAgent,
+{
     pub fn persist_to(mut self, root: impl AsRef<Path>) -> Self {
         self.artifact_root = Some(root.as_ref().to_path_buf());
         self
@@ -94,7 +221,7 @@ impl<'a> SuiteRunner<'a> {
         let local_target_semaphore = Arc::new(Semaphore::new(1));
 
         info!(
-            suite = %self.suite.id(),
+            suite_id = %self.suite.id(),
             targets = self.config.targets.len(),
             trials = self.config.trials,
             "starting eval run"
@@ -104,7 +231,7 @@ impl<'a> SuiteRunner<'a> {
 
         for target in &self.config.targets {
             let target = target.clone();
-            let suite = self.suite.clone();
+            let suite = (*self.suite).clone();
             let run_id = run_id.clone();
             let trials = self.config.trials;
             let local_target_semaphore = local_target_semaphore.clone();
@@ -141,7 +268,7 @@ impl<'a> SuiteRunner<'a> {
         };
 
         info!(
-            suite = %self.suite.id(),
+            suite_id = %self.suite.id(),
             variants = variants.len(),
             "finished eval run"
         );
@@ -150,18 +277,22 @@ impl<'a> SuiteRunner<'a> {
     }
 }
 
-async fn run_single_target(
-    suite: &Suite,
+async fn run_single_target<State, A>(
+    suite: &Suite<State, A>,
     run_id: String,
     target: &ExecutionTarget,
     default_trials: usize,
     artifact_root: Option<&Path>,
-) -> EvalResult<SuiteRunReport> {
+) -> EvalResult<SuiteRunReport>
+where
+    State: Send + Sync + 'static,
+    A: EvalAgent,
+{
     let started_at = now_since_epoch();
     let mut trial_records = Vec::new();
 
     info!(
-        suite = %suite.id(),
+        suite_id = %suite.id(),
         target_label = %target.label,
         provider = %target.provider,
         model = %target.model,
@@ -194,9 +325,9 @@ async fn run_single_target(
     for eval in suite.evals() {
         let trial_count = eval.configured_trials().unwrap_or(default_trials);
         info!(
-            suite = %suite.id(),
+            suite_id = %suite.id(),
             target_label = %target.label,
-            eval = %eval.id(),
+            eval_id = %eval.id(),
             trials = trial_count,
             "starting eval"
         );
@@ -206,10 +337,21 @@ async fn run_single_target(
             let target = target.clone();
             let eval = eval.clone();
             let run_id = run_id.clone();
+            let state = suite.shared_state().clone();
+            let agent_factory = suite.agent_factory.clone();
 
             jobs.spawn(async move {
                 let _permit = semaphore.acquire_owned().await.expect("semaphore permit");
-                execute_trial(run_id, suite_id, target, eval, trial_index).await
+                execute_trial(
+                    run_id,
+                    suite_id,
+                    state,
+                    target,
+                    eval,
+                    agent_factory,
+                    trial_index,
+                )
+                .await
             });
         }
     }
@@ -231,7 +373,7 @@ async fn run_single_target(
     let finished_at = now_since_epoch();
     let summary = build_summary(suite, &run_id, target, &trial_records);
     info!(
-        suite = %suite.id(),
+        suite_id = %suite.id(),
         target_label = %target.label,
         pass_rate = summary.pass_rate,
         mean_score = summary.mean_score,
@@ -260,71 +402,104 @@ async fn run_single_target(
     Ok(report)
 }
 
-async fn execute_trial(
+async fn execute_trial<State, A>(
     run_id: String,
     suite_id: String,
+    state: Arc<State>,
     target: ExecutionTarget,
-    eval: Eval,
+    eval: Eval<State, A>,
+    agent_factory: Option<AgentFactory<State, A>>,
     trial_index: usize,
-) -> TrialRecord {
+) -> TrialRecord
+where
+    State: Send + Sync + 'static,
+    A: EvalAgent,
+{
+    let trial_id = Uuid::now_v7().to_string();
     let started_at_wall = now_since_epoch();
     let started_at_instant = Instant::now();
     let ctx = EvalContext {
         suite_id: suite_id.clone(),
         eval_id: eval.id().to_string(),
+        trial_id: trial_id.clone(),
         trial_index,
         target: target.clone(),
+        state,
     };
     debug!(
-        suite = %suite_id,
+        suite_id = %suite_id,
         target_label = %target.label,
-        eval = %eval.id(),
+        eval_id = %eval.id(),
+        trial_id = %trial_id,
         trial_index,
         "starting trial"
     );
 
-    match eval.execute(ctx).await {
+    let execution = match agent_factory {
+        Some(factory) => match factory(ctx.clone()).await {
+            Ok(agent) => {
+                debug!(
+                    suite_id = %suite_id,
+                    target_label = %target.label,
+                    eval_id = %eval.id(),
+                    trial_id = %trial_id,
+                    trial_index,
+                    "agent built"
+                );
+                eval.execute(ctx.clone(), agent).await
+            }
+            Err(error) => Err(error),
+        },
+        None => Err(EvalError::message("suite missing agent factory")),
+    };
+
+    match execution {
         Ok(trial) => {
             let trial = Arc::new(trial);
-            let mut grades = Vec::new();
-            let mut grade_error = None;
+            let outcome = eval
+                .grading_config()
+                .run((*trial).clone(), ctx.clone())
+                .await;
+            let (passed, mean_score, grades, grader_failures) = match outcome {
+                Ok(outcome) => (
+                    outcome.passed,
+                    outcome.mean_score,
+                    outcome.grades,
+                    outcome.grader_failures,
+                ),
+                Err(error) => (
+                    false,
+                    0.0,
+                    Vec::new(),
+                    vec![crate::grade::GraderFailure {
+                        name: "grading".to_string(),
+                        error: error.to_string(),
+                    }],
+                ),
+            };
 
-            for grader in eval.graders() {
-                match grader.grade(trial.clone()).await {
-                    Ok(grade) => grades.push(grade),
-                    Err(error) => {
-                        grade_error = Some(error.to_string());
-                        break;
-                    }
-                }
-            }
-
-            let (passed, mean_score, error) = if let Some(error) = grade_error {
-                (false, 0.0, Some(error))
+            let error = if grader_failures.is_empty() {
+                None
             } else {
-                let passed = grades.iter().all(|grade| grade.passed);
-                let mean_score = if grades.is_empty() {
-                    1.0
-                } else {
-                    grades.iter().map(|grade| grade.score).sum::<f32>() / grades.len() as f32
-                };
-                (passed, mean_score, None)
+                Some(format!("{} graders failed", grader_failures.len()))
             };
 
             if let Some(error) = &error {
                 warn!(
-                    suite = %suite_id,
+                    suite_id = %suite_id,
                     target_label = %target.label,
-                    eval = %eval.id(),
+                    eval_id = %eval.id(),
+                    trial_id = %trial_id,
                     trial_index,
                     %error,
                     "trial grading failed"
                 );
             } else {
                 info!(
-                    suite = %suite_id,
+                    suite_id = %suite_id,
                     target_label = %target.label,
-                    eval = %eval.id(),
+                    eval_id = %eval.id(),
+                    trial_id = %trial_id,
                     trial_index,
                     passed,
                     mean_score,
@@ -336,6 +511,7 @@ async fn execute_trial(
 
             TrialRecord {
                 schema_version: SCHEMA_VERSION,
+                trial_id,
                 run_id,
                 suite_id,
                 target,
@@ -346,16 +522,18 @@ async fn execute_trial(
                 duration: started_at_instant.elapsed(),
                 passed,
                 mean_score,
-                trial: Some((*trial).clone()),
+                trial: Some(serde_json::to_value(trial.as_ref()).expect("serialize trial")),
                 error,
                 grades,
+                grader_failures,
             }
         }
         Err(error) => {
             error!(
-                suite = %suite_id,
+                suite_id = %suite_id,
                 target_label = %target.label,
-                eval = %eval.id(),
+                eval_id = %eval.id(),
+                trial_id = %trial_id,
                 trial_index,
                 error = %error,
                 "trial execution failed"
@@ -363,6 +541,7 @@ async fn execute_trial(
             let finished_at_wall = now_since_epoch();
             TrialRecord {
                 schema_version: SCHEMA_VERSION,
+                trial_id,
                 run_id,
                 suite_id,
                 target,
@@ -373,9 +552,10 @@ async fn execute_trial(
                 duration: started_at_instant.elapsed(),
                 passed: false,
                 mean_score: 0.0,
-                trial: error.partial_trial().cloned(),
+                trial: error.partial_trial_json().cloned(),
                 error: Some(error.to_string()),
                 grades: Vec::new(),
+                grader_failures: Vec::new(),
             }
         }
     }

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 borg-agent = { path = "../borg-agent" }
 borg-llm = { path = "../borg-llm" }
 chrono.workspace = true
@@ -15,3 +16,4 @@ thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+uuid.workspace = true

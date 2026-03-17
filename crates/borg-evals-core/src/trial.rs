@@ -5,36 +5,47 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct AgentTrial {
+pub struct AgentTrial<Output = String> {
     pub transcript: Vec<RecordedEvent>,
-    pub final_reply: Option<String>,
+    pub final_reply: Option<Output>,
     pub tool_trace: Vec<RecordedToolCall>,
     #[serde(default)]
     pub metadata: Value,
 }
 
-impl AgentTrial {
-    pub fn new(final_reply: impl Into<String>) -> Self {
+impl<Output> AgentTrial<Output> {
+    pub fn new(final_reply: Output) -> Self {
         Self {
             transcript: Vec::new(),
-            final_reply: Some(final_reply.into()),
+            final_reply: Some(final_reply),
             tool_trace: Vec::new(),
             metadata: Value::Null,
         }
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-pub struct AgentTrialRecorder {
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct AgentTrialRecorder<Output = String> {
     transcript: Vec<RecordedEvent>,
-    final_reply: Option<String>,
+    final_reply: Option<Output>,
     tool_trace: Vec<RecordedToolCall>,
 }
 
-impl AgentTrialRecorder {
-    pub fn record<Tool, ToolResult>(&mut self, event: &AgentEvent<Tool, ToolResult, String>)
+impl<Output> Default for AgentTrialRecorder<Output> {
+    fn default() -> Self {
+        Self {
+            transcript: Vec::new(),
+            final_reply: None,
+            tool_trace: Vec::new(),
+        }
+    }
+}
+
+impl<Output> AgentTrialRecorder<Output> {
+    pub fn record<Tool, ToolResult>(&mut self, event: &AgentEvent<Tool, ToolResult, Output>)
     where
         ToolResult: Serialize,
+        Output: Clone + Serialize,
     {
         match event {
             AgentEvent::ModelOutputItem { item } => match item {
@@ -124,7 +135,7 @@ impl AgentTrialRecorder {
             }
             AgentEvent::Completed { reply } => {
                 self.transcript.push(RecordedEvent::Completed {
-                    reply: reply.clone(),
+                    reply: serde_json::to_value(reply).expect("serialize completed reply"),
                 });
                 self.final_reply = Some(reply.clone());
             }
@@ -132,11 +143,14 @@ impl AgentTrialRecorder {
         }
     }
 
-    pub fn final_reply(&self) -> Option<&str> {
-        self.final_reply.as_deref()
+    pub fn final_reply(&self) -> Option<&Output> {
+        self.final_reply.as_ref()
     }
 
-    pub fn snapshot(&self, metadata: Value) -> AgentTrial {
+    pub fn snapshot(&self, metadata: Value) -> AgentTrial<Output>
+    where
+        Output: Clone,
+    {
         AgentTrial {
             transcript: self.transcript.clone(),
             final_reply: self.final_reply.clone(),
@@ -145,7 +159,7 @@ impl AgentTrialRecorder {
         }
     }
 
-    pub fn into_trial(self, metadata: Value) -> AgentTrial {
+    pub fn into_trial(self, metadata: Value) -> AgentTrial<Output> {
         AgentTrial {
             transcript: self.transcript,
             final_reply: self.final_reply,
@@ -173,7 +187,7 @@ pub enum RecordedEvent {
         result: Value,
     },
     Completed {
-        reply: String,
+        reply: Value,
     },
 }
 
