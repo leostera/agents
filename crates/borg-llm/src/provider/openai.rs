@@ -862,7 +862,7 @@ fn map_response_tools(tools: Vec<RawToolDefinition>) -> Vec<ResponseToolDefiniti
     tools
         .into_iter()
         .map(|tool| ResponseToolDefinition {
-            r#type: tool.r#type,
+            r#type: tool.kind,
             name: tool.function.name,
             description: tool.function.description,
             parameters: normalize_openai_schema(tool.function.parameters),

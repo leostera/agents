@@ -520,7 +520,7 @@ fn map_tool_definitions(tools: Vec<RawToolDefinition>) -> Vec<Tool> {
     tools
         .into_iter()
         .map(|tool| Tool {
-            r#type: tool.r#type,
+            r#type: tool.kind,
             function: ToolFunction {
                 name: tool.function.name,
                 description: tool.function.description,

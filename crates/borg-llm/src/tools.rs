@@ -7,20 +7,21 @@ use crate::error::{Error, LlmResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RawToolDefinition {
-    pub r#type: String,
-    pub function: RawToolFunction,
+pub struct ToolDefinition {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: ToolFunction,
 }
 
-impl RawToolDefinition {
+impl ToolDefinition {
     pub fn function(
         name: impl Into<String>,
         description: Option<&str>,
         parameters: serde_json::Value,
     ) -> Self {
         Self {
-            r#type: "function".to_string(),
-            function: RawToolFunction {
+            kind: "function".to_string(),
+            function: ToolFunction {
                 name: name.into(),
                 description: description.map(str::to_string),
                 parameters,
@@ -31,11 +32,14 @@ impl RawToolDefinition {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RawToolFunction {
+pub struct ToolFunction {
     pub name: String,
     pub description: Option<String>,
     pub parameters: serde_json::Value,
 }
+
+pub type RawToolDefinition = ToolDefinition;
+pub type RawToolFunction = ToolFunction;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,13 +50,13 @@ pub struct RawToolCall {
 }
 
 pub trait TypedTool: Sized + DeserializeOwned + schemars::JsonSchema + 'static {
-    fn tool_definitions() -> Vec<RawToolDefinition>;
+    fn tool_definitions() -> Vec<ToolDefinition>;
 
     fn decode_tool_call(name: &str, arguments: serde_json::Value) -> LlmResult<Self>;
 }
 
 impl TypedTool for () {
-    fn tool_definitions() -> Vec<RawToolDefinition> {
+    fn tool_definitions() -> Vec<ToolDefinition> {
         Vec::new()
     }
 
@@ -83,30 +87,32 @@ impl<C: fmt::Debug> fmt::Debug for ToolCall<C> {
 }
 
 #[derive(Clone)]
-pub struct TypedToolSet<C> {
+pub struct ToolSet<C> {
     _phantom: PhantomData<C>,
 }
 
-impl<C: TypedTool> TypedToolSet<C> {
+impl<C: TypedTool> ToolSet<C> {
     pub fn new() -> Self {
         Self {
             _phantom: PhantomData,
         }
     }
 
-    pub fn to_tool_definitions(&self) -> Vec<RawToolDefinition> {
+    pub fn to_tool_definitions(&self) -> Vec<ToolDefinition> {
         C::tool_definitions()
     }
 }
 
-impl<C: TypedTool> Default for TypedToolSet<C> {
+impl<C: TypedTool> Default for ToolSet<C> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<C> fmt::Debug for TypedToolSet<C> {
+impl<C> fmt::Debug for ToolSet<C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TypedToolSet").finish()
+        f.debug_struct("ToolSet").finish()
     }
 }
+
+pub type TypedToolSet<C> = ToolSet<C>;
