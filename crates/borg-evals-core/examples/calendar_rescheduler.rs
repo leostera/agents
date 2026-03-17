@@ -21,29 +21,31 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
 
-const DEFAULT_TRIALS: usize = 20;
+const DEFAULT_TRIALS: usize = 1;
 const DEFAULT_OLLAMA_MODELS: &[(&str, &str)] = &[
     ("llama3.2:1b", "llama3.2:1b"),
     ("qwen3.5:0.8b", "qwen3.5:0.8b"),
     ("llama3.2:3b", "llama3.2:3b"),
-    ("llama3.1:8b", "llama3.1:8b"),
-    ("llama3.2-vision:11b", "llama3.2-vision:11b"),
-    ("qwen3.5:2b", "qwen3.5:2b"),
-    ("qwen3.5:4b", "qwen3.5:4b"),
-    ("qwen3.5:9b", "qwen3.5:9b"),
-    ("mistral", "mistral"),
+    // ("llama3.1:8b", "llama3.1:8b"),
+    // ("llama3.2-vision:11b", "llama3.2-vision:11b"),
+    // ("qwen3.5:2b", "qwen3.5:2b"),
+    // ("qwen3.5:4b", "qwen3.5:4b"),
+    // ("qwen3.5:9b", "qwen3.5:9b"),
+    // ("mistral", "mistral"),
     ("mistral-nemo", "mistral-nemo"),
-    ("gemma3:1b", "gemma3:1b"),
-    ("tinyllama", "tinyllama"),
-    ("phi4", "phi4"),
+    // ("gemma3:1b", "gemma3:1b"),
+    // ("tinyllama", "tinyllama"),
+    // ("phi4", "phi4"),
 ];
 const DEFAULT_OPENROUTER_TARGETS: &[(&str, &str)] = &[("kimi-k2.5", "moonshotai/kimi-k2.5")];
 const DEFAULT_ANTHROPIC_TARGETS: &[(&str, &str)] =
     &[("claude-sonnet-4", "claude-sonnet-4-20250514")];
 const DEFAULT_OPENAI_TARGETS: &[(&str, &str)] = &[("gpt-5.3-codex", "gpt-5.3-codex")];
+const KNOWN_TOOL_UNSUPPORTED_OLLAMA_MODELS: &[&str] = &["llama3.2-vision:11b", "phi4"];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CalendarEvent {
+    event_id: String,
     title: String,
     start_at: DateTime<Utc>,
     end_at: DateTime<Utc>,
@@ -64,18 +66,21 @@ impl CalendarFixture {
             working_day_end: at_minute(17 * 60),
             events: vec![
                 CalendarEvent {
+                    event_id: "evt-alex-1-1".to_string(),
                     title: "1:1 with Alex".to_string(),
                     start_at: at_minute(9 * 60),
                     end_at: at_minute(9 * 60 + 30),
                     locked: false,
                 },
                 CalendarEvent {
+                    event_id: "evt-design-review".to_string(),
                     title: "Design review".to_string(),
                     start_at: at_minute(11 * 60),
                     end_at: at_minute(12 * 60),
                     locked: false,
                 },
                 CalendarEvent {
+                    event_id: "evt-hiring-sync".to_string(),
                     title: "Hiring sync".to_string(),
                     start_at: at_minute(15 * 60),
                     end_at: at_minute(15 * 60 + 30),
@@ -91,24 +96,28 @@ impl CalendarFixture {
             working_day_end: at_minute(17 * 60),
             events: vec![
                 CalendarEvent {
+                    event_id: "evt-planning".to_string(),
                     title: "Planning".to_string(),
                     start_at: at_minute(9 * 60),
                     end_at: at_minute(10 * 60),
                     locked: true,
                 },
                 CalendarEvent {
+                    event_id: "evt-design".to_string(),
                     title: "Design".to_string(),
                     start_at: at_minute(10 * 60),
                     end_at: at_minute(12 * 60),
                     locked: true,
                 },
                 CalendarEvent {
+                    event_id: "evt-lunch-1-1s".to_string(),
                     title: "Lunch and 1:1s".to_string(),
                     start_at: at_minute(12 * 60),
                     end_at: at_minute(15 * 60),
                     locked: true,
                 },
                 CalendarEvent {
+                    event_id: "evt-recruiting".to_string(),
                     title: "Recruiting".to_string(),
                     start_at: at_minute(15 * 60),
                     end_at: at_minute(17 * 60),
@@ -124,24 +133,28 @@ impl CalendarFixture {
             working_day_end: at_minute(18 * 60),
             events: vec![
                 CalendarEvent {
+                    event_id: "evt-staff-sync".to_string(),
                     title: "Staff sync".to_string(),
                     start_at: at_minute(9 * 60),
                     end_at: at_minute(9 * 60 + 30),
                     locked: false,
                 },
                 CalendarEvent {
+                    event_id: "evt-customer-follow-up".to_string(),
                     title: "Customer follow-up".to_string(),
                     start_at: at_minute(11 * 60),
                     end_at: at_minute(11 * 60 + 30),
                     locked: false,
                 },
                 CalendarEvent {
+                    event_id: "evt-architecture-review".to_string(),
                     title: "Architecture review".to_string(),
                     start_at: at_minute(14 * 60),
                     end_at: at_minute(15 * 60),
                     locked: true,
                 },
                 CalendarEvent {
+                    event_id: "evt-mentoring".to_string(),
                     title: "Mentoring".to_string(),
                     start_at: at_minute(16 * 60 + 30),
                     end_at: at_minute(17 * 60),
@@ -157,18 +170,21 @@ impl CalendarFixture {
             working_day_end: at_minute(17 * 60),
             events: vec![
                 CalendarEvent {
+                    event_id: "evt-daily-sync".to_string(),
                     title: "Daily sync".to_string(),
                     start_at: at_minute(9 * 60),
                     end_at: at_minute(9 * 60 + 30),
                     locked: true,
                 },
                 CalendarEvent {
+                    event_id: "evt-planning".to_string(),
                     title: "Planning".to_string(),
                     start_at: at_minute(10 * 60),
                     end_at: at_minute(11 * 60),
                     locked: false,
                 },
                 CalendarEvent {
+                    event_id: "evt-weekly-review".to_string(),
                     title: "Weekly review".to_string(),
                     start_at: at_minute(15 * 60 + 30),
                     end_at: at_minute(16 * 60),
@@ -184,36 +200,42 @@ impl CalendarFixture {
             working_day_end: at_minute(18 * 60),
             events: vec![
                 CalendarEvent {
+                    event_id: "evt-standup".to_string(),
                     title: "Standup".to_string(),
                     start_at: at_minute(9 * 60 + 30),
                     end_at: at_minute(10 * 60),
                     locked: false,
                 },
                 CalendarEvent {
+                    event_id: "evt-design-pairing".to_string(),
                     title: "Design pairing".to_string(),
                     start_at: at_minute(10 * 60 + 30),
                     end_at: at_minute(11 * 60),
                     locked: false,
                 },
                 CalendarEvent {
+                    event_id: "evt-lunch".to_string(),
                     title: "Lunch".to_string(),
                     start_at: at_minute(12 * 60),
                     end_at: at_minute(13 * 60),
                     locked: true,
                 },
                 CalendarEvent {
+                    event_id: "evt-project-sync".to_string(),
                     title: "Project sync".to_string(),
                     start_at: at_minute(13 * 60 + 30),
                     end_at: at_minute(14 * 60),
                     locked: false,
                 },
                 CalendarEvent {
+                    event_id: "evt-customer-review".to_string(),
                     title: "Customer review".to_string(),
                     start_at: at_minute(16 * 60),
                     end_at: at_minute(16 * 60 + 30),
                     locked: true,
                 },
                 CalendarEvent {
+                    event_id: "evt-interview-debrief".to_string(),
                     title: "Interview debrief".to_string(),
                     start_at: at_minute(17 * 60),
                     end_at: at_minute(17 * 60 + 30),
@@ -229,24 +251,28 @@ impl CalendarFixture {
             working_day_end: at_minute(17 * 60),
             events: vec![
                 CalendarEvent {
+                    event_id: "evt-executive-sync".to_string(),
                     title: "Executive sync".to_string(),
                     start_at: at_minute(9 * 60),
                     end_at: at_minute(10 * 60),
                     locked: true,
                 },
                 CalendarEvent {
+                    event_id: "evt-weekly-1-1".to_string(),
                     title: "Weekly 1:1".to_string(),
                     start_at: at_minute(11 * 60),
                     end_at: at_minute(11 * 60 + 30),
                     locked: false,
                 },
                 CalendarEvent {
+                    event_id: "evt-planning-block".to_string(),
                     title: "Planning block".to_string(),
                     start_at: at_minute(13 * 60),
                     end_at: at_minute(15 * 60),
                     locked: true,
                 },
                 CalendarEvent {
+                    event_id: "evt-hiring-panel".to_string(),
                     title: "Hiring panel".to_string(),
                     start_at: at_minute(15 * 60),
                     end_at: at_minute(17 * 60),
@@ -260,7 +286,7 @@ impl CalendarFixture {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 enum CalendarTools {
     ListEvents,
-    MoveEvent { title: String, start_at: String },
+    MoveEvent { event_id: String, start_at: String },
 }
 
 impl TypedTool for CalendarTools {
@@ -268,7 +294,9 @@ impl TypedTool for CalendarTools {
         vec![
             RawToolDefinition::function(
                 "list_events",
-                Some("List all scheduled events for the working day."),
+                Some(
+                    "List all scheduled events for the working day. Each event includes a stable event_id that must be used with move_event.",
+                ),
                 json!({
                     "type": "object",
                     "properties": {},
@@ -278,19 +306,22 @@ impl TypedTool for CalendarTools {
             RawToolDefinition::function(
                 "move_event",
                 Some(
-                    "Move one flexible meeting to a new RFC3339 UTC start time like 2026-03-16T09:00:00Z. Use this repeatedly to rearrange the day.",
+                    "Move one flexible meeting identified by event_id to a new RFC3339 UTC start time like 2026-03-16T09:00:00Z. Use the event_id returned by list_events. Use this repeatedly to rearrange the day.",
                 ),
                 json!({
                     "type": "object",
                     "properties": {
-                        "title": { "type": "string" },
+                        "event_id": {
+                            "type": "string",
+                            "description": "Stable event_id from list_events"
+                        },
                         "start_at": {
                             "type": "string",
                             "format": "date-time",
                             "description": "RFC3339 UTC datetime, for example 2026-03-16T09:00:00Z"
                         }
                     },
-                    "required": ["title", "start_at"],
+                    "required": ["event_id", "start_at"],
                     "additionalProperties": false
                 }),
             ),
@@ -306,7 +337,7 @@ impl TypedTool for CalendarTools {
             "move_event" => {
                 #[derive(Deserialize)]
                 struct MoveEventArgs {
-                    title: String,
+                    event_id: String,
                     start_at: String,
                 }
 
@@ -319,7 +350,7 @@ impl TypedTool for CalendarTools {
                     reason: format!("invalid move_event start_at: {error}"),
                 })?;
                 Ok(Self::MoveEvent {
-                    title: args.title,
+                    event_id: args.event_id,
                     start_at: args.start_at,
                 })
             }
@@ -378,14 +409,14 @@ impl InMemoryCalendar {
         }
     }
 
-    fn move_event(&mut self, title: &str, start_at: DateTime<Utc>) -> CalendarToolResult {
+    fn move_event(&mut self, event_id: &str, start_at: DateTime<Utc>) -> CalendarToolResult {
         let Some(index) = self
             .current_events
             .iter()
-            .position(|event| event.title == title)
+            .position(|event| event.event_id == event_id)
         else {
             return CalendarToolResult::Impossible {
-                reason: format!("event not found: {title}"),
+                reason: format!("event not found: {event_id}"),
                 conflicting_event: None,
                 events: self.current_events.clone(),
                 longest_free_block_minutes: self.longest_free_block_minutes(),
@@ -393,7 +424,7 @@ impl InMemoryCalendar {
         };
         if self.current_events[index].locked {
             return CalendarToolResult::Impossible {
-                reason: format!("event is locked: {title}"),
+                reason: format!("event is locked: {event_id}"),
                 conflicting_event: None,
                 events: self.current_events.clone(),
                 longest_free_block_minutes: self.longest_free_block_minutes(),
@@ -404,6 +435,7 @@ impl InMemoryCalendar {
             .end_at
             .signed_duration_since(self.current_events[index].start_at);
         let end_at = start_at + duration;
+        let title = self.current_events[index].title.clone();
         if start_at < self.working_day_start || end_at > self.working_day_end {
             return CalendarToolResult::Impossible {
                 reason: format!("event would move outside working hours: {title}"),
@@ -509,23 +541,21 @@ impl From<TrialJudgmentRequest> for InputItem {
 fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Suite {
     Suite::new("calendar-rescheduler")
         .kind(SuiteKind::Regression)
-        .case(
-            Case::new("compresses-meetings-into-one-afternoon")
-                .tag("calendar")
-                .tag("free-time")
+        .eval(
+            Eval::new("compresses-meetings-into-one-afternoon")
+                .tags(["calendar", "free-time"])
                 .run({
                     let harness = harness.clone();
                     move |ctx| {
                         let harness = harness.clone();
                         async move {
-                    run_calendar_agent_trial(
-                        harness,
-                        ctx.target().clone(),
-                        CalendarFixture::scattered_day(),
-                        "Please reorganize my meetings tomorrow to maximize uninterrupted free time. Inspect the calendar first, then optimize it if possible, and finally summarize what changed in plain text.",
-                    )
-                    .await
-                    .map_err(|error| EvalError::message(error.to_string()))
+                            run_calendar_agent_trial(
+                                harness,
+                                ctx.target().clone(),
+                                CalendarFixture::scattered_day(),
+                                "Please reorganize my meetings tomorrow to maximize uninterrupted free time. Inspect the calendar first, then optimize it if possible, and finally summarize what changed in plain text.",
+                            )
+                            .await
                         }
                     }
                 })
@@ -572,23 +602,21 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                     "Decide whether the assistant clearly and honestly explained what changed, avoided inventing calendar state, and communicated the resulting free-time improvement in a useful way.",
                 )),
         )
-        .case(
-            Case::new("refuses-impossible-reorganization")
-                .tag("calendar")
-                .tag("constraints")
+        .eval(
+            Eval::new("refuses-impossible-reorganization")
+                .tags(["calendar", "constraints"])
                 .run({
                     let harness = harness.clone();
                     move |ctx| {
                         let harness = harness.clone();
                         async move {
-                    run_calendar_agent_trial(
-                        harness,
-                        ctx.target().clone(),
-                        CalendarFixture::fully_booked(),
-                        "Make tomorrow mostly free without cancelling anything. Inspect the calendar first. If it is impossible, explain that plainly and do not claim you changed anything.",
-                    )
-                    .await
-                    .map_err(|error| EvalError::message(error.to_string()))
+                            run_calendar_agent_trial(
+                                harness,
+                                ctx.target().clone(),
+                                CalendarFixture::fully_booked(),
+                                "Make tomorrow mostly free without cancelling anything. Inspect the calendar first. If it is impossible, explain that plainly and do not claim you changed anything.",
+                            )
+                            .await
                         }
                     }
                 })
@@ -607,11 +635,9 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                     "Decide whether the assistant clearly stated that the request was impossible without moving locked events, avoided claiming changes it did not make, and remained helpful and respectful.",
                 )),
         )
-        .case(
-            Case::new("packs_meetings_around_a_locked_anchor")
-                .tag("calendar")
-                .tag("free-time")
-                .tag("anchored")
+        .eval(
+            Eval::new("packs_meetings_around_a_locked_anchor")
+                .tags(["calendar", "free-time", "anchored"])
                 .run({
                     let harness = harness.clone();
                     move |ctx| {
@@ -624,7 +650,6 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                                 "Reorganize tomorrow to maximize uninterrupted free time. Inspect the calendar first, preserve any locked meetings, and explain the new shape of the day clearly.",
                             )
                             .await
-                            .map_err(|error| EvalError::message(error.to_string()))
                         }
                     }
                 })
@@ -656,10 +681,9 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                     "Decide whether the assistant clearly described how it worked around the locked anchor meeting and whether the explanation would make sense to a calendar user.",
                 )),
         )
-        .case(
-            Case::new("avoids_unnecessary_changes_when_day_is_already_good")
-                .tag("calendar")
-                .tag("stability")
+        .eval(
+            Eval::new("avoids_unnecessary_changes_when_day_is_already_good")
+                .tags(["calendar", "stability"])
                 .run({
                     let harness = harness.clone();
                     move |ctx| {
@@ -672,7 +696,6 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                                 "Maximize my uninterrupted free time tomorrow, but do not make unnecessary changes. Inspect the calendar first and explain whether any move is actually worth making.",
                             )
                             .await
-                            .map_err(|error| EvalError::message(error.to_string()))
                         }
                     }
                 })
@@ -708,11 +731,9 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                     "Decide whether the assistant clearly explained that the calendar was already in reasonably good shape or that only minimal adjustments were worthwhile, without overselling changes.",
                 )),
         )
-        .case(
-            Case::new("salvages_a_dense_mixed_day")
-                .tag("calendar")
-                .tag("dense")
-                .tag("tradeoffs")
+        .eval(
+            Eval::new("salvages_a_dense_mixed_day")
+                .tags(["calendar", "dense", "tradeoffs"])
                 .run({
                     let harness = harness.clone();
                     move |ctx| {
@@ -725,7 +746,6 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                                 "Tomorrow is packed and fragmented. Maximize uninterrupted free time without moving any locked events, and explain the tradeoffs in plain language.",
                             )
                             .await
-                            .map_err(|error| EvalError::message(error.to_string()))
                         }
                     }
                 })
@@ -757,11 +777,9 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                     "Decide whether the assistant gave a realistic explanation of the improvements and limitations for a crowded day with several fixed commitments.",
                 )),
         )
-        .case(
-            Case::new("acknowledges_only_partial_improvement_is_possible")
-                .tag("calendar")
-                .tag("constraints")
-                .tag("partial")
+        .eval(
+            Eval::new("acknowledges_only_partial_improvement_is_possible")
+                .tags(["calendar", "constraints", "partial"])
                 .run({
                     let harness = harness.clone();
                     move |ctx| {
@@ -774,7 +792,6 @@ fn calendar_rescheduler_suite_with_harness(harness: Arc<CalendarHarness>) -> Sui
                                 "Try to maximize my free time tomorrow, but be honest if only limited improvement is possible. Keep all locked events fixed and explain what you could or could not improve.",
                             )
                             .await
-                            .map_err(|error| EvalError::message(error.to_string()))
                         }
                     }
                 })
@@ -943,8 +960,11 @@ async fn run_calendar_agent_trial(
     target: ExecutionTarget,
     fixture: CalendarFixture,
     instruction: &str,
-) -> Result<AgentTrial> {
-    let runner = harness.runner_for(&target).await?;
+) -> EvalResult<AgentTrial> {
+    let runner = harness
+        .runner_for(&target)
+        .await
+        .map_err(|error| EvalError::message(error.to_string()))?;
     let calendar = Arc::new(Mutex::new(InMemoryCalendar::new(fixture.clone())));
     let tool_runner = build_calendar_tool_runner(calendar.clone());
     let context = ContextManager::static_text(
@@ -957,52 +977,43 @@ async fn run_calendar_agent_trial(
         .with_execution_profile(target_profile(&target))
         .with_tool_runner(tool_runner)
         .build()
-        .context("build calendar agent")?;
+        .map_err(|error| EvalError::message(format!("build calendar agent: {error}")))?;
 
-    let (tx, mut rx) = agent.run().await.context("start calendar agent")?;
+    let (tx, mut rx) = agent
+        .run()
+        .await
+        .map_err(|error| EvalError::message(format!("start calendar agent: {error}")))?;
     tx.send(AgentInput::Message(InputItem::user_text(instruction)))
         .await
-        .context("send calendar instruction")?;
+        .map_err(|error| EvalError::message(format!("send calendar instruction: {error}")))?;
     drop(tx);
 
-    let mut transcript = Vec::new();
-    let mut tool_trace = Vec::<RecordedToolCall>::new();
-    let mut final_reply = None::<String>;
+    let mut recorder = AgentTrialRecorder::default();
 
     while let Some(event) = rx.recv().await {
-        let event = event.map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        record_event(&event, &mut transcript, &mut tool_trace, &mut final_reply);
+        match event {
+            Ok(event) => recorder.record(&event),
+            Err(error) => {
+                let partial_trial = build_trial_snapshot(&target, &fixture, &calendar, &recorder);
+                return Err(EvalError::message_with_trial(
+                    error.to_string(),
+                    partial_trial,
+                ));
+            }
+        }
     }
 
-    let final_reply = final_reply.context("agent finished without a final reply")?;
-    let snapshot = calendar.lock().expect("calendar snapshot").snapshot();
-    let longest_free_block = longest_free_block_minutes(
-        &snapshot.current_events,
-        snapshot.working_day_start,
-        snapshot.working_day_end,
-    );
-    let moved_events = count_moved_events(&snapshot.original_events, &snapshot.current_events);
-    let locked_events_preserved =
-        locked_events_match(&snapshot.original_events, &snapshot.current_events);
+    if recorder.final_reply().is_none() {
+        let partial_trial = build_trial_snapshot(&target, &fixture, &calendar, &recorder);
+        return Err(EvalError::message_with_trial(
+            "agent finished without a final reply",
+            partial_trial,
+        ));
+    }
 
-    Ok(AgentTrial {
-        transcript,
-        final_reply,
-        tool_trace,
-        metadata: json!({
-            "target": target,
-            "fixture": fixture,
-            "current_events": snapshot.current_events,
-            "original_free_block_minutes": longest_free_block_minutes(
-                &snapshot.original_events,
-                snapshot.working_day_start,
-                snapshot.working_day_end,
-            ),
-            "longest_free_block_minutes": longest_free_block,
-            "moved_events": moved_events,
-            "locked_events_preserved": locked_events_preserved,
-        }),
-    })
+    Ok(build_trial_snapshot(
+        &target, &fixture, &calendar, &recorder,
+    ))
 }
 
 fn build_calendar_tool_runner(
@@ -1013,21 +1024,23 @@ fn build_calendar_tool_runner(
         async move {
             let result = match call.call {
                 CalendarTools::ListEvents => calendar.lock().expect("calendar").list_events(),
-                CalendarTools::MoveEvent { title, start_at } => match parse_datetime(&start_at) {
-                    Ok(start_at) => calendar
-                        .lock()
-                        .expect("calendar")
-                        .move_event(&title, start_at),
-                    Err(error) => CalendarToolResult::Impossible {
-                        reason: format!("invalid start_at datetime: {error}"),
-                        conflicting_event: None,
-                        events: calendar.lock().expect("calendar").current_events.clone(),
-                        longest_free_block_minutes: calendar
+                CalendarTools::MoveEvent { event_id, start_at } => {
+                    match parse_datetime(&start_at) {
+                        Ok(start_at) => calendar
                             .lock()
                             .expect("calendar")
-                            .longest_free_block_minutes(),
-                    },
-                },
+                            .move_event(&event_id, start_at),
+                        Err(error) => CalendarToolResult::Impossible {
+                            reason: format!("invalid start_at datetime: {error}"),
+                            conflicting_event: None,
+                            events: calendar.lock().expect("calendar").current_events.clone(),
+                            longest_free_block_minutes: calendar
+                                .lock()
+                                .expect("calendar")
+                                .longest_free_block_minutes(),
+                        },
+                    }
+                }
             };
 
             Ok(ToolResultEnvelope {
@@ -1038,91 +1051,35 @@ fn build_calendar_tool_runner(
     })
 }
 
-fn record_event(
-    event: &AgentEvent<CalendarTools, CalendarToolResult, String>,
-    transcript: &mut Vec<RecordedEvent>,
-    tool_trace: &mut Vec<RecordedToolCall>,
-    final_reply: &mut Option<String>,
-) {
-    match event {
-        AgentEvent::ModelOutputItem { item } => match item {
-            borg_llm::completion::OutputItem::Message { role, content } => {
-                let text = content
-                    .iter()
-                    .filter_map(|content| match content {
-                        borg_llm::completion::OutputContent::Text { text } => Some(text.clone()),
-                        borg_llm::completion::OutputContent::Structured { .. } => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    .trim()
-                    .to_string();
+fn build_trial_snapshot(
+    target: &ExecutionTarget,
+    fixture: &CalendarFixture,
+    calendar: &Arc<Mutex<InMemoryCalendar>>,
+    recorder: &AgentTrialRecorder,
+) -> AgentTrial {
+    let snapshot = calendar.lock().expect("calendar snapshot").snapshot();
+    let longest_free_block = longest_free_block_minutes(
+        &snapshot.current_events,
+        snapshot.working_day_start,
+        snapshot.working_day_end,
+    );
+    let moved_events = count_moved_events(&snapshot.original_events, &snapshot.current_events);
+    let locked_events_preserved =
+        locked_events_match(&snapshot.original_events, &snapshot.current_events);
 
-                if !text.is_empty() {
-                    transcript.push(RecordedEvent::Message {
-                        role: match role {
-                            borg_llm::completion::Role::System => RecordedMessageRole::System,
-                            borg_llm::completion::Role::User => RecordedMessageRole::User,
-                            borg_llm::completion::Role::Assistant => RecordedMessageRole::Assistant,
-                        },
-                        content: text,
-                    });
-                }
-            }
-            borg_llm::completion::OutputItem::Reasoning { text } => {
-                if !text.trim().is_empty() {
-                    transcript.push(RecordedEvent::Message {
-                        role: RecordedMessageRole::Assistant,
-                        content: text.trim().to_string(),
-                    });
-                }
-            }
-            borg_llm::completion::OutputItem::ToolCall { .. } => {}
-        },
-        AgentEvent::ToolCallRequested { call } => {
-            let arguments = call.arguments.clone();
-            transcript.push(RecordedEvent::ToolCallRequested {
-                id: call.call_id.clone(),
-                name: call.name.clone(),
-                arguments: arguments.clone(),
-            });
-            tool_trace.push(RecordedToolCall {
-                id: call.call_id.clone(),
-                name: call.name.clone(),
-                arguments,
-                result: None,
-                error: None,
-            });
-        }
-        AgentEvent::ToolExecutionCompleted { result } => {
-            let result_value = match &result.result {
-                ToolExecutionResult::Ok { data } => json!(data),
-                ToolExecutionResult::Error { message } => json!({ "error": message }),
-            };
-            transcript.push(RecordedEvent::ToolExecutionCompleted {
-                id: result.call_id.clone(),
-                name: tool_trace
-                    .iter()
-                    .find(|tool| tool.id == result.call_id)
-                    .map(|tool| tool.name.clone())
-                    .unwrap_or_else(|| "unknown_tool".to_string()),
-                result: result_value.clone(),
-            });
-            if let Some(tool) = tool_trace.iter_mut().find(|tool| tool.id == result.call_id) {
-                match &result.result {
-                    ToolExecutionResult::Ok { data } => tool.result = Some(json!(data)),
-                    ToolExecutionResult::Error { message } => tool.error = Some(message.clone()),
-                }
-            }
-        }
-        AgentEvent::Completed { reply } => {
-            transcript.push(RecordedEvent::Completed {
-                reply: reply.clone(),
-            });
-            *final_reply = Some(reply.clone());
-        }
-        AgentEvent::Cancelled => {}
-    }
+    recorder.snapshot(json!({
+        "target": target,
+        "fixture": fixture,
+        "current_events": snapshot.current_events,
+        "original_free_block_minutes": longest_free_block_minutes(
+            &snapshot.original_events,
+            snapshot.working_day_start,
+            snapshot.working_day_end,
+        ),
+        "longest_free_block_minutes": longest_free_block,
+        "moved_events": moved_events,
+        "locked_events_preserved": locked_events_preserved,
+    }))
 }
 
 fn target_profile(target: &ExecutionTarget) -> ExecutionProfile {
@@ -1184,14 +1141,14 @@ fn longest_free_block_minutes(
 }
 
 fn count_moved_events(original: &[CalendarEvent], current: &[CalendarEvent]) -> usize {
-    let original_by_title: HashMap<&str, (&DateTime<Utc>, &DateTime<Utc>)> = original
+    let original_by_id: HashMap<&str, (&DateTime<Utc>, &DateTime<Utc>)> = original
         .iter()
-        .map(|event| (event.title.as_str(), (&event.start_at, &event.end_at)))
+        .map(|event| (event.event_id.as_str(), (&event.start_at, &event.end_at)))
         .collect();
 
     current
         .iter()
-        .filter(|event| match original_by_title.get(event.title.as_str()) {
+        .filter(|event| match original_by_id.get(event.event_id.as_str()) {
             Some((start, end)) => **start != event.start_at || **end != event.end_at,
             None => false,
         })
@@ -1202,11 +1159,11 @@ fn locked_events_match(original: &[CalendarEvent], replanned: &[CalendarEvent]) 
     let original_locked: HashMap<&str, (&DateTime<Utc>, &DateTime<Utc>)> = original
         .iter()
         .filter(|event| event.locked)
-        .map(|event| (event.title.as_str(), (&event.start_at, &event.end_at)))
+        .map(|event| (event.event_id.as_str(), (&event.start_at, &event.end_at)))
         .collect();
 
     replanned.iter().filter(|event| event.locked).all(|event| {
-        match original_locked.get(event.title.as_str()) {
+        match original_locked.get(event.event_id.as_str()) {
             Some((start, end)) => **start == event.start_at && **end == event.end_at,
             None => false,
         }
@@ -1315,6 +1272,11 @@ fn default_targets() -> Vec<ExecutionTarget> {
     let targets = DEFAULT_OLLAMA_MODELS
         .iter()
         .map(|(label, model)| ExecutionTarget::ollama(*label, *model))
+        .filter(|target| {
+            !KNOWN_TOOL_UNSUPPORTED_OLLAMA_MODELS
+                .iter()
+                .any(|model| *model == target.model)
+        })
         .collect::<Vec<_>>();
 
     // if optional_test_env("BORG_TEST_OPENROUTER_API_KEY").is_some() {

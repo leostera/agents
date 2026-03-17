@@ -5,9 +5,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::case::Case;
 use crate::config::ExecutionTarget;
 use crate::error::EvalResult;
+use crate::eval::Eval;
 use crate::grade::GradeResult;
 use crate::suite::Suite;
 use crate::trial::AgentTrial;
@@ -36,18 +36,18 @@ pub struct SuiteSummary {
     pub run_id: String,
     pub suite_id: String,
     pub target: ExecutionTarget,
-    pub total_cases: usize,
+    pub total_evals: usize,
     pub total_trials: usize,
     pub passed_trials: usize,
     pub pass_rate: f32,
     pub mean_score: f32,
     pub mean_duration: Duration,
-    pub cases: Vec<CaseAggregate>,
+    pub evals: Vec<EvalAggregate>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct CaseAggregate {
-    pub case_id: String,
+pub struct EvalAggregate {
+    pub eval_id: String,
     pub trial_count: usize,
     pub passed_trials: usize,
     pub pass_rate: f32,
@@ -69,7 +69,7 @@ pub struct TrialRecord {
     pub run_id: String,
     pub suite_id: String,
     pub target: ExecutionTarget,
-    pub case_id: String,
+    pub eval_id: String,
     pub trial_index: usize,
     pub started_at: Duration,
     pub finished_at: Duration,
@@ -154,7 +154,7 @@ impl IncrementalSuiteWriter {
         let trial_path = self.suite_dir.join(format!(
             "trial-{:03}__{}.json",
             trial.trial_index + 1,
-            trial.case_id
+            trial.eval_id
         ));
         write_json(&trial_path, trial)?;
         self.files.push(relative_file(&self.root, &trial_path));
@@ -224,7 +224,7 @@ impl SuiteRunReport {
             let trial_path = suite_dir.join(format!(
                 "trial-{:03}__{}.json",
                 trial.trial_index + 1,
-                trial.case_id
+                trial.eval_id
             ));
             write_json(&trial_path, trial)?;
             files.push(relative_file(root, &trial_path));
@@ -253,48 +253,48 @@ impl EvalRunReport {
     }
 
     pub fn summary_table(&self) -> String {
-        let mut case_ids = self
+        let mut eval_ids = self
             .variants
             .iter()
-            .flat_map(|variant| variant.suite.cases.iter().map(|case| case.case_id.clone()))
+            .flat_map(|variant| variant.suite.evals.iter().map(|eval| eval.eval_id.clone()))
             .collect::<Vec<_>>();
-        case_ids.sort();
-        case_ids.dedup();
+        eval_ids.sort();
+        eval_ids.dedup();
 
         let mut sections = Vec::new();
 
-        for case_id in case_ids {
-            let case_rows = self
+        for eval_id in eval_ids {
+            let eval_rows = self
                 .variants
                 .iter()
                 .filter_map(|variant| {
                     variant
                         .suite
-                        .cases
+                        .evals
                         .iter()
-                        .find(|case| case.case_id == case_id)
-                        .map(|case| (variant, case))
+                        .find(|eval| eval.eval_id == eval_id)
+                        .map(|eval| (variant, eval))
                 })
                 .collect::<Vec<_>>();
 
-            if case_rows.is_empty() {
+            if eval_rows.is_empty() {
                 continue;
             }
 
-            let trial_count = case_rows
+            let trial_count = eval_rows
                 .iter()
-                .map(|(_, case)| case.trial_count)
+                .map(|(_, eval)| eval.trial_count)
                 .max()
                 .unwrap_or(0);
 
-            let mut ranked_rows = case_rows
+            let mut ranked_rows = eval_rows
                 .iter()
-                .map(|(variant, case)| {
+                .map(|(variant, eval)| {
                     (
                         variant.suite.target.display_label(),
-                        case.mean_score,
-                        case.mean_duration,
-                        case.grader_means.clone(),
+                        eval.mean_score,
+                        eval.mean_duration,
+                        eval.grader_means.clone(),
                     )
                 })
                 .collect::<Vec<_>>();
@@ -306,18 +306,15 @@ impl EvalRunReport {
                     .then(left.0.cmp(&right.0))
             });
 
+            sections.push(format!("== Eval: {eval_id} (~{trial_count} trials) =="));
+            sections.push(String::new());
+            let eval_mean_duration =
+                mean_duration(eval_rows.iter().map(|(_, eval)| eval.mean_duration));
             sections.push(format!(
-                "== Case: {case_id} (~{trial_count} trials) {} ==",
-                case_icon(&case_id)
+                "avg duration ⏱  {} ms",
+                eval_mean_duration.as_millis()
             ));
             sections.push(String::new());
-            if let Some((_, case)) = case_rows.first() {
-                sections.push(format!(
-                    "avg duration ⏱  {} ms",
-                    case.mean_duration.as_millis()
-                ));
-                sections.push(String::new());
-            }
             sections.push("final 🏁".to_string());
             let provider_width = ranked_rows
                 .iter()
@@ -442,10 +439,10 @@ pub(crate) fn build_summary(
     let mean_score = mean(trials.iter().map(|trial| trial.mean_score));
     let mean_duration = mean_duration(trials.iter().map(|trial| trial.duration));
 
-    let cases = suite
-        .cases()
+    let evals = suite
+        .evals()
         .iter()
-        .map(|case| build_case_aggregate(case, trials))
+        .map(|eval| build_eval_aggregate(eval, trials))
         .collect();
 
     SuiteSummary {
@@ -453,28 +450,28 @@ pub(crate) fn build_summary(
         run_id: run_id.to_string(),
         suite_id: suite.id().to_string(),
         target: target.clone(),
-        total_cases: suite.cases().len(),
+        total_evals: suite.evals().len(),
         total_trials,
         passed_trials,
         pass_rate: ratio(passed_trials, total_trials),
         mean_score,
         mean_duration,
-        cases,
+        evals,
     }
 }
 
-fn build_case_aggregate(case: &Case, trials: &[TrialRecord]) -> CaseAggregate {
-    let case_trials: Vec<&TrialRecord> = trials
+fn build_eval_aggregate(eval: &Eval, trials: &[TrialRecord]) -> EvalAggregate {
+    let eval_trials: Vec<&TrialRecord> = trials
         .iter()
-        .filter(|trial| trial.case_id == case.id())
+        .filter(|trial| trial.eval_id == eval.id())
         .collect();
-    let passed_trials = case_trials.iter().filter(|trial| trial.passed).count();
+    let passed_trials = eval_trials.iter().filter(|trial| trial.passed).count();
 
-    let grader_means = case
+    let grader_means = eval
         .graders()
         .iter()
         .map(|grader| {
-            let scores = case_trials.iter().map(|trial| {
+            let scores = eval_trials.iter().map(|trial| {
                 trial
                     .grades
                     .iter()
@@ -482,7 +479,7 @@ fn build_case_aggregate(case: &Case, trials: &[TrialRecord]) -> CaseAggregate {
                     .map(|grade| grade.score)
                     .unwrap_or(0.0)
             });
-            let passed_trials_for_grader = case_trials
+            let passed_trials_for_grader = eval_trials
                 .iter()
                 .filter(|trial| {
                     trial
@@ -497,18 +494,18 @@ fn build_case_aggregate(case: &Case, trials: &[TrialRecord]) -> CaseAggregate {
             GraderAggregate {
                 name: grader.name().to_string(),
                 mean_score: mean(scores),
-                pass_rate: ratio(passed_trials_for_grader, case_trials.len()),
+                pass_rate: ratio(passed_trials_for_grader, eval_trials.len()),
             }
         })
         .collect();
 
-    CaseAggregate {
-        case_id: case.id().to_string(),
-        trial_count: case_trials.len(),
+    EvalAggregate {
+        eval_id: eval.id().to_string(),
+        trial_count: eval_trials.len(),
         passed_trials,
-        pass_rate: ratio(passed_trials, case_trials.len()),
-        mean_score: mean(case_trials.iter().map(|trial| trial.mean_score)),
-        mean_duration: mean_duration(case_trials.iter().map(|trial| trial.duration)),
+        pass_rate: ratio(passed_trials, eval_trials.len()),
+        mean_score: mean(eval_trials.iter().map(|trial| trial.mean_score)),
+        mean_duration: mean_duration(eval_trials.iter().map(|trial| trial.duration)),
         grader_means,
     }
 }
@@ -557,16 +554,6 @@ fn relative_file(root: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .to_string()
-}
-
-fn case_icon(case_id: &str) -> &'static str {
-    if case_id.contains("compress") || case_id.contains("meeting") || case_id.contains("calendar") {
-        "📅"
-    } else if case_id.contains("impossible") || case_id.contains("refuse") {
-        "🚫"
-    } else {
-        "🧪"
-    }
 }
 
 fn medal_for_rank(rank: usize) -> &'static str {

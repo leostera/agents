@@ -1,27 +1,29 @@
-mod case;
 mod config;
 mod error;
+mod eval;
 mod grade;
 mod report;
 mod suite;
 mod trial;
 
-pub use case::{Case, TrialContext};
 pub use config::{ExecutionTarget, RunConfig};
 pub use error::{EvalError, EvalResult};
+pub use eval::{Eval, EvalContext};
 pub use grade::{GradeResult, Grader, grade};
 pub use report::{
-    ArtifactIndex, CaseAggregate, EvalRunReport, GraderAggregate, RunManifest, SCHEMA_VERSION,
+    ArtifactIndex, EvalAggregate, EvalRunReport, GraderAggregate, RunManifest, SCHEMA_VERSION,
     SuiteRunReport, SuiteSummary, TrialRecord,
 };
 pub use suite::{Suite, SuiteKind};
-pub use trial::{AgentTrial, RecordedEvent, RecordedMessageRole, RecordedToolCall};
+pub use trial::{
+    AgentTrial, AgentTrialRecorder, RecordedEvent, RecordedMessageRole, RecordedToolCall,
+};
 
 pub mod prelude {
     pub use crate::{
-        AgentTrial, ArtifactIndex, Case, EvalError, EvalResult, ExecutionTarget, GradeResult,
-        Grader, RecordedEvent, RecordedMessageRole, RecordedToolCall, RunConfig, Suite, SuiteKind,
-        SuiteRunReport, TrialContext, grade,
+        AgentTrial, AgentTrialRecorder, ArtifactIndex, Eval, EvalAggregate, EvalContext, EvalError,
+        EvalResult, ExecutionTarget, GradeResult, Grader, RecordedEvent, RecordedMessageRole,
+        RecordedToolCall, RunConfig, Suite, SuiteKind, SuiteRunReport, grade,
     };
 }
 
@@ -39,15 +41,15 @@ mod tests {
 
     #[tokio::test]
     async fn suite_runs_trials_and_aggregates_scores() {
-        let suite = Suite::new("calendar").trials(2).case(
-            Case::new("happy-path")
+        let suite = Suite::new("calendar").trials(2).eval(
+            Eval::new("happy-path")
                 .run(|ctx| async move {
                     Ok(AgentTrial {
                         transcript: vec![RecordedEvent::Message {
                             role: RecordedMessageRole::User,
                             content: format!("trial {}", ctx.trial_index),
                         }],
-                        final_reply: "done".to_string(),
+                        final_reply: Some("done".to_string()),
                         tool_trace: Vec::new(),
                         metadata: json!({ "trial_index": ctx.trial_index }),
                     })
@@ -55,7 +57,7 @@ mod tests {
                 .grade(grade("reply-is-done", |trial| async move {
                     Ok(GradeResult::pass_if(
                         "reply-is-done",
-                        trial.final_reply == "done",
+                        trial.final_reply.as_deref() == Some("done"),
                         "reply should equal done",
                         json!({ "reply": trial.final_reply }),
                     ))
@@ -65,7 +67,7 @@ mod tests {
         let report = suite.run().await.expect("suite to run");
         assert_eq!(report.suite.total_trials, 2);
         assert_eq!(report.suite.passed_trials, 2);
-        assert_eq!(report.suite.cases.len(), 1);
+        assert_eq!(report.suite.evals.len(), 1);
         assert_eq!(report.trials.len(), 2);
         assert!(report.trials.iter().all(|trial| trial.trial.is_some()));
     }
@@ -73,8 +75,8 @@ mod tests {
     #[tokio::test]
     async fn suite_runner_expands_model_matrix() {
         let suite =
-            Suite::new("calendar").case(
-                Case::new("matrix")
+            Suite::new("calendar").eval(
+                Eval::new("matrix")
                     .run(|ctx| async move {
                         Ok(AgentTrial::new(format!("target={}", ctx.target.label)))
                     })
@@ -102,6 +104,22 @@ mod tests {
     }
 
     #[test]
+    fn eval_tags_builder_extends_tags_in_order() {
+        let eval = Eval::new("calendar")
+            .tags(["calendar", "free-time"])
+            .tag("regression");
+
+        assert_eq!(
+            eval.tag_list(),
+            &[
+                "calendar".to_string(),
+                "free-time".to_string(),
+                "regression".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn summary_markdown_prefixes_non_local_providers() {
         let hosted_target = ExecutionTarget::openrouter("kimi-k2.5", "moonshotai/kimi-k2.5");
         let local_target = ExecutionTarget::ollama("qwen3.5", "qwen3.5");
@@ -111,9 +129,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn summary_table_groups_rows_by_case() {
-        let suite = Suite::new("calendar").case(
-            Case::new("compress-day")
+    async fn summary_table_groups_rows_by_eval() {
+        let suite = Suite::new("calendar").eval(
+            Eval::new("compress-day")
                 .run(|_| async move { Ok(AgentTrial::new("ok")) })
                 .grade(grade("free-block", |_| async move {
                     Ok(GradeResult::pass("free-block", "always"))
@@ -133,7 +151,7 @@ mod tests {
             .expect("table report");
 
         let table = report.summary_table();
-        assert!(table.contains("== Case: compress-day (~2 trials)"));
+        assert!(table.contains("== Eval: compress-day (~2 trials) =="));
         assert!(table.contains("avg duration ⏱"));
         assert!(table.contains("final 🏁"));
         assert!(table.contains("grades 🔎"));
@@ -146,8 +164,8 @@ mod tests {
 
     #[tokio::test]
     async fn grader_means_count_failed_trials_as_zero_score() {
-        let suite = Suite::new("calendar").trials(2).case(
-            Case::new("compress-day")
+        let suite = Suite::new("calendar").trials(2).eval(
+            Eval::new("compress-day")
                 .run(|ctx| async move {
                     if ctx.trial_index == 0 {
                         Err(EvalError::message("trial failed"))
@@ -161,25 +179,25 @@ mod tests {
         );
 
         let report = suite.run().await.expect("report");
-        let case = &report.suite.cases[0];
-        assert_eq!(case.mean_score, 0.5);
-        assert_eq!(case.grader_means[0].mean_score, 0.5);
-        assert_eq!(case.grader_means[0].pass_rate, 0.5);
+        let eval = &report.suite.evals[0];
+        assert_eq!(eval.mean_score, 0.5);
+        assert_eq!(eval.grader_means[0].mean_score, 0.5);
+        assert_eq!(eval.grader_means[0].pass_rate, 0.5);
     }
 
     #[tokio::test]
     async fn suite_records_failed_trials_without_aborting_run() {
         let suite = Suite::new("calendar")
             .trials(2)
-            .case(Case::new("fails").run(|ctx| async move {
+            .eval(Eval::new("fails").run(|ctx| async move {
                 if ctx.trial_index == 0 {
                     Err(EvalError::message("llm exploded"))
                 } else {
                     Ok(AgentTrial::new("recovered"))
                 }
             }))
-            .case(
-                Case::new("still-runs")
+            .eval(
+                Eval::new("still-runs")
                     .run(|_| async move { Ok(AgentTrial::new("ok")) })
                     .grade(grade("always", |_| async move {
                         Ok(GradeResult::pass("always", "always"))
@@ -193,15 +211,42 @@ mod tests {
             report
                 .trials
                 .iter()
-                .any(|trial| trial.case_id == "still-runs" && trial.passed)
+                .any(|trial| trial.eval_id == "still-runs" && trial.passed)
         );
+    }
+
+    #[tokio::test]
+    async fn failed_trials_can_persist_partial_agent_output() {
+        let suite = Suite::new("calendar").eval(Eval::new("partial").run(|_| async move {
+            Err(EvalError::message_with_trial(
+                "agent never finished",
+                AgentTrial {
+                    transcript: vec![RecordedEvent::Message {
+                        role: RecordedMessageRole::Assistant,
+                        content: "working on it".to_string(),
+                    }],
+                    final_reply: None,
+                    tool_trace: Vec::new(),
+                    metadata: json!({ "partial": true }),
+                },
+            ))
+        }));
+
+        let report = suite.run().await.expect("suite should not abort");
+        let trial = &report.trials[0];
+        assert_eq!(
+            trial.error.as_deref(),
+            Some("eval failed: agent never finished")
+        );
+        assert!(trial.trial.is_some());
+        assert_eq!(trial.trial.as_ref().unwrap().final_reply, None);
     }
 
     #[tokio::test]
     async fn trial_records_capture_timing_and_summary_averages() {
         let suite = Suite::new("calendar")
             .trials(2)
-            .case(Case::new("timed").run(|_| async move {
+            .eval(Eval::new("timed").run(|_| async move {
                 tokio::time::sleep(Duration::from_millis(20)).await;
                 Ok(AgentTrial::new("ok"))
             }));
@@ -221,14 +266,14 @@ mod tests {
                 .all(|trial| trial.duration > Duration::ZERO)
         );
         assert!(report.suite.mean_duration > Duration::ZERO);
-        assert!(report.suite.cases[0].mean_duration > Duration::ZERO);
+        assert!(report.suite.evals[0].mean_duration > Duration::ZERO);
         assert!(report.summary_markdown().contains("mean duration:"));
     }
 
     #[tokio::test]
     async fn report_writer_persists_expected_files() {
-        let suite = Suite::new("calendar").case(
-            Case::new("write-artifacts")
+        let suite = Suite::new("calendar").eval(
+            Eval::new("write-artifacts")
                 .run(|_| async move { Ok(AgentTrial::new("ok")) })
                 .grade(grade("passes", |_| async move {
                     Ok(GradeResult::pass("passes", "always"))
@@ -250,8 +295,8 @@ mod tests {
         let in_flight = Arc::new(AtomicUsize::new(0));
         let peak = Arc::new(AtomicUsize::new(0));
 
-        let suite = Suite::new("calendar").case(
-            Case::new("parallel")
+        let suite = Suite::new("calendar").eval(
+            Eval::new("parallel")
                 .run({
                     let in_flight = in_flight.clone();
                     let peak = peak.clone();
@@ -297,8 +342,8 @@ mod tests {
         let local_peak = Arc::new(AtomicUsize::new(0));
         let hosted_saw_local_running = Arc::new(AtomicBool::new(false));
 
-        let suite = Suite::new("calendar").case(
-            Case::new("mixed-targets")
+        let suite = Suite::new("calendar").eval(
+            Eval::new("mixed-targets")
                 .run({
                     let local_in_flight = local_in_flight.clone();
                     let local_peak = local_peak.clone();
@@ -352,8 +397,8 @@ mod tests {
     #[tokio::test]
     async fn persisted_runs_flush_trial_records_before_completion() {
         let root = unique_test_dir("borg-evals-core-incremental");
-        let suite = Suite::new("calendar").case(
-            Case::new("incremental")
+        let suite = Suite::new("calendar").eval(
+            Eval::new("incremental")
                 .run(|ctx| async move {
                     if ctx.trial_index == 0 {
                         tokio::time::sleep(Duration::from_millis(20)).await;

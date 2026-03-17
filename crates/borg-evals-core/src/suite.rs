@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::case::{Case, TrialContext};
 use crate::config::{ExecutionTarget, RunConfig};
 use crate::error::EvalResult;
+use crate::eval::{Eval, EvalContext};
 use crate::report::{
     EvalRunReport, IncrementalSuiteWriter, RunManifest, SCHEMA_VERSION, SuiteRunReport,
     TrialRecord, build_summary, now_since_epoch, run_id,
@@ -25,7 +25,7 @@ pub struct Suite {
     id: Arc<str>,
     kind: SuiteKind,
     trials: usize,
-    cases: Vec<Case>,
+    evals: Vec<Eval>,
 }
 
 pub struct SuiteRunner<'a> {
@@ -40,7 +40,7 @@ impl Suite {
             id: Arc::from(id.into()),
             kind: SuiteKind::Regression,
             trials: 1,
-            cases: Vec::new(),
+            evals: Vec::new(),
         }
     }
 
@@ -58,13 +58,13 @@ impl Suite {
         self
     }
 
-    pub fn case(mut self, case: Case) -> Self {
-        self.cases.push(case);
+    pub fn eval(mut self, eval: Eval) -> Self {
+        self.evals.push(eval);
         self
     }
 
-    pub fn cases(&self) -> &[Case] {
-        &self.cases
+    pub fn evals(&self) -> &[Eval] {
+        &self.evals
     }
 
     pub async fn run(&self) -> EvalResult<SuiteRunReport> {
@@ -191,25 +191,25 @@ async fn run_single_target(
     let semaphore = Arc::new(Semaphore::new(target.max_in_flight.max(1)));
     let mut jobs = JoinSet::new();
 
-    for case in suite.cases() {
-        let trial_count = case.configured_trials().unwrap_or(default_trials);
+    for eval in suite.evals() {
+        let trial_count = eval.configured_trials().unwrap_or(default_trials);
         info!(
             suite = %suite.id(),
             target_label = %target.label,
-            case = %case.id(),
+            eval = %eval.id(),
             trials = trial_count,
-            "starting case"
+            "starting eval"
         );
         for trial_index in 0..trial_count {
             let semaphore = semaphore.clone();
             let suite_id = suite.id().to_string();
             let target = target.clone();
-            let case = case.clone();
+            let eval = eval.clone();
             let run_id = run_id.clone();
 
             jobs.spawn(async move {
                 let _permit = semaphore.acquire_owned().await.expect("semaphore permit");
-                execute_trial(run_id, suite_id, target, case, trial_index).await
+                execute_trial(run_id, suite_id, target, eval, trial_index).await
             });
         }
     }
@@ -223,8 +223,8 @@ async fn run_single_target(
     }
 
     trial_records.sort_by(|left, right| {
-        left.case_id
-            .cmp(&right.case_id)
+        left.eval_id
+            .cmp(&right.eval_id)
             .then(left.trial_index.cmp(&right.trial_index))
     });
 
@@ -264,32 +264,32 @@ async fn execute_trial(
     run_id: String,
     suite_id: String,
     target: ExecutionTarget,
-    case: Case,
+    eval: Eval,
     trial_index: usize,
 ) -> TrialRecord {
     let started_at_wall = now_since_epoch();
     let started_at_instant = Instant::now();
-    let ctx = TrialContext {
+    let ctx = EvalContext {
         suite_id: suite_id.clone(),
-        case_id: case.id().to_string(),
+        eval_id: eval.id().to_string(),
         trial_index,
         target: target.clone(),
     };
     debug!(
         suite = %suite_id,
         target_label = %target.label,
-        case = %case.id(),
+        eval = %eval.id(),
         trial_index,
         "starting trial"
     );
 
-    match case.execute(ctx).await {
+    match eval.execute(ctx).await {
         Ok(trial) => {
             let trial = Arc::new(trial);
             let mut grades = Vec::new();
             let mut grade_error = None;
 
-            for grader in case.graders() {
+            for grader in eval.graders() {
                 match grader.grade(trial.clone()).await {
                     Ok(grade) => grades.push(grade),
                     Err(error) => {
@@ -315,7 +315,7 @@ async fn execute_trial(
                 warn!(
                     suite = %suite_id,
                     target_label = %target.label,
-                    case = %case.id(),
+                    eval = %eval.id(),
                     trial_index,
                     %error,
                     "trial grading failed"
@@ -324,7 +324,7 @@ async fn execute_trial(
                 info!(
                     suite = %suite_id,
                     target_label = %target.label,
-                    case = %case.id(),
+                    eval = %eval.id(),
                     trial_index,
                     passed,
                     mean_score,
@@ -339,7 +339,7 @@ async fn execute_trial(
                 run_id,
                 suite_id,
                 target,
-                case_id: case.id().to_string(),
+                eval_id: eval.id().to_string(),
                 trial_index,
                 started_at: started_at_wall,
                 finished_at: finished_at_wall,
@@ -355,7 +355,7 @@ async fn execute_trial(
             error!(
                 suite = %suite_id,
                 target_label = %target.label,
-                case = %case.id(),
+                eval = %eval.id(),
                 trial_index,
                 error = %error,
                 "trial execution failed"
@@ -366,14 +366,14 @@ async fn execute_trial(
                 run_id,
                 suite_id,
                 target,
-                case_id: case.id().to_string(),
+                eval_id: eval.id().to_string(),
                 trial_index,
                 started_at: started_at_wall,
                 finished_at: finished_at_wall,
                 duration: started_at_instant.elapsed(),
                 passed: false,
                 mean_score: 0.0,
-                trial: None,
+                trial: error.partial_trial().cloned(),
                 error: Some(error.to_string()),
                 grades: Vec::new(),
             }

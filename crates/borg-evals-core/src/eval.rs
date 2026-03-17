@@ -10,31 +10,31 @@ use crate::trial::AgentTrial;
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
 #[derive(Clone, Debug)]
-pub struct TrialContext {
+pub struct EvalContext {
     pub suite_id: String,
-    pub case_id: String,
+    pub eval_id: String,
     pub trial_index: usize,
     pub target: ExecutionTarget,
 }
 
-impl TrialContext {
+impl EvalContext {
     pub fn target(&self) -> &ExecutionTarget {
         &self.target
     }
 }
 
 #[derive(Clone)]
-pub struct Case {
+pub struct Eval {
     id: Arc<str>,
     tags: Vec<String>,
     trials: Option<usize>,
-    run: Arc<dyn Fn(TrialContext) -> BoxFuture<EvalResult<AgentTrial>> + Send + Sync>,
+    run: Arc<dyn Fn(EvalContext) -> BoxFuture<EvalResult<AgentTrial>> + Send + Sync>,
     graders: Vec<Grader>,
 }
 
-impl std::fmt::Debug for Case {
+impl std::fmt::Debug for Eval {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Case")
+        f.debug_struct("Eval")
             .field("id", &self.id)
             .field("tags", &self.tags)
             .field("trials", &self.trials)
@@ -43,7 +43,7 @@ impl std::fmt::Debug for Case {
     }
 }
 
-impl Case {
+impl Eval {
     pub fn new(id: impl Into<String>) -> Self {
         Self {
             id: Arc::from(id.into()),
@@ -58,7 +58,7 @@ impl Case {
         &self.id
     }
 
-    pub fn tags(&self) -> &[String] {
+    pub fn tag_list(&self) -> &[String] {
         &self.tags
     }
 
@@ -71,6 +71,15 @@ impl Case {
         self
     }
 
+    pub fn tags<I, S>(mut self, tags: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.tags.extend(tags.into_iter().map(Into::into));
+        self
+    }
+
     pub fn trials(mut self, trials: usize) -> Self {
         self.trials = Some(trials);
         self
@@ -78,7 +87,7 @@ impl Case {
 
     pub fn run<F, Fut>(mut self, f: F) -> Self
     where
-        F: Fn(TrialContext) -> Fut + Send + Sync + 'static,
+        F: Fn(EvalContext) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = EvalResult<AgentTrial>> + Send + 'static,
     {
         self.run = Arc::new(move |ctx| Box::pin(f(ctx)));
@@ -90,7 +99,7 @@ impl Case {
         self
     }
 
-    pub async fn execute(&self, ctx: TrialContext) -> EvalResult<AgentTrial> {
+    pub async fn execute(&self, ctx: EvalContext) -> EvalResult<AgentTrial> {
         (self.run)(ctx).await
     }
 

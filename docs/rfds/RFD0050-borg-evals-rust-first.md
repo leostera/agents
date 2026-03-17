@@ -317,30 +317,27 @@ The two suite kinds in v1 should be:
 
 A case is a named scenario definition.
 
-In v1, a case should be modeled as an async Rust function or closure over an eval context:
+The original generic design sketched `Case<O>` and `Grader<O>`. The prototype, however, taught a more useful lesson:
 
-```rust
-pub struct Case<O> {
-    id: String,
-    tags: Vec<String>,
-    trial_count: Option<usize>,
-    run: Arc<dyn Fn(CaseContext) -> BoxFuture<'static, EvalResult<O>> + Send + Sync>,
-    graders: Vec<Arc<dyn Grader<O>>>,
-}
-```
+- v0 and likely v1 should stay explicitly agent-first
+- the core case/grader surface can remain specialized to `AgentTrial`
+- generalization should come later only if a second real trial shape forces it
 
-The exact type details can vary, but the important semantic is:
+So the practical v0/v1 semantic is:
 
-- the case runs an arbitrary scenario
-- the scenario returns a typed trial output `O`
-- graders receive that same typed output
+- the case runs an arbitrary async Rust scenario
+- the scenario returns an `AgentTrial`
+- graders receive that same `AgentTrial`
 
-This allows rich agent scenarios:
+This is still typed and expressive enough for the current target problem:
 
 - create an agent
 - stream multiple inputs
 - collect outputs
+- inspect tool traces
 - return a structured `AgentTrial`
+
+This should be treated as an intentional scope decision, not as an accident of the first prototype.
 
 ## `Trial`
 
@@ -403,6 +400,16 @@ The exact struct names may evolve, but the persisted trial model should preserve
 
 This should be enough for deterministic transcript-aware graders in v1.
 
+One concrete lesson from the calendar prototype is that failed trials must still preserve partial evidence whenever possible.
+
+If an agent:
+
+- calls tools
+- emits partial assistant output
+- or otherwise progresses meaningfully
+
+and only later fails because it never produced a valid terminal reply, the persisted `TrialRecord` should still include the partial transcript and tool trace. Recording only `trial = null` and an error string is not sufficient for debugging weak models or malformed tool loops.
+
 One concrete lesson from the first prototype is that tool-using agent evals must preserve provider-faithful replay state.
 
 For follow-up turns after tool execution, valid replay may require:
@@ -416,17 +423,19 @@ It is not sufficient to only preserve typed Rust tool values and later reseriali
 
 ## `Grader`
 
-Graders should operate over typed outputs and return structured evidence.
+Graders should operate over the trial type used by core and return structured evidence.
 
-A minimal shape:
+For v0/v1, that means:
 
-```rust
-#[async_trait]
-pub trait Grader<O>: Send + Sync {
-    fn name(&self) -> &'static str;
-    async fn grade(&self, output: &O, ctx: &GradeContext) -> GradeResult;
-}
-```
+- `Grader` operates on `AgentTrial`
+- built-in helpers stay agent-oriented
+- later generalization can happen behind a descriptor layer if we truly need non-agent evals
+
+The important contract is still:
+
+- async grading
+- stable grader name
+- persistable structured result
 
 Each grader returns:
 
@@ -473,6 +482,13 @@ This keeps the grading contract small:
 - explicit evidence
 
 If multiple dimensions are needed, they should be represented as multiple graders.
+
+The prototype also showed that browser-friendly grading will eventually need richer evidence than a free-form JSON blob. Future schema versions should likely support typed evidence entries such as:
+
+- note
+- JSON payload
+- artifact reference
+- transcript span or event reference
 
 ### Future `judge(...)` graders
 
@@ -698,6 +714,13 @@ The first prototype also established a concrete concurrency rule:
 - hosted targets should be allowed to overlap with local targets
 - concurrency should apply across both cases and trials, with deterministic output ordering restored during persistence and reporting
 
+The prototype also established a locality rule for local executors such as Ollama:
+
+- local targets should run in a stable target order
+- one local target should run to completion before the next local target begins
+- this reduces repeated model load/unload churn across many long trial matrices
+- hosted targets should still be allowed to run concurrently while a local target is active
+
 ## Initial implementation plan
 
 The implementation should proceed in this order:
@@ -734,10 +757,16 @@ No CLI or proc-macro support is required in this phase.
 - `bless`
 - better local progress output
 
+### Phase 1.5: ergonomics and discovery
+
+- `borg-evals-macros`
+- thin proc-macro sugar for cases and suites
+- convention-based suite discovery
+- installable `cargo-evals` cargo subcommand
+- local web explorer over `.evals/`
+
 ### Phase 2: ergonomics
 
-- proc-macro registration
-- `cargo-evals`
 - richer built-in graders
 - retry/skip semantics for transient provider failures and rate limits
 - `judge(...)` grading support
@@ -747,6 +776,234 @@ The important constraint is:
 - do not start with multiple crates unless the smallest library slice proves insufficient
 - do not start with macro discovery or `cargo-evals`
 - start with the core execution and artifact model
+
+## Ergonomics after core
+
+The prototype clarified that the path to good DX should be layered, not magical.
+
+The right progression is:
+
+1. explicit core API
+2. thin proc-macro sugar
+3. convention-based cargo subcommand
+4. local browser over the existing artifact model
+
+This avoids coupling authoring convenience to execution semantics.
+
+### Thin proc-macro layer
+
+The proc-macro layer should stay intentionally thin.
+
+Its job is to reduce boilerplate, not introduce a second runtime model.
+
+The first useful macro shape is:
+
+- `#[eval_case(...)]` on an async Rust function
+- macro expands into an ordinary `Case` builder function
+- the generated builder still returns a normal `Case`
+- graders remain ordinary Rust for as long as possible
+
+Conceptually:
+
+```rust
+#[eval_case(
+    id = "compress-day",
+    tags("calendar", "free-time"),
+    trials = 20,
+)]
+async fn compress_day(ctx: TrialContext) -> EvalResult<AgentTrial> {
+    // scenario body
+}
+```
+
+expands into something equivalent to:
+
+```rust
+pub async fn compress_day(ctx: TrialContext) -> EvalResult<AgentTrial> { ... }
+
+pub fn compress_day_case() -> Case {
+    Case::new("compress-day")
+        .tag("calendar")
+        .tag("free-time")
+        .trials(20)
+        .run(|ctx| compress_day(ctx))
+}
+```
+
+This gives the author:
+
+- first-class Rust scenario functions
+- IDE/navigation/refactor support
+- no hidden registry magic
+
+The same design should apply to suite sugar:
+
+- the macro may generate a suite builder helper
+- but the resulting object should still just be a `Suite`
+
+The macro layer should not be responsible for discovery or execution.
+
+### `cargo-evals` should be a convention-driven cargo subcommand
+
+The cargo subcommand should come after the core API is proven, but its design is now clear enough to document.
+
+`cargo-evals` should be a standalone cargo subcommand crate that:
+
+- uses `cargo metadata` to inspect the workspace
+- finds packages that follow the eval convention
+- generates a temporary harness crate under `target/`
+- compiles and runs that harness
+- streams progress while the underlying library API persists artifacts to `.evals/`
+
+The recommended workspace convention is:
+
+- eval source lives under `crates/<pkg>/evals/`
+- that tree exposes a small registration function such as:
+  - `pub fn register(registry: &mut SuiteRegistry)`
+  - or `pub fn suites() -> Vec<Suite>`
+
+This implies a small descriptor layer should exist before the cargo subcommand lands:
+
+- `SuiteMetadata`
+- `CaseMetadata`
+- `RegisteredSuite`
+- `SuiteRegistry`
+
+That registry layer is the clean seam between:
+
+- authored suite code
+- proc-macro sugar
+- cargo-based discovery
+- browser/index metadata
+
+The harness generation step is important.
+
+It avoids requiring:
+
+- global linker-based registration
+- `inventory`
+- `linkme`
+- hidden proc-macro side effects
+
+Instead, `cargo-evals` can compile an explicit harness that imports the discovered eval modules by path or dependency and then invokes their normal Rust registration functions.
+
+This keeps discovery understandable and debuggable.
+
+It also fits the repository constraint that `borg-cli` remains the only primary product binary in this repo today. The later cargo subcommand should be treated as its own standalone tool rather than smuggled into the runtime surface.
+
+The intended long-term commands are still:
+
+```text
+cargo evals run <suite-or-filter>
+cargo evals compare <run-id>
+cargo evals bless <run-id>
+cargo evals inspect <run-id>
+cargo evals serve
+```
+
+But the important design point is that these commands are only orchestration and presentation over the same core artifact model.
+
+### Web-based results browser
+
+The browser should be local-first and file-first.
+
+The existing `.evals/` artifact layout is already close to the right storage model for a browser. The missing piece is a local-serving layer and a focused UI.
+
+The recommended architecture is:
+
+- `borg-evals-web`: static frontend assets
+- `cargo-evals serve`: local HTTP server that:
+  - serves the static app
+  - exposes `.evals/` as a read-only API
+  - optionally watches live runs and pushes updates
+
+This should not start with a database.
+
+The current file-first artifact model is already good enough for:
+
+- runs list
+- suite overview
+- target comparison
+- case detail
+- trial detail
+- transcript and tool trace inspection
+- grader evidence inspection
+- baseline comparison
+
+The browser should be optimized for questions engineers actually ask:
+
+- which target regressed?
+- which cases are flaky?
+- why did this trial fail?
+- what tool sequence actually happened?
+- how do two models differ on the same case?
+
+Incremental persistence makes live inspection possible.
+
+Because each trial is already written to disk immediately, a browser can observe a long-running suite while it is still executing. That should be treated as a design goal, not an accident.
+
+The browser should therefore assume:
+
+- run manifests appear first
+- trial records arrive incrementally
+- final summaries may land later
+
+To support this cleanly, later schema revisions should add:
+
+- a top-level run index
+- explicit `trial_id` values
+- typed artifact references instead of only raw file lists
+- partial/final run state markers
+- lazy-load-friendly trial references so large trajectories do not need to be embedded in summary objects
+
+This fits long-running local and hosted eval runs naturally.
+
+### Built-in agent helpers should follow the same rule
+
+A few ergonomics should move out of examples and into the eval family once the core stabilizes:
+
+- agent-trial capture helpers
+- transcript/tool-trace normalization helpers
+- deterministic graders for common agent checks
+- later `judge(...)` helpers built on typed `JudgeResult -> GradeResult`
+
+But these should still compile down to the same core model:
+
+- `Case`
+- `Suite`
+- `TrialRecord`
+- `GradeResult`
+
+## Separation of concerns after v0
+
+The prototype also made one architectural split clearer than the original draft:
+
+- `borg-evals-core` currently mixes:
+  - authoring
+  - execution scheduling
+  - artifact persistence
+
+That is acceptable for v0, but it is not the desired long-term boundary.
+
+The recommended next split is:
+
+- `borg-evals-core`
+  - authoring API
+  - artifact/result schemas
+  - metadata/registry types
+- `borg-evals-runner`
+  - scheduling
+  - concurrency policy
+  - retries/skips
+  - persistence
+  - comparisons
+- `cargo-evals`
+  - workspace discovery
+  - harness generation
+  - progress UI
+  - browser serving
+
+This means `cargo-evals` should not call deep into ad hoc `Suite::run*` internals forever. It should eventually have a runner-facing API designed for orchestration.
 
 ## Drawbacks
 
@@ -812,15 +1069,15 @@ The important lesson from these systems is:
 
 ## Unresolved questions
 
-- What exact field set should the first persisted schema versions contain?
-- The first implementation should be library-only. The remaining question is when that should split into multiple crates instead of staying in `borg-evals-core`.
-- How much of the normalized agent-trial shape should be built into core versus adapted by helper crates?
-- Should v1 suite summaries include variance metrics, or only means and pass rates?
-- How much report formatting belongs in core versus a later HTML/reporting crate?
+- How much partial trial state should be required on failed executions versus opportunistically captured when available?
+- When should the explicit library-only runner split into `borg-evals-runner` and `cargo-evals`?
+- What is the minimal stable registration convention for `crates/<pkg>/evals/`?
+- Should the first browser be read-only, or should it also support actions like baseline blessing?
+- How much summary formatting should remain in core once the browser and cargo subcommand exist?
 
 ## Future possibilities
 
-- proc-macro registration like `#[evals]`
+- thin proc-macro registration over the core API
 - `cargo-evals` subcommand integration
 - a dedicated runner crate and CLI once the library surface stabilizes
 - `judge(...)` graders behind feature flags
