@@ -29,16 +29,16 @@ impl Parse for EvalArgs {
                     }
                     continue;
                 }
-                if matches!(*left, Expr::Path(ref path) if path.path.is_ident("tags")) {
-                    if let Expr::Array(ExprArray { elems, .. }) = *right {
-                        for elem in elems {
-                            if let Expr::Lit(ExprLit {
-                                lit: Lit::Str(value),
-                                ..
-                            }) = elem
-                            {
-                                tags.push(value);
-                            }
+                if matches!(*left, Expr::Path(ref path) if path.path.is_ident("tags"))
+                    && let Expr::Array(ExprArray { elems, .. }) = *right
+                {
+                    for elem in elems {
+                        if let Expr::Lit(ExprLit {
+                            lit: Lit::Str(value),
+                            ..
+                        }) = elem
+                        {
+                            tags.push(value);
                         }
                     }
                 }

@@ -210,12 +210,11 @@ fn parse_suite_agent_builder(item_fn: &ItemFn) -> Result<String> {
                 syn::punctuated::Punctuated::<Expr, syn::Token![,]>::parse_terminated,
             )?;
             for expr in exprs {
-                if let Expr::Assign(ExprAssign { left, right, .. }) = expr {
-                    if matches!(&*left, Expr::Path(path) if path.path.is_ident("agent")) {
-                        if let Expr::Path(path) = &*right {
-                            return Ok(quote!(#path).to_string().replace(' ', ""));
-                        }
-                    }
+                if let Expr::Assign(ExprAssign { left, right, .. }) = expr
+                    && matches!(&*left, Expr::Path(path) if path.path.is_ident("agent"))
+                    && let Expr::Path(path) = &*right
+                {
+                    return Ok(quote!(#path).to_string().replace(' ', ""));
                 }
             }
         }

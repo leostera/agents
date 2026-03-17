@@ -30,10 +30,10 @@ impl Parse for SuiteArgs {
                     continue;
                 }
 
-                if matches!(*left, Expr::Path(ref path) if path.path.is_ident("agent")) {
-                    if let Expr::Path(path) = *right {
-                        agent_builder = Some(path.path);
-                    }
+                if matches!(*left, Expr::Path(ref path) if path.path.is_ident("agent"))
+                    && let Expr::Path(path) = *right
+                {
+                    agent_builder = Some(path.path);
                 }
             }
         }

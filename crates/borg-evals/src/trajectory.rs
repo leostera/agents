@@ -167,6 +167,7 @@ impl<A: EvalAgent, State> TrajectoryBuilder<A, State> {
 }
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type TrajectoryRunFuture<Output> = BoxFuture<Result<AgentTrial<Output>, EvalError>>;
 
 impl<A, State> Trajectory<A, State>
 where
@@ -175,10 +176,8 @@ where
 {
     pub fn runner(
         self,
-    ) -> impl Fn(EvalContext<State>, A) -> BoxFuture<Result<AgentTrial<A::Output>, EvalError>>
-    + Send
-    + Sync
-    + 'static {
+    ) -> impl Fn(EvalContext<State>, A) -> TrajectoryRunFuture<A::Output> + Send + Sync + 'static
+    {
         let trajectory = self;
         move |ctx, agent| {
             let trajectory = trajectory.clone();

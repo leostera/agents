@@ -12,6 +12,9 @@ use crate::eval::EvalContext;
 use crate::trial::AgentTrial;
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type GraderFn<State, Output> = dyn Fn(AgentTrial<Output>, EvalContext<State>) -> BoxFuture<EvalResult<GradeResult>>
+    + Send
+    + Sync;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GradeResult {
@@ -68,11 +71,7 @@ pub struct GraderFailure {
 
 pub struct Grader<State = (), Output = String> {
     name: Arc<str>,
-    run: Arc<
-        dyn Fn(AgentTrial<Output>, EvalContext<State>) -> BoxFuture<EvalResult<GradeResult>>
-            + Send
-            + Sync,
-    >,
+    run: Arc<GraderFn<State, Output>>,
 }
 
 impl<State, Output> Clone for Grader<State, Output> {
