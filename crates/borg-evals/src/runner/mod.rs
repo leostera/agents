@@ -184,8 +184,6 @@ pub async fn run_discovered(
     let sink: std::sync::Arc<dyn EventSink> = if options.json {
         std::sync::Arc::new(JsonEventSink::stdout())
     } else {
-        println!();
-        println!("{}", ProgressEventSink::header_line());
         std::sync::Arc::new(ProgressEventSink::new())
     };
     set_global_sink(sink);
