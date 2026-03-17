@@ -254,7 +254,6 @@ fn render_registry(suites: &[SuiteSource]) -> Result<String> {
 
             quote! {
                 mod #module_ident {
-                    use super::*;
                     include!(#include_path);
 
                     pub fn descriptor() -> ::borg_evals_core::SuiteDescriptor {
@@ -282,8 +281,6 @@ fn render_registry(suites: &[SuiteSource]) -> Result<String> {
         .collect::<Vec<_>>();
 
     let file: syn::File = parse_quote! {
-        use anyhow::Result;
-
         #(#modules)*
 
         pub fn registry() -> Vec<::borg_evals_core::SuiteDescriptor> {
