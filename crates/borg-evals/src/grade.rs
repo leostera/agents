@@ -18,7 +18,6 @@ type GraderFn<State, Output> = dyn Fn(AgentTrial<Output>, EvalContext<State>) ->
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GradeResult {
-    // TODO(@leostera): grade results do not need names!
     pub name: String,
     pub passed: bool,
     pub score: f32,
@@ -27,10 +26,6 @@ pub struct GradeResult {
     pub evidence: Value,
 }
 
-// TODO(@leostera): remove these helpers, and use a builder-style api:
-//    GradeResult::builder().score(0.5).summary("...").evidence(json).build()
-//    GradeResult::builder().score(0.5).summary("...").evidence(json).build()
-//
 impl GradeResult {
     pub fn pass(name: impl Into<String>, summary: impl Into<String>) -> Self {
         Self {
@@ -251,22 +246,11 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
     }
 }
 
-// TODO(@leostera): what in the hell is this, it needs to be REMOVED
-pub trait IntoGradingConfig<State, Output> {
-    fn into_grading_config(self) -> GradingConfig<State, Output>;
-}
-
-impl<State, Output> IntoGradingConfig<State, Output> for GradingConfig<State, Output> {
-    fn into_grading_config(self) -> GradingConfig<State, Output> {
-        self
-    }
-}
-
-impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> IntoGradingConfig<State, Output>
-    for Grader<State, Output>
+impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> From<Grader<State, Output>>
+    for GradingConfig<State, Output>
 {
-    fn into_grading_config(self) -> GradingConfig<State, Output> {
-        GradingConfig::new().grader(self)
+    fn from(value: Grader<State, Output>) -> Self {
+        GradingConfig::new().grader(value)
     }
 }
 

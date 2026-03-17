@@ -32,6 +32,8 @@ pub enum CalcOp {
     ToolAdd(AddArgs),
 }
 
+// This manual impl is the reference shape that a future `borg_macros::AgentTool` derive should
+// generate for typed tools.
 impl TypedTool for CalcOp {
     fn tool_definitions() -> Vec<borg_llm::tools::RawToolDefinition> {
         vec![RawToolDefinition::function(

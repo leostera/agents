@@ -92,14 +92,19 @@ async fn preserves_empty_string(_ctx: EvalContext<EchoHarness>) -> Result<Trajec
             "echo agent should respect empty string",
             GradingConfig::new().grade("echoes-empty", |trial, _ctx| async move {
                 let reply: EchoRes = trial.final_reply.unwrap();
-                // TODO(@leostera): remove these helpers, just use rust code for these
-                // conditionals!
-                Ok(GradeResult::pass_if(
-                    "echoes-empty",
-                    reply.text.is_empty(),
-                    "echo agent should preserve empty string",
-                    json!({ "reply": reply.text }),
-                ))
+                let passed = reply.text.is_empty();
+                let summary = if passed {
+                    "echo agent preserved the empty string"
+                } else {
+                    "echo agent should preserve empty string"
+                };
+                Ok(GradeResult {
+                    name: "echoes-empty".to_string(),
+                    passed,
+                    score: if passed { 1.0 } else { 0.0 },
+                    summary: summary.to_string(),
+                    evidence: json!({ "reply": reply.text }),
+                })
             }),
         ))
         .build()?)

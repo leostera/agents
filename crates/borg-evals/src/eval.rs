@@ -215,9 +215,9 @@ where
 
     pub fn grading<G>(mut self, grading: G) -> Self
     where
-        G: crate::grade::IntoGradingConfig<State, A::Output>,
+        G: Into<GradingConfig<State, A::Output>>,
     {
-        self.grading = grading.into_grading_config();
+        self.grading = grading.into();
         self
     }
 
