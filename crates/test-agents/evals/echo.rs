@@ -96,7 +96,7 @@ async fn preserves_empty_string(_ctx: EvalContext<EchoHarness>) -> Result<Trajec
                 // conditionals!
                 Ok(GradeResult::pass_if(
                     "echoes-empty",
-                    reply.text == "",
+                    reply.text.is_empty(),
                     "echo agent should preserve empty string",
                     json!({ "reply": reply.text }),
                 ))
