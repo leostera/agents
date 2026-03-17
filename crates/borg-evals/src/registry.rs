@@ -140,6 +140,7 @@ fn parse_suite_source(path: &Path) -> Result<SuiteSource> {
         syn::parse_file(&source).with_context(|| format!("parse {}", path.display()))?;
 
     let mut suite_fn = None;
+    let mut suite_id = None;
     let mut agent_builder_fn = None;
     let mut evals = Vec::new();
 
@@ -151,6 +152,7 @@ fn parse_suite_source(path: &Path) -> Result<SuiteSource> {
         if has_evals_attr(&item_fn, "suite") {
             let fn_name = item_fn.sig.ident.to_string();
             suite_fn = Some(fn_name.clone());
+            suite_id = parse_suite_id(&item_fn)?;
             agent_builder_fn = Some(parse_suite_agent_builder(&item_fn)?);
             continue;
         }
@@ -166,13 +168,10 @@ fn parse_suite_source(path: &Path) -> Result<SuiteSource> {
 
     let suite_fn =
         suite_fn.with_context(|| format!("missing #[evals::suite] in {}", path.display()))?;
+    let suite_id = suite_id.unwrap_or(default_suite_id(path)?);
 
     Ok(SuiteSource {
-        id: path
-            .file_stem()
-            .expect("suite source stem")
-            .to_string_lossy()
-            .to_string(),
+        id: suite_id,
         path: path.to_path_buf(),
         agent_builder_fn: agent_builder_fn.with_context(|| {
             format!(
@@ -223,6 +222,47 @@ fn parse_suite_agent_builder(item_fn: &ItemFn) -> Result<String> {
     anyhow::bail!("missing agent = build_agent_fn in #[evals::suite]");
 }
 
+fn parse_suite_id(item_fn: &ItemFn) -> Result<Option<String>> {
+    for attr in &item_fn.attrs {
+        if !matches_evals_attr(attr, "suite") {
+            continue;
+        }
+
+        if let Meta::List(list) = &attr.meta {
+            let exprs = list.parse_args_with(
+                syn::punctuated::Punctuated::<Expr, syn::Token![,]>::parse_terminated,
+            )?;
+            for expr in exprs {
+                if let Expr::Assign(ExprAssign { left, right, .. }) = expr
+                    && matches!(&*left, Expr::Path(path) if path.path.is_ident("suite_id"))
+                    && let Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(value),
+                        ..
+                    }) = &*right
+                {
+                    return Ok(Some(value.value()));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn default_suite_id(path: &Path) -> Result<String> {
+    let evals_index = path
+        .components()
+        .position(|component| component.as_os_str() == "evals")
+        .with_context(|| format!("expected {} to be under evals/", path.display()))?;
+    let relative = path.components().skip(evals_index + 1).collect::<PathBuf>();
+    let without_extension = relative.with_extension("");
+    let parts = without_extension
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    Ok(parts.join("_"))
+}
+
 fn render_registry(suites: &[SuiteSource]) -> Result<String> {
     let modules = suites
         .iter()
@@ -260,7 +300,7 @@ fn render_registry(suites: &[SuiteSource]) -> Result<String> {
                             #suite_id,
                             &[#(#eval_ids),*],
                             || Box::pin(async {
-                                let mut suite = #suite_wrapper().await?
+                                let mut suite = #suite_wrapper(#suite_id).await?
                                     .agent(|ctx| async move { #agent_builder(ctx).await });
                                 #(#eval_lines)*
                                 Ok(Box::new(suite) as Box<dyn ::borg_evals::RunnableSuite>)

@@ -53,7 +53,6 @@ impl Parse for SuiteArgs {
 fn expand_suite(args: &SuiteArgs, item: &ItemFn) -> Result<TokenStream> {
     let fn_ident = &item.sig.ident;
     let wrapper_ident = format_ident!("__evals_make_suite_{}", fn_ident);
-    let suite_id = fn_ident.to_string();
     let state_ty = extract_result_inner_type(&item.sig.output)?;
     let suite_ctor = match args.kind.value().as_str() {
         "capability" => quote!(::borg_evals::Suite::capability),
@@ -64,9 +63,9 @@ fn expand_suite(args: &SuiteArgs, item: &ItemFn) -> Result<TokenStream> {
     Ok(quote! {
         #item
 
-        pub async fn #wrapper_ident() -> ::anyhow::Result<::borg_evals::Suite<#state_ty>> {
+        pub async fn #wrapper_ident(suite_id: &str) -> ::anyhow::Result<::borg_evals::Suite<#state_ty>> {
             Ok(
-                #suite_ctor(#suite_id)
+                #suite_ctor(suite_id)
                     .state(#fn_ident().await?)
             )
         }

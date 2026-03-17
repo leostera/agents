@@ -9,11 +9,12 @@ use serde_json::json;
     agent = build_agent,
 )]
 async fn build_harness() -> Result<EchoHarness> {
-    Ok(EchoHarness)
+    EchoHarness::new().await
 }
 
 async fn build_agent(_ctx: EvalContext<EchoHarness>) -> Result<EchoAgent> {
-    EchoAgent::new().await
+    let runner = _ctx.state().runner_for(_ctx.target()).await?;
+    EchoAgent::new(runner).await
 }
 
 #[borg_macros::eval(
@@ -31,9 +32,9 @@ async fn echoes_plain_text(
                 let reply: EchoRes = trial.final_reply.unwrap();
                 Ok(GradeResult::pass_if(
                     "echoes-hello",
-                    reply.0 == "hello",
+                    reply.text == "hello",
                     "echo agent should preserve the input text",
-                    json!({ "reply": reply.0 }),
+                    json!({ "reply": reply.text }),
                 ))
             }),
         ))
@@ -55,9 +56,9 @@ async fn preserves_newlines(
                 let reply: EchoRes = trial.final_reply.unwrap();
                 Ok(GradeResult::pass_if(
                     "echoes-multiline",
-                    reply.0 == "hello\nworld",
+                    reply.text == "hello\nworld",
                     "echo agent should preserve multiline input",
-                    json!({ "reply": reply.0 }),
+                    json!({ "reply": reply.text }),
                 ))
             }),
         ))
@@ -77,9 +78,9 @@ async fn third_eval(_ctx: EvalContext<EchoHarness>) -> Result<Trajectory<EchoAge
                 let reply: EchoRes = trial.final_reply.unwrap();
                 Ok(GradeResult::pass_if(
                     "echoes-multiline",
-                    reply.0 == "hello\nworld",
+                    reply.text == "hello\nworld",
                     "echo agent should preserve multiline input",
-                    json!({ "reply": reply.0 }),
+                    json!({ "reply": reply.text }),
                 ))
             }),
         ))

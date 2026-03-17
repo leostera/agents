@@ -550,6 +550,26 @@ where
                 "trial execution failed"
             );
             let finished_at_wall = now_since_epoch();
+            let partial_trial = error.partial_trial_json().cloned();
+            let (grades, grader_failures, mean_score) = partial_trial
+                .as_ref()
+                .and_then(|trial| {
+                    serde_json::from_value::<crate::trial::AgentTrial<serde_json::Value>>(
+                        trial.clone(),
+                    )
+                    .ok()
+                })
+                .map(|trial| {
+                    let grader_count = trial.grades.len() + trial.grader_failures.len();
+                    let mean_score = if grader_count == 0 {
+                        0.0
+                    } else {
+                        trial.grades.iter().map(|grade| grade.score).sum::<f32>()
+                            / grader_count as f32
+                    };
+                    (trial.grades, trial.grader_failures, mean_score)
+                })
+                .unwrap_or_else(|| (Vec::new(), Vec::new(), 0.0));
             TrialRecord {
                 schema_version: SCHEMA_VERSION,
                 trial_id,
@@ -562,11 +582,11 @@ where
                 finished_at: finished_at_wall,
                 duration: started_at_instant.elapsed(),
                 passed: false,
-                mean_score: 0.0,
-                trial: error.partial_trial_json().cloned(),
+                mean_score,
+                trial: partial_trial,
                 error: Some(error.to_string()),
-                grades: Vec::new(),
-                grader_failures: Vec::new(),
+                grades,
+                grader_failures,
             }
         }
     }

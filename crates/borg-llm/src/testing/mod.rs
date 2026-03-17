@@ -13,17 +13,11 @@ use crate::provider::openrouter::{OpenRouter, OpenRouterConfig};
 use crate::runner::LlmRunner;
 use ollama_container::LlmContainer;
 
-static TRACING: Once = Once::new();
 static DOTENV: Once = Once::new();
 static OLLAMA_CONTEXT: OnceCell<Arc<TestContext>> = OnceCell::const_new();
 
 pub fn init_tracing() {
-    TRACING.call_once(|| {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter("info")
-            .with_test_writer()
-            .try_init();
-    });
+    // Intentionally a no-op. The caller owns logging/tracing configuration.
 }
 
 pub fn init_test_env() {

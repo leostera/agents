@@ -1,6 +1,5 @@
 [evals]
-trials = 1
-output_dir = ".evals"
+# trials = 10
 targets = [
   { provider = "ollama", model = "llama3.2:1b" },
   { provider = "ollama", model = "llama3.2:3b" },

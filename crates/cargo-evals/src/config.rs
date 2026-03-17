@@ -12,7 +12,9 @@ pub struct EvalsFile {
 
 #[derive(Debug, Deserialize)]
 pub struct EvalsConfig {
+    #[serde(default = "default_trials")]
     pub trials: usize,
+    #[serde(default = "default_output_dir")]
     pub output_dir: String,
     #[serde(default)]
     pub targets: Vec<TargetConfig>,
@@ -87,4 +89,12 @@ fn supported_provider(provider: &str) -> bool {
     ]
     .iter()
     .any(|supported| supported.name() == provider)
+}
+
+fn default_trials() -> usize {
+    10
+}
+
+fn default_output_dir() -> String {
+    ".evals".to_string()
 }
