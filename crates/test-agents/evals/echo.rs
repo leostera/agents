@@ -65,21 +65,39 @@ async fn preserves_newlines(
         .build()?)
 }
 
+// NOTE(@leostera): idea for creating reusable grades
+//
+// #[borg_macros::grade(desc = "echo agent should respect empty strings")]
+// async fn respects_empty_string(
+//     trial: AgentTrial<EchoRes>,
+//     _ctx: EvalContext<EchoHarness>,
+// ) -> EvalResult<GradeResult> {
+//     let reply: EchoRes = trial.final_reply.unwrap();
+//     Ok(GradeResult::pass_if(
+//         "echoes-empty",
+//         reply.text == "",
+//         "echo agent should preserve empty string",
+//         json!({ "reply": reply.text }),
+//     ))
+// }
+
 #[borg_macros::eval(
     agent = EchoAgent,
-    desc = "this is a third eval",
+    desc = "empty string is empty string",
     tags = ["echo", "multiline"],
 )]
-async fn third_eval(_ctx: EvalContext<EchoHarness>) -> Result<Trajectory<EchoAgent, EchoHarness>> {
+async fn preserves_empty_string(_ctx: EvalContext<EchoHarness>) -> Result<Trajectory<EchoAgent, EchoHarness>> {
     Ok(Trajectory::builder()
-        .add_step(Step::user(EchoReq("hello\nworld".to_string())).expect(
-            "echo agent should preserve newlines",
-            GradingConfig::new().grade("echoes-multiline", |trial, _ctx| async move {
+        .add_step(Step::user(EchoReq("".to_string())).expect(
+            "echo agent should respect empty string",
+            GradingConfig::new().grade("echoes-empty", |trial, _ctx| async move {
                 let reply: EchoRes = trial.final_reply.unwrap();
+                // TODO(@leostera): remove these helpers, just use rust code for these
+                // conditionals!
                 Ok(GradeResult::pass_if(
-                    "echoes-multiline",
-                    reply.text == "hello\nworld",
-                    "echo agent should preserve multiline input",
+                    "echoes-empty",
+                    reply.text == "",
+                    "echo agent should preserve empty string",
                     json!({ "reply": reply.text }),
                 ))
             }),

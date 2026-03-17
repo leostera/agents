@@ -1,7 +1,9 @@
 [evals]
 # trials = 10
 targets = [
-  { provider = "ollama", model = "llama3.2:1b" },
+  # { provider = "ollama", model = "llama3.2:1b" },
   { provider = "ollama", model = "llama3.2:3b" },
-  { provider = "ollama", model = "mistral-nemo" },
+  # { provider = "ollama", model = "mistral-nemo" },
+  # { provider = "openai", model = "gpt-5.3-codex" },
+  # { provider = "openrouter", model = "google/gemini-3-flash" },
 ]

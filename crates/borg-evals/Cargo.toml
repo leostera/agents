@@ -10,6 +10,8 @@ borg-agent = { path = "../borg-agent" }
 borg-macros = { path = "../borg-macros" }
 borg-llm = { path = "../borg-llm" }
 chrono.workspace = true
+config.workspace = true
+indicatif.workspace = true
 prettyplease.workspace = true
 proc-macro2.workspace = true
 quote.workspace = true

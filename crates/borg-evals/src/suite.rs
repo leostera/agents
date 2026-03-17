@@ -7,9 +7,11 @@ use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use crate::RunEvent;
 use crate::config::{ExecutionTarget, RunConfig};
 use crate::error::{EvalError, EvalResult};
 use crate::eval::{Eval, EvalAgent, EvalContext, NoAgent};
+use crate::events::emit;
 use crate::report::{
     EvalRunReport, IncrementalSuiteWriter, RunManifest, SCHEMA_VERSION, SuiteRunReport,
     TrialRecord, build_summary, now_since_epoch, run_id,
@@ -220,6 +222,22 @@ where
         let mut variants = Vec::new();
         let local_target_semaphore = Arc::new(Semaphore::new(1));
 
+        emit(RunEvent::RunStarted {
+            suite_count: 1,
+            targets: self
+                .config
+                .targets
+                .iter()
+                .map(|target| target.display_label())
+                .collect(),
+            trials: self.config.trials,
+            output_dir: self
+                .artifact_root
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| ".evals".to_string()),
+        });
+
         info!(
             suite_id = %self.suite.id(),
             targets = self.config.targets.len(),
@@ -273,6 +291,11 @@ where
             "finished eval run"
         );
 
+        emit(RunEvent::RunFinished {
+            suite_count: 1,
+            variant_count: variants.len(),
+        });
+
         Ok(EvalRunReport { manifest, variants })
     }
 }
@@ -290,6 +313,18 @@ where
 {
     let started_at = now_since_epoch();
     let mut trial_records = Vec::new();
+    let total_trial_count = suite
+        .evals()
+        .iter()
+        .map(|eval| eval.configured_trials().unwrap_or(default_trials))
+        .sum();
+
+    emit(RunEvent::SuiteStarted {
+        suite_id: suite.id().to_string(),
+        target_label: target.display_label(),
+        eval_count: suite.evals().len(),
+        trial_count: total_trial_count,
+    });
 
     info!(
         suite_id = %suite.id(),
@@ -331,6 +366,12 @@ where
             trials = trial_count,
             "starting eval"
         );
+        emit(RunEvent::EvalStarted {
+            suite_id: suite.id().to_string(),
+            eval_id: eval.id().to_string(),
+            target_label: target.display_label(),
+            trials: trial_count,
+        });
         for trial_index in 0..trial_count {
             let semaphore = semaphore.clone();
             let suite_id = suite.id().to_string();
@@ -394,6 +435,26 @@ where
         suite: summary,
         trials: trial_records,
     };
+
+    for eval_summary in &report.suite.evals {
+        emit(RunEvent::EvalFinished {
+            suite_id: report.suite.suite_id.clone(),
+            eval_id: eval_summary.eval_id.clone(),
+            target_label: report.suite.target.display_label(),
+            trial_count: eval_summary.trial_count,
+            passed_trials: eval_summary.passed_trials,
+            mean_score: eval_summary.mean_score,
+            mean_duration_ms: eval_summary.mean_duration.as_millis(),
+        });
+    }
+    emit(RunEvent::SuiteFinished {
+        suite_id: report.suite.suite_id.clone(),
+        target_label: report.suite.target.display_label(),
+        total_trials: report.suite.total_trials,
+        passed_trials: report.suite.passed_trials,
+        mean_score: report.suite.mean_score,
+        mean_duration_ms: report.suite.mean_duration.as_millis(),
+    });
 
     if let Some(writer) = incremental_writer.as_mut() {
         writer.finish(&report)?;
@@ -520,7 +581,7 @@ where
 
             let finished_at_wall = now_since_epoch();
 
-            TrialRecord {
+            let record = TrialRecord {
                 schema_version: SCHEMA_VERSION,
                 trial_id,
                 run_id,
@@ -537,7 +598,19 @@ where
                 error,
                 grades,
                 grader_failures,
-            }
+            };
+            emit(RunEvent::TrialFinished {
+                suite_id: record.suite_id.clone(),
+                eval_id: record.eval_id.clone(),
+                trial_id: record.trial_id.clone(),
+                trial_index: record.trial_index,
+                target_label: record.target.display_label(),
+                passed: record.passed,
+                mean_score: record.mean_score,
+                duration_ms: record.duration.as_millis(),
+                error: record.error.clone(),
+            });
+            record
         }
         Err(error) => {
             error!(
@@ -570,7 +643,7 @@ where
                     (trial.grades, trial.grader_failures, mean_score)
                 })
                 .unwrap_or_else(|| (Vec::new(), Vec::new(), 0.0));
-            TrialRecord {
+            let record = TrialRecord {
                 schema_version: SCHEMA_VERSION,
                 trial_id,
                 run_id,
@@ -587,7 +660,19 @@ where
                 error: Some(error.to_string()),
                 grades,
                 grader_failures,
-            }
+            };
+            emit(RunEvent::TrialFinished {
+                suite_id: record.suite_id.clone(),
+                eval_id: record.eval_id.clone(),
+                trial_id: record.trial_id.clone(),
+                trial_index: record.trial_index,
+                target_label: record.target.display_label(),
+                passed: record.passed,
+                mean_score: record.mean_score,
+                duration_ms: record.duration.as_millis(),
+                error: record.error.clone(),
+            });
+            record
         }
     }
 }

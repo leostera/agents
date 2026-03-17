@@ -4,12 +4,12 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone)]
-pub struct EvalCrate {
+pub(super) struct EvalCrate {
     pub package_name: String,
     pub crate_ident: String,
 }
 
-pub fn discover_eval_crates(workspace_root: &Path) -> Vec<EvalCrate> {
+pub(super) fn discover_eval_crates(workspace_root: &Path) -> Vec<EvalCrate> {
     let mut crates = BTreeMap::<String, EvalCrate>::new();
 
     for path in WalkDir::new(workspace_root.join("crates"))

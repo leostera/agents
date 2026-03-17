@@ -1,9 +1,6 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
-
-use crate::cmd::{list, run};
-use crate::config::EvalsFile;
-use crate::discovery::discover_eval_crates;
+use borg_evals::runner::{RunOptions, list_workspace, run_workspace};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(name = "cargo-evals")]
@@ -15,19 +12,31 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    List,
-    Run,
+    List(ListArgs),
+    Run(RunArgs),
+}
+
+#[derive(Debug, Args, Clone, Copy)]
+pub struct ListArgs {
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args, Clone, Copy)]
+pub struct RunArgs {
+    #[arg(long)]
+    pub json: bool,
 }
 
 impl Cli {
     pub async fn run(self) -> Result<()> {
         let workspace_root = std::env::current_dir().context("resolve workspace root")?;
-        let evals_file = EvalsFile::load(&workspace_root)?;
-        let crates = discover_eval_crates(&workspace_root);
 
         match self.command {
-            Command::List => list::run(&evals_file, &crates)?,
-            Command::Run => run::run(&evals_file, &crates).await?,
+            Command::List(args) => list_workspace(&workspace_root, RunOptions { json: args.json })?,
+            Command::Run(args) => {
+                run_workspace(&workspace_root, RunOptions { json: args.json }).await?
+            }
         }
 
         Ok(())

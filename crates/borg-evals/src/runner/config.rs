@@ -6,12 +6,12 @@ use config::{Config, File, FileFormat};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
-pub struct EvalsFile {
+pub(super) struct EvalsFile {
     pub evals: EvalsConfig,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct EvalsConfig {
+pub(super) struct EvalsConfig {
     #[serde(default = "default_trials")]
     pub trials: usize,
     #[serde(default = "default_output_dir")]
@@ -21,7 +21,7 @@ pub struct EvalsConfig {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct TargetConfig {
+pub(super) struct TargetConfig {
     pub label: Option<String>,
     pub provider: String,
     pub model: String,
@@ -29,7 +29,7 @@ pub struct TargetConfig {
 }
 
 impl EvalsFile {
-    pub fn load(workspace_root: &Path) -> Result<Self> {
+    pub(super) fn load(workspace_root: &Path) -> Result<Self> {
         let path = workspace_root.join("evals.toml");
         let mut file: EvalsFile = Config::builder()
             .add_source(File::from(path.clone()).format(FileFormat::Toml))

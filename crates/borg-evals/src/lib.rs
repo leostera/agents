@@ -1,9 +1,11 @@
 mod config;
 mod error;
 mod eval;
+mod events;
 mod grade;
 mod registry;
 mod report;
+pub mod runner;
 mod suite;
 mod trajectory;
 mod trial;
@@ -14,6 +16,10 @@ pub use borg_macros::{eval, suite};
 pub use config::{ExecutionTarget, RunConfig};
 pub use error::{EvalError, EvalResult};
 pub use eval::{Eval, EvalAgent, EvalContext};
+pub use events::{
+    EventSink, JsonEventSink, NoopEventSink, ProgressEventSink, RunEvent, SharedEventSink, emit,
+    global_sink, set_global_sink,
+};
 pub use grade::{Grade, GradeResult, Grader, GraderFailure, GradingConfig, grade};
 pub use registry::{RunnableSuite, SuiteDescriptor, build};
 pub use report::{
@@ -29,10 +35,11 @@ pub use trial::{
 pub mod prelude {
     pub use crate::{
         AgentTrial, AgentTrialRecorder, ArtifactIndex, Eval, EvalAgent, EvalAggregate, EvalContext,
-        EvalError, EvalResult, ExecutionTarget, Expectation, Grade, GradeResult, Grader,
-        GraderFailure, GradingConfig, RecordedEvent, RecordedMessageRole, RecordedToolCall,
-        RunConfig, RunnableSuite, Step, Suite, SuiteDescriptor, SuiteKind, SuiteRunReport,
-        Trajectory, TrajectoryBuilder, async_trait, build, grade, setup,
+        EvalError, EvalResult, EventSink, ExecutionTarget, Expectation, Grade, GradeResult, Grader,
+        GraderFailure, GradingConfig, JsonEventSink, ProgressEventSink, RecordedEvent,
+        RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite, SharedEventSink,
+        Step, Suite, SuiteDescriptor, SuiteKind, SuiteRunReport, Trajectory, TrajectoryBuilder,
+        async_trait, build, emit, global_sink, grade, set_global_sink, setup,
     };
 }
 

@@ -1,8 +1,4 @@
 mod cli;
-mod cmd;
-mod config;
-mod discovery;
-mod harness;
 
 use anyhow::Result;
 use clap::Parser;

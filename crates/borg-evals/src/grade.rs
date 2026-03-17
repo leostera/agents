@@ -18,6 +18,7 @@ type GraderFn<State, Output> = dyn Fn(AgentTrial<Output>, EvalContext<State>) ->
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GradeResult {
+    // TODO(@leostera): grade results do not need names!
     pub name: String,
     pub passed: bool,
     pub score: f32,
@@ -26,6 +27,10 @@ pub struct GradeResult {
     pub evidence: Value,
 }
 
+// TODO(@leostera): remove these helpers, and use a builder-style api:
+//    GradeResult::builder().score(0.5).summary("...").evidence(json).build()
+//    GradeResult::builder().score(0.5).summary("...").evidence(json).build()
+//
 impl GradeResult {
     pub fn pass(name: impl Into<String>, summary: impl Into<String>) -> Self {
         Self {

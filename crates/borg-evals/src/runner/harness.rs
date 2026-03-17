@@ -5,22 +5,32 @@ use anyhow::{Context, Result};
 use quote::quote;
 use syn::parse_quote;
 
-use crate::config::EvalsFile;
-use crate::discovery::EvalCrate;
+use crate::runner::config::EvalsFile;
+use crate::runner::discovery::EvalCrate;
 
 const HARNESS_ROOT: &str = "target/cargo-evals/harness";
 
-pub struct GeneratedHarness {
+pub(super) struct GeneratedHarness {
+    root: PathBuf,
     manifest_path: PathBuf,
 }
 
 impl GeneratedHarness {
-    pub fn manifest_path(&self) -> &Path {
+    pub(super) fn manifest_path(&self) -> &Path {
         &self.manifest_path
+    }
+
+    pub(super) fn binary_path(&self) -> PathBuf {
+        let binary = if std::env::consts::EXE_EXTENSION.is_empty() {
+            "cargo-evals-harness".to_string()
+        } else {
+            format!("cargo-evals-harness.{}", std::env::consts::EXE_EXTENSION)
+        };
+        self.root.join("target").join("debug").join(binary)
     }
 }
 
-pub fn generate(
+pub(super) fn generate_harness(
     workspace_root: &Path,
     config: &EvalsFile,
     crates: &[EvalCrate],
@@ -37,7 +47,10 @@ pub fn generate(
     std::fs::write(&main_path, render_main(config, crates)?)
         .with_context(|| format!("write {}", main_path.display()))?;
 
-    Ok(GeneratedHarness { manifest_path })
+    Ok(GeneratedHarness {
+        root,
+        manifest_path,
+    })
 }
 
 fn render_manifest(workspace_root: &Path, crates: &[EvalCrate]) -> String {
@@ -80,31 +93,11 @@ fn render_main(config: &EvalsFile, crates: &[EvalCrate]) -> Result<String> {
         quote!(use #crate_ident as _;)
     });
 
-    let list_lines = crates.iter().map(|krate| {
+    let registries = crates.iter().map(|krate| {
         let crate_ident = syn::Ident::new(&krate.crate_ident, proc_macro2::Span::call_site());
         let package_name = &krate.package_name;
         quote! {
-            for suite in #crate_ident::__evals_registry() {
-                println!("crate {}", #package_name);
-                println!("suite {}", suite.id);
-                for eval_id in suite.eval_ids {
-                    println!("  eval {}", eval_id);
-                }
-            }
-        }
-    });
-
-    let run_lines = crates.iter().map(|krate| {
-        let crate_ident = syn::Ident::new(&krate.crate_ident, proc_macro2::Span::call_site());
-        quote! {
-            for suite in #crate_ident::__evals_registry() {
-                reports.push(
-                    (suite.build)()
-                        .await?
-                        .run_box(run_config.clone(), output_dir)
-                        .await?
-                );
-            }
+            (#package_name, #crate_ident::__evals_registry())
         }
     });
 
@@ -114,7 +107,7 @@ fn render_main(config: &EvalsFile, crates: &[EvalCrate]) -> Result<String> {
         let model = &target.model;
         let concurrency = target.concurrency.unwrap_or(1);
         quote! {
-            borg_evals::ExecutionTarget::new(#label, #provider, #model)
+            ::borg_evals::ExecutionTarget::new(#label, #provider, #model)
                 .with_max_in_flight(#concurrency)
         }
     });
@@ -130,19 +123,21 @@ fn render_main(config: &EvalsFile, crates: &[EvalCrate]) -> Result<String> {
         #[tokio::main]
         async fn main() -> Result<()> {
             let command = std::env::args().nth(1).unwrap_or_else(|| "run".to_string());
+            let json = std::env::args().any(|arg| arg == "--json");
+            let registries = vec![#(#registries),*];
+            let run_config = ::borg_evals::RunConfig::new(vec![#(#targets),*]).with_trials(#trials);
 
             match command.as_str() {
                 "list" => {
-                    #(#list_lines)*
+                    ::borg_evals::runner::list_discovered(&registries, &run_config, json);
                 }
                 "run" => {
-                    let run_config = borg_evals::RunConfig::new(vec![#(#targets),*]).with_trials(#trials);
-                    let output_dir = #output_dir;
-                    let mut reports = Vec::new();
-                    #(#run_lines)*
-                    for report in reports {
-                        println!("{}", report.summary_table());
-                    }
+                    ::borg_evals::runner::run_discovered(
+                        registries,
+                        run_config,
+                        #output_dir,
+                        ::borg_evals::runner::RunOptions { json },
+                    ).await?;
                 }
                 other => {
                     anyhow::bail!("unsupported harness command: {}", other);
