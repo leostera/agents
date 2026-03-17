@@ -12,7 +12,9 @@ Use it as a router: pick the most relevant existing AGENTS file before making ch
    - [`crates/borg-agent/AGENTS.md`](crates/borg-agent/AGENTS.md)
 2. LLM providers, typed tools, and model-facing APIs:
    - [`crates/borg-llm/AGENTS.md`](crates/borg-llm/AGENTS.md)
-3. Workspace-wide changes without a more specific AGENTS file:
+3. Evals, runner workflow, cargo-evals, and macro-generated suite wiring:
+   - [`crates/borg-evals/AGENTS.md`](crates/borg-evals/AGENTS.md)
+4. Workspace-wide changes without a more specific AGENTS file:
    - use this root file and inspect nearby crate code directly
 
 ## Global Rules (Apply Everywhere)

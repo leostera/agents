@@ -4,6 +4,8 @@ targets = [
   { provider = "ollama", model = "llama3.2:1b" },
   { provider = "ollama", model = "llama3.2:3b" },
   { provider = "ollama", model = "mistral-nemo" },
+  # Hosted providers stay disabled here until the local test harness no longer assumes
+  # container-managed Ollama setup for every target.
   # { provider = "openai", model = "gpt-5.3-codex" },
   # { provider = "openrouter", model = "google/gemini-3-flash" },
 ]

@@ -10,7 +10,7 @@ src/
 ├── completion.rs    # Typed public API plus raw provider-neutral request/response types
 ├── transcription.rs  # AudioTranscriptionRequest, AudioTranscriptionResponse, AudioSource
 ├── runner.rs        # LlmRunner typed adapter over raw providers
-├── tools.rs         # TypedToolSet<C>, ToolCall<C>, TypedTool trait, raw tool metadata
+├── tools.rs         # ToolDefinition, ToolSet<C>, ToolCall<C>, TypedTool trait
 ├── response.rs      # TypedResponse<R> and raw response-format schema
 ├── error.rs         # Structured errors (Error, LlmResult)
 ├── capability.rs    # Capability enum
@@ -77,10 +77,14 @@ CompletionResponse<MyTools, MyResponse>
 Define tools by implementing the `TypedTool` trait:
 ```rust
 impl TypedTool for MyTools {
-    fn tool_definitions() -> Vec<RawToolDefinition> { ... }
+    fn tool_definitions() -> Vec<ToolDefinition> { ... }
     fn decode_tool_call(name: &str, arguments: serde_json::Value) -> LlmResult<Self> { ... }
 }
 ```
+
+Use `ToolDefinition::function(...)` to describe function tools.
+The serialized wire field is still `"type"`, but the Rust field is `kind`.
+`RawToolDefinition` and `TypedToolSet` remain as compatibility aliases; prefer `ToolDefinition` and `ToolSet` in new code.
 
 ### Request Knobs
 Provider-neutral request tuning uses explicit enums/newtypes instead of `Option`s:
@@ -103,6 +107,7 @@ cargo clippy -p borg-llm
 
 Shared test helpers live under `src/testing/` and real end-to-end cases live under `tests/`.
 The Ollama helpers start one shared server container per test binary and pull models lazily per test.
+The testing helpers should not install tracing subscribers; callers own logging configuration.
 
 ## Adding a New Provider
 

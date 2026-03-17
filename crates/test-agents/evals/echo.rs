@@ -65,22 +65,6 @@ async fn preserves_newlines(
         .build()?)
 }
 
-// NOTE(@leostera): idea for creating reusable grades
-//
-// #[borg_macros::grade(desc = "echo agent should respect empty strings")]
-// async fn respects_empty_string(
-//     trial: AgentTrial<EchoRes>,
-//     _ctx: EvalContext<EchoHarness>,
-// ) -> EvalResult<GradeResult> {
-//     let reply: EchoRes = trial.final_reply.unwrap();
-//     Ok(GradeResult::pass_if(
-//         "echoes-empty",
-//         reply.text == "",
-//         "echo agent should preserve empty string",
-//         json!({ "reply": reply.text }),
-//     ))
-// }
-
 #[borg_macros::eval(
     agent = EchoAgent,
     desc = "empty string is empty string",
