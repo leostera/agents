@@ -251,6 +251,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
     }
 }
 
+// TODO(@leostera): what in the hell is this, it needs to be REMOVED
 pub trait IntoGradingConfig<State, Output> {
     fn into_grading_config(self) -> GradingConfig<State, Output>;
 }
