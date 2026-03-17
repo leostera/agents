@@ -62,7 +62,7 @@ The gap is not just “we need a score.” The gap is “we need evals to feel l
 
 ### What an eval looks like
 
-In the first version, an eval case should be an ordinary Rust scenario function.
+In the first version, an eval should be an ordinary Rust scenario function or a thin declarative runner such as a trajectory.
 
 It is not constrained to one prompt or one harness call. A case may:
 
@@ -79,30 +79,27 @@ A representative shape:
 use borg_evals::prelude::*;
 
 fn refunds_suite() -> Suite {
-    Suite::new("support-refunds")
-        .kind(SuiteKind::Regression)
+    Suite::regression("support-refunds")
         .trials(5)
-        .case(
-            Case::new("angry-customer-late-refund")
-                .tag("support")
-                .tag("refunds")
-                .run(|ctx| async move {
-                    let agent = fixtures::support_agent().await?;
-                    let (tx, mut rx) = agent.run().await?;
-
-                    tx.send_many([
-                        AgentInput::Message("I was charged twice and I want my money back now."),
-                    ])
-                    .await?;
-
-                    let transcript = rx.recv_all().await?;
-
-                    Ok(AgentTrial {
-                        transcript,
-                    })
-                })
-                .grade(reply_contains("refund"))
-                .grade(tool_sequence("verify before refund"))
+        .agent(|ctx| async move {
+            fixtures::support_agent(ctx).await
+        })
+        .eval(
+            Eval::new("angry-customer-late-refund")
+                .tags(["support", "refunds"])
+                .grading(
+                    GradingConfig::new()
+                        .grader(reply_contains("refund"))
+                        .grader(tool_sequence("verify before refund"))
+                )
+                .run(
+                    Trajectory::builder()
+                        .add_step(
+                            Step::user("I was charged twice and I want my money back now.")
+                        )
+                        .build()?
+                        .runner()
+                )
         )
 }
 ```
@@ -237,7 +234,7 @@ Core data model and eval authoring API.
 Responsibilities:
 
 - `Suite`
-- `Case`
+- `Eval`
 - `Trial`
 - grading result model
 - artifact and summary schemas
@@ -289,7 +286,7 @@ The first version should keep the abstraction stack small.
 The primary concepts are:
 
 - `Suite`
-- `Case`
+- `Eval`
 - `Trial`
 - `Grader`
 
@@ -313,21 +310,23 @@ The two suite kinds in v1 should be:
 - `Regression`
 - `Capability`
 
-## `Case`
+## `Eval`
 
-A case is a named scenario definition.
+An eval is a named scenario definition.
 
 The original generic design sketched `Case<O>` and `Grader<O>`. The prototype, however, taught a more useful lesson:
 
-- v0 and likely v1 should stay explicitly agent-first
-- the core case/grader surface can remain specialized to `AgentTrial`
+- v0 and likely v1 should stay explicitly `borg-agent`-first
+- the suite should own the shared agent factory for the system under test
+- the core eval/grader surface can remain specialized to `AgentTrial<Output>`
 - generalization should come later only if a second real trial shape forces it
 
 So the practical v0/v1 semantic is:
 
-- the case runs an arbitrary async Rust scenario
-- the scenario returns an `AgentTrial`
-- graders receive that same `AgentTrial`
+- the suite builds a fresh typed agent per trial
+- the eval runs an arbitrary async Rust scenario, or a trajectory runner
+- the scenario returns an `AgentTrial<Output>`
+- graders receive that same `AgentTrial<Output>`
 
 This is still typed and expressive enough for the current target problem:
 
@@ -354,49 +353,27 @@ Each trial should have:
 
 Since the same case may run multiple times, case aggregates should be derived from trial records rather than replacing them.
 
-### `AgentTrial` in v1
+### `AgentTrial<Output>` in v1
 
 Because v1 is explicitly scoped to systems built on `borg-agent` and `borg-llm`, the framework should define a first-class normalized trial shape for agent-oriented evals.
 
 A minimal conceptual model:
 
 ```rust
-pub struct AgentTrial {
-    pub inputs: Vec<AgentTrialInput>,
-    pub events: Vec<AgentTrialEvent>,
-    pub final_reply: Option<Value>,
-    pub error: Option<String>,
-    pub metrics: TrialMetrics,
-}
-
-pub enum AgentTrialInput {
-    Message { content: String },
-    Steer { content: String },
-    Cancel,
-}
-
-pub enum AgentTrialEvent {
-    ModelOutputItem { item: Value },
-    ToolCallRequested { call_id: String, name: String, args: Value },
-    ToolExecutionCompleted { call_id: String, result: Value },
-    Completed { reply: Value },
-    Cancelled,
-}
-
-pub struct TrialMetrics {
-    pub started_at: String,
-    pub finished_at: String,
-    pub latency_ms: u64,
+pub struct AgentTrial<Output> {
+    pub transcript: Vec<RecordedEvent>,
+    pub tool_trace: Vec<RecordedToolCall>,
+    pub final_reply: Option<Output>,
+    pub metadata: Value,
 }
 ```
 
 The exact struct names may evolve, but the persisted trial model should preserve:
 
-- the sequence of user/control inputs
-- the sequence of emitted agent events
-- the final reply when one exists
-- terminal failure/cancellation information
-- timing metadata
+- the sequence of recorded transcript and tool events
+- the typed final reply when one exists
+- terminal failure information via the enclosing `TrialRecord`
+- timing metadata via the enclosing `TrialRecord`
 
 This should be enough for deterministic transcript-aware graders in v1.
 
@@ -427,7 +404,7 @@ Graders should operate over the trial type used by core and return structured ev
 
 For v0/v1, that means:
 
-- `Grader` operates on `AgentTrial`
+- `Grader<State, Output>` operates on `AgentTrial<Output>`
 - built-in helpers stay agent-oriented
 - later generalization can happen behind a descriptor layer if we truly need non-agent evals
 
@@ -517,8 +494,9 @@ Judge-based grading should remain auditable. Future persisted results should the
 
 The execution path should remain typed in Rust:
 
-- cases return typed outputs
-- graders receive typed outputs
+- suite agents return typed outputs
+- eval runners return typed `AgentTrial<Output>`
+- graders receive typed `AgentTrial<Output>`
 - fixtures and helpers stay typed
 
 But persisted artifacts and result records must be normalized and versioned.
@@ -535,11 +513,17 @@ This follows the same principle already established in the rest of Borg:
 
 Concretely, this means:
 
-- the scenario function can return a typed Rust output
-- graders can inspect that typed Rust output
+- the scenario function can return a typed `AgentTrial<Output>`
+- graders can inspect that typed `Output`
 - the runner is responsible for lowering the relevant execution state into a normalized persisted record
 
 For agent evals, the persisted representation should resemble the already-existing semantic event/history model in `borg-agent`, rather than opaque text snapshots.
+
+The prototype also clarified the boundary precisely:
+
+- keep `Output` typed through `EvalAgent`, `Eval`, `Trajectory`, `AgentTrial`, and `GradingConfig`
+- erase to JSON only when constructing persisted `TrialRecord`s and run reports
+- do not thread `Output` generics through `SuiteRunReport`, `EvalRunReport`, or artifact indexes
 
 ## Suggested artifact model
 
@@ -573,7 +557,7 @@ The exact filenames are not final, but the persisted object model should include
 
 - `RunManifest`
 - `SuiteSummary`
-- `CaseAggregate`
+- `EvalAggregate`
 - `TrialRecord`
 - `ArtifactIndex`
 
@@ -600,7 +584,7 @@ pub struct RunManifest {
     pub started_at: String,
     pub finished_at: String,
     pub targets: Vec<ExecutionTarget>,
-    pub case_ids: Vec<String>,
+    pub eval_ids: Vec<String>,
 }
 
 pub struct SuiteSummary {
@@ -608,7 +592,7 @@ pub struct SuiteSummary {
     pub run_id: String,
     pub suite_id: String,
     pub kind: SuiteKind,
-    pub total_cases: usize,
+    pub total_evals: usize,
     pub total_trials: usize,
     pub pass_rate: f32,
     pub mean_score: f32,
@@ -616,10 +600,10 @@ pub struct SuiteSummary {
     pub grader_deltas: Vec<GraderDelta>,
 }
 
-pub struct CaseAggregate {
+pub struct EvalAggregate {
     pub schema_version: String,
     pub run_id: String,
-    pub case_id: String,
+    pub eval_id: String,
     pub trial_count: usize,
     pub pass_rate: f32,
     pub mean_score: f32,
@@ -632,14 +616,14 @@ pub struct TrialRecord {
     pub run_id: String,
     pub suite_id: String,
     pub target: ExecutionTarget,
-    pub case_id: String,
+    pub eval_id: String,
     pub trial_id: String,
     pub started_at: String,
     pub finished_at: String,
     pub duration_ms: u64,
     pub passed: bool,
     pub score: f32,
-    pub output: Value,
+    pub trial: Value,
     pub grader_results: Vec<GradeResult>,
     pub artifact_paths: Vec<String>,
 }
@@ -648,7 +632,7 @@ pub struct ArtifactIndex {
     pub schema_version: String,
     pub run_id: String,
     pub target_label: String,
-    pub case_id: String,
+    pub eval_id: String,
     pub trial_id: String,
     pub artifacts: Vec<ArtifactRef>,
 }
@@ -720,6 +704,32 @@ The prototype also established a locality rule for local executors such as Ollam
 - one local target should run to completion before the next local target begins
 - this reduces repeated model load/unload churn across many long trial matrices
 - hosted targets should still be allowed to run concurrently while a local target is active
+
+## Current prototype lessons
+
+The current refactor taught a few concrete design lessons that should now be treated as part of the intended architecture:
+
+- `Suite<State, Agent>` is the right ownership boundary for the system under test
+- the suite should own the shared agent factory
+- each eval should run against a fresh suite-built agent instance
+- `EvalContext<State>` should include stable run-local identifiers:
+  - `suite_id`
+  - `eval_id`
+  - `trial_id`
+  - `trial_index`
+  - `target`
+  - `state`
+- logs and persisted artifacts should include `trial_id` so engineers can jump directly from logs to `.evals` files
+- a linear `Trajectory` is already valuable even before supporting trees or branching
+- trajectory expectations should be modeled as `GradingConfig`s attached to steps
+- partial failed-trial evidence must be preserved, not discarded
+
+The same refactor also made the remaining DX gaps obvious:
+
+- too many explicit type parameters in authored code are a strong smell
+- the public API should avoid requiring authors to spell `Eval::<...>`, `Trajectory::<...>`, or `GradingConfig::<...>` explicitly
+- typed wrapper agents are useful, but the framework should not force eval authors to write manual run-loop plumbing
+- current traces are still too thin because trajectory inputs are not yet persisted as first-class trial events
 
 ## Initial implementation plan
 
@@ -798,35 +808,35 @@ Its job is to reduce boilerplate, not introduce a second runtime model.
 
 The first useful macro shape is:
 
-- `#[eval_case(...)]` on an async Rust function
-- macro expands into an ordinary `Case` builder function
-- the generated builder still returns a normal `Case`
+- `#[eval(...)]` on an async Rust function or trajectory-returning function
+- macro expands into an ordinary `Eval` builder function
+- the generated builder still returns a normal `Eval`
 - graders remain ordinary Rust for as long as possible
 
 Conceptually:
 
 ```rust
-#[eval_case(
+#[eval(
     id = "compress-day",
     tags("calendar", "free-time"),
-    trials = 20,
 )]
-async fn compress_day(ctx: TrialContext) -> EvalResult<AgentTrial> {
-    // scenario body
+fn compress_day() -> Trajectory<MyAgent, MyState> {
+    Trajectory::builder()
+        .add_step(
+            Step::user("Please reorganize tomorrow to maximize free time.")
+                .expect("uses calendar tools", grading_config)
+        )
+        .build()
 }
 ```
 
-expands into something equivalent to:
-
 ```rust
-pub async fn compress_day(ctx: TrialContext) -> EvalResult<AgentTrial> { ... }
+pub async fn compress_day(ctx: EvalContext<MyState>, agent: MyAgent) -> EvalResult<AgentTrial<MyReply>> { ... }
 
-pub fn compress_day_case() -> Case {
-    Case::new("compress-day")
-        .tag("calendar")
-        .tag("free-time")
-        .trials(20)
-        .run(|ctx| compress_day(ctx))
+pub fn compress_day_eval() -> Eval<MyState, MyAgent> {
+    Eval::new("compress-day")
+        .tags(["calendar", "free-time"])
+        .run(|ctx, agent| compress_day(ctx, agent))
 }
 ```
 
@@ -969,7 +979,7 @@ A few ergonomics should move out of examples and into the eval family once the c
 
 But these should still compile down to the same core model:
 
-- `Case`
+- `Eval`
 - `Suite`
 - `TrialRecord`
 - `GradeResult`
