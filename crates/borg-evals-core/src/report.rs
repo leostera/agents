@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -479,15 +480,27 @@ where
         .collect();
     let passed_trials = eval_trials.iter().filter(|trial| trial.passed).count();
 
-    let grader_means = eval
+    let grader_names = eval
         .graders()
         .iter()
-        .map(|grader| {
+        .map(|grader| grader.name().to_string())
+        .chain(
+            eval_trials
+                .iter()
+                .flat_map(|trial| trial.grades.iter().map(|grade| grade.name.clone())),
+        )
+        .collect::<BTreeSet<_>>();
+
+    let grader_means = grader_names
+        .into_iter()
+        .map(|grader_name| {
+            let grader_name_for_score = grader_name.clone();
+            let grader_name_for_pass = grader_name.clone();
             let scores = eval_trials.iter().map(|trial| {
                 trial
                     .grades
                     .iter()
-                    .find(|grade| grade.name == grader.name())
+                    .find(|grade| grade.name == grader_name_for_score)
                     .map(|grade| grade.score)
                     .unwrap_or(0.0)
             });
@@ -497,14 +510,14 @@ where
                     trial
                         .grades
                         .iter()
-                        .find(|grade| grade.name == grader.name())
+                        .find(|grade| grade.name == grader_name_for_pass)
                         .map(|grade| grade.passed)
                         .unwrap_or(false)
                 })
                 .count();
 
             GraderAggregate {
-                name: grader.name().to_string(),
+                name: grader_name,
                 mean_score: mean(scores),
                 pass_rate: ratio(passed_trials_for_grader, eval_trials.len()),
             }

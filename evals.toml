@@ -1,0 +1,8 @@
+[evals]
+trials = 1
+output_dir = ".evals"
+targets = [
+  { provider = "ollama", model = "llama3.2:1b" },
+  { provider = "ollama", model = "llama3.2:3b" },
+  { provider = "ollama", model = "mistral-nemo" },
+]

@@ -2,16 +2,20 @@ mod config;
 mod error;
 mod eval;
 mod grade;
+mod registry;
 mod report;
 mod suite;
 mod trajectory;
 mod trial;
 
+pub use crate as core;
 pub use async_trait::async_trait;
+pub use borg_evals_macros::{eval, suite};
 pub use config::{ExecutionTarget, RunConfig};
 pub use error::{EvalError, EvalResult};
 pub use eval::{Eval, EvalAgent, EvalContext};
 pub use grade::{Grade, GradeResult, Grader, GraderFailure, GradingConfig, grade};
+pub use registry::{RunnableSuite, SuiteDescriptor, build};
 pub use report::{
     ArtifactIndex, EvalAggregate, EvalRunReport, GraderAggregate, RunManifest, SCHEMA_VERSION,
     SuiteRunReport, SuiteSummary, TrialRecord,
@@ -27,8 +31,8 @@ pub mod prelude {
         AgentTrial, AgentTrialRecorder, ArtifactIndex, Eval, EvalAgent, EvalAggregate, EvalContext,
         EvalError, EvalResult, ExecutionTarget, Expectation, Grade, GradeResult, Grader,
         GraderFailure, GradingConfig, RecordedEvent, RecordedMessageRole, RecordedToolCall,
-        RunConfig, Step, Suite, SuiteKind, SuiteRunReport, Trajectory, TrajectoryBuilder,
-        async_trait, grade,
+        RunConfig, RunnableSuite, Step, Suite, SuiteDescriptor, SuiteKind, SuiteRunReport,
+        Trajectory, TrajectoryBuilder, async_trait, build, grade, setup,
     };
 }
 
@@ -39,7 +43,9 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+    use borg_agent::{AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
     use serde_json::json;
+    use tokio::sync::mpsc;
     use tokio::time::{Duration, Instant};
 
     use crate::prelude::*;
@@ -68,6 +74,45 @@ mod tests {
         Suite::new(id).agent(|_ctx| async move { Ok::<DummyAgent, EvalError>(DummyAgent) })
     }
 
+    #[derive(Clone)]
+    struct EchoAgent;
+
+    #[async_trait]
+    impl EvalAgent for EchoAgent {
+        type Input = String;
+        type ToolCall = ();
+        type ToolResult = ();
+        type Output = String;
+
+        async fn run(
+            self,
+        ) -> EvalResult<(
+            AgentRunInput<Self::Input>,
+            AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+        )> {
+            let (input_tx, mut input_rx) = mpsc::channel(16);
+            let (event_tx, event_rx) = mpsc::channel(16);
+
+            tokio::spawn(async move {
+                while let Some(input) = input_rx.recv().await {
+                    match input {
+                        AgentInput::Message(text) | AgentInput::Steer(text) => {
+                            let _ = event_tx
+                                .send(Ok(AgentEvent::Completed { reply: text }))
+                                .await;
+                        }
+                        AgentInput::Cancel => {
+                            let _ = event_tx.send(Ok(AgentEvent::Cancelled)).await;
+                            break;
+                        }
+                    }
+                }
+            });
+
+            Ok((input_tx, event_rx))
+        }
+    }
+
     #[tokio::test]
     async fn suite_runs_trials_and_aggregates_scores() {
         let suite = suite_with_dummy_agent("calendar").trials(2).eval(
@@ -88,6 +133,8 @@ mod tests {
                         }],
                         final_reply: Some("done".to_string()),
                         tool_trace: Vec::new(),
+                        grades: Vec::new(),
+                        grader_failures: Vec::new(),
                         metadata: json!({ "trial_index": ctx.trial_index }),
                     })
                 }),
@@ -244,6 +291,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn trajectory_expectations_appear_in_trial_and_summary_grades() {
+        let suite = Suite::new("echo")
+            .agent(|_ctx| async move { Ok::<EchoAgent, EvalError>(EchoAgent) })
+            .eval(
+                Eval::new("echoes").run(
+                    Trajectory::<EchoAgent>::builder()
+                        .add_step(Step::user("hello".to_string()).expect(
+                            "echoes hello",
+                            GradingConfig::new().grade("echoes-hello", |trial, _ctx| async move {
+                                Ok(GradeResult::pass_if(
+                                    "echoes-hello",
+                                    trial.final_reply.as_deref() == Some("hello"),
+                                    "reply should equal hello",
+                                    json!({ "reply": trial.final_reply }),
+                                ))
+                            }),
+                        ))
+                        .build()
+                        .expect("trajectory")
+                        .runner(),
+                ),
+            );
+
+        let report = suite
+            .run_with(RunConfig::single(ExecutionTarget::ollama("echo", "echo")).with_trials(1))
+            .run()
+            .await
+            .expect("report");
+        let variant = &report.variants[0];
+
+        assert_eq!(variant.trials.len(), 1);
+        assert_eq!(variant.trials[0].grades.len(), 1);
+        assert_eq!(variant.trials[0].grades[0].name, "echoes-hello");
+        assert_eq!(variant.suite.evals[0].grader_means.len(), 1);
+        assert_eq!(variant.suite.evals[0].grader_means[0].name, "echoes-hello");
+    }
+
+    #[tokio::test]
     async fn failed_trials_can_persist_partial_agent_output() {
         let suite = suite_with_dummy_agent("calendar").eval(Eval::new("partial").run(
             |_, _agent| async move {
@@ -256,6 +341,8 @@ mod tests {
                         }],
                         final_reply: None,
                         tool_trace: Vec::new(),
+                        grades: Vec::new(),
+                        grader_failures: Vec::new(),
                         metadata: json!({ "partial": true }),
                     },
                 ))

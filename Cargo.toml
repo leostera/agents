@@ -1,60 +1,57 @@
 [workspace]
-members = ["crates/borg-agent",
-  "crates/borg-evals-core",
-  "crates/borg-llm",
-  # "crates/borg-agent",
-  # "crates/borg-cli",
-  # "crates/borg-core",
-  # "crates/borg-db",
-  # "crates/borg-exec",
-  # "crates/borg-gql",
-  # "crates/borg-llm",
-  # "crates/borg-ports",
-  #  "crates/borg-apps",
-  #  "crates/borg-schedule",
-  #  "crates/borg-cmd",
-  #  "crates/borg-taskgraph",
-  #  "crates/borg-infer",
-  #  "crates/borg-memory",
-  #  "crates/borg-ports-tools",
-  #  "crates/borg-codemode",
-  #  "crates/borg-shellmode",
-  #  "crates/borg-fs",
+members = [
+  "crates/borg-agent",
+  "crates/borg-evals-core", 
+  "crates/borg-evals-macros",
+  "crates/borg-llm", 
+  "crates/cargo-evals", 
+  "crates/test-agents",
 ]
 resolver = "2"
 
 [workspace.dependencies]
-async-graphql = { version = "7", features = ["chrono"] }
 anyhow = "1"
-axum = { version = "0.7", features = ["json"] }
-base64 = "0.22"
-chrono = { version = "0.4", features = ["serde", "clock"] }
+async-graphql = { version = "7", features = ["chrono"] }
+async-trait = "0"
+axum = { version = "0", features = ["json"] }
+base64 = "0"
+chrono = { version = "0", features = ["serde", "clock"] }
 clap = { version = "4", features = ["derive"] }
+config = "0"
+deno_core = "0"
+derive_builder = "0"
+dotenvy = "0"
+futures-util = "0"
+hex = "0"
+infer = "0"
+insta = "1"
+oauth2 = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
+prettyplease = "0"
+proc-macro2 = "1"
+quote = "1"
+reqwest = { version = "0", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+reqwest-eventsource = "0"
+schemars = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 serde_derive = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs", "io-util"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-uuid = { version = "1", features = ["v4", "v7", "serde"] }
-deno_core = "0.311"
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
-oauth2 = { version = "4.4", default-features = false, features = ["reqwest", "rustls-tls"] }
-dotenvy = "0.15"
-async-trait = "0.1"
-url = { version = "2", features = ["serde"] }
-teloxide = "0.17"
-serenity = "0.12"
+serde_json = "1"
+serenity = "0"
 serial_test = "3"
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
-testcontainers = "0.27.1"
-indradb = { package = "indradb-lib", version = "5.0.0", features = ["rocksdb-datastore"] }
-tantivy = "0.22"
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
+sha2 = "0"
+sqlx = { version = "0", features = ["sqlite", "runtime-tokio-rustls", "chrono"] }
+swift-rs = "1"
+syn = { version = "2", features = ["full"] }
+tantivy = "0"
+teloxide = "0"
+tempfile = "3"
+testcontainers = "0"
 thiserror = "2"
-sha2 = "0.10"
-hex = "0.4"
-infer = "0.16"
-derive_builder = "0.20"
-schemars = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs", "io-util"] }
+toml = "1"
+tower = "0"
+tower-http = { version = "0", features = ["cors", "trace"] }
+tracing = "0"
+tracing-subscriber = { version = "0", features = ["fmt", "env-filter"] }
+url = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+walkdir = "2"

@@ -210,6 +210,8 @@ where
                     "agent run started"
                 );
                 let mut recorder = AgentTrialRecorder::default();
+                let mut collected_grades = Vec::new();
+                let mut collected_grader_failures = Vec::new();
 
                 for (step_index, step) in trajectory.steps().iter().enumerate() {
                     debug!(
@@ -311,6 +313,9 @@ where
                             .run(snapshot.clone(), ctx.clone())
                             .await?;
 
+                        collected_grades.extend(outcome.grades.clone());
+                        collected_grader_failures.extend(outcome.grader_failures.clone());
+
                         if !outcome.passed {
                             warn!(
                                 suite_id = %ctx.suite_id,
@@ -327,7 +332,11 @@ where
                                     "trajectory expectation '{}' failed",
                                     expectation.description
                                 ),
-                                snapshot,
+                                AgentTrial {
+                                    grades: collected_grades.clone(),
+                                    grader_failures: collected_grader_failures.clone(),
+                                    ..snapshot
+                                },
                             ));
                         }
                     }
@@ -342,7 +351,10 @@ where
                     target_label = %ctx.target.label,
                     "trajectory completed"
                 );
-                Ok(recorder.into_trial(Value::Null))
+                let mut trial = recorder.into_trial(Value::Null);
+                trial.grades = collected_grades;
+                trial.grader_failures = collected_grader_failures;
+                Ok(trial)
             })
         }
     }

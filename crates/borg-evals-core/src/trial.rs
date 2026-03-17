@@ -4,11 +4,17 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::grade::{GradeResult, GraderFailure};
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct AgentTrial<Output = String> {
     pub transcript: Vec<RecordedEvent>,
     pub final_reply: Option<Output>,
     pub tool_trace: Vec<RecordedToolCall>,
+    #[serde(default)]
+    pub grades: Vec<GradeResult>,
+    #[serde(default)]
+    pub grader_failures: Vec<GraderFailure>,
     #[serde(default)]
     pub metadata: Value,
 }
@@ -19,6 +25,8 @@ impl<Output> AgentTrial<Output> {
             transcript: Vec::new(),
             final_reply: Some(final_reply),
             tool_trace: Vec::new(),
+            grades: Vec::new(),
+            grader_failures: Vec::new(),
             metadata: Value::Null,
         }
     }
@@ -155,6 +163,8 @@ impl<Output> AgentTrialRecorder<Output> {
             transcript: self.transcript.clone(),
             final_reply: self.final_reply.clone(),
             tool_trace: self.tool_trace.clone(),
+            grades: Vec::new(),
+            grader_failures: Vec::new(),
             metadata,
         }
     }
@@ -164,6 +174,8 @@ impl<Output> AgentTrialRecorder<Output> {
             transcript: self.transcript,
             final_reply: self.final_reply,
             tool_trace: self.tool_trace,
+            grades: Vec::new(),
+            grader_failures: Vec::new(),
             metadata,
         }
     }

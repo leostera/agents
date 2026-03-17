@@ -456,26 +456,37 @@ where
     match execution {
         Ok(trial) => {
             let trial = Arc::new(trial);
+            let trajectory_grades = trial.grades.clone();
+            let trajectory_grader_failures = trial.grader_failures.clone();
             let outcome = eval
                 .grading_config()
                 .run((*trial).clone(), ctx.clone())
                 .await;
             let (passed, mean_score, grades, grader_failures) = match outcome {
-                Ok(outcome) => (
-                    outcome.passed,
-                    outcome.mean_score,
-                    outcome.grades,
-                    outcome.grader_failures,
-                ),
-                Err(error) => (
-                    false,
-                    0.0,
-                    Vec::new(),
-                    vec![crate::grade::GraderFailure {
+                Ok(outcome) => {
+                    let mut grades = trajectory_grades.clone();
+                    grades.extend(outcome.grades);
+                    let mut grader_failures = trajectory_grader_failures.clone();
+                    grader_failures.extend(outcome.grader_failures);
+                    let configured_grader_count = grades.len() + grader_failures.len();
+                    let passed =
+                        grader_failures.is_empty() && grades.iter().all(|grade| grade.passed);
+                    let mean_score = if configured_grader_count == 0 {
+                        1.0
+                    } else {
+                        grades.iter().map(|grade| grade.score).sum::<f32>()
+                            / configured_grader_count as f32
+                    };
+                    (passed, mean_score, grades, grader_failures)
+                }
+                Err(error) => (false, 0.0, trajectory_grades.clone(), {
+                    let mut grader_failures = trajectory_grader_failures.clone();
+                    grader_failures.push(crate::grade::GraderFailure {
                         name: "grading".to_string(),
                         error: error.to_string(),
-                    }],
-                ),
+                    });
+                    grader_failures
+                }),
             };
 
             let error = if grader_failures.is_empty() {
