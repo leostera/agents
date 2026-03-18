@@ -22,15 +22,18 @@ fn event_kind<Tool, ToolResult, Output>(
     }
 }
 
+/// One user step in a linear eval trajectory.
 pub struct Step<A: Agent, State = ()> {
     user: A::Input,
     grade: Option<GradingConfig<State, A::Output>>,
 }
 
+/// A linear multi-step eval scenario for an agent.
 pub struct Trajectory<A: Agent, State = ()> {
     steps: Vec<Step<A, State>>,
 }
 
+/// Builder for [`Trajectory`].
 pub struct TrajectoryBuilder<A: Agent, State = ()> {
     steps: Vec<Step<A, State>>,
 }
@@ -98,9 +101,9 @@ where
 }
 
 impl<A: Agent, State> Step<A, State> {
-    pub fn user(message: A::Input) -> Self {
+    pub fn user(message: impl Into<A::Input>) -> Self {
         Self {
-            user: message,
+            user: message.into(),
             grade: None,
         }
     }

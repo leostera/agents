@@ -48,7 +48,7 @@ src/
 ### Runner split
 - `cargo-evals` is intentionally thin.
 - Workspace discovery, `evals.toml` loading, harness preparation, and output formatting belong under `borg_evals::runner`.
-- The generated harness should stay minimal and delegate real behavior back into `borg-evals`.
+- The generated harness should stay minimal and delegate real behavior back through the `agents::evals` facade.
 
 ### Terminal output
 - `RunEvent` is the shared event transport.

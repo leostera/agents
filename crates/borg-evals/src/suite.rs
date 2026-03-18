@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use borg_agent::Agent;
+use borg_llm::LlmRunner;
 use borg_llm::error::Error as LlmError;
 use borg_llm::provider::anthropic::{Anthropic, AnthropicConfig};
 use borg_llm::provider::apple::{Apple, AppleConfig};
@@ -13,7 +14,6 @@ use borg_llm::provider::lm_studio::{LmStudio, LmStudioConfig};
 use borg_llm::provider::ollama::{Ollama, OllamaConfig};
 use borg_llm::provider::openai::{OpenAI, OpenAIConfig};
 use borg_llm::provider::openrouter::{OpenRouter, OpenRouterConfig};
-use borg_llm::runner::LlmRunner;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
@@ -55,12 +55,24 @@ fn llm_runner_for_target(
         "lm_studio" => {
             let mut config = LmStudioConfig::new(target.model.clone());
             if let Some(base_url) =
-                optional_env(&["BORG_LLM_LM_STUDIO_BASE_URL", "LM_STUDIO_BASE_URL"])
+                optional_env(&["BORG_LLM_LM_STUDIO_BASE_URL", "LM_STUDIO_BASE_URL"]).or_else(|| {
+                    provider_configs
+                        .lm_studio
+                        .as_ref()
+                        .and_then(|config| config.url.clone())
+                })
             {
                 config = config.with_base_url(base_url);
             }
             if let Some(token) =
-                optional_env(&["BORG_LLM_LM_STUDIO_API_TOKEN", "LM_STUDIO_API_TOKEN"])
+                optional_env(&["BORG_LLM_LM_STUDIO_API_TOKEN", "LM_STUDIO_API_TOKEN"]).or_else(
+                    || {
+                        provider_configs
+                            .lm_studio
+                            .as_ref()
+                            .and_then(|config| config.api_token.clone())
+                    },
+                )
             {
                 config = config.with_api_token(token);
             }
@@ -73,16 +85,34 @@ fn llm_runner_for_target(
                 "BORG_LLM_OPENAI_API_KEY",
                 "OPENAI_API_KEY",
                 "BORG_TEST_OPENAI_API_KEY",
-            ]) else {
+            ])
+            .or_else(|| {
+                provider_configs
+                    .openai
+                    .as_ref()
+                    .and_then(|config| config.api_key.clone())
+            }) else {
                 return Ok(LlmRunner::builder().build());
             };
             let mut config = OpenAIConfig::new(api_key, target.model.clone())
                 .map_err(LlmError::OpenAIConfig)
                 .map_err(|error| EvalError::message(error.to_string()))?;
-            if let Some(base_url) = optional_env(&["BORG_LLM_OPENAI_BASE_URL"]) {
+            if let Some(base_url) = optional_env(&["BORG_LLM_OPENAI_BASE_URL"]).or_else(|| {
+                provider_configs
+                    .openai
+                    .as_ref()
+                    .and_then(|config| config.base_url.clone())
+            }) {
                 config = config.with_base_url(base_url);
             }
-            if let Some(org) = optional_env(&["BORG_LLM_OPENAI_ORGANIZATION", "OPENAI_ORG_ID"]) {
+            if let Some(org) = optional_env(&["BORG_LLM_OPENAI_ORGANIZATION", "OPENAI_ORG_ID"])
+                .or_else(|| {
+                    provider_configs
+                        .openai
+                        .as_ref()
+                        .and_then(|config| config.organization.clone())
+                })
+            {
                 config = config.with_organization(org);
             }
             LlmRunner::builder()
@@ -94,14 +124,32 @@ fn llm_runner_for_target(
                 "BORG_LLM_ANTHROPIC_API_KEY",
                 "ANTHROPIC_API_KEY",
                 "BORG_TEST_ANTHROPIC_API_KEY",
-            ]) else {
+            ])
+            .or_else(|| {
+                provider_configs
+                    .anthropic
+                    .as_ref()
+                    .and_then(|config| config.api_key.clone())
+            }) else {
                 return Ok(LlmRunner::builder().build());
             };
             let mut config = AnthropicConfig::new(api_key, target.model.clone())
                 .map_err(LlmError::AnthropicConfig)
                 .map_err(|error| EvalError::message(error.to_string()))?;
-            if let Some(base_url) = optional_env(&["BORG_LLM_ANTHROPIC_BASE_URL"]) {
+            if let Some(base_url) = optional_env(&["BORG_LLM_ANTHROPIC_BASE_URL"]).or_else(|| {
+                provider_configs
+                    .anthropic
+                    .as_ref()
+                    .and_then(|config| config.base_url.clone())
+            }) {
                 config = config.with_base_url(base_url);
+            }
+            if let Some(version) = provider_configs
+                .anthropic
+                .as_ref()
+                .and_then(|config| config.version.clone())
+            {
+                config = config.with_version(version);
             }
             LlmRunner::builder()
                 .add_provider(Anthropic::new(config))
@@ -112,13 +160,24 @@ fn llm_runner_for_target(
                 "BORG_LLM_OPENROUTER_API_KEY",
                 "OPENROUTER_API_KEY",
                 "BORG_TEST_OPENROUTER_API_KEY",
-            ]) else {
+            ])
+            .or_else(|| {
+                provider_configs
+                    .openrouter
+                    .as_ref()
+                    .and_then(|config| config.api_key.clone())
+            }) else {
                 return Ok(LlmRunner::builder().build());
             };
             let mut config = OpenRouterConfig::new(api_key, target.model.clone())
                 .map_err(LlmError::OpenRouterConfig)
                 .map_err(|error| EvalError::message(error.to_string()))?;
-            if let Some(base_url) = optional_env(&["BORG_LLM_OPENROUTER_BASE_URL"]) {
+            if let Some(base_url) = optional_env(&["BORG_LLM_OPENROUTER_BASE_URL"]).or_else(|| {
+                provider_configs
+                    .openrouter
+                    .as_ref()
+                    .and_then(|config| config.base_url.clone())
+            }) {
                 config = config.with_base_url(base_url);
             }
             LlmRunner::builder()
@@ -144,6 +203,11 @@ fn optional_env(keys: &[&str]) -> Option<String> {
         .find_map(|key| env::var(key).ok().filter(|value| !value.trim().is_empty()))
 }
 
+fn is_local_provider(provider: &str) -> bool {
+    matches!(provider, "ollama" | "lm_studio" | "apple")
+}
+
+/// High-level suite classification.
 #[derive(Clone, Copy, Debug, Default)]
 pub enum SuiteKind {
     #[default]
@@ -155,6 +219,7 @@ type AgentFactory<State, A> =
     Arc<dyn Fn(EvalContext<State>) -> BoxFuture<EvalResult<A>> + Send + Sync>;
 type BoxFuture<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'static>>;
 
+/// A collection of related evals that share state and an agent factory.
 pub struct Suite<State = (), A = NoAgent>
 where
     A: Agent,
@@ -208,6 +273,7 @@ where
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// Filter applied while selecting targets and evals to run.
 pub struct TargetFilter {
     pub query: Option<String>,
     pub model: Option<String>,
@@ -224,13 +290,26 @@ impl TargetFilter {
 }
 
 #[derive(Debug)]
-pub struct SuitePlan<State = (), A = NoAgent>
+pub(crate) struct SuitePlan<State = (), A = NoAgent>
 where
     A: Agent,
 {
     suite: Suite<State, A>,
     config: RunConfig,
     artifact_root: Option<PathBuf>,
+}
+
+impl<State, A> SuitePlan<State, A>
+where
+    A: Agent,
+{
+    pub(crate) fn suite(&self) -> &Suite<State, A> {
+        &self.suite
+    }
+
+    pub(crate) fn config(&self) -> &RunConfig {
+        &self.config
+    }
 }
 
 #[async_trait]
@@ -367,6 +446,7 @@ where
             &ProviderConfigs::default(),
             self.trials,
             None,
+            None,
         )
         .await
     }
@@ -396,7 +476,7 @@ where
         self
     }
 
-    pub fn plan(self) -> EvalResult<SuitePlan<State, A>> {
+    pub(crate) fn plan(self) -> EvalResult<SuitePlan<State, A>> {
         let mut suite = self.suite.clone();
         let mut config = self.config;
         config
@@ -459,19 +539,6 @@ where
     }
 }
 
-impl<State, A> SuitePlan<State, A>
-where
-    A: Agent,
-{
-    pub fn suite(&self) -> &Suite<State, A> {
-        &self.suite
-    }
-
-    pub fn config(&self) -> &RunConfig {
-        &self.config
-    }
-}
-
 #[async_trait]
 impl<State, A> SuiteExecutor<State, A> for LocalExecutor
 where
@@ -521,7 +588,7 @@ where
             let local_target_semaphore = local_target_semaphore.clone();
             let artifact_root = artifact_root.clone();
             jobs.spawn(async move {
-                let _local_permit = if target.provider == "ollama" {
+                let _local_permit = if is_local_provider(&target.provider) {
                     Some(
                         local_target_semaphore
                             .acquire_owned()
@@ -537,6 +604,7 @@ where
                     &target,
                     &provider_configs,
                     trials,
+                    config.timeout,
                     artifact_root.as_deref(),
                 )
                 .await
@@ -581,6 +649,7 @@ async fn run_single_target<State, A>(
     target: &ExecutionTarget,
     provider_configs: &ProviderConfigs,
     default_trials: usize,
+    timeout: Option<Duration>,
     artifact_root: Option<&Path>,
 ) -> EvalResult<SuiteRunReport>
 where
@@ -670,6 +739,7 @@ where
                     eval,
                     agent_factory,
                     trial_index,
+                    timeout,
                 )
                 .await
             });
@@ -752,6 +822,7 @@ async fn execute_trial<State, A>(
     eval: Eval<State, A>,
     agent_factory: Option<AgentFactory<State, A>>,
     trial_index: usize,
+    timeout: Option<Duration>,
 ) -> TrialRecord
 where
     State: Send + Sync + 'static,
@@ -814,22 +885,35 @@ where
         "starting trial"
     );
 
-    let execution = match agent_factory {
-        Some(factory) => match factory(ctx.clone()).await {
-            Ok(agent) => {
-                debug!(
-                    suite_id = %suite_id,
-                    target_label = %target.label,
-                    eval_id = %eval.id(),
-                    trial_id = %trial_id,
-                    trial_index,
-                    "agent built"
-                );
-                eval.execute(ctx.clone(), agent).await
-            }
-            Err(error) => Err(error),
+    let execution_future = async {
+        match agent_factory {
+            Some(factory) => match factory(ctx.clone()).await {
+                Ok(agent) => {
+                    debug!(
+                        suite_id = %suite_id,
+                        target_label = %target.label,
+                        eval_id = %eval.id(),
+                        trial_id = %trial_id,
+                        trial_index,
+                        "agent built"
+                    );
+                    eval.execute(ctx.clone(), agent).await
+                }
+                Err(error) => Err(error),
+            },
+            None => Err(EvalError::message("suite missing agent factory")),
+        }
+    };
+
+    let execution = match timeout {
+        Some(timeout) => match tokio::time::timeout(timeout, execution_future).await {
+            Ok(result) => result,
+            Err(_) => Err(EvalError::message(format!(
+                "trial timed out after {}s",
+                timeout.as_secs()
+            ))),
         },
-        None => Err(EvalError::message("suite missing agent factory")),
+        None => execution_future.await,
     };
 
     match execution {

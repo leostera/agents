@@ -76,18 +76,18 @@ pub fn expand_agent_tool(input: &DeriveInput) -> Result<TokenStream> {
     Ok(quote! {
         #(#helpers)*
 
-        impl ::borg_llm::tools::TypedTool for #enum_ident {
-            fn tool_definitions() -> Vec<::borg_llm::tools::ToolDefinition> {
+        impl ::agents::llm::tools::TypedTool for #enum_ident {
+            fn tool_definitions() -> Vec<::agents::llm::tools::ToolDefinition> {
                 vec![#(#definitions),*]
             }
 
             fn decode_tool_call(
                 name: &str,
                 arguments: ::serde_json::Value,
-            ) -> ::borg_llm::error::LlmResult<Self> {
+            ) -> ::agents::llm::error::LlmResult<Self> {
                 match name {
                     #(#decode_arms),*,
-                    other => Err(::borg_llm::error::Error::InvalidResponse {
+                    other => Err(::agents::llm::error::Error::InvalidResponse {
                         reason: format!("unexpected tool name: {other}"),
                     }),
                 }
@@ -148,7 +148,7 @@ fn expand_unit_variant(
     VariantSpec {
         helper: None,
         definition: quote! {
-            ::borg_llm::tools::ToolDefinition::function(
+            ::agents::llm::tools::ToolDefinition::function(
                 #tool_name,
                 #description,
                 ::serde_json::json!({
@@ -162,7 +162,7 @@ fn expand_unit_variant(
             #tool_name => {
                 let _: ::std::collections::HashMap<String, ::serde_json::Value> =
                     ::serde_json::from_value(arguments)
-                        .map_err(|error| ::borg_llm::error::Error::parse("tool arguments", error))?;
+                        .map_err(|error| ::agents::llm::error::Error::parse("tool arguments", error))?;
                 Ok(Self::#ident)
             }
         },
@@ -183,7 +183,7 @@ fn expand_single_unnamed_variant(
     VariantSpec {
         helper: None,
         definition: quote! {
-            ::borg_llm::tools::ToolDefinition::function(
+            ::agents::llm::tools::ToolDefinition::function(
                 #tool_name,
                 #description,
                 ::serde_json::to_value(::schemars::schema_for!(#inner_ty))
@@ -193,7 +193,7 @@ fn expand_single_unnamed_variant(
         decode_arm: quote! {
             #tool_name => Ok(Self::#ident(
                 ::serde_json::from_value::<#inner_ty>(arguments)
-                    .map_err(|error| ::borg_llm::error::Error::parse("tool arguments", error))?
+                    .map_err(|error| ::agents::llm::error::Error::parse("tool arguments", error))?
             ))
         },
     }
@@ -229,7 +229,7 @@ fn expand_named_variant(
             }
         }),
         definition: quote! {
-            ::borg_llm::tools::ToolDefinition::function(
+            ::agents::llm::tools::ToolDefinition::function(
                 #tool_name,
                 #description,
                 ::serde_json::to_value(::schemars::schema_for!(#helper_ident))
@@ -239,7 +239,7 @@ fn expand_named_variant(
         decode_arm: quote! {
             #tool_name => {
                 let args = ::serde_json::from_value::<#helper_ident>(arguments)
-                    .map_err(|error| ::borg_llm::error::Error::parse("tool arguments", error))?;
+                    .map_err(|error| ::agents::llm::error::Error::parse("tool arguments", error))?;
                 Ok(Self::#ident { #(#construct_fields),* })
             }
         },
@@ -310,16 +310,16 @@ mod tests {
         struct __BorgAgentToolArgsTestToolsPing {
             pub value: String,
         }
-        impl ::borg_llm::tools::TypedTool for TestTools {
-            fn tool_definitions() -> Vec<::borg_llm::tools::ToolDefinition> {
+        impl ::agents::llm::tools::TypedTool for TestTools {
+            fn tool_definitions() -> Vec<::agents::llm::tools::ToolDefinition> {
                 vec![
-                    ::borg_llm::tools::ToolDefinition::function("ping", Some("Ping tool"),
+                    ::agents::llm::tools::ToolDefinition::function("ping", Some("Ping tool"),
                     ::serde_json::to_value(::schemars::schema_for!(__BorgAgentToolArgsTestToolsPing))
                     .expect("serialize tool schema"),),
-                    ::borg_llm::tools::ToolDefinition::function("echo_text", Some("Echo tool"),
-                    ::serde_json::to_value(::schemars::schema_for!(EchoArgs))
+                    ::agents::llm::tools::ToolDefinition::function("echo_text",
+                    Some("Echo tool"), ::serde_json::to_value(::schemars::schema_for!(EchoArgs))
                     .expect("serialize tool schema"),),
-                    ::borg_llm::tools::ToolDefinition::function("list_events", None,
+                    ::agents::llm::tools::ToolDefinition::function("list_events", None,
                     ::serde_json::json!({ "type" : "object", "properties" : {},
                     "additionalProperties" : false }),)
                 ]
@@ -327,13 +327,13 @@ mod tests {
             fn decode_tool_call(
                 name: &str,
                 arguments: ::serde_json::Value,
-            ) -> ::borg_llm::error::LlmResult<Self> {
+            ) -> ::agents::llm::error::LlmResult<Self> {
                 match name {
                     "ping" => {
                         let args = ::serde_json::from_value::<
                             __BorgAgentToolArgsTestToolsPing,
                         >(arguments)
-                            .map_err(|error| ::borg_llm::error::Error::parse(
+                            .map_err(|error| ::agents::llm::error::Error::parse(
                                 "tool arguments",
                                 error,
                             ))?;
@@ -343,7 +343,7 @@ mod tests {
                         Ok(
                             Self::Echo(
                                 ::serde_json::from_value::<EchoArgs>(arguments)
-                                    .map_err(|error| ::borg_llm::error::Error::parse(
+                                    .map_err(|error| ::agents::llm::error::Error::parse(
                                         "tool arguments",
                                         error,
                                     ))?,
@@ -354,14 +354,14 @@ mod tests {
                         let _: ::std::collections::HashMap<String, ::serde_json::Value> = ::serde_json::from_value(
                                 arguments,
                             )
-                            .map_err(|error| ::borg_llm::error::Error::parse(
+                            .map_err(|error| ::agents::llm::error::Error::parse(
                                 "tool arguments",
                                 error,
                             ))?;
                         Ok(Self::ListEvents)
                     }
                     other => {
-                        Err(::borg_llm::error::Error::InvalidResponse {
+                        Err(::agents::llm::error::Error::InvalidResponse {
                             reason: format!("unexpected tool name: {other}"),
                         })
                     }

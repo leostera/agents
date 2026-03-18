@@ -1,4 +1,5 @@
-use borg_agent::{Agent, AgentEvent, AgentInput, ToolExecutionResult};
+use async_trait::async_trait;
+use borg_agent::{Agent, AgentError, AgentEvent, AgentInput, ToolExecutionResult};
 use borg_llm::completion::{OutputContent, OutputItem, Role};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -49,15 +50,15 @@ impl<Output> AgentTrial<Output> {
     }
 }
 
-pub type TranscriptSender = mpsc::Sender<RecordedEvent>;
+pub(crate) type TranscriptSender = mpsc::Sender<RecordedEvent>;
 
-pub struct TranscriptCollector {
+pub(crate) struct TranscriptCollector {
     receiver: mpsc::Receiver<RecordedEvent>,
     store: Vec<RecordedEvent>,
 }
 
 impl TranscriptCollector {
-    pub fn new(capacity: usize) -> (TranscriptSender, Self) {
+    pub(crate) fn new(capacity: usize) -> (TranscriptSender, Self) {
         let (tx, receiver) = mpsc::channel(capacity.max(1));
         (
             tx,
@@ -68,12 +69,12 @@ impl TranscriptCollector {
         )
     }
 
-    pub async fn snapshot(&mut self) -> Vec<RecordedEvent> {
+    pub(crate) async fn snapshot(&mut self) -> Vec<RecordedEvent> {
         self.drain_pending();
         self.store.clone()
     }
 
-    pub async fn finish(mut self) -> Vec<RecordedEvent> {
+    pub(crate) async fn finish(mut self) -> Vec<RecordedEvent> {
         self.drain_pending();
         while let Some(event) = self.receiver.recv().await {
             self.store.push(event);
@@ -88,22 +89,18 @@ impl TranscriptCollector {
     }
 }
 
-pub struct TranscriptAgent<A: Agent> {
+pub(crate) struct TranscriptAgent<A: Agent> {
     inner: A,
     transcript: TranscriptSender,
 }
 
 impl<A: Agent> TranscriptAgent<A> {
-    pub fn new(inner: A, transcript: TranscriptSender) -> Self {
+    pub(crate) fn new(inner: A, transcript: TranscriptSender) -> Self {
         Self { inner, transcript }
-    }
-
-    pub fn transcript_sender(&self) -> TranscriptSender {
-        self.transcript.clone()
     }
 }
 
-#[borg_agent::async_trait]
+#[async_trait]
 impl<A> Agent for TranscriptAgent<A>
 where
     A: Agent,
@@ -131,7 +128,7 @@ where
                 let _ = self
                     .transcript
                     .send(RecordedEvent::Error {
-                        reason: error.to_string(),
+                        error: RecordedError::from_agent_error(&error),
                     })
                     .await;
                 return Err(error);
@@ -185,7 +182,7 @@ where
                             Some(Err(error)) => {
                                 let _ = transcript
                                     .send(RecordedEvent::Error {
-                                        reason: error.to_string(),
+                                        error: RecordedError::from_agent_error(&error),
                                     })
                                     .await;
                                 if event_tx.send(Err(error)).await.is_err() {
@@ -234,7 +231,7 @@ pub enum RecordedEvent {
         reply: Value,
     },
     Error {
-        reason: String,
+        error: RecordedError,
     },
     GraderStarted {
         scope: RecordedGradingScope,
@@ -252,6 +249,66 @@ pub enum RecordedEvent {
         grader: String,
         error: String,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RecordedError {
+    Agent {
+        category: String,
+        message: String,
+        provider: Option<String>,
+        status: Option<u16>,
+    },
+}
+
+impl RecordedError {
+    fn from_agent_error(error: &AgentError) -> Self {
+        match error {
+            AgentError::Llm(llm_error) => Self::Agent {
+                category: "llm".to_string(),
+                message: llm_error.to_string(),
+                provider: llm_error.provider_name().map(ToString::to_string),
+                status: llm_error.provider_status(),
+            },
+            AgentError::InvalidInput { reason } => Self::Agent {
+                category: "invalid_input".to_string(),
+                message: reason.clone(),
+                provider: None,
+                status: None,
+            },
+            AgentError::InvalidResponse { reason } => Self::Agent {
+                category: "invalid_response".to_string(),
+                message: reason.clone(),
+                provider: None,
+                status: None,
+            },
+            AgentError::ToolExecution { reason } => Self::Agent {
+                category: "tool_execution".to_string(),
+                message: reason.clone(),
+                provider: None,
+                status: None,
+            },
+            AgentError::ToolResultEncoding { reason } => Self::Agent {
+                category: "tool_result_encoding".to_string(),
+                message: reason.clone(),
+                provider: None,
+                status: None,
+            },
+            AgentError::Cancelled => Self::Agent {
+                category: "cancelled".to_string(),
+                message: "cancelled".to_string(),
+                provider: None,
+                status: None,
+            },
+            AgentError::Internal { message } => Self::Agent {
+                category: "internal".to_string(),
+                message: message.clone(),
+                provider: None,
+                status: None,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

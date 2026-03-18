@@ -12,9 +12,11 @@ mod trajectory;
 mod trial;
 
 pub use crate as core;
-pub use async_trait::async_trait;
 pub use borg_macros::{eval, suite};
-pub use config::{ExecutionTarget, OllamaProviderConfig, ProviderConfigs, RunConfig};
+pub use config::{
+    AnthropicProviderConfig, ExecutionTarget, LmStudioProviderConfig, OllamaProviderConfig,
+    OpenAIProviderConfig, OpenRouterProviderConfig, ProviderConfigs, RunConfig,
+};
 pub use error::{EvalError, EvalResult};
 pub use eval::{Eval, EvalContext};
 pub use events::{
@@ -28,11 +30,11 @@ pub use report::{
     ArtifactIndex, EvalAggregate, EvalRunReport, GraderAggregate, RunManifest, SCHEMA_VERSION,
     SuiteRunReport, SuiteSummary, TrialRecord,
 };
-pub use suite::{Suite, SuiteKind, SuitePlan, TargetFilter};
+pub use suite::{Suite, SuiteKind, TargetFilter};
 pub use trajectory::{Step, Trajectory, TrajectoryBuilder};
 pub use trial::{
-    AgentTrial, RecordedEvent, RecordedGradingScope, RecordedMessageRole, RecordedToolCall,
-    TranscriptAgent, TranscriptCollector, TranscriptSender,
+    AgentTrial, RecordedError, RecordedEvent, RecordedGradingScope, RecordedMessageRole,
+    RecordedToolCall,
 };
 
 #[macro_export]
@@ -78,12 +80,11 @@ pub mod prelude {
         AgentTrial, ArtifactIndex, Eval, EvalAggregate, EvalContext, EvalError, EvalResult,
         EventSink, ExecutionTarget, Grade, GradeResult, Grader, GraderFailure, GradingConfig,
         JsonEventSink, JudgeAgent, JudgeInput, JudgeVerdict, OllamaProviderConfig, PlannedSuiteRun,
-        ProgressEventSink, ProviderConfigs, RecordedEvent, RecordedGradingScope,
+        ProgressEventSink, ProviderConfigs, RecordedError, RecordedEvent, RecordedGradingScope,
         RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite, SharedEventSink,
-        Step, Suite, SuiteDescriptor, SuiteKind, SuitePlan, SuiteRunReport, TargetFilter,
-        Trajectory, TrajectoryBuilder, TranscriptAgent, TranscriptCollector, TranscriptSender,
-        assistant, async_trait, build, emit, global_sink, grade, judge, predicate, set_global_sink,
-        setup, trajectory, user,
+        Step, Suite, SuiteDescriptor, SuiteKind, SuiteRunReport, TargetFilter, Trajectory,
+        TrajectoryBuilder, assistant, build, emit, global_sink, grade, judge, predicate,
+        set_global_sink, setup, trajectory, user,
     };
     pub use borg_agent::Agent;
 }
@@ -95,7 +96,9 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+    use async_trait::async_trait;
     use borg_agent::{AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
+    use borg_llm::LlmRunner;
     use borg_llm::capability::Capability;
     use borg_llm::completion::{
         FinishReason, ProviderType, RawCompletionRequest, RawCompletionResponse, RawOutputContent,
@@ -104,7 +107,6 @@ mod tests {
     use borg_llm::error::{Error as LlmError, LlmResult};
     use borg_llm::model::Model;
     use borg_llm::provider::LlmProvider;
-    use borg_llm::runner::LlmRunner;
     use borg_llm::transcription::{AudioTranscriptionRequest, AudioTranscriptionResponse};
     use serde_json::json;
     use tempfile::TempDir;
@@ -893,9 +895,10 @@ mod tests {
         assert!(transcript.iter().any(|event| {
             event.get("type").and_then(|value| value.as_str()) == Some("error")
                 && event
-                    .get("reason")
+                    .get("error")
+                    .and_then(|value| value.get("message"))
                     .and_then(|value| value.as_str())
-                    .is_some_and(|reason| reason.contains("decode failure"))
+                    .is_some_and(|message| message.contains("decode failure"))
         }));
     }
 

@@ -4,12 +4,12 @@ use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use borg_llm::LlmRunner;
 use borg_llm::completion::{
     CompletionRequest, CompletionResponse, InputItem, ModelSelector, OutputContent, OutputItem,
     ResponseMode, TokenLimit, TopK, TopP,
 };
 use borg_llm::response::TypedResponse;
-use borg_llm::runner::LlmRunner;
 use borg_llm::tools::{ToolCall, TypedTool, TypedToolSet};
 use borg_llm::{completion::Temperature, completion::ToolChoice};
 use schemars::JsonSchema;
@@ -29,13 +29,18 @@ use crate::tools::{
 
 use super::Agent as AgentTrait;
 
+/// Input accepted by an agent session.
 #[derive(Debug, Clone)]
 pub enum AgentInput<M> {
+    /// Standard user input.
     Message(M),
+    /// Steering input for an already-running turn.
     Steer(M),
+    /// Cancellation request for the active turn.
     Cancel,
 }
 
+/// Model execution knobs applied to agent turns.
 #[derive(Debug, Clone)]
 pub struct ExecutionProfile {
     pub model_selector: ModelSelector,
@@ -60,6 +65,7 @@ impl Default for ExecutionProfile {
 }
 
 impl ExecutionProfile {
+    /// Returns a profile tuned for reproducible, low-variance outputs.
     pub fn deterministic() -> Self {
         Self {
             temperature: Temperature::Value(0.0),
@@ -67,6 +73,7 @@ impl ExecutionProfile {
         }
     }
 
+    /// Returns a profile tuned for more exploratory outputs.
     pub fn volatile() -> Self {
         Self {
             temperature: Temperature::Value(1.0),
@@ -75,20 +82,33 @@ impl ExecutionProfile {
     }
 }
 
+/// Events emitted while an agent turn is executing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEvent<C, T, R> {
+    /// A model output item streamed from the underlying provider.
     ModelOutputItem { item: OutputItem<C, R> },
+    /// A typed tool call requested by the model.
     ToolCallRequested { call: ToolCallEnvelope<C> },
+    /// Completion of a tool execution.
     ToolExecutionCompleted { result: ToolResultEnvelope<T> },
+    /// Terminal completion of the turn with the final structured reply.
     Completed { reply: R },
+    /// Terminal cancellation of the turn.
     Cancelled,
 }
 
+/// Sender half for a spawned agent.
 pub type AgentRunInput<M> = mpsc::Sender<AgentInput<M>>;
+/// Receiver half for a spawned agent.
 pub type AgentRunOutput<C, T, R> = mpsc::Receiver<AgentResult<AgentEvent<C, T, R>>>;
 
 const DEFAULT_RUN_CHANNEL_CAPACITY: usize = 64;
 
+/// Builder for [`SessionAgent`].
+///
+/// The default builder shape is `SessionAgent<String, (), (), String>`.
+/// Use `with_message_type`, `with_response_type`, and `with_tool_runner`
+/// to move into more strongly typed configurations.
 pub struct AgentBuilder<M, C, T, R> {
     llm: Option<Arc<LlmRunner>>,
     context_manager: ContextManager,
@@ -100,7 +120,8 @@ pub struct AgentBuilder<M, C, T, R> {
     _response: PhantomData<R>,
 }
 
-impl AgentBuilder<InputItem, (), (), String> {
+impl AgentBuilder<String, (), (), String> {
+    /// Creates a builder for a string-in, string-out session agent.
     pub fn new() -> Self {
         Self {
             llm: None,
@@ -115,7 +136,7 @@ impl AgentBuilder<InputItem, (), (), String> {
     }
 }
 
-impl Default for AgentBuilder<InputItem, (), (), String> {
+impl Default for AgentBuilder<String, (), (), String> {
     fn default() -> Self {
         Self::new()
     }
@@ -234,6 +255,11 @@ where
     }
 }
 
+/// Default model-backed implementation of [`super::Agent`].
+///
+/// `SessionAgent` owns the runner, context manager, execution profile, optional
+/// typed tool execution, and the mutable turn/session state required to drive a
+/// conversation.
 pub struct SessionAgent<M, C, T, R>
 where
     M: Clone + Serialize + DeserializeOwned + Into<InputItem> + Send + Sync + 'static,
@@ -778,9 +804,15 @@ where
     }
 }
 
-impl SessionAgent<InputItem, (), (), String> {
-    pub fn builder() -> AgentBuilder<InputItem, (), (), String> {
+impl SessionAgent<String, (), (), String> {
+    pub fn builder() -> AgentBuilder<String, (), (), String> {
         AgentBuilder::new()
+    }
+}
+
+impl SessionAgent<InputItem, (), (), String> {
+    pub fn raw_builder() -> AgentBuilder<InputItem, (), (), String> {
+        AgentBuilder::with_message_type(AgentBuilder::<String, (), (), String>::new())
     }
 }
 
@@ -1178,13 +1210,13 @@ mod tests {
 
     #[tokio::test]
     async fn builder_errors_without_llm_runner() {
-        let result = Agent::builder().build();
+        let result = Agent::raw_builder().build();
         assert!(matches!(result, Err(AgentError::Internal { .. })));
     }
 
     #[tokio::test]
     async fn send_records_string_input_and_reply_in_transcript() {
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(
@@ -1222,7 +1254,7 @@ mod tests {
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
 
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_context_manager(
                 ContextManager::builder()
                     .add_provider(StaticContextProvider::system_text("You are a test agent."))
@@ -1250,7 +1282,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_decodes_typed_response() {
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_response_type::<EchoResponse>()
             .with_llm_runner(
                 LlmRunner::builder()
@@ -1288,7 +1320,7 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_tool_runner(ping_tool_runner())
             .with_llm_runner(runner.into())
             .build()
@@ -1346,7 +1378,7 @@ mod tests {
                 })
             });
 
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_tool_runner(failing_runner)
             .with_llm_runner(runner.into())
             .build()
@@ -1392,7 +1424,7 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_tool_runner(unit_tool_runner())
             .with_llm_runner(runner.into())
             .build()
@@ -1424,7 +1456,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_streams_text_turn_events() {
-        let agent = Agent::builder()
+        let agent = Agent::raw_builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(
@@ -1455,7 +1487,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_streams_tool_sequence() {
-        let agent = Agent::builder()
+        let agent = Agent::raw_builder()
             .with_tool_runner(ping_tool_runner())
             .with_llm_runner(
                 LlmRunner::builder()
@@ -1496,7 +1528,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_processes_multiple_inputs_in_order() {
-        let agent = Agent::builder()
+        let agent = Agent::raw_builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![
@@ -1540,7 +1572,7 @@ mod tests {
     #[tokio::test]
     async fn storage_adapter_records_started_turn_inputs_and_events() {
         let storage = InMemoryStorageAdapter::shared();
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_storage_adapter_arc(storage.clone())
             .with_llm_runner(
                 LlmRunner::builder()
@@ -1595,7 +1627,7 @@ mod tests {
     #[tokio::test]
     async fn storage_adapter_records_queued_turns_and_activation() {
         let storage = InMemoryStorageAdapter::shared();
-        let agent = Agent::builder()
+        let agent = Agent::raw_builder()
             .with_storage_adapter_arc(storage.clone())
             .with_llm_runner(
                 LlmRunner::builder()
@@ -1645,7 +1677,7 @@ mod tests {
     #[tokio::test]
     async fn storage_adapter_records_cancel_for_active_turn() {
         let storage = InMemoryStorageAdapter::shared();
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_storage_adapter_arc(storage.clone())
             .with_tool_runner(ping_tool_runner())
             .with_llm_runner(
@@ -1684,7 +1716,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_surfaces_agent_errors() {
-        let agent = Agent::builder()
+        let agent = Agent::raw_builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Err(provider_error())]))
@@ -1710,7 +1742,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancel_while_idle_is_a_no_op() {
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![]))
@@ -1733,7 +1765,7 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_llm_runner(runner.into())
             .build()
             .expect("agent");
@@ -1762,7 +1794,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_queues_messages_while_turn_is_in_progress() {
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![
@@ -1812,7 +1844,7 @@ mod tests {
 
     #[tokio::test]
     async fn steer_while_idle_behaves_like_message() {
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(
@@ -1849,7 +1881,7 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_tool_runner(ping_tool_runner())
             .with_llm_runner(runner.into())
             .build()
@@ -1904,7 +1936,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancel_during_active_turn_finishes_immediately() {
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_tool_runner(ping_tool_runner())
             .with_llm_runner(
                 LlmRunner::builder()
@@ -1959,7 +1991,7 @@ mod tests {
             finish_reason: FinishReason::Stop,
         };
 
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(response)]))
@@ -1986,7 +2018,7 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_llm_runner(runner.into())
             .build()
             .expect("agent");
@@ -2021,7 +2053,7 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_response_type::<EchoResponse>()
             .with_llm_runner(runner.into())
             .build()
@@ -2047,7 +2079,7 @@ mod tests {
         let runner = LlmRunner::builder()
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_llm_runner(runner.into())
             .build()
             .expect("agent");
@@ -2066,7 +2098,7 @@ mod tests {
 
     #[tokio::test]
     async fn next_emits_model_output_before_completion() {
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(
@@ -2096,7 +2128,7 @@ mod tests {
 
     #[tokio::test]
     async fn next_propagates_llm_errors() {
-        let mut agent = Agent::builder()
+        let mut agent = Agent::raw_builder()
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Err(provider_error())]))

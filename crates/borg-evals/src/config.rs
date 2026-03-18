@@ -1,16 +1,55 @@
+use std::time::Duration;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Provider-specific overrides loaded from `evals.toml` or built in code.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderConfigs {
     pub ollama: Option<OllamaProviderConfig>,
+    pub openai: Option<OpenAIProviderConfig>,
+    pub anthropic: Option<AnthropicProviderConfig>,
+    pub openrouter: Option<OpenRouterProviderConfig>,
+    pub lm_studio: Option<LmStudioProviderConfig>,
 }
 
+/// Runtime override for Ollama targets.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct OllamaProviderConfig {
     pub url: String,
 }
 
+/// Runtime override for OpenAI targets.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OpenAIProviderConfig {
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub organization: Option<String>,
+}
+
+/// Runtime override for Anthropic targets.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct AnthropicProviderConfig {
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub version: Option<String>,
+}
+
+/// Runtime override for OpenRouter targets.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OpenRouterProviderConfig {
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+}
+
+/// Runtime override for LM Studio targets.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct LmStudioProviderConfig {
+    pub url: Option<String>,
+    pub api_token: Option<String>,
+}
+
+/// One concrete model target to evaluate against.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ExecutionTarget {
     pub label: String,
@@ -66,10 +105,12 @@ impl Default for ExecutionTarget {
     }
 }
 
+/// Top-level configuration for an eval run.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RunConfig {
     pub targets: Vec<ExecutionTarget>,
     pub trials: usize,
+    pub timeout: Option<Duration>,
     pub provider: ProviderConfigs,
 }
 
@@ -78,6 +119,7 @@ impl RunConfig {
         Self {
             targets,
             trials: 1,
+            timeout: None,
             provider: ProviderConfigs::default(),
         }
     }
@@ -93,6 +135,16 @@ impl RunConfig {
 
     pub fn with_provider_configs(mut self, provider: ProviderConfigs) -> Self {
         self.provider = provider;
+        self
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    pub fn with_optional_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
         self
     }
 }

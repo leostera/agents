@@ -53,6 +53,7 @@ impl std::error::Error for ParseError {
     }
 }
 
+/// Error returned by provider setup, request execution, or response decoding.
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -195,6 +196,7 @@ impl Error {
     }
 }
 
+/// Result type used by `borg-llm`.
 pub type LlmResult<V> = std::result::Result<V, Error>;
 
 #[cfg(test)]

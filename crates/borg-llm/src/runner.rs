@@ -15,11 +15,13 @@ use crate::provider::LlmProvider;
 use crate::tools::{ToolCall, TypedTool};
 use crate::transcription::{AudioTranscriptionRequest, AudioTranscriptionResponse};
 
+/// Shared entrypoint for running typed completion and transcription requests.
 #[derive(Clone)]
 pub struct LlmRunner {
     providers: Vec<Arc<dyn LlmProvider>>,
 }
 
+/// Builder for [`LlmRunner`].
 pub struct LlmRunnerBuilder {
     providers: Vec<Arc<dyn LlmProvider>>,
 }

@@ -13,7 +13,7 @@ use crate::error::EvalResult;
 use crate::eval::Eval;
 use crate::grade::{GradeResult, GraderFailure, is_passing_score};
 use crate::suite::Suite;
-use crate::trial::{AgentTrial, RecordedEvent, RecordedMessageRole};
+use crate::trial::{AgentTrial, RecordedError, RecordedEvent, RecordedMessageRole};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -327,7 +327,7 @@ enum PersistedTranscriptEvent {
         step: Option<usize>,
     },
     Error {
-        reason: String,
+        error: RecordedError,
     },
 }
 
@@ -446,8 +446,8 @@ fn persisted_transcript(events: Vec<RecordedEvent>) -> Vec<PersistedTranscriptEv
             RecordedEvent::Completed { reply } => {
                 transcript.push(PersistedTranscriptEvent::Assistant { value: reply })
             }
-            RecordedEvent::Error { reason } => {
-                transcript.push(PersistedTranscriptEvent::Error { reason })
+            RecordedEvent::Error { error } => {
+                transcript.push(PersistedTranscriptEvent::Error { error })
             }
             RecordedEvent::StepCompleted { .. } | RecordedEvent::GraderStarted { .. } => {}
         }

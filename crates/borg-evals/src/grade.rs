@@ -21,6 +21,7 @@ pub(crate) fn is_passing_score(score: f32) -> bool {
     (score - 1.0).abs() < f32::EPSILON
 }
 
+/// Result returned by a grader.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GradeResult {
     pub score: f32,
@@ -29,12 +30,14 @@ pub struct GradeResult {
     pub evidence: Value,
 }
 
+/// Failure to execute a grader, distinct from a low score.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GraderFailure {
     pub name: String,
     pub error: String,
 }
 
+/// A reusable grading function for an eval trial.
 pub struct Grader<State = (), Output = String> {
     name: String,
     run: Arc<GraderFn<State, Output>>,
@@ -82,6 +85,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> Grader<State, 
     }
 }
 
+/// Collection of graders applied to a trial.
 pub struct GradingConfig<State = (), Output = String> {
     graders: Vec<Grader<State, Output>>,
 }
@@ -110,6 +114,7 @@ impl<State, Output> Default for GradingConfig<State, Output> {
     }
 }
 
+/// Aggregate outcome across all configured graders.
 #[derive(Clone, Debug)]
 pub struct Grade {
     pub grades: BTreeMap<String, GradeResult>,
@@ -253,6 +258,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> From<Grader<St
     }
 }
 
+/// Creates a deterministic grader from ordinary Rust code.
 pub fn predicate<State, Output, F, Fut>(name: impl Into<String>, f: F) -> Grader<State, Output>
 where
     State: Send + Sync + 'static,
@@ -263,4 +269,5 @@ where
     Grader::new(name, f)
 }
 
+/// Compatibility alias for [`predicate`].
 pub use predicate as grade;

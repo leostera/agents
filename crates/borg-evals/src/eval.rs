@@ -1,9 +1,10 @@
+use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use borg_agent::{Agent, AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
-use borg_llm::runner::LlmRunner;
+use borg_llm::LlmRunner;
 use tracing::debug;
 
 use crate::config::ExecutionTarget;
@@ -13,10 +14,11 @@ use crate::trial::AgentTrial;
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
+/// Marker agent used before a suite installs its real agent factory.
 #[derive(Clone, Debug)]
 pub struct NoAgent;
 
-#[borg_agent::async_trait]
+#[async_trait]
 impl Agent for NoAgent {
     type Input = serde_json::Value;
     type ToolCall = serde_json::Value;
@@ -53,6 +55,7 @@ impl Agent for NoAgent {
     }
 }
 
+/// Per-trial context passed into suite agent factories, eval runners, and graders.
 pub struct EvalContext<State = ()> {
     pub suite_id: String,
     pub eval_id: String,
@@ -90,14 +93,17 @@ impl<State> std::fmt::Debug for EvalContext<State> {
 }
 
 impl<State> EvalContext<State> {
+    /// Returns the target being evaluated.
     pub fn target(&self) -> &ExecutionTarget {
         &self.target
     }
 
+    /// Returns the shared suite state.
     pub fn state(&self) -> &Arc<State> {
         &self.state
     }
 
+    /// Returns the shared runner for the current target.
     pub fn llm_runner(&self) -> Arc<LlmRunner> {
         self.llm_runner.clone()
     }
@@ -109,6 +115,10 @@ type EvalRunner<State, A> = Arc<
         + Sync,
 >;
 
+/// A single eval scenario for an agent type.
+///
+/// An `Eval` combines an identifier, optional tags and trial overrides, a
+/// runner closure that produces an [`AgentTrial`], and one or more graders.
 pub struct Eval<State = (), Agent = NoAgent>
 where
     Agent: borg_agent::Agent,
@@ -163,23 +173,28 @@ where
         }
     }
 
+    /// Returns the eval identifier.
     pub fn id(&self) -> &str {
         &self.id
     }
 
+    /// Returns the configured tag list.
     pub fn tag_list(&self) -> &[String] {
         &self.tags
     }
 
+    /// Returns the explicitly configured trial count, if any.
     pub fn configured_trials(&self) -> Option<usize> {
         self.trials
     }
 
+    /// Adds a single tag.
     pub fn tag(mut self, tag: impl Into<String>) -> Self {
         self.tags.push(tag.into());
         self
     }
 
+    /// Adds many tags.
     pub fn tags<I, S>(mut self, tags: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -189,11 +204,13 @@ where
         self
     }
 
+    /// Overrides the number of trials for this eval.
     pub fn trials(mut self, trials: usize) -> Self {
         self.trials = Some(trials);
         self
     }
 
+    /// Replaces the grading configuration for this eval.
     pub fn grading<G>(mut self, grading: G) -> Self
     where
         G: Into<GradingConfig<State, A::Output>>,
@@ -202,10 +219,12 @@ where
         self
     }
 
+    /// Returns the configured graders.
     pub fn graders(&self) -> &[crate::grade::Grader<State, A::Output>] {
         self.grading.graders()
     }
 
+    /// Returns the grading configuration.
     pub fn grading_config(&self) -> &GradingConfig<State, A::Output> {
         &self.grading
     }

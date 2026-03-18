@@ -6,6 +6,7 @@ use crate::error::{Error, LlmResult};
 use crate::response::{RawResponseFormat, TypedResponse};
 use crate::tools::{RawToolCall, RawToolDefinition, ToolCall, TypedToolSet};
 
+/// LLM provider family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProviderType {
     OpenAI,
@@ -29,6 +30,7 @@ impl ProviderType {
     }
 }
 
+/// Strategy for selecting a provider or exact model name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelSelector {
     Any,
@@ -56,6 +58,7 @@ impl ModelSelector {
     }
 }
 
+/// Message role used in completion input and output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -64,6 +67,7 @@ pub enum Role {
     Assistant,
 }
 
+/// One typed input item sent to a provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum InputItem {
@@ -124,6 +128,19 @@ impl InputItem {
     }
 }
 
+impl From<String> for InputItem {
+    fn from(value: String) -> Self {
+        Self::user_text(value)
+    }
+}
+
+impl From<&str> for InputItem {
+    fn from(value: &str) -> Self {
+        Self::user_text(value)
+    }
+}
+
+/// One content item inside a message input.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum InputContent {
@@ -141,6 +158,19 @@ impl InputContent {
     }
 }
 
+impl From<String> for InputContent {
+    fn from(value: String) -> Self {
+        Self::text(value)
+    }
+}
+
+impl From<&str> for InputContent {
+    fn from(value: &str) -> Self {
+        Self::text(value)
+    }
+}
+
+/// Reason a provider ended generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FinishReason {
     Stop,
@@ -163,6 +193,7 @@ impl From<Option<String>> for FinishReason {
     }
 }
 
+/// Typed completion request sent through [`crate::LlmRunner`].
 #[derive(Debug, Clone, Builder)]
 #[builder(setter(into))]
 pub struct CompletionRequest<ToolType, ResponseType> {
@@ -249,6 +280,7 @@ impl<ToolType, ResponseType> CompletionRequest<ToolType, ResponseType> {
     }
 }
 
+/// Final typed completion response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionResponse<ToolType = (), ResponseType = String> {
@@ -259,6 +291,34 @@ pub struct CompletionResponse<ToolType = (), ResponseType = String> {
     pub finish_reason: FinishReason,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{InputContent, InputItem, Role};
+
+    #[test]
+    fn input_item_from_string_defaults_to_user_text() {
+        let item = InputItem::from("hello");
+
+        match item {
+            InputItem::Message { role, content } => {
+                assert_eq!(role, Role::User);
+                assert_eq!(content.len(), 1);
+                assert!(
+                    matches!(content.first(), Some(InputContent::Text { text }) if text == "hello")
+                );
+            }
+            other => panic!("expected user text message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn input_content_from_string_defaults_to_text() {
+        let content = InputContent::from("hello");
+        assert!(matches!(content, InputContent::Text { text } if text == "hello"));
+    }
+}
+
+/// One typed output item emitted by a provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum OutputItem<ToolType = (), ResponseType = String> {
@@ -274,6 +334,7 @@ pub enum OutputItem<ToolType = (), ResponseType = String> {
     },
 }
 
+/// Content carried by a typed output message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum OutputContent<ResponseType = String> {
@@ -281,6 +342,7 @@ pub enum OutputContent<ResponseType = String> {
     Structured { value: ResponseType },
 }
 
+/// Whether a response should be buffered or streamed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ResponseMode {
@@ -294,6 +356,7 @@ impl ResponseMode {
     }
 }
 
+/// Probability value constrained to the `[0.0, 1.0]` range.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Probability(f32);
@@ -314,6 +377,7 @@ impl Probability {
     }
 }
 
+/// Temperature configuration for generation.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Temperature {
@@ -330,6 +394,7 @@ impl Temperature {
     }
 }
 
+/// Token limit configuration for generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TokenLimit {
@@ -346,6 +411,7 @@ impl TokenLimit {
     }
 }
 
+/// Top-p sampling configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TopP {
@@ -362,6 +428,7 @@ impl TopP {
     }
 }
 
+/// Top-k sampling configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TopK {
@@ -378,6 +445,7 @@ impl TopK {
     }
 }
 
+/// Tool selection mode for a completion request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolChoice {
@@ -388,6 +456,7 @@ pub enum ToolChoice {
     None,
 }
 
+/// One streamed completion event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CompletionEvent<ToolType, ResponseType> {
@@ -397,6 +466,7 @@ pub enum CompletionEvent<ToolType, ResponseType> {
     Done(CompletionResponse<ToolType, ResponseType>),
 }
 
+/// Stream of typed completion events.
 pub struct CompletionEventStream<ToolType, ResponseType> {
     receiver: mpsc::Receiver<crate::error::LlmResult<CompletionEvent<ToolType, ResponseType>>>,
 }
@@ -415,6 +485,7 @@ impl<ToolType, ResponseType> CompletionEventStream<ToolType, ResponseType> {
     }
 }
 
+/// Untyped completion request sent directly to a provider implementation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawCompletionRequest {
@@ -430,6 +501,7 @@ pub struct RawCompletionRequest {
     pub response_format: Option<RawResponseFormat>,
 }
 
+/// Untyped completion response returned directly by a provider implementation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawCompletionResponse {
@@ -440,6 +512,7 @@ pub struct RawCompletionResponse {
     pub finish_reason: FinishReason,
 }
 
+/// Untyped input item used by provider implementations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum RawInputItem {
@@ -456,6 +529,7 @@ pub enum RawInputItem {
     },
 }
 
+/// Untyped content item used by provider implementations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum RawInputContent {
@@ -463,6 +537,7 @@ pub enum RawInputContent {
     ImageUrl { url: String },
 }
 
+/// Untyped output item used by provider implementations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum RawOutputItem {
@@ -478,6 +553,7 @@ pub enum RawOutputItem {
     },
 }
 
+/// Untyped output content used by provider implementations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum RawOutputContent {
@@ -485,6 +561,7 @@ pub enum RawOutputContent {
     Json { value: serde_json::Value },
 }
 
+/// One streamed raw completion event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RawCompletionEvent {
@@ -494,6 +571,7 @@ pub enum RawCompletionEvent {
     Done(RawCompletionResponse),
 }
 
+/// Stream of raw completion events.
 pub struct RawCompletionEventStream {
     receiver: mpsc::Receiver<crate::error::LlmResult<RawCompletionEvent>>,
 }
@@ -508,6 +586,7 @@ impl RawCompletionEventStream {
     }
 }
 
+/// Token accounting attached to a provider response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Usage {

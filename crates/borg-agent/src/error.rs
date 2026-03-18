@@ -1,6 +1,7 @@
 use borg_llm::error::Error as LlmError;
 use thiserror::Error;
 
+/// Errors returned while driving an agent.
 #[derive(Debug, Error)]
 pub enum AgentError {
     #[error("LLM error: {0}")]
@@ -25,4 +26,5 @@ pub enum AgentError {
     Internal { message: String },
 }
 
+/// Result type used by agent operations.
 pub type AgentResult<T> = Result<T, AgentError>;

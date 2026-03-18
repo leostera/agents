@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use borg_agent::{
     Agent, AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput, ExecutionProfile,
     SessionAgent,
 };
+use borg_llm::LlmRunner;
 use borg_llm::completion::InputItem;
-use borg_llm::runner::LlmRunner;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,7 @@ use crate::trial::{AgentTrial, RecordedEvent};
 
 const DEFAULT_JUDGE_PROMPT: &str = "You are an evaluation judge. Read the rubric and transcript carefully. Return a JSON verdict with score in [0.0, 1.0], a short summary, and an `evidence` array of short strings. Score 1.0 only when the assistant fully satisfies the rubric. Score 0.0 when it clearly fails. Use intermediate values only when the result is partially correct.";
 
+/// Input sent to the built-in judge agent.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct JudgeInput<Output> {
     pub rubric: String,
@@ -37,6 +39,7 @@ where
     }
 }
 
+/// Verdict returned by the built-in judge agent.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct JudgeVerdict {
     pub score: f32,
@@ -45,6 +48,7 @@ pub struct JudgeVerdict {
     pub evidence: Vec<String>,
 }
 
+/// Built-in LLM-backed grader agent used by [`judge`].
 pub struct JudgeAgent<Output>
 where
     Output: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
@@ -72,7 +76,7 @@ where
     }
 }
 
-#[borg_agent::async_trait]
+#[async_trait]
 impl<Output> Agent for JudgeAgent<Output>
 where
     Output: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
@@ -106,6 +110,7 @@ where
     }
 }
 
+/// Creates an LLM-backed grader from a natural-language rubric.
 pub fn judge<State, Output>(
     name: impl Into<String>,
     rubric: impl Into<String>,

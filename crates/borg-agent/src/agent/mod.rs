@@ -12,23 +12,43 @@ pub use session::{
     SessionAgent,
 };
 
+/// Typed interface for an agent.
+///
+/// The trait is centered around a turn-based API:
+///
+/// - [`send`](Self::send) queues input into the session
+/// - [`next`](Self::next) advances the session and yields the next event
+/// - [`call`](Self::call), [`cast`](Self::cast), [`steer`](Self::steer), and [`cancel`](Self::cancel)
+///   are convenience helpers built on top of `send` + `next`
+/// - [`spawn`](Self::spawn) adapts the same agent into a background task with channels
+///
+/// Most users should implement this trait by delegating to [`SessionAgent`],
+/// either manually or through `#[derive(Agent)]`.
 #[async_trait]
 pub trait Agent: Send + 'static {
+    /// Input message type accepted by the agent.
     type Input: Clone + Serialize + DeserializeOwned + Send + Sync + 'static;
+    /// Tool call type emitted by the agent.
     type ToolCall: Clone + Serialize + DeserializeOwned + Send + Sync + 'static;
+    /// Tool result type returned into the agent after execution.
     type ToolResult: Clone + Serialize + DeserializeOwned + Send + Sync + 'static;
+    /// Final structured reply type produced by the agent.
     type Output: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static;
 
+    /// Sends an input into the session.
     async fn send(&mut self, input: AgentInput<Self::Input>) -> AgentResult<()>;
 
+    /// Advances the session and yields the next event, if any.
     async fn next(
         &mut self,
     ) -> AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>>;
 
+    /// Sends a normal user message without waiting for completion.
     async fn cast(&mut self, input: Self::Input) -> AgentResult<()> {
         self.send(AgentInput::Message(input)).await
     }
 
+    /// Sends a normal user message and waits for the terminal reply.
     async fn call(&mut self, input: Self::Input) -> AgentResult<Self::Output> {
         self.send(AgentInput::Message(input)).await?;
         loop {
@@ -45,6 +65,7 @@ pub trait Agent: Send + 'static {
         }
     }
 
+    /// Sends steering input and waits for the resulting terminal reply.
     async fn steer(&mut self, input: Self::Input) -> AgentResult<Self::Output> {
         self.send(AgentInput::Steer(input)).await?;
         loop {
@@ -61,6 +82,7 @@ pub trait Agent: Send + 'static {
         }
     }
 
+    /// Requests cancellation and waits until the session observes it.
     async fn cancel(&mut self) -> AgentResult<()> {
         self.send(AgentInput::Cancel).await?;
         loop {
@@ -81,6 +103,7 @@ pub trait Agent: Send + 'static {
         }
     }
 
+    /// Spawns the agent as a background task and exposes channel-based I/O.
     async fn spawn(
         self,
     ) -> AgentResult<(

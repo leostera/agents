@@ -9,6 +9,7 @@ use serde_json::Value;
 use crate::context::{ContextChunk, ContextStrategy};
 use crate::error::{AgentError, AgentResult};
 
+/// Typed tool call plus its serialized envelope metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallEnvelope<C> {
     pub call_id: String,
@@ -28,6 +29,7 @@ impl<C> ToolCallEnvelope<C> {
     }
 }
 
+/// Result of executing a tool call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ToolExecutionResult<T> {
@@ -35,6 +37,7 @@ pub enum ToolExecutionResult<T> {
     Error { message: String },
 }
 
+/// Typed tool result plus the originating call id.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResultEnvelope<T> {
     pub call_id: String,
@@ -59,11 +62,13 @@ where
     }
 }
 
+/// Executes tool calls on behalf of an agent.
 #[async_trait]
 pub trait ToolRunner<C, T>: Send + Sync {
     async fn run(&self, call: ToolCallEnvelope<C>) -> AgentResult<ToolResultEnvelope<T>>;
 }
 
+/// Tool runner that rejects all tool calls.
 pub struct NoToolRunner;
 
 #[async_trait]
@@ -82,6 +87,7 @@ where
 type BoxedToolFuture<T> = Pin<Box<dyn Future<Output = AgentResult<ToolResultEnvelope<T>>> + Send>>;
 type ToolCallback<C, T> = Arc<dyn Fn(ToolCallEnvelope<C>) -> BoxedToolFuture<T> + Send + Sync>;
 
+/// Tool runner backed by an async callback.
 pub struct CallbackToolRunner<C, T> {
     callback: ToolCallback<C, T>,
 }

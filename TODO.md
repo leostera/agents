@@ -1,95 +1,210 @@
-# TODO Audit
+# TODO
 
-This file records the TODOs encountered during the current cleanup pass.
-The intent is to keep the reasoning visible even after the original inline TODO comment is removed.
+This file tracks the current evals/agent runtime roadmap and the follow-up items we have explicitly agreed to.
 
-## Legend
+## Current Priority
 
-- `addressed`: the underlying issue has been fixed in code
-- `in_progress`: code is actively being refactored but not yet validated
-- `open`: the underlying issue is still real and needs implementation
-- `rejected`: the original TODO direction was wrong and was intentionally not implemented
+1. Finish eval timeouts
+   - Timeout plumbing exists, but the end-to-end behavior and UX still need tightening.
+   - Keep the API in `Duration`, and make the failure mode obvious in both terminal output and trial artifacts.
 
-## Inventory
+2. Finish structured transcript errors
+   - Stop flattening runtime failures into strings too early.
+   - Keep typed errors internally for as long as possible, then serialize them cleanly into transcript `error` events.
+   - Longer term, relevant error enums should implement `Serialize`.
 
-1. `crates/borg-evals/src/grade.rs`
-   Status: `addressed`
-   Context: the grading surface duplicated grader identity in `GradeResult.name`, relied on helper constructors like `pass_if`, and carried a custom `IntoGradingConfig` trait just to make the API chain.
-   Implemented fix:
-   - `Grader` owns the grade name
-   - `GradeResult` is plain data returned from normal Rust code
-   - `pass_if`/builder-style helpers are gone from the authored surface
-   - trial/report grade storage now keys grades by grader name instead of duplicating names inside `GradeResult`
+3. Finish removing remaining Ollama-local coupling
+   - Normal eval execution should not depend on any Ollama-specific assumptions.
+   - Hosted targets and local targets should both be cleanly supported without special-case runtime behavior.
 
-2. `crates/borg-evals/src/suite.rs`
-   Status: `addressed`
-   Context: target execution was hard-coded directly into `SuiteRunner::run`, with a design note about eventually splitting this into a local executor and a remote executor.
-   Implemented fix:
-   - introduce a real `SuiteExecutor` seam
-   - implement `LocalExecutor`
-   - have `SuiteRunner` delegate through that seam
+4. Improve empty-config and filter errors
+   - `cargo evals run` should fail clearly when there are no configured targets.
+   - Distinguish “no suites discovered”, “no targets configured”, and “no matches for the selected filters”.
 
-3. `crates/borg-evals/examples/calculator_agent.rs`
-   Status: `addressed`
-   Context: tool definition wiring is still handwritten; the example was pointing at a future derive-based tool macro.
-   Implemented fix:
-   - added `#[derive(borg_macros::AgentTool)]` for tool enums
-   - replaced the manual `TypedTool` impl in the calculator example
-   - argument payload types remain ordinary serde/schemars Rust types
+5. Split `crates/borg-evals/src/suite.rs`
+   - `suite.rs` is still doing too much.
+   - Likely split:
+     - `suite/mod.rs`
+     - `suite/planning.rs`
+     - `suite/executor.rs`
+     - `suite/target.rs`
+     - `suite/trial.rs`
+     - `suite/llm.rs`
 
-4. `crates/test-agents/evals/echo.rs`
-   Status: `addressed`
-   Context: reusable deterministic graders were still being hand-written inline as closures, and the file explicitly wanted a reusable grade abstraction.
-   Implemented fix:
-   - add a `#[grade]` proc macro that wraps a plain async Rust function into a reusable `Grader`
-   - moved the echo suite onto reusable grade functions
+6. Expand `AgentEvent` into the full runtime event stream
+   - The current event model is still too output-oriented.
+   - We want a complete stream of agent/runtime events so transcript recording can rely on the agent event stream directly.
 
-5. `crates/test-agents/evals/echo.rs`
-   Status: `addressed`
-   Context: one-step trajectory authoring was too noisy for hand-written evals.
-   Implemented fix:
-   - kept the linear runtime model but simplified the authored one-step path to `Trajectory::new(Step::user(...).grade(...))`
-   - moved the echo suite onto that simpler path
+7. Capture system/context materialization in transcripts
+   - Transcripts still do not show the real system/context window seen by the model.
+   - This depends on the fuller `AgentEvent` work.
 
-6. `crates/borg-agent/src/agent.rs`
-   Status: `addressed`
-   Context: `Agent` bounds only lived on impl blocks, and helper logic for abandoned tool calls / context chunk conversion was spread across free functions.
-   Implemented fix:
-   - moved the runtime bounds onto `Agent`
-   - moved pending-tool traversal onto `TurnState`
-   - moved chunk conversion onto `ToolCallEnvelope` / `ToolResultEnvelope`
+## Validation and Packaging
 
-7. `crates/borg-llm/src/tools.rs`
-   Status: `addressed`
-   Context: tool metadata types had awkward `Raw*` names and a Rust field called `r#type`, even though this is ordinary structured metadata in Rust code.
-   Implemented fix:
-   - introduced `ToolDefinition`, `ToolFunction`, and `ToolSet`
-   - renamed the Rust field to `kind` while preserving wire-format `"type"`
-   - kept compatibility aliases where useful
+8. Keep validating external-workspace support
+   - `borg-evals`, `borg-macros`, and `cargo-evals` must work from another project, not just this workspace.
+   - Continue adding smoke coverage for:
+     - external path dependencies
+     - setup via `build.rs`
+     - `cargo evals list`
+     - `cargo evals run`
 
-8. `crates/borg-llm/src/tools.rs`
-   Status: `addressed`
-   Context: `TypedToolSet` had a TODO questioning whether it should exist at all.
-   Implemented fix:
-   - kept the concept because it is still used to materialize typed tool metadata at request construction time
-   - renamed/documented it as `ToolSet` and left the old name as a compatibility alias
+9. Feature-flag `borg_llm::testing`
+   - `borg-llm` should not pull `testcontainers` into normal binary dependency resolution.
+   - The testing helpers should be behind an explicit feature or otherwise isolated to test-only use.
 
-9. `evals.toml`
-   Status: `open`
-   Context: hosted targets are still commented out because the current local harness path is too tied to container-managed Ollama setup.
-   Intended fix:
-   - decouple provider selection from Ollama container startup
-   - allow local/server-backed Ollama without forcing container startup
+## Reporting and Cost Tracking
 
-10. `crates/borg-evals/src/grade.rs`
-    Status: `rejected`
-    Context: one intermediate TODO suggested making `GradeResult` fields private.
-    Reason rejected:
-    - deterministic graders should read like ordinary Rust code
-    - hiding the fields would push the API back toward a builder DSL
+10. Add usage/cost tracking on `LlmRunner`
+   - We want visibility into:
+     - token counts
+     - provider/model usage
+     - spend/cost where available
 
-## Verification Checklist
+## Future Work
 
-- [x] `rg -n "TODO\\(|TODO|FIXME|XXX" crates evals.toml` is empty
-- [x] every `addressed` item above is backed by compiling code and tests
-- [x] every remaining `open` item remains visible here instead of being deleted
+11. Explore `borg-llm` support for Cloudflare Workers AI
+
+
+---
+
+Documentation checklist:
+- [] Macros
+    - [x] assistant
+    - [] setup
+    - [x] trajectory
+    - [x] user
+- [] Structs
+    - [x] AgentBuilder
+    - [] AgentTrial
+    - [] AnthropicProviderConfig
+    - [] ArtifactIndex
+    - [] CallbackToolRunner
+    - [] CompletionEventStream
+    - [] CompletionRequest
+    - [] CompletionRequestBuilder
+    - [] Builder for CompletionRequest.
+    - [] CompletionResponse
+    - [x] ContextManager
+    - [x] ContextManagerBuilder
+    - [x] ContextWindow
+    - [x] Eval
+    - [] EvalAggregate
+    - [x] EvalContext
+    - [] EvalRunReport
+    - [x] ExecutionProfile
+    - [x] ExecutionTarget
+    - [x] Grade
+    - [x] GradeResult
+    - [x] Grader
+    - [] GraderAggregate
+    - [x] GraderFailure
+    - [x] GradingConfig
+    - [x] InMemoryStorageAdapter
+    - [] JsonEventSink
+    - [x] JudgeAgent
+    - [x] JudgeInput
+    - [x] JudgeVerdict
+    - [] LlmRunner
+    - [] LlmRunnerBuilder
+    - [] LmStudioProviderConfig
+    - [x] NoToolRunner
+    - [] NoopEventSink
+    - [] NoopStorageAdapter
+    - [x] OllamaProviderConfig
+    - [x] OpenAIProviderConfig
+    - [x] OpenRouterProviderConfig
+    - [] PlannedSuiteRun
+    - [] Probability
+    - [] ProgressEventSink
+    - [x] ProviderConfigs
+    - [] RawCompletionEventStream
+    - [] RawCompletionRequest
+    - [] RawCompletionResponse
+    - [] RecordedToolCall
+    - [x] RunConfig
+    - [] RunManifest
+    - [x] SessionAgent
+    - [x] StaticContextProvider
+    - [x] Step
+    - [x] Suite
+    - [] SuiteDescriptor
+    - [] SuiteRunReport
+    - [] SuiteSummary
+    - [x] TargetFilter
+    - [x] ToolCallEnvelope
+    - [x] ToolResultEnvelope
+    - [x] Trajectory
+    - [x] TrajectoryBuilder
+    - [] TrialRecord
+    - [] Usage
+- [] Enums
+    - [x] AgentError
+    - [x] AgentEvent
+    - [x] AgentInput
+    - [] CompletionEvent
+    - [] CompletionRequestBuilderError
+    - [] Error type for CompletionRequestBuilder
+    - [x] ContextChunk
+    - [x] ContextRole
+    - [x] ContextStrategy
+    - [] EvalError
+    - [] FinishReason
+    - [] InputContent
+    - [] InputItem
+    - [] ModelSelector
+    - [] OutputContent
+    - [] OutputItem
+    - [] ProviderType
+    - [] RawCompletionEvent
+    - [] RawInputContent
+    - [] RawInputItem
+    - [] RawOutputContent
+    - [] RawOutputItem
+    - [] RecordedError
+    - [] RecordedEvent
+    - [] RecordedGradingScope
+    - [] RecordedMessageRole
+    - [] ResponseMode
+    - [] Role
+    - [] RunEvent
+    - [] StorageEvent
+    - [] StorageInput
+    - [] StorageRecord
+    - [x] SuiteKind
+    - [] Temperature
+    - [] TokenLimit
+    - [] ToolChoice
+    - [] ToolExecutionResult
+    - [] TopK
+    - [] TopP
+- [] Constants
+    - [] SCHEMA_VERSION
+- [] Traits
+    - [x] Agent
+    - [x] ContextProvider
+    - [] EventSink
+    - [] RunnableSuite
+    - [x] StorageAdapter
+    - [x] ToolRunner
+- [] Functions
+    - [] build
+    - [] emit
+    - [] global_sink
+    - [x] grade
+    - [x] judge
+    - [x] predicate
+    - [] set_global_sink
+- [] Type Aliases
+    - [x] AgentResult
+    - [x] AgentRunInput
+    - [x] AgentRunOutput
+    - [] EvalResult
+    - [] SharedEventSink
+- [] Attribute Macros
+    - [] eval
+    - [] grade
+    - [] suite
+- [] Derive Macros
+    - [] Agent
+    - [] Tool

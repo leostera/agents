@@ -1,19 +1,21 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use borg_llm::LlmRunner;
 use borg_llm::completion::{InputContent, InputItem, Role};
-use borg_llm::runner::LlmRunner;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::AgentResult;
 
+/// Strategy hint for how a context chunk should be retained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContextStrategy {
     Pinnable,
     Compactable,
 }
 
+/// Role attached to a context message chunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContextRole {
     System,
@@ -21,6 +23,7 @@ pub enum ContextRole {
     Assistant,
 }
 
+/// One item in an agent context window.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ContextChunk {
     Message {
@@ -131,6 +134,7 @@ impl ContextChunk {
     }
 }
 
+/// Materialized context window ready to be lowered into model input items.
 #[derive(Debug, Clone, Default)]
 pub struct ContextWindow {
     pub chunks: Vec<ContextChunk>,
@@ -149,11 +153,13 @@ impl ContextWindow {
     }
 }
 
+/// Source of additional context chunks for an agent.
 #[async_trait]
 pub trait ContextProvider: Send + Sync {
     async fn provide(&self) -> AgentResult<Vec<ContextChunk>>;
 }
 
+/// Builder for [`ContextManager`].
 pub struct ContextManagerBuilder {
     providers: Vec<Arc<dyn ContextProvider>>,
 }
@@ -188,6 +194,7 @@ impl Default for ContextManagerBuilder {
     }
 }
 
+/// Composes static providers and conversation history into a context window.
 pub struct ContextManager {
     providers: Vec<Arc<dyn ContextProvider>>,
     history: Mutex<Vec<ContextChunk>>,
@@ -243,6 +250,7 @@ impl Default for ContextManager {
     }
 }
 
+/// Simple context provider backed by a fixed list of chunks.
 pub struct StaticContextProvider {
     chunks: Vec<ContextChunk>,
 }

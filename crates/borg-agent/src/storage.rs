@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::context::ContextChunk;
 use crate::error::AgentResult;
 
+/// Input records captured by a storage adapter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StorageInput {
     Message(ContextChunk),
@@ -14,6 +15,7 @@ pub enum StorageInput {
     Cancel,
 }
 
+/// Event records captured by a storage adapter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StorageEvent {
     ModelOutputItem {
@@ -34,6 +36,7 @@ pub enum StorageEvent {
     Cancelled,
 }
 
+/// Structured record emitted by agent instrumentation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StorageRecord {
     InputReceived {
@@ -52,11 +55,13 @@ pub enum StorageRecord {
     },
 }
 
+/// Sink for structured agent instrumentation records.
 #[async_trait]
 pub trait StorageAdapter: Send + Sync {
     async fn record(&self, record: StorageRecord) -> AgentResult<()>;
 }
 
+/// Storage adapter that discards all records.
 pub struct NoopStorageAdapter;
 
 #[async_trait]
@@ -66,6 +71,7 @@ impl StorageAdapter for NoopStorageAdapter {
     }
 }
 
+/// Storage adapter that keeps all records in memory.
 #[derive(Default)]
 pub struct InMemoryStorageAdapter {
     records: Mutex<Vec<StorageRecord>>,
