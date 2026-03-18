@@ -7,11 +7,15 @@
 //!
 //! The intended embedding path is:
 //!
-//! ```rust,no_run
+//! ```rust
 //! use std::sync::Arc;
 //!
 //! use agents_codemode::{CodeMode, CodeModeConfig, SearchCode};
 //!
+//! # tokio::runtime::Builder::new_current_thread()
+//! #     .enable_all()
+//! #     .build()?
+//! #     .block_on(async {
 //! let codemode = Arc::new(
 //!     CodeMode::builder()
 //!         .with_config(CodeModeConfig::default().multithreaded(true))
@@ -26,6 +30,8 @@
 //!     .await?;
 //!
 //! println!("{} matches", response.matches.len());
+//! # Ok::<(), anyhow::Error>(())
+//! # })?;
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
