@@ -304,10 +304,12 @@ impl<State, A> SuitePlan<State, A>
 where
     A: Agent,
 {
+    #[cfg(test)]
     pub(crate) fn suite(&self) -> &Suite<State, A> {
         &self.suite
     }
 
+    #[cfg(test)]
     pub(crate) fn config(&self) -> &RunConfig {
         &self.config
     }
