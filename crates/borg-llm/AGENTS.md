@@ -85,6 +85,12 @@ impl TypedTool for MyTools {
 Use `ToolDefinition::function(...)` to describe function tools.
 The serialized wire field is still `"type"`, but the Rust field is `kind`.
 `RawToolDefinition` and `TypedToolSet` remain as compatibility aliases; prefer `ToolDefinition` and `ToolSet` in new code.
+For ordinary tool enums, prefer `#[derive(borg_macros::AgentTool)]` instead of hand-writing the `TypedTool` impl.
+The derive currently supports:
+- unit variants
+- single-field tuple variants
+- named-field variants
+Use `#[agent_tool(name = \"...\", description = \"...\")]` on a variant when the default snake_case name is not the desired tool name.
 
 ### Request Knobs
 Provider-neutral request tuning uses explicit enums/newtypes instead of `Option`s:

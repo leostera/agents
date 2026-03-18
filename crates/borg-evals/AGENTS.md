@@ -28,6 +28,12 @@ src/
 - `Trajectory<Agent, State>` is the declarative runner path.
 - Step expectations grade partial trials immediately and those grades must be preserved even when the trial fails later.
 - `trajectory.runner()` should remain a thin closure adapter over the typed runtime.
+- For hand-written one-step evals, prefer `Trajectory::new(Step::user(...).grade(...))` over the full builder.
+
+### Grading
+- Deterministic graders should read like ordinary Rust code returning `GradeResult { score, summary, evidence }`.
+- `Grader` owns the grade name; `GradeResult` should not duplicate it.
+- Prefer reusable `#[borg_macros::grade]` functions when the same deterministic grader is used in more than one eval.
 
 ### Reports and artifacts
 - Runtime stays typed through `AgentTrial<Output>`.
@@ -43,6 +49,11 @@ src/
 - `RunEvent` is the shared event transport.
 - `--json` should emit line-delimited JSON events.
 - Human-facing output should be driven from the same event stream, not ad hoc tracing logs.
+
+### Proc macros
+- `#[suite]` and `#[eval]` live in `borg-macros`, but they generate `borg-evals` runtime objects.
+- `#[grade]` should stay thin: take a normal async Rust function and wrap it as a reusable `Grader`.
+- `#[derive(AgentTool)]` currently targets tool enums; keep the generated `TypedTool` impl predictable and inspectable.
 
 ## Crate integration
 

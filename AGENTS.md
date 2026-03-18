@@ -14,6 +14,7 @@ Use it as a router: pick the most relevant existing AGENTS file before making ch
    - [`crates/borg-llm/AGENTS.md`](crates/borg-llm/AGENTS.md)
 3. Evals, runner workflow, cargo-evals, and macro-generated suite wiring:
    - [`crates/borg-evals/AGENTS.md`](crates/borg-evals/AGENTS.md)
+   - this route also covers `borg-macros` work for `#[suite]`, `#[eval]`, `#[grade]`, and `#[derive(AgentTool)]`
 4. Workspace-wide changes without a more specific AGENTS file:
    - use this root file and inspect nearby crate code directly
 
