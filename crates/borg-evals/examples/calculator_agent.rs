@@ -1,15 +1,22 @@
 use std::sync::Arc;
 
+use agents::{
+    agent::{
+        AgentResult, ContextManager, SessionAgent, ToolCallEnvelope, ToolExecutionResult,
+        ToolResultEnvelope, ToolRunner,
+    },
+    evals::{
+        Eval, EvalError, ExecutionTarget, GradeResult, GradingConfig, RunConfig, Step, Suite,
+        Trajectory,
+    },
+    llm::{
+        LlmRunner,
+        completion::InputItem,
+        testing::{TestContext, TestProvider},
+    },
+};
 use anyhow::Result;
 use async_trait::async_trait;
-use borg_agent::{
-    AgentResult, ContextManager, SessionAgent, ToolCallEnvelope, ToolExecutionResult,
-    ToolResultEnvelope, ToolRunner,
-};
-use borg_evals::prelude::*;
-use borg_llm::completion::InputItem;
-use borg_llm::runner::LlmRunner;
-use borg_llm::testing::{TestContext, TestProvider};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -70,10 +77,10 @@ pub struct CalculatorAgent {
 }
 
 impl CalculatorAgent {
-    pub async fn new(runner: LlmRunner) -> Result<Self> {
+    pub async fn new(runner: Arc<LlmRunner>) -> Result<Self> {
         let agent = SessionAgent::builder()
             .with_tool_runner(CalcToolRunner)
-            .with_llm_runner(runner.into())
+            .with_llm_runner(runner)
             .with_context_manager(ContextManager::static_text(
                 "You are a calculator. Reply with only the final numeric answer.",
             ))
@@ -90,10 +97,11 @@ struct CalculatorHarness {
 }
 
 impl CalculatorHarness {
-    async fn runner_for(&self, target: &ExecutionTarget) -> Result<LlmRunner> {
+    async fn runner_for(&self, target: &ExecutionTarget) -> Result<Arc<LlmRunner>> {
         self.ollama
             .runner_for_model(&target.model)
             .await
+            .map(Arc::new)
             .map_err(|error| anyhow::anyhow!(error.to_string()))
     }
 }
@@ -121,16 +129,17 @@ async fn main() -> Result<()> {
         .eval(
             Eval::new("adds-two-integers")
                 .tags(["calculator", "arithmetic", "addition"])
-                .grading(
-                    GradingConfig::new().grade("returns-4", |trial, _ctx| async move {
+                .grading(GradingConfig::new().grader(agents::evals::predicate(
+                    "returns-4",
+                    |trial, _ctx| async move {
                         let reply: CalcRes = trial.final_reply.unwrap();
                         Ok(GradeResult {
                             score: if reply.result == 4 { 1.0 } else { 0.0 },
                             summary: "calculator should answer 2 + 2 with exactly 4".to_string(),
                             evidence: json!({ "reply": reply }),
                         })
-                    }),
-                )
+                    },
+                )))
                 .run(
                     Trajectory::builder()
                         .add_step(Step::user(CalcReq::Add(2, 2)))
