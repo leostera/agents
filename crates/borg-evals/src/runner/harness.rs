@@ -51,6 +51,11 @@ pub(super) fn generate_harness(
 }
 
 fn render_manifest(_workspace_root: &Path, crates: &[EvalCrate]) -> String {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let agents_dir = crate_dir
+        .parent()
+        .expect("borg-evals crate to live under crates/")
+        .join("agents");
     let mut out = String::new();
     out.push_str("[package]\n");
     out.push_str("name = \"cargo-evals-harness\"\n");
@@ -62,8 +67,8 @@ fn render_manifest(_workspace_root: &Path, crates: &[EvalCrate]) -> String {
     out.push_str("dotenvy = \"0\"\n");
     out.push_str("tokio = { version = \"1\", features = [\"macros\", \"rt-multi-thread\"] }\n");
     out.push_str(&format!(
-        "borg-evals = {{ path = {:?} }}\n",
-        Path::new(env!("CARGO_MANIFEST_DIR")).display().to_string()
+        "agents = {{ path = {:?} }}\n",
+        agents_dir.display().to_string()
     ));
 
     for krate in crates {
@@ -117,23 +122,23 @@ fn render_main(crates: &[EvalCrate]) -> Result<String> {
                 }
             }
             let registries = vec![#(#registries),*];
-            let workspace_root = ::borg_evals::runner::resolve_workspace_root(&std::env::current_dir()?)?;
-            let loaded = ::borg_evals::runner::load_workspace_run_config(&workspace_root)?;
+            let workspace_root = ::agents::evals::runner::resolve_workspace_root(&std::env::current_dir()?)?;
+            let loaded = ::agents::evals::runner::load_workspace_run_config(&workspace_root)?;
             let run_config = loaded.run_config;
             let output_dir = loaded.output_dir;
 
             match command.as_str() {
                 "list" => {
-                    ::borg_evals::runner::list_discovered(&registries, &run_config, json);
+                    ::agents::evals::runner::list_discovered(&registries, &run_config, json);
                 }
                 "run" => {
-                    ::borg_evals::runner::run_discovered(
+                    ::agents::evals::runner::run_discovered(
                         registries,
                         run_config,
                         &output_dir,
-                        ::borg_evals::runner::RunOptions {
+                        ::agents::evals::runner::RunOptions {
                             json,
-                            filter: ::borg_evals::TargetFilter {
+                            filter: ::agents::evals::TargetFilter {
                                 query,
                                 model,
                             },

@@ -101,6 +101,14 @@ pub fn build() -> Result<()> {
 }
 
 #[macro_export]
+/// Includes the generated eval registry for the current crate.
+///
+/// Call this once from `src/lib.rs` in the crate that owns the `evals/`
+/// directory discovered by [`build`].
+///
+/// ```rust
+/// borg_evals::setup!();
+/// ```
 macro_rules! setup {
     () => {
         #[allow(non_snake_case)]
@@ -288,7 +296,7 @@ fn render_registry(suites: &[SuiteSource]) -> Result<String> {
                 .map(|eval| {
                     let wrapper = syn::Ident::new(&eval.wrapper_fn, proc_macro2::Span::call_site());
                     quote! {
-                        suite = suite.eval(#wrapper().await?);
+                        suite = suite.eval(#wrapper().await.map_err(::anyhow::Error::from)?);
                     }
                 })
                 .collect::<Vec<_>>();
@@ -303,15 +311,17 @@ fn render_registry(suites: &[SuiteSource]) -> Result<String> {
                 mod #module_ident {
                     include!(#include_path);
 
-                    pub fn descriptor() -> ::borg_evals::SuiteDescriptor {
-                        ::borg_evals::SuiteDescriptor::new(
+                    pub fn descriptor() -> ::agents::evals::SuiteDescriptor {
+                        ::agents::evals::SuiteDescriptor::new(
                             #suite_id,
                             &[#(#eval_ids),*],
                             || Box::pin(async {
-                                let mut suite = #suite_wrapper(#suite_id).await?
+                                let mut suite = #suite_wrapper(#suite_id)
+                                    .await
+                                    .map_err(::anyhow::Error::from)?
                                     .agent(|ctx| async move { #agent_builder(ctx).await });
                                 #(#eval_lines)*
-                                Ok(Box::new(suite) as Box<dyn ::borg_evals::RunnableSuite>)
+                                Ok(Box::new(suite) as Box<dyn ::agents::evals::RunnableSuite>)
                             }),
                         )
                     }
@@ -330,7 +340,7 @@ fn render_registry(suites: &[SuiteSource]) -> Result<String> {
     let file: syn::File = parse_quote! {
         #(#modules)*
 
-        pub fn registry() -> Vec<::borg_evals::SuiteDescriptor> {
+        pub fn registry() -> Vec<::agents::evals::SuiteDescriptor> {
             vec![#(#descriptors),*]
         }
     };

@@ -1,7 +1,7 @@
 [evals]
-trials = 20
+trials = 50
 targets = [
-  { provider = "ollama", model = "llama3.2:1b" },
+  # too dumb! { provider = "ollama", model = "llama3.2:1b" },
   { provider = "ollama", model = "llama3.2:3b" },
   { provider = "ollama", model = "llama3.3:70b" },
   { provider = "ollama", model = "qwen3.5:35b-a3b" },

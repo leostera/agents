@@ -1,7 +1,12 @@
 use std::path::Path;
+use std::time::Duration;
 
 use crate::{
-    ExecutionTarget, OllamaProviderConfig as PublicOllamaProviderConfig, ProviderConfigs, RunConfig,
+    AnthropicProviderConfig as PublicAnthropicProviderConfig, ExecutionTarget,
+    LmStudioProviderConfig as PublicLmStudioProviderConfig,
+    OllamaProviderConfig as PublicOllamaProviderConfig,
+    OpenAIProviderConfig as PublicOpenAIProviderConfig,
+    OpenRouterProviderConfig as PublicOpenRouterProviderConfig, ProviderConfigs, RunConfig,
 };
 use anyhow::{Context, Result, bail};
 use borg_llm::completion::ProviderType;
@@ -21,6 +26,7 @@ pub(super) struct EvalsConfig {
     pub trials: usize,
     #[serde(default = "default_output_dir")]
     pub output_dir: String,
+    pub timeout_secs: Option<u64>,
     #[serde(default)]
     pub targets: Vec<TargetConfig>,
 }
@@ -36,11 +42,41 @@ pub(super) struct TargetConfig {
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct ProviderConfigSet {
     pub ollama: Option<OllamaProviderConfig>,
+    pub openai: Option<OpenAIProviderConfig>,
+    pub anthropic: Option<AnthropicProviderConfig>,
+    pub openrouter: Option<OpenRouterProviderConfig>,
+    pub lm_studio: Option<LmStudioProviderConfig>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(super) struct OllamaProviderConfig {
     pub url: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct OpenAIProviderConfig {
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub organization: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct AnthropicProviderConfig {
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct OpenRouterProviderConfig {
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct LmStudioProviderConfig {
+    pub url: Option<String>,
+    pub api_token: Option<String>,
 }
 
 impl EvalsFile {
@@ -73,6 +109,7 @@ impl EvalsFile {
         )
         .with_trials(self.evals.trials)
         .with_provider_configs(self.provider_configs())
+        .with_optional_timeout(self.evals.timeout_secs.map(Duration::from_secs))
     }
 
     pub(super) fn output_dir(&self) -> &str {
@@ -88,6 +125,34 @@ impl EvalsFile {
                 .map(|config| PublicOllamaProviderConfig {
                     url: config.url.clone(),
                 }),
+            openai: self
+                .provider
+                .openai
+                .as_ref()
+                .map(|config| PublicOpenAIProviderConfig {
+                    api_key: config.api_key.clone(),
+                    base_url: config.base_url.clone(),
+                    organization: config.organization.clone(),
+                }),
+            anthropic: self.provider.anthropic.as_ref().map(|config| {
+                PublicAnthropicProviderConfig {
+                    api_key: config.api_key.clone(),
+                    base_url: config.base_url.clone(),
+                    version: config.version.clone(),
+                }
+            }),
+            openrouter: self.provider.openrouter.as_ref().map(|config| {
+                PublicOpenRouterProviderConfig {
+                    api_key: config.api_key.clone(),
+                    base_url: config.base_url.clone(),
+                }
+            }),
+            lm_studio: self.provider.lm_studio.as_ref().map(|config| {
+                PublicLmStudioProviderConfig {
+                    url: config.url.clone(),
+                    api_token: config.api_token.clone(),
+                }
+            }),
         }
     }
 
@@ -95,13 +160,42 @@ impl EvalsFile {
         for target in &mut self.evals.targets {
             target.validate()?;
         }
+        if let Some(timeout_secs) = &mut self.evals.timeout_secs
+            && *timeout_secs == 0
+        {
+            bail!("evals.timeout_secs must be greater than zero");
+        }
         if let Some(ollama) = &mut self.provider.ollama {
             ollama.url = ollama.url.trim().to_string();
             if ollama.url.is_empty() {
                 bail!("provider.ollama.url cannot be empty");
             }
         }
+        if let Some(openai) = &mut self.provider.openai {
+            trim_optional_string(&mut openai.api_key);
+            trim_optional_string(&mut openai.base_url);
+            trim_optional_string(&mut openai.organization);
+        }
+        if let Some(anthropic) = &mut self.provider.anthropic {
+            trim_optional_string(&mut anthropic.api_key);
+            trim_optional_string(&mut anthropic.base_url);
+            trim_optional_string(&mut anthropic.version);
+        }
+        if let Some(openrouter) = &mut self.provider.openrouter {
+            trim_optional_string(&mut openrouter.api_key);
+            trim_optional_string(&mut openrouter.base_url);
+        }
+        if let Some(lm_studio) = &mut self.provider.lm_studio {
+            trim_optional_string(&mut lm_studio.url);
+            trim_optional_string(&mut lm_studio.api_token);
+        }
         Ok(())
+    }
+}
+
+fn trim_optional_string(value: &mut Option<String>) {
+    if let Some(value_ref) = value.as_mut() {
+        *value_ref = value_ref.trim().to_string();
     }
 }
 

@@ -1,3 +1,26 @@
+//! Provider-neutral typed APIs for completions, tools, and transcription.
+//!
+//! `borg-llm` is the lowest-level crate in the stack:
+//!
+//! - build a [`LlmRunner`] from one or more providers
+//! - submit typed [`CompletionRequest`] values
+//! - receive typed [`CompletionResponse`] values or streamed [`CompletionEvent`]s
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use borg_llm::{CompletionRequest, InputItem, LlmRunner, ModelSelector};
+//!
+//! # async fn demo(runner: LlmRunner) -> anyhow::Result<()> {
+//!
+//! let response = runner
+//!     .chat(CompletionRequest::<(), String>::new(
+//!         vec![InputItem::user_text("hello")],
+//!         ModelSelector::from_model("gpt-5.3-codex"),
+//!     ))
+//!     .await?;
+//! # Ok(()) }
+//! ```
 pub mod capability;
 pub mod completion;
 pub mod error;

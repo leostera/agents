@@ -181,14 +181,15 @@ fn expand_eval(args: &EvalArgs, input: &ItemFn) -> Result<TokenStream> {
     Ok(quote! {
         #input
 
-        pub async fn #wrapper_ident() -> ::anyhow::Result<::borg_evals::Eval<#state_ty, #agent_ty>> {
+        pub async fn #wrapper_ident(
+        ) -> ::anyhow::Result<::agents::evals::Eval<#state_ty, #agent_ty>> {
             Ok(
-                ::borg_evals::Eval::new(#eval_id)
+                ::agents::evals::Eval::new(#eval_id)
                     #tags_expr
                     .run(|ctx, agent| async move {
                         let trajectory = #fn_ident(ctx.clone())
                             .await
-                            .map_err(|error| ::borg_evals::EvalError::message(error.to_string()))?;
+                            .map_err(|error| ::agents::evals::EvalError::message(error.to_string()))?;
                         trajectory.runner()(ctx, agent).await
                     })
             )
@@ -232,15 +233,15 @@ mod tests {
             todo!()
         }
         pub async fn __evals_make_eval_echoes_plain_text() -> ::anyhow::Result<
-            ::borg_evals::Eval<EchoHarness, EchoAgent>,
+            ::agents::evals::Eval<EchoHarness, EchoAgent>,
         > {
             Ok(
-                ::borg_evals::Eval::new("echoes_plain_text")
+                ::agents::evals::Eval::new("echoes_plain_text")
                     .tags(["echo", "baseline"])
                     .run(|ctx, agent| async move {
                         let trajectory = echoes_plain_text(ctx.clone())
                             .await
-                            .map_err(|error| ::borg_evals::EvalError::message(
+                            .map_err(|error| ::agents::evals::EvalError::message(
                                 error.to_string(),
                             ))?;
                         trajectory.runner()(ctx, agent).await
@@ -269,7 +270,7 @@ mod tests {
         let file: syn::File = syn::parse2(expanded).expect("parse expanded file");
         let pretty = prettyplease::unparse(&file);
 
-        assert!(pretty.contains("::borg_evals::Eval::new(\"smoke_eval\")"));
+        assert!(pretty.contains("::agents::evals::Eval::new(\"smoke_eval\")"));
         assert!(!pretty.contains(".tags(["));
     }
 

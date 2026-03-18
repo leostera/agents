@@ -12,41 +12,41 @@ fn expand_agent(input: &DeriveInput) -> Result<TokenStream> {
     let field_ty = find_agent_field_type(input)?;
 
     Ok(quote! {
-        #[::borg_agent::async_trait]
-        impl ::borg_agent::Agent for #struct_ident {
-            type Input = <#field_ty as ::borg_agent::Agent>::Input;
-            type ToolCall = <#field_ty as ::borg_agent::Agent>::ToolCall;
-            type ToolResult = <#field_ty as ::borg_agent::Agent>::ToolResult;
-            type Output = <#field_ty as ::borg_agent::Agent>::Output;
+        #[::async_trait::async_trait]
+        impl ::agents::agent::Agent for #struct_ident {
+            type Input = <#field_ty as ::agents::agent::Agent>::Input;
+            type ToolCall = <#field_ty as ::agents::agent::Agent>::ToolCall;
+            type ToolResult = <#field_ty as ::agents::agent::Agent>::ToolResult;
+            type Output = <#field_ty as ::agents::agent::Agent>::Output;
 
             async fn send(
                 &mut self,
-                input: ::borg_agent::AgentInput<Self::Input>,
-            ) -> ::borg_agent::AgentResult<()> {
-                ::borg_agent::Agent::send(&mut self.#accessor, input).await
+                input: ::agents::agent::AgentInput<Self::Input>,
+            ) -> ::agents::agent::AgentResult<()> {
+                ::agents::agent::Agent::send(&mut self.#accessor, input).await
             }
 
             async fn next(
                 &mut self,
-            ) -> ::borg_agent::AgentResult<
+            ) -> ::agents::agent::AgentResult<
                 Option<
-                    ::borg_agent::AgentEvent<
+                    ::agents::agent::AgentEvent<
                         Self::ToolCall,
                         Self::ToolResult,
                         Self::Output,
                     >,
                 >,
             > {
-                ::borg_agent::Agent::next(&mut self.#accessor).await
+                ::agents::agent::Agent::next(&mut self.#accessor).await
             }
 
             async fn spawn(
                 self,
-            ) -> ::borg_agent::AgentResult<(
-                ::borg_agent::AgentRunInput<Self::Input>,
-                ::borg_agent::AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+            ) -> ::agents::agent::AgentResult<(
+                ::agents::agent::AgentRunInput<Self::Input>,
+                ::agents::agent::AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
             )> {
-                ::borg_agent::Agent::spawn(self.#accessor).await
+                ::agents::agent::Agent::spawn(self.#accessor).await
             }
         }
     })
@@ -200,54 +200,60 @@ mod tests {
         let pretty = prettyplease::unparse(&file);
 
         assert_snapshot!(pretty, @r#"
-        #[::borg_agent::async_trait]
-        impl ::borg_agent::Agent for EchoAgent {
+        #[::async_trait::async_trait]
+        impl ::agents::agent::Agent for EchoAgent {
             type Input = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::Input;
+            > as ::agents::agent::Agent>::Input;
             type ToolCall = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::ToolCall;
+            > as ::agents::agent::Agent>::ToolCall;
             type ToolResult = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::ToolResult;
+            > as ::agents::agent::Agent>::ToolResult;
             type Output = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::Output;
+            > as ::agents::agent::Agent>::Output;
             async fn send(
                 &mut self,
-                input: ::borg_agent::AgentInput<Self::Input>,
-            ) -> ::borg_agent::AgentResult<()> {
-                ::borg_agent::Agent::send(&mut self.0, input).await
+                input: ::agents::agent::AgentInput<Self::Input>,
+            ) -> ::agents::agent::AgentResult<()> {
+                ::agents::agent::Agent::send(&mut self.0, input).await
             }
             async fn next(
                 &mut self,
-            ) -> ::borg_agent::AgentResult<
-                Option<::borg_agent::AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>,
+            ) -> ::agents::agent::AgentResult<
+                Option<
+                    ::agents::agent::AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>,
+                >,
             > {
-                ::borg_agent::Agent::next(&mut self.0).await
+                ::agents::agent::Agent::next(&mut self.0).await
             }
             async fn spawn(
                 self,
-            ) -> ::borg_agent::AgentResult<
+            ) -> ::agents::agent::AgentResult<
                 (
-                    ::borg_agent::AgentRunInput<Self::Input>,
-                    ::borg_agent::AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+                    ::agents::agent::AgentRunInput<Self::Input>,
+                    ::agents::agent::AgentRunOutput<
+                        Self::ToolCall,
+                        Self::ToolResult,
+                        Self::Output,
+                    >,
                 ),
             > {
-                ::borg_agent::Agent::spawn(self.0).await
+                ::agents::agent::Agent::spawn(self.0).await
             }
         }
         "#);
@@ -268,54 +274,60 @@ mod tests {
         let pretty = prettyplease::unparse(&file);
 
         assert_snapshot!(pretty, @r#"
-        #[::borg_agent::async_trait]
-        impl ::borg_agent::Agent for EchoAgent {
+        #[::async_trait::async_trait]
+        impl ::agents::agent::Agent for EchoAgent {
             type Input = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::Input;
+            > as ::agents::agent::Agent>::Input;
             type ToolCall = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::ToolCall;
+            > as ::agents::agent::Agent>::ToolCall;
             type ToolResult = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::ToolResult;
+            > as ::agents::agent::Agent>::ToolResult;
             type Output = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::Output;
+            > as ::agents::agent::Agent>::Output;
             async fn send(
                 &mut self,
-                input: ::borg_agent::AgentInput<Self::Input>,
-            ) -> ::borg_agent::AgentResult<()> {
-                ::borg_agent::Agent::send(&mut self.agent, input).await
+                input: ::agents::agent::AgentInput<Self::Input>,
+            ) -> ::agents::agent::AgentResult<()> {
+                ::agents::agent::Agent::send(&mut self.agent, input).await
             }
             async fn next(
                 &mut self,
-            ) -> ::borg_agent::AgentResult<
-                Option<::borg_agent::AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>,
+            ) -> ::agents::agent::AgentResult<
+                Option<
+                    ::agents::agent::AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>,
+                >,
             > {
-                ::borg_agent::Agent::next(&mut self.agent).await
+                ::agents::agent::Agent::next(&mut self.agent).await
             }
             async fn spawn(
                 self,
-            ) -> ::borg_agent::AgentResult<
+            ) -> ::agents::agent::AgentResult<
                 (
-                    ::borg_agent::AgentRunInput<Self::Input>,
-                    ::borg_agent::AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+                    ::agents::agent::AgentRunInput<Self::Input>,
+                    ::agents::agent::AgentRunOutput<
+                        Self::ToolCall,
+                        Self::ToolResult,
+                        Self::Output,
+                    >,
                 ),
             > {
-                ::borg_agent::Agent::spawn(self.agent).await
+                ::agents::agent::Agent::spawn(self.agent).await
             }
         }
         "#);
@@ -334,54 +346,60 @@ mod tests {
         let pretty = prettyplease::unparse(&file);
 
         assert_snapshot!(pretty, @r#"
-        #[::borg_agent::async_trait]
-        impl ::borg_agent::Agent for EchoAgent {
+        #[::async_trait::async_trait]
+        impl ::agents::agent::Agent for EchoAgent {
             type Input = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::Input;
+            > as ::agents::agent::Agent>::Input;
             type ToolCall = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::ToolCall;
+            > as ::agents::agent::Agent>::ToolCall;
             type ToolResult = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::ToolResult;
+            > as ::agents::agent::Agent>::ToolResult;
             type Output = <::borg_agent::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
-            > as ::borg_agent::Agent>::Output;
+            > as ::agents::agent::Agent>::Output;
             async fn send(
                 &mut self,
-                input: ::borg_agent::AgentInput<Self::Input>,
-            ) -> ::borg_agent::AgentResult<()> {
-                ::borg_agent::Agent::send(&mut self.agent, input).await
+                input: ::agents::agent::AgentInput<Self::Input>,
+            ) -> ::agents::agent::AgentResult<()> {
+                ::agents::agent::Agent::send(&mut self.agent, input).await
             }
             async fn next(
                 &mut self,
-            ) -> ::borg_agent::AgentResult<
-                Option<::borg_agent::AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>,
+            ) -> ::agents::agent::AgentResult<
+                Option<
+                    ::agents::agent::AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>,
+                >,
             > {
-                ::borg_agent::Agent::next(&mut self.agent).await
+                ::agents::agent::Agent::next(&mut self.agent).await
             }
             async fn spawn(
                 self,
-            ) -> ::borg_agent::AgentResult<
+            ) -> ::agents::agent::AgentResult<
                 (
-                    ::borg_agent::AgentRunInput<Self::Input>,
-                    ::borg_agent::AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+                    ::agents::agent::AgentRunInput<Self::Input>,
+                    ::agents::agent::AgentRunOutput<
+                        Self::ToolCall,
+                        Self::ToolResult,
+                        Self::Output,
+                    >,
                 ),
             > {
-                ::borg_agent::Agent::spawn(self.agent).await
+                ::agents::agent::Agent::spawn(self.agent).await
             }
         }
         "#);

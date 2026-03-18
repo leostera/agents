@@ -85,7 +85,7 @@ impl TypedTool for MyTools {
 Use `ToolDefinition::function(...)` to describe function tools.
 The serialized wire field is still `"type"`, but the Rust field is `kind`.
 `RawToolDefinition` and `TypedToolSet` remain as compatibility aliases; prefer `ToolDefinition` and `ToolSet` in new code.
-For ordinary tool enums, prefer `#[derive(borg_macros::AgentTool)]` instead of hand-writing the `TypedTool` impl.
+For ordinary tool enums, prefer `#[derive(agents_macros::Tool)]` instead of hand-writing the `TypedTool` impl.
 The derive currently supports:
 - unit variants
 - single-field tuple variants

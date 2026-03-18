@@ -1,3 +1,70 @@
+//! Core agent traits and the default [`SessionAgent`] implementation.
+//!
+//! Most users do not implement an agent from scratch. The usual path is:
+//!
+//! 1. build a [`SessionAgent`] for your input/output types
+//! 2. wrap it in your own struct
+//! 3. derive [`Agent`](agents_macros::Agent) to delegate the trait
+//!
+//! # String-in, string-out agent
+//!
+//! ```rust,no_run
+//! use std::sync::Arc;
+//!
+//! use borg_agent::SessionAgent;
+//! use borg_llm::LlmRunner;
+//!
+//! async fn make_agent(
+//!     llm: Arc<LlmRunner>,
+//! ) -> anyhow::Result<SessionAgent<String, (), (), String>> {
+//!     Ok(SessionAgent::builder().with_llm_runner(llm).build()?)
+//! }
+//! ```
+//!
+//! # Wrapped typed agent
+//!
+//! ```rust,no_run
+//! use std::sync::Arc;
+//!
+//! use borg_agent::{Agent, SessionAgent};
+//! use borg_llm::{InputItem, LlmRunner};
+//! use schemars::JsonSchema;
+//! use serde::{Deserialize, Serialize};
+//!
+//! #[derive(Clone, Serialize, Deserialize)]
+//! struct EchoRequest {
+//!     text: String,
+//! }
+//!
+//! impl From<EchoRequest> for InputItem {
+//!     fn from(value: EchoRequest) -> Self {
+//!         InputItem::user_text(value.text)
+//!     }
+//! }
+//!
+//! #[derive(Clone, Serialize, Deserialize, JsonSchema)]
+//! struct EchoResponse {
+//!     text: String,
+//! }
+//!
+//! #[derive(Agent)]
+//! struct EchoAgent {
+//!     #[agent]
+//!     inner: SessionAgent<EchoRequest, (), (), EchoResponse>,
+//! }
+//!
+//! impl EchoAgent {
+//!     async fn new(llm: Arc<LlmRunner>) -> anyhow::Result<Self> {
+//!         Ok(Self {
+//!             inner: SessionAgent::builder()
+//!                 .with_llm_runner(llm)
+//!                 .with_message_type::<EchoRequest>()
+//!                 .with_response_type::<EchoResponse>()
+//!                 .build()?,
+//!         })
+//!     }
+//! }
+//! ```
 mod agent;
 mod context;
 mod error;
@@ -8,7 +75,7 @@ pub use agent::{
     Agent, AgentBuilder, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput, ExecutionProfile,
     SessionAgent,
 };
-pub use borg_macros::Agent;
+pub use agents_macros::Agent;
 pub use context::{
     ContextChunk, ContextManager, ContextManagerBuilder, ContextProvider, ContextRole,
     ContextStrategy, ContextWindow, StaticContextProvider,

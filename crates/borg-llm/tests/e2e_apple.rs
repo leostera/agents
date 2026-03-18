@@ -2,10 +2,10 @@
 
 use std::path::PathBuf;
 
+use borg_llm::LlmRunner;
 use borg_llm::error::LlmResult;
 use borg_llm::provider::LlmProvider;
 use borg_llm::provider::apple::{Apple, AppleConfig};
-use borg_llm::runner::LlmRunner;
 use borg_llm::transcription::{AudioSource, AudioTranscriptionRequest};
 use serial_test::serial;
 

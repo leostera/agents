@@ -270,7 +270,10 @@ pub async fn run_discovered(
             (planned_suite.descriptor.build)()
                 .await?
                 .run_box(
-                    RunConfig::new(planned_suite.targets).with_trials(run_config.trials),
+                    RunConfig::new(planned_suite.targets)
+                        .with_trials(run_config.trials)
+                        .with_optional_timeout(run_config.timeout)
+                        .with_provider_configs(run_config.provider.clone()),
                     output_dir,
                     options.filter.clone(),
                 )

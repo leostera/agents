@@ -64,8 +64,8 @@ fn expand_suite(args: &SuiteArgs, item: &ItemFn) -> Result<TokenStream> {
     let fn_ident = &item.sig.ident;
     let wrapper_ident = format_ident!("__evals_make_suite_{}", fn_ident);
     let suite_ctor = match args.kind.value().as_str() {
-        "capability" => quote!(::borg_evals::Suite::capability),
-        _ => quote!(::borg_evals::Suite::regression),
+        "capability" => quote!(::agents::evals::Suite::capability),
+        _ => quote!(::agents::evals::Suite::regression),
     };
     let _ = &args.agent_builder;
     let (state_ty, state_expr) = match &args.state_builder {
@@ -79,7 +79,9 @@ fn expand_suite(args: &SuiteArgs, item: &ItemFn) -> Result<TokenStream> {
     Ok(quote! {
         #item
 
-        pub async fn #wrapper_ident(suite_id: &str) -> ::anyhow::Result<::borg_evals::Suite<#state_ty>> {
+        pub async fn #wrapper_ident(
+            suite_id: &str,
+        ) -> ::anyhow::Result<::agents::evals::Suite<#state_ty>> {
             Ok(
                 #suite_ctor(suite_id)
                     .state(#state_expr)

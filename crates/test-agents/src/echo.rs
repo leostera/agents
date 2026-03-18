@@ -1,13 +1,8 @@
 use std::sync::Arc;
 
+use agents::prelude::*;
 use anyhow::Result;
 use async_trait::async_trait;
-use borg_agent::{
-    AgentResult, ContextManager, SessionAgent, ToolCallEnvelope, ToolExecutionResult,
-    ToolResultEnvelope, ToolRunner,
-};
-use borg_llm::completion::InputItem;
-use borg_llm::runner::LlmRunner;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +24,7 @@ pub struct EchoResponseFormat {
     pub boogyboo: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, borg_macros::Tool)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Tool)]
 pub enum EchoToolCall {
     #[agent_tool(
         name = "echo_text",
@@ -65,7 +60,7 @@ pub struct EchoToolResponse {
     nanana: String,
 }
 
-#[derive(borg_macros::Agent)]
+#[derive(Agent)]
 pub struct EchoAgent {
     agent: SessionAgent<EchoRequest, EchoToolCall, EchoToolResponse, EchoResponseFormat>,
 }

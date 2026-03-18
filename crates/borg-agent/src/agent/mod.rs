@@ -24,6 +24,102 @@ pub use session::{
 ///
 /// Most users should implement this trait by delegating to [`SessionAgent`],
 /// either manually or through `#[derive(Agent)]`.
+///
+/// # One-shot call
+///
+/// ```rust,no_run
+/// # use std::sync::Arc;
+/// # use borg_agent::{Agent, AgentInput, AgentResult, SessionAgent};
+/// # use borg_llm::LlmRunner;
+/// # struct EchoAgent {
+/// #     inner: SessionAgent<String, (), (), String>,
+/// # }
+/// # impl EchoAgent {
+/// #     async fn new(llm: Arc<LlmRunner>) -> anyhow::Result<Self> {
+/// #         Ok(Self {
+/// #             inner: SessionAgent::builder().with_llm_runner(llm).build()?,
+/// #         })
+/// #     }
+/// # }
+/// # #[async_trait::async_trait]
+/// # impl Agent for EchoAgent {
+/// #     type Input = String;
+/// #     type ToolCall = ();
+/// #     type ToolResult = ();
+/// #     type Output = String;
+/// #     async fn send(&mut self, input: AgentInput<Self::Input>) -> AgentResult<()> {
+/// #         self.inner.send(input).await
+/// #     }
+/// #     async fn next(
+/// #         &mut self,
+/// #     ) -> AgentResult<Option<borg_agent::AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>> {
+/// #         self.inner.next().await
+/// #     }
+/// # }
+/// # async fn demo(llm: Arc<LlmRunner>) -> anyhow::Result<()> {
+/// let mut agent = EchoAgent::new(llm).await?;
+/// let reply = agent.call("hello".to_string()).await?;
+/// assert_eq!(reply, "hello");
+/// # Ok(()) }
+/// ```
+///
+/// # Spawned session
+///
+/// ```rust,no_run
+/// use std::sync::Arc;
+///
+/// use borg_agent::{Agent, AgentEvent, AgentInput, SessionAgent};
+/// use borg_llm::LlmRunner;
+///
+/// struct EchoAgent {
+///     inner: SessionAgent<String, (), (), String>,
+/// }
+///
+/// impl EchoAgent {
+///     async fn new(llm: Arc<LlmRunner>) -> anyhow::Result<Self> {
+///         Ok(Self {
+///             inner: SessionAgent::builder().with_llm_runner(llm).build()?,
+///         })
+///     }
+/// }
+///
+/// #[async_trait::async_trait]
+/// impl Agent for EchoAgent {
+///     type Input = String;
+///     type ToolCall = ();
+///     type ToolResult = ();
+///     type Output = String;
+///
+///     async fn send(&mut self, input: AgentInput<Self::Input>) -> borg_agent::AgentResult<()> {
+///         self.inner.send(input).await
+///     }
+///
+///     async fn next(
+///         &mut self,
+///     ) -> borg_agent::AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>> {
+///         self.inner.next().await
+///     }
+/// }
+///
+/// # async fn demo(llm: Arc<LlmRunner>) -> anyhow::Result<()> {
+/// let agent: EchoAgent = EchoAgent::new(llm).await?;
+/// let (input, mut events): (
+///     borg_agent::AgentRunInput<String>,
+///     borg_agent::AgentRunOutput<(), (), String>,
+/// ) = agent.spawn().await?;
+/// input.send(AgentInput::Message("hello".to_string())).await?;
+///
+/// while let Some(event) = events.recv().await {
+///     match event? {
+///         AgentEvent::Completed { reply } => {
+///             assert_eq!(reply, "hello");
+///             break;
+///         }
+///         _ => {}
+///     }
+/// }
+/// # Ok(()) }
+/// ```
 #[async_trait]
 pub trait Agent: Send + 'static {
     /// Input message type accepted by the agent.

@@ -32,7 +32,7 @@ const DEFAULT_OLLAMA_MODELS: &[(&str, &str)] = &[
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AddArgs(u32, u32);
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, borg_macros::Tool)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, agents_macros::Tool)]
 pub enum CalcOp {
     ToolAdd(AddArgs),
 }
@@ -71,7 +71,7 @@ impl ToolRunner<CalcOp, u32> for CalcToolRunner {
     }
 }
 
-#[derive(borg_macros::Agent)]
+#[derive(agents_macros::Agent)]
 pub struct CalculatorAgent {
     agent: SessionAgent<CalcReq, CalcOp, u32, CalcRes>,
 }

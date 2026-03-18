@@ -1,7 +1,12 @@
 [package]
-name = "borg-macros"
+name = "agents-macros"
 version = "0.0.1"
 edition = "2024"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Proc macros for typed agents, tools, suites, evals, and reusable graders"
+readme = "README.md"
 
 [lib]
 proc-macro = true
@@ -12,5 +17,8 @@ quote.workspace = true
 syn.workspace = true
 
 [dev-dependencies]
+agents = { path = "../agents" }
+anyhow.workspace = true
 insta.workspace = true
 prettyplease.workspace = true
+serde_json.workspace = true

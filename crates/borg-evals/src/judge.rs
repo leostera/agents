@@ -19,6 +19,9 @@ use crate::trial::{AgentTrial, RecordedEvent};
 const DEFAULT_JUDGE_PROMPT: &str = "You are an evaluation judge. Read the rubric and transcript carefully. Return a JSON verdict with score in [0.0, 1.0], a short summary, and an `evidence` array of short strings. Score 1.0 only when the assistant fully satisfies the rubric. Score 0.0 when it clearly fails. Use intermediate values only when the result is partially correct.";
 
 /// Input sent to the built-in judge agent.
+///
+/// This is assembled automatically by [`judge`]. Most authored code does not
+/// construct `JudgeInput` by hand.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct JudgeInput<Output> {
     pub rubric: String,
@@ -49,6 +52,9 @@ pub struct JudgeVerdict {
 }
 
 /// Built-in LLM-backed grader agent used by [`judge`].
+///
+/// Most eval authors should use [`judge`] rather than instantiating
+/// `JudgeAgent` directly.
 pub struct JudgeAgent<Output>
 where
     Output: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
@@ -60,6 +66,7 @@ impl<Output> JudgeAgent<Output>
 where
     Output: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
 {
+    /// Builds the built-in judge agent on top of the provided runner.
     pub fn new(runner: Arc<LlmRunner>) -> EvalResult<Self> {
         let inner = SessionAgent::builder()
             .with_llm_runner(runner)
@@ -111,6 +118,18 @@ where
 }
 
 /// Creates an LLM-backed grader from a natural-language rubric.
+///
+/// Use `judge` when the score should be produced by another model reading the
+/// transcript and final reply.
+///
+/// ```rust
+/// use borg_evals::judge;
+///
+/// let grader = judge(
+///     "helpfulness",
+///     "Did the assistant answer the user's request accurately and directly?",
+/// );
+/// ```
 pub fn judge<State, Output>(
     name: impl Into<String>,
     rubric: impl Into<String>,

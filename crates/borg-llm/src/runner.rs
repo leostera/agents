@@ -16,6 +16,12 @@ use crate::tools::{ToolCall, TypedTool};
 use crate::transcription::{AudioTranscriptionRequest, AudioTranscriptionResponse};
 
 /// Shared entrypoint for running typed completion and transcription requests.
+///
+/// A runner can hold multiple providers. Each request declares a
+/// [`ModelSelector`](crate::completion::ModelSelector) and the runner picks the
+/// matching provider for that call.
+///
+/// `LlmRunner` is usually shared through [`Arc`](std::sync::Arc).
 #[derive(Clone)]
 pub struct LlmRunner {
     providers: Vec<Arc<dyn LlmProvider>>,
@@ -27,17 +33,20 @@ pub struct LlmRunnerBuilder {
 }
 
 impl LlmRunnerBuilder {
+    /// Creates a new empty builder.
     pub fn new() -> Self {
         Self {
             providers: Vec::new(),
         }
     }
 
+    /// Adds one provider to the runner.
     pub fn add_provider<P: LlmProvider + 'static>(mut self, provider: P) -> Self {
         self.providers.push(Arc::new(provider));
         self
     }
 
+    /// Builds the final runner.
     pub fn build(self) -> LlmRunner {
         LlmRunner {
             providers: self.providers,
@@ -52,6 +61,7 @@ impl Default for LlmRunnerBuilder {
 }
 
 impl LlmRunner {
+    /// Creates a builder for [`LlmRunner`].
     pub fn builder() -> LlmRunnerBuilder {
         LlmRunnerBuilder::new()
     }
@@ -233,6 +243,20 @@ impl LlmRunner {
         })
     }
 
+    /// Runs a typed completion request and buffers the full response.
+    ///
+    /// ```rust,no_run
+    /// use borg_llm::{CompletionRequest, InputItem, ModelSelector};
+    ///
+    /// # async fn demo(runner: borg_llm::LlmRunner) -> anyhow::Result<()> {
+    /// let response = runner
+    ///     .chat(CompletionRequest::<(), String>::new(
+    ///         vec![InputItem::user_text("hello")],
+    ///         ModelSelector::from_model("llama3.2:3b"),
+    ///     ))
+    ///     .await?;
+    /// # Ok(()) }
+    /// ```
     pub async fn chat<C, R>(
         &self,
         req: CompletionRequest<C, R>,
@@ -246,6 +270,7 @@ impl LlmRunner {
         Self::from_raw_response(raw)
     }
 
+    /// Runs a typed completion request and returns a stream of events.
     pub async fn chat_stream<C, R>(
         &self,
         req: CompletionRequest<C, R>,

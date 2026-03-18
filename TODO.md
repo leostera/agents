@@ -71,17 +71,17 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
 Documentation checklist:
 - [] Macros
     - [x] assistant
-    - [] setup
+    - [x] setup
     - [x] trajectory
     - [x] user
 - [] Structs
     - [x] AgentBuilder
-    - [] AgentTrial
+    - [x] AgentTrial
     - [] AnthropicProviderConfig
-    - [] ArtifactIndex
-    - [] CallbackToolRunner
+    - [x] ArtifactIndex
+    - [x] CallbackToolRunner
     - [] CompletionEventStream
-    - [] CompletionRequest
+    - [x] CompletionRequest
     - [] CompletionRequestBuilder
     - [] Builder for CompletionRequest.
     - [] CompletionResponse
@@ -89,24 +89,24 @@ Documentation checklist:
     - [x] ContextManagerBuilder
     - [x] ContextWindow
     - [x] Eval
-    - [] EvalAggregate
+    - [x] EvalAggregate
     - [x] EvalContext
-    - [] EvalRunReport
+    - [x] EvalRunReport
     - [x] ExecutionProfile
     - [x] ExecutionTarget
     - [x] Grade
     - [x] GradeResult
     - [x] Grader
-    - [] GraderAggregate
+    - [x] GraderAggregate
     - [x] GraderFailure
     - [x] GradingConfig
     - [x] InMemoryStorageAdapter
-    - [] JsonEventSink
+    - [x] JsonEventSink
     - [x] JudgeAgent
     - [x] JudgeInput
     - [x] JudgeVerdict
-    - [] LlmRunner
-    - [] LlmRunnerBuilder
+    - [x] LlmRunner
+    - [x] LlmRunnerBuilder
     - [] LmStudioProviderConfig
     - [x] NoToolRunner
     - [] NoopEventSink
@@ -114,7 +114,7 @@ Documentation checklist:
     - [x] OllamaProviderConfig
     - [x] OpenAIProviderConfig
     - [x] OpenRouterProviderConfig
-    - [] PlannedSuiteRun
+    - [x] PlannedSuiteRun
     - [] Probability
     - [] ProgressEventSink
     - [x] ProviderConfigs
@@ -123,20 +123,20 @@ Documentation checklist:
     - [] RawCompletionResponse
     - [] RecordedToolCall
     - [x] RunConfig
-    - [] RunManifest
+    - [x] RunManifest
     - [x] SessionAgent
     - [x] StaticContextProvider
     - [x] Step
     - [x] Suite
     - [] SuiteDescriptor
-    - [] SuiteRunReport
-    - [] SuiteSummary
+    - [x] SuiteRunReport
+    - [x] SuiteSummary
     - [x] TargetFilter
     - [x] ToolCallEnvelope
     - [x] ToolResultEnvelope
     - [x] Trajectory
     - [x] TrajectoryBuilder
-    - [] TrialRecord
+    - [x] TrialRecord
     - [] Usage
 - [] Enums
     - [x] AgentError
@@ -161,13 +161,13 @@ Documentation checklist:
     - [] RawInputItem
     - [] RawOutputContent
     - [] RawOutputItem
-    - [] RecordedError
-    - [] RecordedEvent
-    - [] RecordedGradingScope
+    - [x] RecordedError
+    - [x] RecordedEvent
+    - [x] RecordedGradingScope
     - [] RecordedMessageRole
     - [] ResponseMode
     - [] Role
-    - [] RunEvent
+    - [x] RunEvent
     - [] StorageEvent
     - [] StorageInput
     - [] StorageRecord
@@ -202,9 +202,9 @@ Documentation checklist:
     - [] EvalResult
     - [] SharedEventSink
 - [] Attribute Macros
-    - [] eval
-    - [] grade
-    - [] suite
+    - [x] eval
+    - [x] grade
+    - [x] suite
 - [] Derive Macros
-    - [] Agent
-    - [] Tool
+    - [x] Agent
+    - [x] Tool

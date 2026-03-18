@@ -1,6 +1,6 @@
-# borg-macros
+# agents-macros
 
-`borg-macros` contains the proc macros used across the workspace.
+`agents-macros` contains the proc macros used across the workspace.
 
 It provides:
 

@@ -2,6 +2,11 @@
 name = "borg-llm"
 version = "0.0.1"
 edition = "2024"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Typed LLM provider runtime with structured completions, tools, and transcripts"
+readme = "README.md"
 
 [dependencies]
 async-trait.workspace = true

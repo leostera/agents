@@ -1,3 +1,3 @@
-borg_evals::setup!();
+agents::evals::setup!();
 
 pub mod echo;

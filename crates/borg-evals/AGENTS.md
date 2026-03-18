@@ -37,7 +37,7 @@ src/
 - Deterministic graders should read like ordinary Rust code returning `GradeResult { score, summary, evidence }`.
 - Prefer `predicate(name, |trial, ctx| ...)` for deterministic grading and `judge(name, rubric)` for LLM-based grading.
 - `Grader` owns the grade name; `GradeResult` should not duplicate it.
-- Prefer reusable `#[borg_macros::grade]` functions when the same deterministic grader is used in more than one eval.
+- Prefer reusable `#[agents_macros::grade]` functions when the same deterministic grader is used in more than one eval.
 
 ### Reports and artifacts
 - Runtime stays typed through `AgentTrial<Output>`.
@@ -56,7 +56,7 @@ src/
 - Human-facing output should be driven from the same event stream, not ad hoc tracing logs.
 
 ### Proc macros
-- `#[suite]` and `#[eval]` live in `borg-macros`, but they generate `borg-evals` runtime objects.
+- `#[suite]` and `#[eval]` live in `agents-macros`, but they generate `borg-evals` runtime objects.
 - `#[grade]` should stay thin: take a normal async Rust function and wrap it as a reusable `Grader`.
 - `#[derive(Tool)]` targets tool enums; keep the generated `TypedTool` impl predictable and inspectable.
 

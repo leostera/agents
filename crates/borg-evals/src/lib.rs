@@ -1,3 +1,32 @@
+//! Eval definitions, grading helpers, and the `cargo evals` runner surface.
+//!
+//! The authored path is:
+//!
+//! 1. define a suite with [`#[suite]`](agents_macros::suite)
+//! 2. define one or more evals with [`#[eval]`](agents_macros::eval)
+//! 3. describe the interaction with [`trajectory!`]
+//! 4. attach deterministic checks with [`predicate`] or model-based checks with [`judge`]
+//!
+//! # Minimal eval
+//!
+//! ```rust,no_run
+//! use borg_agent::SessionAgent;
+//! use borg_evals::{eval, suite, trajectory, user};
+//! use borg_evals::{EvalContext, Trajectory};
+//! use anyhow::Result;
+//!
+//! type BasicAgent = SessionAgent<String, (), (), String>;
+//!
+//! #[suite(kind = "regression", agent = new_agent)]
+//! async fn new_agent(ctx: EvalContext<()>) -> Result<BasicAgent> {
+//!     Ok(SessionAgent::builder().with_llm_runner(ctx.llm_runner()).build()?)
+//! }
+//!
+//! #[eval(agent = BasicAgent, desc = "echoes the input", tags = ["smoke"])]
+//! async fn smoke(_ctx: EvalContext<()>) -> Result<Trajectory<BasicAgent, ()>> {
+//!     Ok(trajectory![user!("hello")])
+//! }
+//! ```
 mod config;
 mod error;
 mod eval;
@@ -12,7 +41,7 @@ mod trajectory;
 mod trial;
 
 pub use crate as core;
-pub use borg_macros::{eval, suite};
+pub use agents_macros::{eval, suite};
 pub use config::{
     AnthropicProviderConfig, ExecutionTarget, LmStudioProviderConfig, OllamaProviderConfig,
     OpenAIProviderConfig, OpenRouterProviderConfig, ProviderConfigs, RunConfig,
@@ -37,6 +66,13 @@ pub use trial::{
     RecordedToolCall,
 };
 
+/// Builds a user step inside [`trajectory!`].
+///
+/// ```rust
+/// use borg_evals::{trajectory, user};
+///
+/// let script = trajectory![user!("hello world")];
+/// ```
 #[macro_export]
 macro_rules! user {
     ($message:expr) => {
@@ -44,6 +80,24 @@ macro_rules! user {
     };
 }
 
+/// Marks the grading attached to the preceding `user!` step inside [`trajectory!`].
+///
+/// ```rust,no_run
+/// use borg_evals::{assistant, trajectory, user};
+/// use borg_evals::{GradeResult, predicate};
+///
+/// let script = trajectory![
+///     user!("hello"),
+///     assistant!(predicate("echoes_input", |trial, _ctx| async move {
+///         let reply = trial.final_reply.unwrap_or_default();
+///         Ok(GradeResult {
+///             score: if reply == "hello" { 1.0 } else { 0.0 },
+///             summary: "agent should echo the input".to_string(),
+///             evidence: serde_json::json!({ "reply": reply }),
+///         })
+///     })),
+/// ];
+/// ```
 #[macro_export]
 macro_rules! assistant {
     ($grading:expr) => {
@@ -51,6 +105,16 @@ macro_rules! assistant {
     };
 }
 
+/// Builds a [`Trajectory`] from ordered `user!` / `assistant!` steps.
+///
+/// ```rust
+/// use borg_evals::{trajectory, user};
+///
+/// let script = trajectory![
+///     user!("hello"),
+///     user!("world"),
+/// ];
+/// ```
 #[macro_export]
 macro_rules! trajectory {
     [

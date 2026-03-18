@@ -1,10 +1,9 @@
 use crate::echo::{EchoAgent, EchoRequest, EchoResponseFormat};
+use agents::prelude::*;
 use anyhow::Result;
-use borg_evals::prelude::*;
-use borg_macros::eval;
 use serde_json::json;
 
-#[borg_macros::suite(
+#[suite(
     kind = "regression",
     agent = new_agent,
 )]
@@ -13,7 +12,7 @@ async fn new_agent(ctx: EvalContext<()>) -> Result<EchoAgent> {
     EchoAgent::new(ctx.llm_runner()).await
 }
 
-#[borg_macros::grade(name = "echoes-hello")]
+#[grade(name = "echoes-hello")]
 async fn echoes_hello(
     trial: AgentTrial<EchoResponseFormat>,
     _ctx: EvalContext<()>,
@@ -26,7 +25,7 @@ async fn echoes_hello(
     })
 }
 
-#[borg_macros::grade(name = "echoes-multiline")]
+#[grade(name = "echoes-multiline")]
 async fn echoes_multiline(
     trial: AgentTrial<EchoResponseFormat>,
     _ctx: EvalContext<()>,
@@ -43,7 +42,7 @@ async fn echoes_multiline(
     })
 }
 
-#[borg_macros::grade(name = "echoes-empty")]
+#[grade(name = "echoes-empty")]
 async fn echoes_empty(
     trial: AgentTrial<EchoResponseFormat>,
     _ctx: EvalContext<()>,

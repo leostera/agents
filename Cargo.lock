@@ -6,10 +6,24 @@ version = 4
 name = "agents"
 version = "0.0.1"
 dependencies = [
+ "agents-macros",
  "borg-agent",
  "borg-evals",
  "borg-llm",
- "borg-macros",
+]
+
+[[package]]
+name = "agents-macros"
+version = "0.0.1"
+dependencies = [
+ "agents",
+ "anyhow",
+ "insta",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -340,9 +354,11 @@ dependencies = [
 name = "borg-agent"
 version = "0.0.1"
 dependencies = [
+ "agents",
+ "agents-macros",
+ "anyhow",
  "async-trait",
  "borg-llm",
- "borg-macros",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -360,11 +376,11 @@ name = "borg-evals"
 version = "0.0.1"
 dependencies = [
  "agents",
+ "agents-macros",
  "anyhow",
  "async-trait",
  "borg-agent",
  "borg-llm",
- "borg-macros",
  "chrono",
  "config",
  "crossterm",
@@ -409,17 +425,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "borg-macros"
-version = "0.0.1"
-dependencies = [
- "insta",
- "prettyplease",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
 ]
 
 [[package]]

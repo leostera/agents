@@ -5,9 +5,14 @@ members = [
   "crates/borg-macros",
   "crates/borg-llm", 
   "crates/cargo-evals", 
-  "crates/test-agents",
+  "crates/test-agents", "crates/borg-codemode", "crates/agents",
 ]
 resolver = "2"
+
+[workspace.package]
+license = "Apache-2.0"
+repository = "https://github.com/leostera/agents"
+homepage = "https://github.com/leostera/agents"
 
 [workspace.dependencies]
 anyhow = "1"

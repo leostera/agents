@@ -13,7 +13,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 borg-agent = { path = "../borg-agent", package = "borg-agent", version = "=0.0.1" }
 borg-llm = { path = "../borg-llm", package = "borg-llm", version = "=0.0.1" }
-borg-macros = { path = "../borg-macros" , package = "borg-macros", version = "=0.0.1" }
+agents-macros = { path = "../borg-macros" , package = "agents-macros", version = "=0.0.1" }
 chrono.workspace = true
 config.workspace = true
 crossterm.workspace = true

@@ -38,6 +38,9 @@ pub struct GraderFailure {
 }
 
 /// A reusable grading function for an eval trial.
+///
+/// Most authored code creates a `Grader` through [`predicate`] or [`judge`]
+/// instead of constructing it directly.
 pub struct Grader<State = (), Output = String> {
     name: String,
     run: Arc<GraderFn<State, Output>>,
@@ -59,12 +62,14 @@ impl<State, Output> std::fmt::Debug for Grader<State, Output> {
 }
 
 impl<State, Output> Grader<State, Output> {
+    /// Returns the stable grader name used in reports and transcripts.
     pub fn name(&self) -> &str {
         &self.name
     }
 }
 
 impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> Grader<State, Output> {
+    /// Builds a reusable grader from an async function or closure.
     pub fn new<F, Fut>(name: impl Into<String>, f: F) -> Self
     where
         F: Fn(AgentTrial<Output>, EvalContext<State>) -> Fut + Send + Sync + 'static,
@@ -76,6 +81,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> Grader<State, 
         }
     }
 
+    /// Runs the grader against one trial.
     pub async fn grade(
         &self,
         trial: AgentTrial<Output>,
@@ -86,6 +92,8 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> Grader<State, 
 }
 
 /// Collection of graders applied to a trial.
+///
+/// Use `GradingConfig` when an eval needs more than one grading pass.
 pub struct GradingConfig<State = (), Output = String> {
     graders: Vec<Grader<State, Output>>,
 }
@@ -125,23 +133,27 @@ pub struct Grade {
 }
 
 impl<State, Output> GradingConfig<State, Output> {
+    /// Creates an empty grading configuration.
     pub fn new() -> Self {
         Self {
             graders: Vec::new(),
         }
     }
 
+    /// Adds a pre-built grader.
     pub fn grader(mut self, grader: Grader<State, Output>) -> Self {
         self.graders.push(grader);
         self
     }
 
+    /// Returns the configured graders in execution order.
     pub fn graders(&self) -> &[Grader<State, Output>] {
         &self.graders
     }
 }
 
 impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<State, Output> {
+    /// Adds a deterministic grader inline.
     pub fn grade<F, Fut>(self, name: impl Into<String>, f: F) -> Self
     where
         F: Fn(AgentTrial<Output>, EvalContext<State>) -> Fut + Send + Sync + 'static,
@@ -150,6 +162,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
         self.grader(Grader::new(name, f))
     }
 
+    /// Runs all configured graders at eval scope.
     pub async fn run(&self, trial: AgentTrial<Output>, ctx: EvalContext<State>) -> EvalResult<Grade>
     where
         Output: Clone,
@@ -158,6 +171,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
             .await
     }
 
+    /// Runs all configured graders at the provided grading scope.
     pub async fn run_with_scope(
         &self,
         trial: AgentTrial<Output>,
@@ -259,6 +273,22 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> From<Grader<St
 }
 
 /// Creates a deterministic grader from ordinary Rust code.
+///
+/// Use `predicate` when the score should be computed directly from the recorded
+/// trial instead of asking another model to judge it.
+///
+/// ```rust,no_run
+/// use borg_evals::{AgentTrial, EvalContext, GradeResult, predicate};
+///
+/// let grader = predicate("echoes_input", |trial: AgentTrial<String>, _ctx: EvalContext<()>| async move {
+///     let reply = trial.final_reply.unwrap_or_default();
+///     Ok(GradeResult {
+///         score: if reply == "hello" { 1.0 } else { 0.0 },
+///         summary: "agent should echo the input".to_string(),
+///         evidence: serde_json::json!({ "reply": reply }),
+///     })
+/// });
+/// ```
 pub fn predicate<State, Output, F, Fut>(name: impl Into<String>, f: F) -> Grader<State, Output>
 where
     State: Send + Sync + 'static,
@@ -270,4 +300,6 @@ where
 }
 
 /// Compatibility alias for [`predicate`].
+///
+/// Prefer [`predicate`] in new code.
 pub use predicate as grade;

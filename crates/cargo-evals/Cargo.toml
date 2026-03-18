@@ -2,9 +2,14 @@
 name = "cargo-evals"
 version = "0.0.1"
 edition = "2024"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Cargo subcommand for listing and running typed agent eval suites"
+readme = "README.md"
 
 [dependencies]
 anyhow.workspace = true
-borg-evals = { path = "../borg-evals", package = "borg-evals", version = "0" }
+borg-evals = { path = "../borg-evals", package = "borg-evals", version = "=0.0.1" }
 clap.workspace = true
 tokio.workspace = true
