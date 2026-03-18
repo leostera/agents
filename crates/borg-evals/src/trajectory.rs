@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 use std::{future::Future, pin::Pin};
 
-use borg_agent::{AgentEvent, AgentInput};
+use borg_agent::{Agent, AgentEvent, AgentInput};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use crate::error::EvalError;
-use crate::eval::{EvalAgent, EvalContext};
+use crate::eval::EvalContext;
 use crate::grade::GradingConfig;
 use crate::trial::{AgentTrial, AgentTrialRecorder};
 
@@ -22,22 +22,22 @@ fn event_kind<Tool, ToolResult, Output>(
     }
 }
 
-pub struct Step<A: EvalAgent, State = ()> {
+pub struct Step<A: Agent, State = ()> {
     user: A::Input,
     grade: Option<GradingConfig<State, A::Output>>,
 }
 
-pub struct Trajectory<A: EvalAgent, State = ()> {
+pub struct Trajectory<A: Agent, State = ()> {
     steps: Vec<Step<A, State>>,
 }
 
-pub struct TrajectoryBuilder<A: EvalAgent, State = ()> {
+pub struct TrajectoryBuilder<A: Agent, State = ()> {
     steps: Vec<Step<A, State>>,
 }
 
 impl<A, State> Clone for Step<A, State>
 where
-    A: EvalAgent,
+    A: Agent,
     A::Input: Clone,
 {
     fn clone(&self) -> Self {
@@ -50,7 +50,7 @@ where
 
 impl<A, State> Clone for Trajectory<A, State>
 where
-    A: EvalAgent,
+    A: Agent,
     A::Input: Clone,
 {
     fn clone(&self) -> Self {
@@ -62,7 +62,7 @@ where
 
 impl<A, State> std::fmt::Debug for Step<A, State>
 where
-    A: EvalAgent,
+    A: Agent,
     A::Input: std::fmt::Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -75,7 +75,7 @@ where
 
 impl<A, State> std::fmt::Debug for Trajectory<A, State>
 where
-    A: EvalAgent,
+    A: Agent,
     A::Input: std::fmt::Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -87,7 +87,7 @@ where
 
 impl<A, State> std::fmt::Debug for TrajectoryBuilder<A, State>
 where
-    A: EvalAgent,
+    A: Agent,
     A::Input: std::fmt::Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -97,7 +97,7 @@ where
     }
 }
 
-impl<A: EvalAgent, State> Step<A, State> {
+impl<A: Agent, State> Step<A, State> {
     pub fn user(message: A::Input) -> Self {
         Self {
             user: message,
@@ -114,7 +114,7 @@ impl<A: EvalAgent, State> Step<A, State> {
     }
 }
 
-impl<A: EvalAgent, State> Trajectory<A, State> {
+impl<A: Agent, State> Trajectory<A, State> {
     pub fn new(step: Step<A, State>) -> Self {
         Self { steps: vec![step] }
     }
@@ -128,7 +128,7 @@ impl<A: EvalAgent, State> Trajectory<A, State> {
     }
 }
 
-impl<A: EvalAgent, State> TrajectoryBuilder<A, State> {
+impl<A: Agent, State> TrajectoryBuilder<A, State> {
     pub fn add_step(mut self, step: Step<A, State>) -> Self {
         self.steps.push(step);
         self
@@ -149,7 +149,7 @@ type TrajectoryRunFuture<Output> = BoxFuture<Result<AgentTrial<Output>, EvalErro
 
 impl<A, State> Trajectory<A, State>
 where
-    A: EvalAgent,
+    A: Agent,
     State: Send + Sync + 'static,
 {
     pub fn runner(

@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use borg_agent::Agent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -441,7 +442,7 @@ pub(crate) fn build_summary<State, A>(
 ) -> SuiteSummary
 where
     State: Send + Sync + 'static,
-    A: crate::eval::EvalAgent,
+    A: Agent,
 {
     let total_trials = trials.len();
     let passed_trials = trials.iter().filter(|trial| trial.passed).count();
@@ -472,7 +473,7 @@ where
 fn build_eval_aggregate<State, A>(eval: &Eval<State, A>, trials: &[TrialRecord]) -> EvalAggregate
 where
     State: Send + Sync + 'static,
-    A: crate::eval::EvalAgent,
+    A: Agent,
 {
     let eval_trials: Vec<&TrialRecord> = trials
         .iter()

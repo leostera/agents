@@ -15,7 +15,7 @@ pub use async_trait::async_trait;
 pub use borg_macros::{eval, suite};
 pub use config::{ExecutionTarget, RunConfig};
 pub use error::{EvalError, EvalResult};
-pub use eval::{Eval, EvalAgent, EvalContext};
+pub use eval::{Eval, EvalContext};
 pub use events::{
     EventSink, JsonEventSink, NoopEventSink, PlannedSuiteRun, ProgressEventSink, RunEvent,
     SharedEventSink, emit, global_sink, set_global_sink,
@@ -72,14 +72,15 @@ macro_rules! trajectory {
 
 pub mod prelude {
     pub use crate::{
-        AgentTrial, AgentTrialRecorder, ArtifactIndex, Eval, EvalAgent, EvalAggregate, EvalContext,
-        EvalError, EvalResult, EventSink, ExecutionTarget, Grade, GradeResult, Grader,
-        GraderFailure, GradingConfig, JsonEventSink, PlannedSuiteRun, ProgressEventSink,
-        RecordedEvent, RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite,
-        SharedEventSink, Step, Suite, SuiteDescriptor, SuiteKind, SuitePlan, SuiteRunReport,
-        TargetFilter, Trajectory, TrajectoryBuilder, assistant, async_trait, build, emit,
-        global_sink, grade, set_global_sink, setup, trajectory, user,
+        AgentTrial, AgentTrialRecorder, ArtifactIndex, Eval, EvalAggregate, EvalContext, EvalError,
+        EvalResult, EventSink, ExecutionTarget, Grade, GradeResult, Grader, GraderFailure,
+        GradingConfig, JsonEventSink, PlannedSuiteRun, ProgressEventSink, RecordedEvent,
+        RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite, SharedEventSink,
+        Step, Suite, SuiteDescriptor, SuiteKind, SuitePlan, SuiteRunReport, TargetFilter,
+        Trajectory, TrajectoryBuilder, assistant, async_trait, build, emit, global_sink, grade,
+        set_global_sink, setup, trajectory, user,
     };
+    pub use borg_agent::Agent;
 }
 
 #[cfg(test)]
@@ -101,7 +102,7 @@ mod tests {
     struct DummyAgent;
 
     #[async_trait]
-    impl EvalAgent for DummyAgent {
+    impl Agent for DummyAgent {
         type Input = serde_json::Value;
         type ToolCall = serde_json::Value;
         type ToolResult = serde_json::Value;
@@ -145,7 +146,7 @@ mod tests {
     struct EchoAgent;
 
     #[async_trait]
-    impl EvalAgent for EchoAgent {
+    impl Agent for EchoAgent {
         type Input = String;
         type ToolCall = ();
         type ToolResult = ();

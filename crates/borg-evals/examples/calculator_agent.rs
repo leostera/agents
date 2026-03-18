@@ -64,7 +64,7 @@ impl ToolRunner<CalcOp, u32> for CalcToolRunner {
     }
 }
 
-#[derive(borg_macros::EvalAgent)]
+#[derive(borg_macros::Agent)]
 pub struct CalculatorAgent {
     agent: SessionAgent<CalcReq, CalcOp, u32, CalcRes>,
 }

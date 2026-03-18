@@ -2,9 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use borg_agent::{
-    Agent as SharedAgent, AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput,
-};
+use borg_agent::{Agent, AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
 use tracing::debug;
 
 use crate::config::ExecutionTarget;
@@ -14,13 +12,11 @@ use crate::trial::AgentTrial;
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
-pub use borg_agent::Agent as EvalAgent;
-
 #[derive(Clone, Debug)]
 pub struct NoAgent;
 
 #[borg_agent::async_trait]
-impl SharedAgent for NoAgent {
+impl Agent for NoAgent {
     type Input = serde_json::Value;
     type ToolCall = serde_json::Value;
     type ToolResult = serde_json::Value;
@@ -101,14 +97,14 @@ impl<State> EvalContext<State> {
 }
 
 type EvalRunner<State, A> = Arc<
-    dyn Fn(EvalContext<State>, A) -> BoxFuture<EvalResult<AgentTrial<<A as EvalAgent>::Output>>>
+    dyn Fn(EvalContext<State>, A) -> BoxFuture<EvalResult<AgentTrial<<A as Agent>::Output>>>
         + Send
         + Sync,
 >;
 
 pub struct Eval<State = (), Agent = NoAgent>
 where
-    Agent: EvalAgent,
+    Agent: borg_agent::Agent,
 {
     id: String,
     tags: Vec<String>,
@@ -119,7 +115,7 @@ where
 
 impl<State, A> Clone for Eval<State, A>
 where
-    A: EvalAgent,
+    A: Agent,
 {
     fn clone(&self) -> Self {
         Self {
@@ -134,7 +130,7 @@ where
 
 impl<State, A> std::fmt::Debug for Eval<State, A>
 where
-    A: EvalAgent,
+    A: Agent,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Eval")
@@ -148,7 +144,7 @@ where
 
 impl<State, A> Eval<State, A>
 where
-    A: EvalAgent,
+    A: Agent,
 {
     pub fn new(id: impl Into<String>) -> Self {
         Self {
@@ -211,7 +207,7 @@ where
 impl<State, A> Eval<State, A>
 where
     State: Send + Sync + 'static,
-    A: EvalAgent,
+    A: Agent,
 {
     pub fn run<F, Fut>(mut self, run: F) -> Self
     where

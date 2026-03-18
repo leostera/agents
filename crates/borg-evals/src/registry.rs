@@ -4,11 +4,12 @@ use std::pin::Pin;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use borg_agent::Agent;
 use quote::{format_ident, quote};
 use syn::{Expr, ExprAssign, File, Item, ItemFn, Meta, parse_quote};
 use walkdir::WalkDir;
 
-use crate::{EvalAgent, EvalRunReport, RunConfig, Suite, TargetFilter};
+use crate::{EvalRunReport, RunConfig, Suite, TargetFilter};
 
 pub type BoxSuiteFuture = Pin<Box<dyn Future<Output = Result<Box<dyn RunnableSuite>>> + Send>>;
 
@@ -49,7 +50,7 @@ pub trait RunnableSuite: Send {
 impl<State, A> RunnableSuite for Suite<State, A>
 where
     State: Send + Sync + 'static,
-    A: EvalAgent,
+    A: Agent,
 {
     fn id(&self) -> &str {
         self.id()

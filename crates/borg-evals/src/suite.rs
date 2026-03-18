@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use borg_agent::Agent;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
@@ -12,7 +13,7 @@ use uuid::Uuid;
 use crate::RunEvent;
 use crate::config::{ExecutionTarget, RunConfig};
 use crate::error::{EvalError, EvalResult};
-use crate::eval::{Eval, EvalAgent, EvalContext, NoAgent};
+use crate::eval::{Eval, EvalContext, NoAgent};
 use crate::events::emit;
 use crate::grade::is_passing_score;
 use crate::report::{
@@ -33,7 +34,7 @@ type BoxFuture<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send
 
 pub struct Suite<State = (), A = NoAgent>
 where
-    A: EvalAgent,
+    A: Agent,
 {
     id: String,
     kind: SuiteKind,
@@ -45,7 +46,7 @@ where
 
 impl<State, A> Clone for Suite<State, A>
 where
-    A: EvalAgent,
+    A: Agent,
 {
     fn clone(&self) -> Self {
         Self {
@@ -61,7 +62,7 @@ where
 
 impl<State, A> std::fmt::Debug for Suite<State, A>
 where
-    A: EvalAgent,
+    A: Agent,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Suite")
@@ -75,7 +76,7 @@ where
 
 pub struct SuiteRunner<'a, State = (), A = NoAgent>
 where
-    A: EvalAgent,
+    A: Agent,
 {
     suite: &'a Suite<State, A>,
     config: RunConfig,
@@ -102,7 +103,7 @@ impl TargetFilter {
 #[derive(Debug)]
 pub struct SuitePlan<State = (), A = NoAgent>
 where
-    A: EvalAgent,
+    A: Agent,
 {
     suite: Suite<State, A>,
     config: RunConfig,
@@ -113,7 +114,7 @@ where
 trait SuiteExecutor<State, A>: Send + Sync
 where
     State: Send + Sync + 'static,
-    A: EvalAgent,
+    A: Agent,
 {
     async fn run(&self, plan: SuitePlan<State, A>) -> EvalResult<EvalRunReport>;
 }
@@ -152,7 +153,7 @@ impl Suite<(), NoAgent> {
 
 impl<State, A> Suite<State, A>
 where
-    A: EvalAgent,
+    A: Agent,
 {
     pub fn with_state<NewState>(self, state: NewState) -> Suite<NewState, A> {
         Suite {
@@ -200,11 +201,11 @@ where
 impl<State, A> Suite<State, A>
 where
     State: Send + Sync + 'static,
-    A: EvalAgent,
+    A: Agent,
 {
     pub fn agent<NewA, F, Fut, E>(self, factory: F) -> Suite<State, NewA>
     where
-        NewA: EvalAgent,
+        NewA: Agent,
         F: Fn(EvalContext<State>) -> Fut + Send + Sync + Clone + 'static,
         Fut: std::future::Future<Output = Result<NewA, E>> + Send + 'static,
         E: ToString + Send + 'static,
@@ -252,7 +253,7 @@ where
 impl<'a, State, A> SuiteRunner<'a, State, A>
 where
     State: Send + Sync + 'static,
-    A: EvalAgent,
+    A: Agent,
 {
     pub fn filter(mut self, filter: TargetFilter) -> Self {
         self.filter = filter;
@@ -329,7 +330,7 @@ where
 
 impl<State, A> SuitePlan<State, A>
 where
-    A: EvalAgent,
+    A: Agent,
 {
     pub fn suite(&self) -> &Suite<State, A> {
         &self.suite
@@ -344,7 +345,7 @@ where
 impl<State, A> SuiteExecutor<State, A> for LocalExecutor
 where
     State: Send + Sync + 'static,
-    A: EvalAgent,
+    A: Agent,
 {
     async fn run(&self, plan: SuitePlan<State, A>) -> EvalResult<EvalRunReport> {
         let SuitePlan {
@@ -442,7 +443,7 @@ async fn run_single_target<State, A>(
 ) -> EvalResult<SuiteRunReport>
 where
     State: Send + Sync + 'static,
-    A: EvalAgent,
+    A: Agent,
 {
     let started_at = now_since_epoch();
     let mut trial_records = Vec::new();
@@ -607,7 +608,7 @@ async fn execute_trial<State, A>(
 ) -> TrialRecord
 where
     State: Send + Sync + 'static,
-    A: EvalAgent,
+    A: Agent,
 {
     let trial_id = Uuid::now_v7().to_string();
     let started_at_wall = now_since_epoch();
