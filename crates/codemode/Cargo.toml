@@ -1,16 +1,17 @@
 [package]
-name = "agents-codemode"
-version = "0.1.0"
+name = "codemode"
+version = "0.0.0"
 edition = "2024"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Embeddable code search and execution tools for agents"
+readme = "README.md"
 
 [dependencies]
 async-trait.workspace = true
 deno_core.workspace = true
-deno_error = "0.7.1"
+deno_error.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -19,4 +20,4 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-agents = { path = "../agents" }
+agents = { package = "agents", version = "0", path = "../agents" }

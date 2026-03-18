@@ -1,22 +1,16 @@
 use std::sync::Arc;
 
 use agents::{
-    agent::{
-        AgentResult, ContextManager, SessionAgent, ToolCallEnvelope, ToolExecutionResult,
-        ToolResultEnvelope, ToolRunner,
-    },
-    evals::{
-        Eval, EvalError, ExecutionTarget, GradeResult, GradingConfig, RunConfig, Step, Suite,
-        Trajectory,
-    },
-    llm::{
-        LlmRunner,
-        completion::InputItem,
-        testing::{TestContext, TestProvider},
-    },
+    AgentResult, ContextManager, LlmRunner, SessionAgent, ToolCallEnvelope, ToolExecutionResult,
+    ToolResultEnvelope, ToolRunner, completion::InputItem,
 };
+use agents_test::{TestContext, TestProvider};
 use anyhow::Result;
 use async_trait::async_trait;
+use evals::{
+    Eval, EvalError, ExecutionTarget, GradeResult, GradingConfig, RunConfig, Step, Suite,
+    Trajectory,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -32,7 +26,7 @@ const DEFAULT_OLLAMA_MODELS: &[(&str, &str)] = &[
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AddArgs(u32, u32);
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, agents_macros::Tool)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, agents::Tool)]
 pub enum CalcOp {
     ToolAdd(AddArgs),
 }
@@ -71,7 +65,7 @@ impl ToolRunner<CalcOp, u32> for CalcToolRunner {
     }
 }
 
-#[derive(agents_macros::Agent)]
+#[derive(agents::Agent)]
 pub struct CalculatorAgent {
     agent: SessionAgent<CalcReq, CalcOp, u32, CalcRes>,
 }

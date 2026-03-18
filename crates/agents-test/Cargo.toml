@@ -1,0 +1,18 @@
+[package]
+name = "agents-test"
+version = "0.0.1"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Test helpers and provider fixtures for agents"
+readme = "README.md"
+
+[dependencies]
+agents = { path = "../agents", version = "=0.0.1" }
+dotenvy.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+testcontainers.workspace = true
+tokio.workspace = true
+tracing.workspace = true

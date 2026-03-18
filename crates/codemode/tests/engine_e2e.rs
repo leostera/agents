@@ -2,11 +2,11 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 
-use agents_codemode::{
+use async_trait::async_trait;
+use codemode::{
     CodeMode, CodeModeConfig, CodeModeResult, EnvironmentProvider, EnvironmentVariable,
     NativeFunctionRegistry, Package, PackageProvider, RunCode, SearchCode,
 };
-use async_trait::async_trait;
 use serde_json::json;
 
 #[derive(Clone)]

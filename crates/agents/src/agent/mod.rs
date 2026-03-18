@@ -11,8 +11,7 @@
 //! ```rust,no_run
 //! use std::sync::Arc;
 //!
-//! use crate::agent::SessionAgent;
-//! use crate::llm::LlmRunner;
+//! use agents::{LlmRunner, SessionAgent};
 //!
 //! async fn make_agent(
 //!     llm: Arc<LlmRunner>,
@@ -26,8 +25,7 @@
 //! ```rust,no_run
 //! use std::sync::Arc;
 //!
-//! use crate::agent::{Agent, SessionAgent};
-//! use crate::llm::{InputItem, LlmRunner};
+//! use agents::{Agent as AgentTrait, InputItem, LlmRunner, SessionAgent};
 //! use schemars::JsonSchema;
 //! use serde::{Deserialize, Serialize};
 //!
@@ -47,7 +45,7 @@
 //!     text: String,
 //! }
 //!
-//! #[derive(Agent)]
+//! #[derive(agents::Agent)]
 //! struct EchoAgent {
 //!     #[agent]
 //!     inner: SessionAgent<EchoRequest, (), (), EchoResponse>,

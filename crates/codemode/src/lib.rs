@@ -1,6 +1,6 @@
 //! Embeddable code execution and code search tools for custom agent tool runners.
 //!
-//! `agents-codemode` is intentionally small:
+//! `codemode` is intentionally small:
 //! - [`CodeMode`] is the engine
 //! - [`Request`] / [`Response`] are the typed boundary
 //! - package, environment, and native function providers customize behavior
@@ -10,7 +10,7 @@
 //! ```rust
 //! use std::sync::Arc;
 //!
-//! use agents_codemode::{CodeMode, CodeModeConfig, SearchCode};
+//! use codemode::{CodeMode, CodeModeConfig, SearchCode};
 //!
 //! # let runtime = tokio::runtime::Builder::new_current_thread()
 //! #     .enable_all()
@@ -31,9 +31,9 @@
 //!     .await?;
 //!
 //! println!("{} matches", response.matches.len());
-//! # Ok::<(), agents_codemode::CodeModeError>(())
+//! # Ok::<(), codemode::CodeModeError>(())
 //! # })?;
-//! # Ok::<(), agents_codemode::CodeModeError>(())
+//! # Ok::<(), codemode::CodeModeError>(())
 //! ```
 
 mod config;

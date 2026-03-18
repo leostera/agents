@@ -29,8 +29,7 @@ pub use session::{
 ///
 /// ```rust,no_run
 /// # use std::sync::Arc;
-/// # use crate::agent::{Agent, AgentInput, AgentResult, SessionAgent};
-/// # use crate::llm::LlmRunner;
+/// # use agents::{Agent, AgentEvent, AgentInput, AgentResult, LlmRunner, SessionAgent};
 /// # struct EchoAgent {
 /// #     inner: SessionAgent<String, (), (), String>,
 /// # }
@@ -52,7 +51,7 @@ pub use session::{
 /// #     }
 /// #     async fn next(
 /// #         &mut self,
-/// #     ) -> AgentResult<Option<crate::agent::AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>> {
+/// #     ) -> AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>> {
 /// #         self.inner.next().await
 /// #     }
 /// # }
@@ -68,8 +67,7 @@ pub use session::{
 /// ```rust,no_run
 /// use std::sync::Arc;
 ///
-/// use crate::agent::{Agent, AgentEvent, AgentInput, SessionAgent};
-/// use crate::llm::LlmRunner;
+/// use agents::{Agent, AgentEvent, AgentInput, AgentResult, AgentRunInput, AgentRunOutput, LlmRunner, SessionAgent};
 ///
 /// struct EchoAgent {
 ///     inner: SessionAgent<String, (), (), String>,
@@ -90,23 +88,21 @@ pub use session::{
 ///     type ToolResult = ();
 ///     type Output = String;
 ///
-///     async fn send(&mut self, input: AgentInput<Self::Input>) -> crate::agent::AgentResult<()> {
+///     async fn send(&mut self, input: AgentInput<Self::Input>) -> AgentResult<()> {
 ///         self.inner.send(input).await
 ///     }
 ///
 ///     async fn next(
 ///         &mut self,
-///     ) -> crate::agent::AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>> {
+///     ) -> AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>> {
 ///         self.inner.next().await
 ///     }
 /// }
 ///
 /// # async fn demo(llm: Arc<LlmRunner>) -> anyhow::Result<()> {
-/// let agent: EchoAgent = EchoAgent::new(llm).await?;
-/// let (input, mut events): (
-///     crate::agent::AgentRunInput<String>,
-///     crate::agent::AgentRunOutput<(), (), String>,
-/// ) = agent.spawn().await?;
+/// let agent = EchoAgent::new(llm).await?;
+/// let (input, mut events): (AgentRunInput<String>, AgentRunOutput<(), (), String>) =
+///     agent.spawn().await?;
 /// input.send(AgentInput::Message("hello".to_string())).await?;
 ///
 /// while let Some(event) = events.recv().await {

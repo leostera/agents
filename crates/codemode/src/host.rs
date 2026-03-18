@@ -89,12 +89,12 @@ async fn op_native_call(
 }
 
 deno_core::extension!(
-    agents_codemode_host,
+    codemode_host,
     ops = [op_env_get, op_env_keys, op_fetch, op_native_call],
 );
 
 pub(crate) fn extension() -> deno_core::Extension {
-    agents_codemode_host::init()
+    codemode_host::init()
 }
 
 pub(crate) fn install_host_functions(
@@ -114,7 +114,7 @@ pub(crate) fn install_host_functions(
 
     let bootstrap = bootstrap_script(native_functions.names())?;
     runtime
-        .execute_script("file:///__agents_codemode_bootstrap__.js", bootstrap)
+        .execute_script("file:///__codemode_bootstrap__.js", bootstrap)
         .map_err(|error| CodeModeError::InstallGlobals {
             reason: error.to_string(),
         })?;

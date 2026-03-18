@@ -1,17 +1,21 @@
-pub mod ollama_container;
+//! Test helpers for [`agents`].
+//!
+//! `agents-test` contains opt-in support for provider-backed integration tests,
+//! including local Ollama container helpers and shared runner builders.
+
+mod ollama_container;
 
 use std::collections::HashSet;
 use std::sync::{Arc, Once};
 
-use tokio::sync::{Mutex, OnceCell};
-
-use crate::llm::error::{Error, LlmResult};
-use crate::llm::provider::anthropic::{Anthropic, AnthropicConfig};
-use crate::llm::provider::ollama::{Ollama, OllamaConfig};
-use crate::llm::provider::openai::{OpenAI, OpenAIConfig};
-use crate::llm::provider::openrouter::{OpenRouter, OpenRouterConfig};
-use crate::llm::runner::LlmRunner;
+use agents::LlmRunner;
+use agents::error::{Error as LlmError, LlmResult};
+use agents::provider::anthropic::{Anthropic, AnthropicConfig};
+use agents::provider::ollama::{Ollama, OllamaConfig};
+use agents::provider::openai::{OpenAI, OpenAIConfig};
+use agents::provider::openrouter::{OpenRouter, OpenRouterConfig};
 use ollama_container::LlmContainer;
+use tokio::sync::{Mutex, OnceCell};
 
 static DOTENV: Once = Once::new();
 static OLLAMA_CONTEXT: OnceCell<Arc<TestContext>> = OnceCell::const_new();
@@ -111,7 +115,7 @@ impl TestContext {
 
 pub fn required_test_env(name: &str) -> LlmResult<String> {
     init_test_env();
-    std::env::var(name).map_err(|_| Error::Configuration(format!("missing test env var {name}")))
+    std::env::var(name).map_err(|_| LlmError::Configuration(format!("missing test env var {name}")))
 }
 
 pub fn optional_test_env(name: &str) -> Option<String> {
@@ -121,21 +125,21 @@ pub fn optional_test_env(name: &str) -> Option<String> {
 
 pub fn openai_provider_for_model(model: &str) -> LlmResult<OpenAI> {
     let api_key = required_test_env("BORG_TEST_OPENAI_API_KEY")?;
-    let config = OpenAIConfig::new(api_key, model.to_string()).map_err(Error::OpenAIConfig)?;
+    let config = OpenAIConfig::new(api_key, model.to_string()).map_err(LlmError::OpenAIConfig)?;
     Ok(OpenAI::new(config))
 }
 
 pub fn anthropic_provider_for_model(model: &str) -> LlmResult<Anthropic> {
     let api_key = required_test_env("BORG_TEST_ANTHROPIC_API_KEY")?;
     let config =
-        AnthropicConfig::new(api_key, model.to_string()).map_err(Error::AnthropicConfig)?;
+        AnthropicConfig::new(api_key, model.to_string()).map_err(LlmError::AnthropicConfig)?;
     Ok(Anthropic::new(config))
 }
 
 pub fn openrouter_provider_for_model(model: &str) -> LlmResult<OpenRouter> {
     let api_key = required_test_env("BORG_TEST_OPENROUTER_API_KEY")?;
     let config =
-        OpenRouterConfig::new(api_key, model.to_string()).map_err(Error::OpenRouterConfig)?;
+        OpenRouterConfig::new(api_key, model.to_string()).map_err(LlmError::OpenRouterConfig)?;
     Ok(OpenRouter::new(config))
 }
 

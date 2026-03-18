@@ -220,7 +220,7 @@ fn execute_run_code(
 
         let function = runtime
             .execute_script(
-                "file:///__agents_codemode_exec__.js",
+                "file:///__codemode_exec__.js",
                 format!("({})", request.code),
             )
             .map_err(|error| CodeModeError::CompileCode {

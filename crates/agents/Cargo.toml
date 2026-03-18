@@ -22,7 +22,6 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
-testcontainers.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -30,3 +29,9 @@ tracing-subscriber.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 swift-rs = { workspace = true, features = ["build"] }
+
+[dev-dependencies]
+anyhow.workspace = true
+agents-test = { path = "../agents-test" }
+serial_test.workspace = true
+testcontainers.workspace = true

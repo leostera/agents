@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Result type used throughout `agents-codemode`.
+/// Result type used throughout `codemode`.
 pub type CodeModeResult<T> = Result<T, CodeModeError>;
 
 /// Errors produced by the codemode engine and its extension points.

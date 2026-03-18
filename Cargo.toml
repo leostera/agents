@@ -1,7 +1,8 @@
 [workspace]
 members = [
   "crates/agents", 
-  "crates/agents-codemode",
+  "crates/agents-test",
+  "crates/codemode",
   "crates/agents-macros",
   "crates/cargo-evals", 
   "crates/evals",
@@ -26,6 +27,7 @@ clap = { version = "4", features = ["derive"] }
 config = "0"
 crossterm = "0"
 deno_core = "0"
+deno_error = "0"
 derive_builder = "0"
 dotenvy = "0"
 futures-util = "0"

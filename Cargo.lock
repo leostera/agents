@@ -13,6 +13,8 @@ name = "agents"
 version = "0.0.1"
 dependencies = [
  "agents-macros",
+ "agents-test",
+ "anyhow",
  "async-trait",
  "derive_builder",
  "dotenvy",
@@ -24,6 +26,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "serial_test",
  "swift-rs",
  "tempfile",
  "testcontainers",
@@ -31,22 +34,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "agents-codemode"
-version = "0.1.0"
-dependencies = [
- "agents",
- "async-trait",
- "deno_core",
- "deno_error",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -61,6 +48,19 @@ dependencies = [
  "quote",
  "serde_json",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "agents-test"
+version = "0.0.1"
+dependencies = [
+ "agents",
+ "dotenvy",
+ "reqwest",
+ "serde_json",
+ "testcontainers",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -650,6 +650,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
+name = "codemode"
+version = "0.0.0"
+dependencies = [
+ "agents",
+ "async-trait",
+ "deno_core",
+ "deno_error",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -934,9 +950,9 @@ checksum = "5729f5117e208430e437df2f4843f5e5952997175992d1414f94c57d61e270b4"
 
 [[package]]
 name = "deno_core"
-version = "0.392.0"
+version = "0.387.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afb39ee05f067d8803ddd23377310d81bcece0ef8d6441726b3321aa71489b7e"
+checksum = "05ff87ea269f345c07d29d69237af40b048cfb4274329823eed9abe749f9f3c0"
 dependencies = [
  "anyhow",
  "az",
@@ -980,9 +996,9 @@ checksum = "a9efff8990a82c1ae664292507e1a5c6749ddd2312898cdf9cd7cb1fd4bc64c6"
 
 [[package]]
 name = "deno_error"
-version = "0.7.1"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfafd2219b29886a71aecbb3449e462deed1b2c474dc5b12f855f0e58c478931"
+checksum = "3007d3f1ea92ea503324ae15883aac0c2de2b8cf6fead62203ff6a67161007ab"
 dependencies = [
  "deno_error_macro",
  "libc",
@@ -994,9 +1010,9 @@ dependencies = [
 
 [[package]]
 name = "deno_error_macro"
-version = "0.7.1"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c28ede88783f14cd8aae46ca89f230c226b40e4a81ab06fa52ed72af84beb2f"
+checksum = "9b565e60a9685cdf312c888665b5f8647ac692a7da7e058a5e2268a466da8eaf"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1005,9 +1021,9 @@ dependencies = [
 
 [[package]]
 name = "deno_ops"
-version = "0.268.0"
+version = "0.263.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb2e794e7ed4ba606ae862b92859cf4ce4148f5c2381b6e4d10014d54338ced6"
+checksum = "b80c3d956d1a8eb9db6a44f263bdf93a6db52c69668c5be8a0664ae9dde71f6a"
 dependencies = [
  "indexmap 2.13.0",
  "proc-macro2",
@@ -1261,9 +1277,9 @@ dependencies = [
 
 [[package]]
 name = "euclid"
-version = "0.22.13"
+version = "0.22.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df61bf483e837f88d5c2291dcf55c67be7e676b3a51acc48db3a7b163b91ed63"
+checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
 dependencies = [
  "num-traits",
 ]
@@ -1273,6 +1289,7 @@ name = "evals"
 version = "0.0.1"
 dependencies = [
  "agents",
+ "agents-test",
  "anyhow",
  "async-trait",
  "chrono",
@@ -3328,6 +3345,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scc"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46e6f046b7fef48e2660c57ed794263155d713de679057f2d0c169bfc6e756cc"
+dependencies = [
+ "sdd",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3378,6 +3404,12 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "sdd"
+version = "3.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
 
 [[package]]
 name = "security-framework"
@@ -3509,9 +3541,9 @@ dependencies = [
 
 [[package]]
 name = "serde_v8"
-version = "0.301.0"
+version = "0.296.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7029ef68b93acc7997cca3205a517d5e8b6e0a480eb0beece77a0496b73ff89f"
+checksum = "8d28324e48c5fba167780aa8968fcb288612b34157c343aa72d7e79ed694eb66"
 dependencies = [
  "deno_error",
  "num-bigint",
@@ -3547,6 +3579,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3db8978e608f1fe7357e211969fd9abdcae80bac1ba7a3369bb7eb6b404eb65"
 dependencies = [
  "darling 0.23.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "serial_test"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "911bd979bf1070a3f3aa7b691a3b3e9968f339ceeec89e08c280a8a22207a32f"
+dependencies = [
+ "futures-executor",
+ "futures-util",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "scc",
+ "serial_test_derive",
+]
+
+[[package]]
+name = "serial_test_derive"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a7d91949b85b0d2fb687445e448b40d322b6b3e4af6b44a29b21d9a5f33e6d9"
+dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",

@@ -28,7 +28,6 @@ pub mod model;
 pub mod provider;
 pub mod response;
 mod runner;
-pub mod testing;
 pub mod tools;
 pub mod transcription;
 
