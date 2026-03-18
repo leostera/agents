@@ -55,18 +55,24 @@ pub(super) fn discover_eval_crates(workspace_root: &Path) -> Result<Vec<EvalCrat
             continue;
         }
 
-        if !package.targets.iter().any(|target| target.kind.iter().any(|kind| kind == "lib")) {
+        if !package
+            .targets
+            .iter()
+            .any(|target| target.kind.iter().any(|kind| kind == "lib"))
+        {
             bail!(
                 "workspace package {:?} defines evals/ but has no library target; add a [lib] target so cargo-evals can import __evals_registry()",
                 package.name
             );
         }
 
-        crates.entry(package.name.clone()).or_insert_with(|| EvalCrate {
-            crate_ident: package.name.replace('-', "_"),
-            package_name: package.name,
-            manifest_dir,
-        });
+        crates
+            .entry(package.name.clone())
+            .or_insert_with(|| EvalCrate {
+                crate_ident: package.name.replace('-', "_"),
+                package_name: package.name,
+                manifest_dir,
+            });
     }
 
     Ok(crates.into_values().collect())

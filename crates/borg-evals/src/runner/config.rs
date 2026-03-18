@@ -1,7 +1,9 @@
 use std::path::Path;
 
+use crate::{
+    ExecutionTarget, OllamaProviderConfig as PublicOllamaProviderConfig, ProviderConfigs, RunConfig,
+};
 use anyhow::{Context, Result, bail};
-use crate::{ExecutionTarget, OllamaProviderConfig as PublicOllamaProviderConfig, ProviderConfigs, RunConfig};
 use borg_llm::completion::ProviderType;
 use config::{Config, File, FileFormat};
 use serde::Deserialize;
@@ -79,9 +81,13 @@ impl EvalsFile {
 
     fn provider_configs(&self) -> ProviderConfigs {
         ProviderConfigs {
-            ollama: self.provider.ollama.as_ref().map(|config| PublicOllamaProviderConfig {
-                url: config.url.clone(),
-            }),
+            ollama: self
+                .provider
+                .ollama
+                .as_ref()
+                .map(|config| PublicOllamaProviderConfig {
+                    url: config.url.clone(),
+                }),
         }
     }
 
