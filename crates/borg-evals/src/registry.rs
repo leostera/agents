@@ -106,7 +106,8 @@ pub fn build() -> Result<()> {
 /// Call this once from `src/lib.rs` in the crate that owns the `evals/`
 /// directory discovered by [`build`].
 ///
-/// ```rust
+/// ```text
+/// // src/lib.rs
 /// borg_evals::setup!();
 /// ```
 macro_rules! setup {

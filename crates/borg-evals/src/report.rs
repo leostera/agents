@@ -15,8 +15,10 @@ use crate::grade::{GradeResult, GraderFailure, is_passing_score};
 use crate::suite::Suite;
 use crate::trial::{AgentTrial, RecordedError, RecordedEvent, RecordedMessageRole};
 
+/// Schema version written into persisted eval artifacts.
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Top-level manifest for one eval run directory.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RunManifest {
     pub schema_version: u32,
@@ -29,12 +31,14 @@ pub struct RunManifest {
     pub files: Vec<String>,
 }
 
+/// Full persisted report for one `cargo evals` run.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EvalRunReport {
     pub manifest: RunManifest,
     pub variants: Vec<SuiteRunReport>,
 }
 
+/// Aggregated summary for one suite/target pair.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SuiteSummary {
     pub schema_version: u32,
@@ -50,6 +54,7 @@ pub struct SuiteSummary {
     pub evals: Vec<EvalAggregate>,
 }
 
+/// Aggregated results for one eval across its trials.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EvalAggregate {
     pub eval_id: String,
@@ -61,6 +66,7 @@ pub struct EvalAggregate {
     pub grader_means: Vec<GraderAggregate>,
 }
 
+/// Mean score and pass rate for one grader across a set of trials.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GraderAggregate {
     pub name: String,
@@ -68,6 +74,7 @@ pub struct GraderAggregate {
     pub pass_rate: f32,
 }
 
+/// One persisted trial artifact before transcript projection.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TrialRecord {
     pub schema_version: u32,
@@ -89,6 +96,7 @@ pub struct TrialRecord {
     pub grader_failures: Vec<GraderFailure>,
 }
 
+/// File index for artifacts written under one suite/target directory.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ArtifactIndex {
     pub schema_version: u32,
@@ -98,6 +106,7 @@ pub struct ArtifactIndex {
     pub files: Vec<String>,
 }
 
+/// In-memory report for one suite/target execution.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SuiteRunReport {
     pub manifest: RunManifest,
@@ -199,6 +208,7 @@ impl IncrementalSuiteWriter {
 }
 
 impl SuiteRunReport {
+    /// Renders a short markdown summary for human inspection.
     pub fn summary_markdown(&self) -> String {
         format!(
             "# {} ({})\n\n- total trials: {}\n- pass rate: {:.0}%\n- mean score: {:.2}\n- mean duration: {:.0} ms\n",
@@ -211,6 +221,7 @@ impl SuiteRunReport {
         )
     }
 
+    /// Writes the suite summary, trial artifacts, and manifest under `root`.
     pub fn write_to(&self, root: impl AsRef<Path>) -> EvalResult<ArtifactIndex> {
         let root = root.as_ref();
         let suite_dir = root

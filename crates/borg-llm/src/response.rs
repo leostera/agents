@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::marker::PhantomData;
 
+/// Provider-facing response format payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawResponseFormat {
@@ -10,6 +11,7 @@ pub struct RawResponseFormat {
     pub json_schema: Option<RawResponseJsonSchema>,
 }
 
+/// JSON Schema payload embedded in [`RawResponseFormat`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawResponseJsonSchema {
@@ -18,6 +20,24 @@ pub struct RawResponseJsonSchema {
     pub schema: serde_json::Value,
 }
 
+/// Typed structured-response description for one completion call.
+///
+/// ```rust
+/// use borg_llm::response::TypedResponse;
+/// use schemars::JsonSchema;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+/// struct Answer {
+///     text: String,
+/// }
+///
+/// let format = TypedResponse::<Answer>::new("answer");
+/// let raw = format.to_raw_response_format();
+///
+/// assert_eq!(raw.r#type, "json_schema");
+/// assert!(raw.json_schema.is_some());
+/// ```
 #[derive(Clone)]
 pub struct TypedResponse<R> {
     name: String,
@@ -30,6 +50,7 @@ impl<R> TypedResponse<R>
 where
     R: JsonSchema,
 {
+    /// Builds a strict JSON Schema response format for `R`.
     pub fn new(name: impl Into<String>) -> Self {
         let schema = schemars::schema_for!(R);
         let schema_json = serde_json::to_value(&schema).unwrap_or_default();
@@ -42,11 +63,13 @@ where
         }
     }
 
+    /// Controls whether providers should enforce the schema strictly when supported.
     pub fn with_strict(mut self, strict: bool) -> Self {
         self.strict = strict;
         self
     }
 
+    /// Converts the typed schema into the raw provider-facing payload.
     pub fn to_raw_response_format(&self) -> RawResponseFormat {
         RawResponseFormat {
             r#type: "json_schema".to_string(),

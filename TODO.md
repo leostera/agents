@@ -77,9 +77,9 @@ Documentation checklist:
     - [x] CallbackToolRunner
     - [] CompletionEventStream
     - [x] CompletionRequest
-    - [] CompletionRequestBuilder
-    - [] Builder for CompletionRequest.
-    - [] CompletionResponse
+    - [x] CompletionRequestBuilder
+    - [x] Builder for CompletionRequest.
+    - [x] CompletionResponse
     - [x] ContextManager
     - [x] ContextManagerBuilder
     - [x] ContextWindow
@@ -104,18 +104,18 @@ Documentation checklist:
     - [x] LlmRunnerBuilder
     - [] LmStudioProviderConfig
     - [x] NoToolRunner
-    - [] NoopEventSink
+    - [x] NoopEventSink
     - [] NoopStorageAdapter
     - [x] OllamaProviderConfig
     - [x] OpenAIProviderConfig
     - [x] OpenRouterProviderConfig
     - [x] PlannedSuiteRun
     - [] Probability
-    - [] ProgressEventSink
+    - [x] ProgressEventSink
     - [x] ProviderConfigs
-    - [] RawCompletionEventStream
-    - [] RawCompletionRequest
-    - [] RawCompletionResponse
+    - [x] RawCompletionEventStream
+    - [x] RawCompletionRequest
+    - [x] RawCompletionResponse
     - [] RecordedToolCall
     - [x] RunConfig
     - [x] RunManifest
@@ -137,16 +137,16 @@ Documentation checklist:
     - [x] AgentError
     - [x] AgentEvent
     - [x] AgentInput
-    - [] CompletionEvent
-    - [] CompletionRequestBuilderError
-    - [] Error type for CompletionRequestBuilder
+    - [x] CompletionEvent
+    - [x] CompletionRequestBuilderError
+    - [x] Error type for CompletionRequestBuilder
     - [x] ContextChunk
     - [x] ContextRole
     - [x] ContextStrategy
-    - [] EvalError
-    - [] FinishReason
-    - [] InputContent
-    - [] InputItem
+    - [x] EvalError
+    - [x] FinishReason
+    - [x] InputContent
+    - [x] InputItem
     - [] ModelSelector
     - [] OutputContent
     - [] OutputItem
@@ -160,7 +160,7 @@ Documentation checklist:
     - [x] RecordedEvent
     - [x] RecordedGradingScope
     - [] RecordedMessageRole
-    - [] ResponseMode
+    - [x] ResponseMode
     - [] Role
     - [x] RunEvent
     - [] StorageEvent
@@ -174,22 +174,22 @@ Documentation checklist:
     - [] TopK
     - [] TopP
 - [] Constants
-    - [] SCHEMA_VERSION
+    - [x] SCHEMA_VERSION
 - [] Traits
     - [x] Agent
     - [x] ContextProvider
-    - [] EventSink
+    - [x] EventSink
     - [] RunnableSuite
     - [x] StorageAdapter
     - [x] ToolRunner
 - [] Functions
     - [] build
-    - [] emit
-    - [] global_sink
+    - [x] emit
+    - [x] global_sink
     - [x] grade
     - [x] judge
     - [x] predicate
-    - [] set_global_sink
+    - [x] set_global_sink
 - [] Type Aliases
     - [x] AgentResult
     - [x] AgentRunInput

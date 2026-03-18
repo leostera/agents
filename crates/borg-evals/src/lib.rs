@@ -69,9 +69,12 @@ pub use trial::{
 /// Builds a user step inside [`trajectory!`].
 ///
 /// ```rust
-/// use borg_evals::{trajectory, user};
+/// use borg_agent::SessionAgent;
+/// use borg_evals::{Trajectory, trajectory, user};
 ///
-/// let script = trajectory![user!("hello world")];
+/// type BasicAgent = SessionAgent<String, (), (), String>;
+///
+/// let script: Trajectory<BasicAgent, ()> = trajectory![user!("hello world")];
 /// ```
 #[macro_export]
 macro_rules! user {
@@ -83,10 +86,13 @@ macro_rules! user {
 /// Marks the grading attached to the preceding `user!` step inside [`trajectory!`].
 ///
 /// ```rust,no_run
+/// use borg_agent::SessionAgent;
 /// use borg_evals::{assistant, trajectory, user};
-/// use borg_evals::{GradeResult, predicate};
+/// use borg_evals::{GradeResult, Trajectory, predicate};
 ///
-/// let script = trajectory![
+/// type BasicAgent = SessionAgent<String, (), (), String>;
+///
+/// let script: Trajectory<BasicAgent, ()> = trajectory![
 ///     user!("hello"),
 ///     assistant!(predicate("echoes_input", |trial, _ctx| async move {
 ///         let reply = trial.final_reply.unwrap_or_default();
@@ -108,9 +114,12 @@ macro_rules! assistant {
 /// Builds a [`Trajectory`] from ordered `user!` / `assistant!` steps.
 ///
 /// ```rust
-/// use borg_evals::{trajectory, user};
+/// use borg_agent::SessionAgent;
+/// use borg_evals::{Trajectory, trajectory, user};
 ///
-/// let script = trajectory![
+/// type BasicAgent = SessionAgent<String, (), (), String>;
+///
+/// let script: Trajectory<BasicAgent, ()> = trajectory![
 ///     user!("hello"),
 ///     user!("world"),
 /// ];

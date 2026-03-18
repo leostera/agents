@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 type CrosstermTerminal = Terminal<CrosstermBackend<Stdout>>;
 const MIN_INLINE_VIEWPORT_HEIGHT: u16 = 4;
 
+/// Shared event stream emitted by `cargo evals` and the eval runner.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunEvent {
@@ -75,6 +76,7 @@ pub enum RunEvent {
     },
 }
 
+/// One suite row in the planned run event.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct PlannedSuiteRun {
     pub crate_name: String,
@@ -83,10 +85,12 @@ pub struct PlannedSuiteRun {
     pub eval_ids: Vec<String>,
 }
 
+/// Sink for shared eval run events.
 pub trait EventSink: Send + Sync + 'static {
     fn emit(&self, event: RunEvent);
 }
 
+/// Event sink that discards all events.
 #[derive(Clone, Default)]
 pub struct NoopEventSink;
 
@@ -94,13 +98,16 @@ impl EventSink for NoopEventSink {
     fn emit(&self, _event: RunEvent) {}
 }
 
+/// Shared event sink trait object.
 pub type SharedEventSink = Arc<dyn EventSink>;
 
+/// Event sink that writes line-delimited JSON to stdout.
 pub struct JsonEventSink {
     writer: Mutex<Stdout>,
 }
 
 impl JsonEventSink {
+    /// Writes JSON events to standard output.
     pub fn stdout() -> Self {
         Self {
             writer: Mutex::new(std::io::stdout()),
@@ -117,6 +124,7 @@ impl EventSink for JsonEventSink {
     }
 }
 
+/// Human-oriented inline progress renderer for `cargo evals`.
 pub struct ProgressEventSink {
     state: Arc<Mutex<ProgressState>>,
     running: Arc<AtomicBool>,
@@ -160,6 +168,7 @@ impl ProgressEventSink {
     const SCORE_COLUMN_WIDTH: u16 = 8;
     const TIME_COLUMN_WIDTH: u16 = 10;
 
+    /// Creates a new progress sink backed by an inline terminal viewport when available.
     pub fn new() -> Self {
         let terminal = if std::io::stdout().is_terminal() {
             let backend = CrosstermBackend::new(std::io::stdout());
@@ -553,6 +562,7 @@ fn sink_cell() -> &'static RwLock<SharedEventSink> {
     GLOBAL_SINK.get_or_init(|| RwLock::new(Arc::new(NoopEventSink)))
 }
 
+/// Replaces the process-global run event sink.
 pub fn set_global_sink(sink: SharedEventSink) {
     let mut guard = sink_cell()
         .write()
@@ -560,6 +570,7 @@ pub fn set_global_sink(sink: SharedEventSink) {
     *guard = sink;
 }
 
+/// Returns the current process-global run event sink.
 pub fn global_sink() -> SharedEventSink {
     sink_cell()
         .read()
@@ -567,6 +578,7 @@ pub fn global_sink() -> SharedEventSink {
         .clone()
 }
 
+/// Emits one run event through the current global sink.
 pub fn emit(event: RunEvent) {
     global_sink().emit(event);
 }

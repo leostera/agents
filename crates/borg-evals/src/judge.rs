@@ -123,9 +123,9 @@ where
 /// transcript and final reply.
 ///
 /// ```rust
-/// use borg_evals::judge;
+/// use borg_evals::{Grader, judge};
 ///
-/// let grader = judge(
+/// let grader: Grader<(), String> = judge(
 ///     "helpfulness",
 ///     "Did the assistant answer the user's request accurately and directly?",
 /// );

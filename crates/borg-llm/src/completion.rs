@@ -18,6 +18,7 @@ pub enum ProviderType {
 }
 
 impl ProviderType {
+    /// Returns the stable lowercase provider name used in config and artifacts.
     pub fn name(&self) -> &'static str {
         match self {
             ProviderType::OpenAI => "openai",
@@ -42,10 +43,12 @@ pub enum ModelSelector {
 }
 
 impl ModelSelector {
+    /// Selects whichever provider the runner chooses as its default.
     pub fn any() -> Self {
         ModelSelector::Any
     }
 
+    /// Selects an exact model name without pinning a provider.
     pub fn from_model(model: impl Into<String>) -> Self {
         ModelSelector::Specific {
             provider: None,
@@ -53,6 +56,7 @@ impl ModelSelector {
         }
     }
 
+    /// Selects the default model for one provider family.
     pub fn for_provider(provider: ProviderType) -> Self {
         ModelSelector::Provider(provider)
     }
@@ -85,6 +89,7 @@ pub enum InputItem {
 }
 
 impl InputItem {
+    /// Builds one user text message.
     pub fn user_text(text: impl Into<String>) -> Self {
         Self::Message {
             role: Role::User,
@@ -92,6 +97,7 @@ impl InputItem {
         }
     }
 
+    /// Builds one assistant text message.
     pub fn assistant_text(text: impl Into<String>) -> Self {
         Self::Message {
             role: Role::Assistant,
@@ -99,6 +105,7 @@ impl InputItem {
         }
     }
 
+    /// Builds one system text message.
     pub fn system_text(text: impl Into<String>) -> Self {
         Self::Message {
             role: Role::System,
@@ -106,6 +113,7 @@ impl InputItem {
         }
     }
 
+    /// Builds one tool call transcript item.
     pub fn tool_call(
         id: impl Into<String>,
         name: impl Into<String>,
@@ -120,6 +128,7 @@ impl InputItem {
         }
     }
 
+    /// Builds one tool result transcript item.
     pub fn tool_result(tool_use_id: impl Into<String>, content: impl Into<String>) -> Self {
         Self::ToolResult {
             tool_use_id: tool_use_id.into(),
@@ -149,10 +158,12 @@ pub enum InputContent {
 }
 
 impl InputContent {
+    /// Builds one text content part.
     pub fn text(text: impl Into<String>) -> Self {
         Self::Text { text: text.into() }
     }
 
+    /// Builds one image-url content part.
     pub fn image_url(url: impl Into<String>) -> Self {
         Self::ImageUrl { url: url.into() }
     }
@@ -194,6 +205,27 @@ impl From<Option<String>> for FinishReason {
 }
 
 /// Typed completion request sent through [`crate::LlmRunner`].
+///
+/// This is the main high-level request type for chat completions. It keeps
+/// tools and structured response parsing typed at the Rust boundary.
+///
+/// ```rust
+/// use borg_llm::{
+///     CompletionRequest, InputItem, ModelSelector, Probability, ResponseMode, TokenLimit,
+/// };
+///
+/// let request = CompletionRequest::<(), String>::new(
+///     vec![InputItem::system_text("Be concise."), InputItem::user_text("hello")],
+///     ModelSelector::from_model("llama3.2:3b"),
+/// )
+/// .with_max_tokens(256)
+/// .with_response_mode(ResponseMode::Buffered)
+/// .with_top_p(Probability::new(0.9)?);
+///
+/// assert_eq!(request.input.len(), 2);
+/// assert!(matches!(request.token_limit, TokenLimit::Max(256)));
+/// # Ok::<(), borg_llm::error::Error>(())
+/// ```
 #[derive(Debug, Clone, Builder)]
 #[builder(setter(into))]
 pub struct CompletionRequest<ToolType, ResponseType> {
@@ -219,6 +251,7 @@ pub struct CompletionRequest<ToolType, ResponseType> {
 }
 
 impl<ToolType, ResponseType> CompletionRequest<ToolType, ResponseType> {
+    /// Creates a request with explicit input and model selection.
     pub fn new(input: Vec<InputItem>, model: ModelSelector) -> Self {
         Self {
             model,
@@ -234,46 +267,55 @@ impl<ToolType, ResponseType> CompletionRequest<ToolType, ResponseType> {
         }
     }
 
+    /// Sets an explicit temperature value.
     pub fn with_temperature(mut self, temperature: f32) -> Self {
         self.temperature = Temperature::Value(temperature);
         self
     }
 
+    /// Sets the provider-neutral token limit.
     pub fn with_token_limit(mut self, token_limit: TokenLimit) -> Self {
         self.token_limit = token_limit;
         self
     }
 
+    /// Convenience helper for `TokenLimit::Max`.
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.token_limit = TokenLimit::Max(max_tokens);
         self
     }
 
+    /// Sets top-p sampling.
     pub fn with_top_p(mut self, top_p: Probability) -> Self {
         self.top_p = TopP::Value(top_p);
         self
     }
 
+    /// Sets top-k sampling.
     pub fn with_top_k(mut self, top_k: u32) -> Self {
         self.top_k = TopK::Value(top_k);
         self
     }
 
+    /// Chooses buffered or streamed response handling.
     pub fn with_response_mode(mut self, response_mode: ResponseMode) -> Self {
         self.response_mode = response_mode;
         self
     }
 
+    /// Attaches typed tool definitions to the request.
     pub fn with_tools(mut self, tools: TypedToolSet<ToolType>) -> Self {
         self.tools = Some(tools);
         self
     }
 
+    /// Overrides the tool selection behavior for this request.
     pub fn with_tool_choice(mut self, tool_choice: ToolChoice) -> Self {
         self.tool_choice = tool_choice;
         self
     }
 
+    /// Requests a typed structured response.
     pub fn with_typed_response(mut self, response_format: TypedResponse<ResponseType>) -> Self {
         self.response_format = Some(response_format);
         self
@@ -281,6 +323,10 @@ impl<ToolType, ResponseType> CompletionRequest<ToolType, ResponseType> {
 }
 
 /// Final typed completion response.
+///
+/// Providers always return a sequence of output items. When a typed response
+/// schema is configured, message content may contain
+/// [`OutputContent::Structured`] values instead of plain text.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionResponse<ToolType = (), ResponseType = String> {
@@ -351,6 +397,7 @@ pub enum ResponseMode {
 }
 
 impl ResponseMode {
+    /// Returns `true` when the caller requested streamed events.
     pub fn is_streaming(self) -> bool {
         matches!(self, Self::Stream)
     }
@@ -362,6 +409,7 @@ impl ResponseMode {
 pub struct Probability(f32);
 
 impl Probability {
+    /// Creates a validated probability in the inclusive `[0.0, 1.0]` range.
     pub fn new(value: f32) -> LlmResult<Self> {
         if (0.0..=1.0).contains(&value) {
             Ok(Self(value))
@@ -372,6 +420,7 @@ impl Probability {
         }
     }
 
+    /// Returns the raw float value.
     pub fn value(self) -> f32 {
         self.0
     }
@@ -386,6 +435,7 @@ pub enum Temperature {
 }
 
 impl Temperature {
+    /// Converts the setting into the optional provider wire value.
     pub fn as_option(self) -> Option<f32> {
         match self {
             Self::ProviderDefault => None,
@@ -403,6 +453,7 @@ pub enum TokenLimit {
 }
 
 impl TokenLimit {
+    /// Converts the setting into the optional provider wire value.
     pub fn as_option(self) -> Option<u32> {
         match self {
             Self::ProviderDefault => None,
@@ -420,6 +471,7 @@ pub enum TopP {
 }
 
 impl TopP {
+    /// Converts the setting into the optional provider wire value.
     pub fn as_option(self) -> Option<f32> {
         match self {
             Self::ProviderDefault => None,
@@ -437,6 +489,7 @@ pub enum TopK {
 }
 
 impl TopK {
+    /// Converts the setting into the optional provider wire value.
     pub fn as_option_i32(self) -> Option<i32> {
         match self {
             Self::ProviderDefault => None,
@@ -466,18 +519,20 @@ pub enum CompletionEvent<ToolType, ResponseType> {
     Done(CompletionResponse<ToolType, ResponseType>),
 }
 
-/// Stream of typed completion events.
+/// Stream of typed completion events returned by [`crate::LlmRunner::chat_stream`].
 pub struct CompletionEventStream<ToolType, ResponseType> {
     receiver: mpsc::Receiver<crate::error::LlmResult<CompletionEvent<ToolType, ResponseType>>>,
 }
 
 impl<ToolType, ResponseType> CompletionEventStream<ToolType, ResponseType> {
+    /// Wraps a raw receiver into a typed stream handle.
     pub fn new(
         receiver: mpsc::Receiver<crate::error::LlmResult<CompletionEvent<ToolType, ResponseType>>>,
     ) -> Self {
         Self { receiver }
     }
 
+    /// Awaits the next streamed completion event.
     pub async fn recv(
         &mut self,
     ) -> Option<crate::error::LlmResult<CompletionEvent<ToolType, ResponseType>>> {
@@ -486,6 +541,9 @@ impl<ToolType, ResponseType> CompletionEventStream<ToolType, ResponseType> {
 }
 
 /// Untyped completion request sent directly to a provider implementation.
+///
+/// Provider adapters should use this type instead of [`CompletionRequest`] when
+/// translating requests into provider wire formats.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RawCompletionRequest {
@@ -571,16 +629,18 @@ pub enum RawCompletionEvent {
     Done(RawCompletionResponse),
 }
 
-/// Stream of raw completion events.
+/// Stream of raw completion events for provider implementations.
 pub struct RawCompletionEventStream {
     receiver: mpsc::Receiver<crate::error::LlmResult<RawCompletionEvent>>,
 }
 
 impl RawCompletionEventStream {
+    /// Wraps a raw receiver into an event stream handle.
     pub fn new(receiver: mpsc::Receiver<crate::error::LlmResult<RawCompletionEvent>>) -> Self {
         Self { receiver }
     }
 
+    /// Awaits the next streamed raw completion event.
     pub async fn recv(&mut self) -> Option<crate::error::LlmResult<RawCompletionEvent>> {
         self.receiver.recv().await
     }
