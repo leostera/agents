@@ -56,7 +56,7 @@ pub fn expand_agent_tool(input: &DeriveInput) -> Result<TokenStream> {
     let Data::Enum(DataEnum { variants, .. }) = &input.data else {
         return Err(syn::Error::new_spanned(
             input,
-            "AgentTool can only be derived for enums",
+            "Tool can only be derived for enums",
         ));
     };
 
@@ -130,7 +130,7 @@ fn expand_variant(enum_ident: &syn::Ident, variant: &syn::Variant) -> Result<Var
         ),
         Fields::Unnamed(_) => Err(syn::Error::new_spanned(
             variant,
-            "AgentTool only supports unit variants, single-field tuple variants, or named-field variants",
+            "Tool derive only supports unit variants, single-field tuple variants, or named-field variants",
         )),
     }
 }
@@ -206,7 +206,7 @@ fn expand_named_variant(
     description: Option<LitStr>,
     fields: Vec<&Field>,
 ) -> Result<VariantSpec> {
-    let helper_ident = format_ident!("__BorgAgentToolArgs_{}_{}", enum_ident, ident);
+    let helper_ident = format_ident!("__BorgAgentToolArgs{}{}", enum_ident, ident,);
     let helper_fields = fields.iter().map(|field| {
         let field_ident = field.ident.clone().expect("named field");
         let field_ty = &field.ty;
@@ -307,14 +307,14 @@ mod tests {
 
         assert_snapshot!(pretty, @r#"
         #[derive(::serde::Deserialize, ::schemars::JsonSchema)]
-        struct __BorgAgentToolArgs_TestTools_Ping {
+        struct __BorgAgentToolArgsTestToolsPing {
             pub value: String,
         }
         impl ::borg_llm::tools::TypedTool for TestTools {
             fn tool_definitions() -> Vec<::borg_llm::tools::ToolDefinition> {
                 vec![
                     ::borg_llm::tools::ToolDefinition::function("ping", Some("Ping tool"),
-                    ::serde_json::to_value(::schemars::schema_for!(__BorgAgentToolArgs_TestTools_Ping))
+                    ::serde_json::to_value(::schemars::schema_for!(__BorgAgentToolArgsTestToolsPing))
                     .expect("serialize tool schema"),),
                     ::borg_llm::tools::ToolDefinition::function("echo_text", Some("Echo tool"),
                     ::serde_json::to_value(::schemars::schema_for!(EchoArgs))
@@ -331,7 +331,7 @@ mod tests {
                 match name {
                     "ping" => {
                         let args = ::serde_json::from_value::<
-                            __BorgAgentToolArgs_TestTools_Ping,
+                            __BorgAgentToolArgsTestToolsPing,
                         >(arguments)
                             .map_err(|error| ::borg_llm::error::Error::parse(
                                 "tool arguments",

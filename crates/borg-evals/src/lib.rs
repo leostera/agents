@@ -32,6 +32,44 @@ pub use trial::{
     AgentTrial, AgentTrialRecorder, RecordedEvent, RecordedMessageRole, RecordedToolCall,
 };
 
+#[macro_export]
+macro_rules! user {
+    ($message:expr) => {
+        $crate::Step::user($message)
+    };
+}
+
+#[macro_export]
+macro_rules! assistant {
+    ($grading:expr) => {
+        $grading
+    };
+}
+
+#[macro_export]
+macro_rules! trajectory {
+    [
+        user!($first_user:expr)
+        $(, assistant!($first_grade:expr))?
+        $(, user!($next_user:expr) $(, assistant!($next_grade:expr))? )*
+        $(,)?
+    ] => {{
+        $crate::Trajectory::builder()
+            .add_step(
+                $crate::Step::user($first_user)
+                    $(.grade($first_grade))?
+            )
+            $(
+                .add_step(
+                    $crate::Step::user($next_user)
+                        $(.grade($next_grade))?
+                )
+            )*
+            .build()
+            .expect("trajectory! generated an invalid trajectory")
+    }};
+}
+
 pub mod prelude {
     pub use crate::{
         AgentTrial, AgentTrialRecorder, ArtifactIndex, Eval, EvalAgent, EvalAggregate, EvalContext,
@@ -39,7 +77,8 @@ pub mod prelude {
         GraderFailure, GradingConfig, JsonEventSink, ProgressEventSink, RecordedEvent,
         RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite, SharedEventSink,
         Step, Suite, SuiteDescriptor, SuiteKind, SuiteRunReport, Trajectory, TrajectoryBuilder,
-        async_trait, build, emit, global_sink, grade, set_global_sink, setup,
+        assistant, async_trait, build, emit, global_sink, grade, set_global_sink, setup,
+        trajectory, user,
     };
 }
 
@@ -355,6 +394,26 @@ mod tests {
         assert!(variant.trials[0].grades.contains_key("echoes-hello"));
         assert_eq!(variant.suite.evals[0].grader_means.len(), 1);
         assert_eq!(variant.suite.evals[0].grader_means[0].name, "echoes-hello");
+    }
+
+    #[test]
+    fn trajectory_macro_builds_linear_steps() {
+        let grading = GradingConfig::<(), String>::new().grade("always", |_, _| async move {
+            Ok(GradeResult {
+                score: 1.0,
+                summary: "always".to_string(),
+                evidence: serde_json::Value::Null,
+            })
+        });
+
+        let trajectory: Trajectory<EchoAgent> = trajectory![
+            user!("hello".to_string()),
+            assistant!(grading.clone()),
+            user!("world".to_string()),
+            assistant!(grading),
+        ];
+
+        assert_eq!(trajectory.steps().len(), 2);
     }
 
     #[tokio::test]

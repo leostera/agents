@@ -64,9 +64,10 @@ async fn echoes_empty(
 async fn echoes_plain_text(
     _ctx: EvalContext<EchoHarness>,
 ) -> Result<Trajectory<EchoAgent, EchoHarness>> {
-    Ok(Trajectory::new(
-        Step::user(EchoReq("hello".to_string())).grade(echoes_hello()),
-    ))
+    Ok(trajectory![
+        user!(EchoReq("hello".to_string())),
+        assistant!(echoes_hello()),
+    ])
 }
 
 #[borg_macros::eval(
@@ -77,9 +78,10 @@ async fn echoes_plain_text(
 async fn preserves_newlines(
     _ctx: EvalContext<EchoHarness>,
 ) -> Result<Trajectory<EchoAgent, EchoHarness>> {
-    Ok(Trajectory::new(
-        Step::user(EchoReq("hello\nworld".to_string())).grade(echoes_multiline()),
-    ))
+    Ok(trajectory![
+        user!(EchoReq("hello\nworld".to_string())),
+        assistant!(echoes_multiline()),
+    ])
 }
 
 #[borg_macros::eval(
@@ -90,7 +92,8 @@ async fn preserves_newlines(
 async fn preserves_empty_string(
     _ctx: EvalContext<EchoHarness>,
 ) -> Result<Trajectory<EchoAgent, EchoHarness>> {
-    Ok(Trajectory::new(
-        Step::user(EchoReq("".to_string())).grade(echoes_empty()),
-    ))
+    Ok(trajectory![
+        user!(EchoReq("".to_string())),
+        assistant!(echoes_empty()),
+    ])
 }

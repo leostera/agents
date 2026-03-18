@@ -5,7 +5,7 @@ use borg_agent::{
     Agent, AgentResult, ContextManager, ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope,
     ToolRunner,
 };
-use borg_evals::{EvalAgent, EvalError, EvalResult, ExecutionTarget, async_trait};
+use borg_evals::{ExecutionTarget, async_trait};
 use borg_llm::completion::InputItem;
 use borg_llm::runner::LlmRunner;
 use borg_llm::testing::{TestContext, TestProvider};
@@ -47,18 +47,13 @@ pub struct EchoRes {
     pub text: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct EchoArgs {
-    pub text: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, borg_macros::AgentTool)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, borg_macros::Tool)]
 pub enum EchoTool {
     #[agent_tool(
         name = "echo_text",
         description = "Return the exact input text unchanged."
     )]
-    Echo(EchoArgs),
+    Echo { text: String },
 }
 
 #[derive(Clone)]
@@ -71,7 +66,7 @@ impl ToolRunner<EchoTool, String> for EchoToolRunner {
         call: ToolCallEnvelope<EchoTool>,
     ) -> AgentResult<ToolResultEnvelope<String>> {
         let result = match call.call {
-            EchoTool::Echo(args) => ToolExecutionResult::Ok { data: args.text },
+            EchoTool::Echo { text } => ToolExecutionResult::Ok { data: text },
         };
 
         Ok(ToolResultEnvelope {
@@ -81,6 +76,7 @@ impl ToolRunner<EchoTool, String> for EchoToolRunner {
     }
 }
 
+#[derive(borg_macros::EvalAgent)]
 pub struct EchoAgent {
     agent: Agent<EchoReq, EchoTool, String, EchoRes>,
 }
@@ -98,25 +94,5 @@ impl EchoAgent {
             .build()?;
 
         Ok(Self { agent })
-    }
-}
-
-#[async_trait]
-impl EvalAgent for EchoAgent {
-    type Input = EchoReq;
-    type ToolCall = EchoTool;
-    type ToolResult = String;
-    type Output = EchoRes;
-
-    async fn run(
-        self,
-    ) -> EvalResult<(
-        borg_agent::AgentRunInput<Self::Input>,
-        borg_agent::AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
-    )> {
-        self.agent
-            .run()
-            .await
-            .map_err(|error| EvalError::message(error.to_string()))
     }
 }

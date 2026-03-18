@@ -25,7 +25,7 @@ const DEFAULT_OLLAMA_MODELS: &[(&str, &str)] = &[
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AddArgs(u32, u32);
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, borg_macros::AgentTool)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, borg_macros::Tool)]
 pub enum CalcOp {
     ToolAdd(AddArgs),
 }
@@ -64,6 +64,7 @@ impl ToolRunner<CalcOp, u32> for CalcToolRunner {
     }
 }
 
+#[derive(borg_macros::EvalAgent)]
 pub struct CalculatorAgent {
     agent: Agent<CalcReq, CalcOp, u32, CalcRes>,
 }
@@ -81,29 +82,6 @@ impl CalculatorAgent {
             .build()?;
 
         Ok(Self { agent })
-    }
-}
-
-#[async_trait]
-impl EvalAgent for CalculatorAgent {
-    type Input = CalcReq;
-
-    type ToolCall = CalcOp;
-
-    type ToolResult = u32;
-
-    type Output = CalcRes;
-
-    async fn run(
-        self,
-    ) -> EvalResult<(
-        borg_agent::AgentRunInput<Self::Input>,
-        borg_agent::AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
-    )> {
-        self.agent
-            .run()
-            .await
-            .map_err(|error| EvalError::message(error.to_string()))
     }
 }
 
