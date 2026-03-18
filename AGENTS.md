@@ -25,6 +25,7 @@ Use it as a router: pick the most relevant existing AGENTS file before making ch
 - Initialize tracing before other app logic.
 - Prefer error propagation with `?` where possible.
 - When updating paths in documentation never use absolute paths -- always use paths relative to the repository root
+- Git hooks are managed via Cargo Husky user hooks in `.cargo-husky/hooks/`; do not reintroduce `.husky` or `core.hooksPath` overrides unless explicitly intended
 
 ## Fast Start Checklist
 
