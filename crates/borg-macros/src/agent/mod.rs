@@ -3,10 +3,10 @@ use quote::quote;
 use syn::{Data, DeriveInput, Field, Fields, Result};
 
 pub fn expand(input: DeriveInput) -> Result<TokenStream> {
-    expand_eval_agent(&input)
+    expand_agent(&input)
 }
 
-fn expand_eval_agent(input: &DeriveInput) -> Result<TokenStream> {
+fn expand_agent(input: &DeriveInput) -> Result<TokenStream> {
     let struct_ident = &input.ident;
     let accessor = find_agent_field(input)?;
     let field_ty = find_agent_field_type(input)?;
@@ -56,7 +56,7 @@ fn find_agent_field(input: &DeriveInput) -> Result<TokenStream> {
     let Data::Struct(data) = &input.data else {
         return Err(syn::Error::new_spanned(
             input,
-            "EvalAgent can only be derived for structs",
+            "Agent can only be derived for structs",
         ));
     };
 
@@ -81,11 +81,11 @@ fn find_agent_field(input: &DeriveInput) -> Result<TokenStream> {
                 }
                 [] => Err(syn::Error::new_spanned(
                     fields,
-                    "EvalAgent derive needs exactly one field or one #[agent] field",
+                    "Agent derive needs exactly one field or one #[agent] field",
                 )),
                 _ => Err(syn::Error::new_spanned(
                     fields,
-                    "EvalAgent derive found multiple #[agent] fields",
+                    "Agent derive found multiple #[agent] fields",
                 )),
             }
         }
@@ -102,17 +102,17 @@ fn find_agent_field(input: &DeriveInput) -> Result<TokenStream> {
                 }
                 [] => Err(syn::Error::new_spanned(
                     fields,
-                    "EvalAgent derive needs exactly one field or one #[agent] field",
+                    "Agent derive needs exactly one field or one #[agent] field",
                 )),
                 _ => Err(syn::Error::new_spanned(
                     fields,
-                    "EvalAgent derive found multiple #[agent] fields",
+                    "Agent derive found multiple #[agent] fields",
                 )),
             }
         }
         Fields::Unit => Err(syn::Error::new_spanned(
             input,
-            "EvalAgent derive requires a field containing the inner agent",
+            "Agent derive requires a field containing the inner agent",
         )),
     }
 }
@@ -121,7 +121,7 @@ fn find_agent_field_type(input: &DeriveInput) -> Result<syn::Type> {
     let Data::Struct(data) = &input.data else {
         return Err(syn::Error::new_spanned(
             input,
-            "EvalAgent can only be derived for structs",
+            "Agent can only be derived for structs",
         ));
     };
 
@@ -145,11 +145,11 @@ fn find_agent_field_type(input: &DeriveInput) -> Result<syn::Type> {
                 [field] => Ok(field.ty.clone()),
                 [] => Err(syn::Error::new_spanned(
                     fields,
-                    "EvalAgent derive needs exactly one field or one #[agent] field",
+                    "Agent derive needs exactly one field or one #[agent] field",
                 )),
                 _ => Err(syn::Error::new_spanned(
                     fields,
-                    "EvalAgent derive found multiple #[agent] fields",
+                    "Agent derive found multiple #[agent] fields",
                 )),
             }
         }
@@ -163,17 +163,17 @@ fn find_agent_field_type(input: &DeriveInput) -> Result<syn::Type> {
                 [field] => Ok(field.ty.clone()),
                 [] => Err(syn::Error::new_spanned(
                     fields,
-                    "EvalAgent derive needs exactly one field or one #[agent] field",
+                    "Agent derive needs exactly one field or one #[agent] field",
                 )),
                 _ => Err(syn::Error::new_spanned(
                     fields,
-                    "EvalAgent derive found multiple #[agent] fields",
+                    "Agent derive found multiple #[agent] fields",
                 )),
             }
         }
         Fields::Unit => Err(syn::Error::new_spanned(
             input,
-            "EvalAgent derive requires a field containing the inner agent",
+            "Agent derive requires a field containing the inner agent",
         )),
     }
 }
@@ -195,7 +195,7 @@ mod tests {
             struct EchoAgent(::borg_agent::SessionAgent<EchoReq, EchoTool, String, EchoRes>);
         };
 
-        let expanded = expand_eval_agent(&input).expect("expand eval agent derive");
+        let expanded = expand_agent(&input).expect("expand eval agent derive");
         let file: syn::File = syn::parse2(expanded).expect("parse expanded file");
         let pretty = prettyplease::unparse(&file);
 
@@ -263,7 +263,7 @@ mod tests {
             }
         };
 
-        let expanded = expand_eval_agent(&input).expect("expand eval agent derive");
+        let expanded = expand_agent(&input).expect("expand eval agent derive");
         let file: syn::File = syn::parse2(expanded).expect("parse expanded file");
         let pretty = prettyplease::unparse(&file);
 
@@ -329,7 +329,7 @@ mod tests {
             }
         };
 
-        let expanded = expand_eval_agent(&input).expect("expand eval agent derive");
+        let expanded = expand_agent(&input).expect("expand eval agent derive");
         let file: syn::File = syn::parse2(expanded).expect("parse expanded file");
         let pretty = prettyplease::unparse(&file);
 
@@ -396,7 +396,7 @@ mod tests {
             }
         };
 
-        let error = expand_eval_agent(&input).expect_err("derive should fail");
+        let error = expand_agent(&input).expect_err("derive should fail");
         assert!(
             error
                 .to_string()

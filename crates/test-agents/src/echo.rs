@@ -1,11 +1,15 @@
 use anyhow::Result;
-use borg_agent::*;
+use async_trait::async_trait;
+use borg_agent::{
+    AgentResult, ContextManager, SessionAgent, ToolCallEnvelope, ToolExecutionResult,
+    ToolResultEnvelope, ToolRunner,
+};
 use borg_llm::completion::InputItem;
 use borg_llm::runner::LlmRunner;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-static DEFAULT_PROMPT: &'static str = "You are an echo agent. Always call the echo_text tool exactly once with the user's full text. Then reply as JSON matching the EchoRes schema with the same text in the `text` field.";
+static DEFAULT_PROMPT: &str = "You are an echo agent. Always call the echo_text tool exactly once with the user's full text. Then reply as JSON matching the EchoRes schema with the same text in the `text` field.";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EchoRequest(pub String);
@@ -55,7 +59,7 @@ impl ToolRunner<EchoToolCall, EchoToolResponse> for EchoToolRunner {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EchoToolResponse(String);
 
-#[derive(Agent)]
+#[derive(borg_macros::Agent)]
 pub struct EchoAgent {
     agent: SessionAgent<EchoRequest, EchoToolCall, EchoToolResponse, EchoResponseFormat>,
 }

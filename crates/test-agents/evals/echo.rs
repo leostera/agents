@@ -107,15 +107,11 @@ async fn echoes_plain_text(
     desc = "multiline strings are preserved",
     tags = ["echo", "multiline"],
 )]
-async fn preserves_newlines(
-    _ctx: EvalContext<EchoHarness>,
-) -> Result<Trajectory<EchoAgent, EchoHarness>> {
+async fn preserves_newlines(_ctx: EvalContext<EchoHarness>) -> Result<Trajectory<EchoAgent, EchoHarness>> {
     Ok(trajectory![
         user!(EchoRequest("hello\nworld".to_string())),
         assistant!(echoes_multiline()),
-        user!(EchoRequest(
-            "hello\nwiht longer lines\nand consecutive newlines\n\n\n".to_string()
-        )),
+        user!(EchoRequest("hello\nwiht longer lines\nand consecutive newlines\n\n\n".to_string())),
         assistant!(echoes_multiline()),
     ])
 }

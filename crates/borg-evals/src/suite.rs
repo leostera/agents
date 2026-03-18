@@ -282,27 +282,26 @@ where
             };
         }
 
-        if let Some(query) = self.filter.query.as_deref() {
-            if !suite.id().contains(query) {
-                let mut matched_eval_ids = std::collections::BTreeSet::new();
-                config.targets.retain(|target| {
-                    let matching_eval_ids = suite
-                        .evals()
-                        .iter()
-                        .filter_map(|eval| {
-                            let search_key =
-                                format!("{}::{}::{}", suite.id(), target.label, eval.id());
-                            search_key.contains(query).then(|| eval.id().to_string())
-                        })
-                        .collect::<Vec<_>>();
-                    let target_has_match = !matching_eval_ids.is_empty();
-                    matched_eval_ids.extend(matching_eval_ids);
-                    target_has_match
-                });
-                suite
-                    .evals
-                    .retain(|eval| matched_eval_ids.contains(eval.id()));
-            }
+        if let Some(query) = self.filter.query.as_deref()
+            && !suite.id().contains(query)
+        {
+            let mut matched_eval_ids = std::collections::BTreeSet::new();
+            config.targets.retain(|target| {
+                let matching_eval_ids = suite
+                    .evals()
+                    .iter()
+                    .filter_map(|eval| {
+                        let search_key = format!("{}::{}::{}", suite.id(), target.label, eval.id());
+                        search_key.contains(query).then(|| eval.id().to_string())
+                    })
+                    .collect::<Vec<_>>();
+                let target_has_match = !matching_eval_ids.is_empty();
+                matched_eval_ids.extend(matching_eval_ids);
+                target_has_match
+            });
+            suite
+                .evals
+                .retain(|eval| matched_eval_ids.contains(eval.id()));
         }
 
         if suite.evals.is_empty() || config.targets.is_empty() {
