@@ -6,8 +6,8 @@ targets = [
   { provider = "ollama", model = "llama3.3:70b" },
   { provider = "ollama", model = "qwen3.5:35b-a3b" },
   { provider = "ollama", model = "mistral-nemo" },
-  { provider = "openai", model = "gpt-5.3-codex" },
-  { provider = "openrouter", model = "google/gemini-3-flash" },
+  # { provider = "openai", model = "gpt-5.3-codex" },
+  # { provider = "openrouter", model = "google/gemini-3-flash" },
 ]
 
 [provider.ollama]

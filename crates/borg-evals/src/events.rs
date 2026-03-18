@@ -145,7 +145,14 @@ struct ProgressRow {
 enum ProgressStatus {
     Pending,
     Running { frame: usize },
-    Finished { passed: bool },
+    Finished { outcome: ProgressOutcome },
+}
+
+#[derive(Clone, Copy)]
+enum ProgressOutcome {
+    Passed,
+    Failed,
+    Errored,
 }
 
 impl ProgressEventSink {
@@ -238,16 +245,21 @@ impl ProgressEventSink {
                     Style::default().fg(Color::Cyan),
                 ));
             }
-            ProgressStatus::Finished { passed } => {
-                let (symbol, style) = if passed {
-                    (
+            ProgressStatus::Finished { outcome } => {
+                let (symbol, style) = match outcome {
+                    ProgressOutcome::Passed => (
                         "✓ ",
                         Style::default()
                             .fg(Color::Green)
                             .add_modifier(Modifier::BOLD),
-                    )
-                } else {
-                    ("✗ ", Style::default().fg(Color::Red))
+                    ),
+                    ProgressOutcome::Failed => ("✗ ", Style::default().fg(Color::Red)),
+                    ProgressOutcome::Errored => (
+                        "E ",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 };
                 spans.push(Span::styled(symbol, style));
             }
@@ -262,6 +274,12 @@ impl ProgressEventSink {
             .iter()
             .map(|mark| match mark {
                 'F' => Span::styled("F", Style::default().fg(Color::Red)),
+                'E' => Span::styled(
+                    "E",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 other => Span::raw(other.to_string()),
             })
             .collect()
@@ -428,6 +446,7 @@ impl EventSink for ProgressEventSink {
                 passed,
                 mean_score,
                 duration_ms,
+                error,
                 ..
             } => {
                 let key = Self::key(&suite_id, &eval_id, &target_label);
@@ -455,7 +474,13 @@ impl EventSink for ProgressEventSink {
                     }
                     _ => ProgressStatus::Running { frame: 0 },
                 };
-                row.marks.push(if passed { '.' } else { 'F' });
+                row.marks.push(if error.is_some() {
+                    'E'
+                } else if passed {
+                    '.'
+                } else {
+                    'F'
+                });
                 row.total_score += mean_score;
                 row.total_duration_ms += duration_ms;
                 let completed_trials = row.marks.len() as u128;
@@ -492,7 +517,13 @@ impl EventSink for ProgressEventSink {
                 let row = state.rows.get_mut(&key).expect("progress row inserted");
                 row.trials = trial_count;
                 row.status = ProgressStatus::Finished {
-                    passed: mean_score > 0.8,
+                    outcome: if row.marks.contains(&'E') {
+                        ProgressOutcome::Errored
+                    } else if mean_score > 0.8 {
+                        ProgressOutcome::Passed
+                    } else {
+                        ProgressOutcome::Failed
+                    },
                 };
                 row.mean_score = Some(mean_score);
                 row.mean_duration_ms = Some(mean_duration_ms);

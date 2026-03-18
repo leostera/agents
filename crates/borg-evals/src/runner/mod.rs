@@ -22,10 +22,22 @@ pub struct RunOptions {
     pub filter: TargetFilter,
 }
 
-pub fn list_workspace(workspace_root: &Path, options: RunOptions) -> Result<()> {
+pub struct WorkspaceRunConfig {
+    pub run_config: RunConfig,
+    pub output_dir: String,
+}
+
+pub fn load_workspace_run_config(workspace_root: &Path) -> Result<WorkspaceRunConfig> {
     let evals_file = EvalsFile::load(workspace_root)?;
-    let crates = discover_eval_crates(workspace_root);
-    let harness = generate_harness(workspace_root, &evals_file, &crates)?;
+    Ok(WorkspaceRunConfig {
+        run_config: evals_file.run_config(),
+        output_dir: evals_file.output_dir().to_string(),
+    })
+}
+
+pub fn list_workspace(workspace_root: &Path, options: RunOptions) -> Result<()> {
+    let crates = discover_eval_crates(workspace_root)?;
+    let harness = generate_harness(workspace_root, &crates)?;
 
     let mut command = Command::new("cargo");
     command
@@ -66,9 +78,8 @@ pub fn list_models_workspace(workspace_root: &Path) -> Result<()> {
 }
 
 pub async fn run_workspace(workspace_root: &Path, options: RunOptions) -> Result<()> {
-    let evals_file = EvalsFile::load(workspace_root)?;
-    let crates = discover_eval_crates(workspace_root);
-    let harness = generate_harness(workspace_root, &evals_file, &crates)?;
+    let crates = discover_eval_crates(workspace_root)?;
+    let harness = generate_harness(workspace_root, &crates)?;
 
     print!("Preparing evals... ");
     std::io::Write::flush(&mut std::io::stdout()).context("flush prepare message")?;

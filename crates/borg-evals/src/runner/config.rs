@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
+use crate::{ExecutionTarget, OllamaProviderConfig as PublicOllamaProviderConfig, ProviderConfigs, RunConfig};
 use borg_llm::completion::ProviderType;
 use config::{Config, File, FileFormat};
 use serde::Deserialize;
@@ -53,25 +54,34 @@ impl EvalsFile {
         Ok(file)
     }
 
-    pub(super) fn provider_expr(&self) -> proc_macro2::TokenStream {
-        let ollama = self
-            .provider
-            .ollama
-            .as_ref()
-            .map(|config| {
-                let url = &config.url;
-                quote::quote! {
-                    Some(::borg_evals::OllamaProviderConfig {
-                        url: #url.to_string(),
-                    })
-                }
-            })
-            .unwrap_or_else(|| quote::quote!(None));
+    pub(super) fn run_config(&self) -> RunConfig {
+        RunConfig::new(
+            self.evals
+                .targets
+                .iter()
+                .map(|target| {
+                    ExecutionTarget::new(
+                        target.label.as_deref().unwrap_or(""),
+                        &target.provider,
+                        &target.model,
+                    )
+                    .with_max_in_flight(target.concurrency.unwrap_or(1))
+                })
+                .collect(),
+        )
+        .with_trials(self.evals.trials)
+        .with_provider_configs(self.provider_configs())
+    }
 
-        quote::quote! {
-            ::borg_evals::ProviderConfigs {
-                ollama: #ollama,
-            }
+    pub(super) fn output_dir(&self) -> &str {
+        &self.evals.output_dir
+    }
+
+    fn provider_configs(&self) -> ProviderConfigs {
+        ProviderConfigs {
+            ollama: self.provider.ollama.as_ref().map(|config| PublicOllamaProviderConfig {
+                url: config.url.clone(),
+            }),
         }
     }
 
