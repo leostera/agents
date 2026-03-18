@@ -3,6 +3,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use borg_agent::{Agent, AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
+use borg_llm::runner::LlmRunner;
 use tracing::debug;
 
 use crate::config::ExecutionTarget;
@@ -58,6 +59,7 @@ pub struct EvalContext<State = ()> {
     pub trial_id: String,
     pub trial_index: usize,
     pub target: ExecutionTarget,
+    pub llm_runner: Arc<LlmRunner>,
     pub state: Arc<State>,
 }
 
@@ -69,6 +71,7 @@ impl<State> Clone for EvalContext<State> {
             trial_id: self.trial_id.clone(),
             trial_index: self.trial_index,
             target: self.target.clone(),
+            llm_runner: self.llm_runner.clone(),
             state: self.state.clone(),
         }
     }
@@ -93,6 +96,10 @@ impl<State> EvalContext<State> {
 
     pub fn state(&self) -> &Arc<State> {
         &self.state
+    }
+
+    pub fn llm_runner(&self) -> Arc<LlmRunner> {
+        self.llm_runner.clone()
     }
 }
 

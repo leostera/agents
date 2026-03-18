@@ -128,8 +128,8 @@ where
     T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
     R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
 {
-    pub fn with_llm_runner(mut self, llm: LlmRunner) -> Self {
-        self.llm = Some(Arc::new(llm));
+    pub fn with_llm_runner(mut self, llm: Arc<LlmRunner>) -> Self {
+        self.llm = Some(llm);
         self
     }
 
@@ -1190,7 +1190,8 @@ mod tests {
                     .add_provider(FakeProvider::with_responses(vec![Ok(
                         assistant_text_response("hello back"),
                     )]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1227,7 +1228,7 @@ mod tests {
                     .add_provider(StaticContextProvider::system_text("You are a test agent."))
                     .build(),
             )
-            .with_llm_runner(runner)
+            .with_llm_runner(runner.into())
             .build()
             .expect("agent");
 
@@ -1256,7 +1257,8 @@ mod tests {
                     .add_provider(FakeProvider::with_responses(vec![Ok(
                         assistant_json_response(serde_json::json!({ "value": "typed-ok" })),
                     )]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1288,7 +1290,7 @@ mod tests {
             .build();
         let mut agent = Agent::builder()
             .with_tool_runner(ping_tool_runner())
-            .with_llm_runner(runner)
+            .with_llm_runner(runner.into())
             .build()
             .expect("agent");
 
@@ -1346,7 +1348,7 @@ mod tests {
 
         let mut agent = Agent::builder()
             .with_tool_runner(failing_runner)
-            .with_llm_runner(runner)
+            .with_llm_runner(runner.into())
             .build()
             .expect("agent");
 
@@ -1392,7 +1394,7 @@ mod tests {
             .build();
         let mut agent = Agent::builder()
             .with_tool_runner(unit_tool_runner())
-            .with_llm_runner(runner)
+            .with_llm_runner(runner.into())
             .build()
             .expect("agent");
 
@@ -1428,7 +1430,8 @@ mod tests {
                     .add_provider(FakeProvider::with_responses(vec![Ok(
                         assistant_text_response("hello from run"),
                     )]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1460,7 +1463,8 @@ mod tests {
                         Ok(tool_call_response()),
                         Ok(assistant_text_response("done after tool")),
                     ]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1499,7 +1503,8 @@ mod tests {
                         Ok(assistant_text_response("first")),
                         Ok(assistant_text_response("second")),
                     ]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1542,7 +1547,8 @@ mod tests {
                     .add_provider(FakeProvider::with_responses(vec![Ok(
                         assistant_text_response("stored hello"),
                     )]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1597,7 +1603,8 @@ mod tests {
                         Ok(assistant_text_response("first")),
                         Ok(assistant_text_response("second")),
                     ]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1644,7 +1651,8 @@ mod tests {
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(tool_call_response())]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1680,7 +1688,8 @@ mod tests {
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Err(provider_error())]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1705,7 +1714,8 @@ mod tests {
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1724,7 +1734,7 @@ mod tests {
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
         let mut agent = Agent::builder()
-            .with_llm_runner(runner)
+            .with_llm_runner(runner.into())
             .build()
             .expect("agent");
 
@@ -1759,7 +1769,8 @@ mod tests {
                         Ok(assistant_text_response("first")),
                         Ok(assistant_text_response("second")),
                     ]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1807,7 +1818,8 @@ mod tests {
                     .add_provider(FakeProvider::with_responses(vec![Ok(
                         assistant_text_response("steered"),
                     )]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1839,7 +1851,7 @@ mod tests {
             .build();
         let mut agent = Agent::builder()
             .with_tool_runner(ping_tool_runner())
-            .with_llm_runner(runner)
+            .with_llm_runner(runner.into())
             .build()
             .expect("agent");
 
@@ -1897,7 +1909,8 @@ mod tests {
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(tool_call_response())]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1950,7 +1963,8 @@ mod tests {
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Ok(response)]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -1973,7 +1987,7 @@ mod tests {
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
         let mut agent = Agent::builder()
-            .with_llm_runner(runner)
+            .with_llm_runner(runner.into())
             .build()
             .expect("agent");
 
@@ -2009,7 +2023,7 @@ mod tests {
             .build();
         let mut agent = Agent::builder()
             .with_response_type::<EchoResponse>()
-            .with_llm_runner(runner)
+            .with_llm_runner(runner.into())
             .build()
             .expect("agent");
 
@@ -2034,7 +2048,7 @@ mod tests {
             .add_provider(ArcBackedFakeProvider(provider.clone()))
             .build();
         let mut agent = Agent::builder()
-            .with_llm_runner(runner)
+            .with_llm_runner(runner.into())
             .build()
             .expect("agent");
 
@@ -2058,7 +2072,8 @@ mod tests {
                     .add_provider(FakeProvider::with_responses(vec![Ok(
                         assistant_text_response("hello back"),
                     )]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");
@@ -2085,7 +2100,8 @@ mod tests {
             .with_llm_runner(
                 LlmRunner::builder()
                     .add_provider(FakeProvider::with_responses(vec![Err(provider_error())]))
-                    .build(),
+                    .build()
+                    .into(),
             )
             .build()
             .expect("agent");

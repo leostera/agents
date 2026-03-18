@@ -1,10 +1,19 @@
 use std::collections::BTreeMap;
+use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use borg_agent::Agent;
+use borg_llm::error::Error as LlmError;
+use borg_llm::provider::anthropic::{Anthropic, AnthropicConfig};
+use borg_llm::provider::apple::{Apple, AppleConfig};
+use borg_llm::provider::lm_studio::{LmStudio, LmStudioConfig};
+use borg_llm::provider::ollama::{Ollama, OllamaConfig};
+use borg_llm::provider::openai::{OpenAI, OpenAIConfig};
+use borg_llm::provider::openrouter::{OpenRouter, OpenRouterConfig};
+use borg_llm::runner::LlmRunner;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
@@ -20,6 +29,110 @@ use crate::report::{
     EvalRunReport, IncrementalSuiteWriter, RunManifest, SCHEMA_VERSION, SuiteRunReport,
     TrialRecord, build_summary, now_since_epoch, run_id,
 };
+
+fn llm_runner_for_target(target: &ExecutionTarget) -> EvalResult<LlmRunner> {
+    let runner = match target.provider.as_str() {
+        "default" => LlmRunner::builder().build(),
+        "ollama" => {
+            let mut config = OllamaConfig::new(target.model.clone());
+            if let Some(base_url) = optional_env(&["BORG_LLM_OLLAMA_BASE_URL", "OLLAMA_BASE_URL"]) {
+                config = config.with_base_url(base_url);
+            }
+            LlmRunner::builder()
+                .add_provider(Ollama::new(config))
+                .build()
+        }
+        "lm_studio" => {
+            let mut config = LmStudioConfig::new(target.model.clone());
+            if let Some(base_url) =
+                optional_env(&["BORG_LLM_LM_STUDIO_BASE_URL", "LM_STUDIO_BASE_URL"])
+            {
+                config = config.with_base_url(base_url);
+            }
+            if let Some(token) =
+                optional_env(&["BORG_LLM_LM_STUDIO_API_TOKEN", "LM_STUDIO_API_TOKEN"])
+            {
+                config = config.with_api_token(token);
+            }
+            LlmRunner::builder()
+                .add_provider(LmStudio::new(config))
+                .build()
+        }
+        "openai" => {
+            let Some(api_key) = optional_env(&[
+                "BORG_LLM_OPENAI_API_KEY",
+                "OPENAI_API_KEY",
+                "BORG_TEST_OPENAI_API_KEY",
+            ]) else {
+                return Ok(LlmRunner::builder().build());
+            };
+            let mut config = OpenAIConfig::new(api_key, target.model.clone())
+                .map_err(LlmError::OpenAIConfig)
+                .map_err(|error| EvalError::message(error.to_string()))?;
+            if let Some(base_url) = optional_env(&["BORG_LLM_OPENAI_BASE_URL"]) {
+                config = config.with_base_url(base_url);
+            }
+            if let Some(org) = optional_env(&["BORG_LLM_OPENAI_ORGANIZATION", "OPENAI_ORG_ID"]) {
+                config = config.with_organization(org);
+            }
+            LlmRunner::builder()
+                .add_provider(OpenAI::new(config))
+                .build()
+        }
+        "anthropic" => {
+            let Some(api_key) = optional_env(&[
+                "BORG_LLM_ANTHROPIC_API_KEY",
+                "ANTHROPIC_API_KEY",
+                "BORG_TEST_ANTHROPIC_API_KEY",
+            ]) else {
+                return Ok(LlmRunner::builder().build());
+            };
+            let mut config = AnthropicConfig::new(api_key, target.model.clone())
+                .map_err(LlmError::AnthropicConfig)
+                .map_err(|error| EvalError::message(error.to_string()))?;
+            if let Some(base_url) = optional_env(&["BORG_LLM_ANTHROPIC_BASE_URL"]) {
+                config = config.with_base_url(base_url);
+            }
+            LlmRunner::builder()
+                .add_provider(Anthropic::new(config))
+                .build()
+        }
+        "openrouter" => {
+            let Some(api_key) = optional_env(&[
+                "BORG_LLM_OPENROUTER_API_KEY",
+                "OPENROUTER_API_KEY",
+                "BORG_TEST_OPENROUTER_API_KEY",
+            ]) else {
+                return Ok(LlmRunner::builder().build());
+            };
+            let mut config = OpenRouterConfig::new(api_key, target.model.clone())
+                .map_err(LlmError::OpenRouterConfig)
+                .map_err(|error| EvalError::message(error.to_string()))?;
+            if let Some(base_url) = optional_env(&["BORG_LLM_OPENROUTER_BASE_URL"]) {
+                config = config.with_base_url(base_url);
+            }
+            LlmRunner::builder()
+                .add_provider(OpenRouter::new(config))
+                .build()
+        }
+        "apple" => LlmRunner::builder()
+            .add_provider(Apple::new(AppleConfig::new()))
+            .build(),
+        provider => {
+            return Err(EvalError::message(format!(
+                "unsupported eval target provider {:?}",
+                provider
+            )));
+        }
+    };
+
+    Ok(runner)
+}
+
+fn optional_env(keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| env::var(key).ok().filter(|value| !value.trim().is_empty()))
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub enum SuiteKind {
@@ -616,12 +729,49 @@ where
     let trial_id = Uuid::now_v7().to_string();
     let started_at_wall = now_since_epoch();
     let started_at_instant = Instant::now();
+    let llm_runner = match llm_runner_for_target(&target) {
+        Ok(runner) => Arc::new(runner),
+        Err(error) => {
+            let finished_at_wall = now_since_epoch();
+            let record = TrialRecord {
+                schema_version: SCHEMA_VERSION,
+                trial_id: trial_id.clone(),
+                run_id,
+                suite_id: suite_id.clone(),
+                target: target.clone(),
+                eval_id: eval.id().to_string(),
+                trial_index,
+                started_at: started_at_wall,
+                finished_at: finished_at_wall,
+                duration: started_at_instant.elapsed(),
+                passed: false,
+                mean_score: 0.0,
+                trial: None,
+                error: Some(error.to_string()),
+                grades: BTreeMap::new(),
+                grader_failures: Vec::new(),
+            };
+            emit(RunEvent::TrialFinished {
+                suite_id: record.suite_id.clone(),
+                eval_id: record.eval_id.clone(),
+                trial_id: record.trial_id.clone(),
+                trial_index: record.trial_index,
+                target_label: record.target.display_label(),
+                passed: record.passed,
+                mean_score: record.mean_score,
+                duration_ms: record.duration.as_millis(),
+                error: record.error.clone(),
+            });
+            return record;
+        }
+    };
     let ctx = EvalContext {
         suite_id: suite_id.clone(),
         eval_id: eval.id().to_string(),
         trial_id: trial_id.clone(),
         trial_index,
         target: target.clone(),
+        llm_runner,
         state,
     };
     debug!(

@@ -300,6 +300,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_factory_receives_target_scoped_llm_runner_in_context() {
+        let saw_runner = Arc::new(AtomicBool::new(false));
+        let marker = saw_runner.clone();
+
+        let suite = Suite::new("calendar")
+            .agent(move |ctx| {
+                let marker = marker.clone();
+                async move {
+                    let _runner = ctx.llm_runner().clone();
+                    marker.store(true, Ordering::SeqCst);
+                    Ok::<DummyAgent, EvalError>(DummyAgent)
+                }
+            })
+            .eval(
+                Eval::new("noop")
+                    .run(|_, _agent| async move { Ok(AgentTrial::new("done".to_string())) }),
+            );
+
+        let report = suite.run().await.expect("suite should run");
+        assert_eq!(report.trials.len(), 1);
+        assert!(saw_runner.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
     async fn suite_runner_expands_model_matrix() {
         let suite = suite_with_dummy_agent("calendar").eval(
             Eval::new("matrix")
@@ -880,7 +904,12 @@ mod tests {
         let index = report.write_to(root.path()).expect("artifacts to write");
 
         assert!(root.path().join(&index.files[0]).exists());
-        assert!(root.path().join("results/calendar").exists());
+        assert!(
+            root.path()
+                .join(&report.manifest.run_id)
+                .join("calendar")
+                .exists()
+        );
     }
 
     #[tokio::test]
@@ -1029,17 +1058,17 @@ mod tests {
 
         let check_persisted_trial = async {
             tokio::time::sleep(Duration::from_millis(80)).await;
-            let results_dir = root.path().join("results").join("calendar");
-            let run_dir = fs::read_dir(&results_dir)
-                .expect("results dir should exist")
-                .next()
-                .expect("run dir entry")
-                .expect("run dir");
+            let run_dir = fs::read_dir(root.path())
+                .expect("run root should exist")
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .find(|path| path.is_dir())
+                .expect("run dir should exist");
             let trial_path = run_dir
-                .path()
+                .join("calendar")
+                .join("incremental")
                 .join("gpt")
                 .read_dir()
-                .expect("target dir should exist")
+                .expect("trial dir should exist")
                 .filter_map(|entry| entry.ok().map(|entry| entry.path()))
                 .find(|path| {
                     path.file_name()

@@ -73,7 +73,7 @@ impl CalculatorAgent {
     pub async fn new(runner: LlmRunner) -> Result<Self> {
         let agent = SessionAgent::builder()
             .with_tool_runner(CalcToolRunner)
-            .with_llm_runner(runner)
+            .with_llm_runner(runner.into())
             .with_context_manager(ContextManager::static_text(
                 "You are a calculator. Reply with only the final numeric answer.",
             ))

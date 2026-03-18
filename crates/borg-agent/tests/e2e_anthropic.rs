@@ -135,7 +135,7 @@ where
 async fn anthropic_agent_send_completes_text_turn_long() -> LlmResult<()> {
     let runner = runner_with_anthropic_model(&anthropic_model())?;
     let mut agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .build()
         .expect("agent");
 
@@ -167,7 +167,7 @@ async fn anthropic_agent_send_completes_text_turn_long() -> LlmResult<()> {
 async fn anthropic_agent_run_streams_text_turn_long() -> LlmResult<()> {
     let runner = runner_with_anthropic_model(&anthropic_model())?;
     let agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .build()
         .expect("agent");
 
@@ -201,7 +201,7 @@ async fn anthropic_agent_send_decodes_typed_response_long() -> LlmResult<()> {
     let runner = runner_with_anthropic_model(&anthropic_model())?;
     let mut agent = Agent::builder()
         .with_response_type::<EchoResponse>()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .build()
         .expect("agent");
 
@@ -254,7 +254,7 @@ async fn anthropic_agent_executes_ping_tool_and_finishes_long() -> LlmResult<()>
     });
 
     let mut agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_tool_runner(tool_runner)
         .build()
         .expect("agent");
@@ -367,7 +367,7 @@ async fn anthropic_agent_run_executes_ping_tool_and_finishes_long() -> LlmResult
     });
 
     let agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_tool_runner(tool_runner)
         .build()
         .expect("agent");
@@ -447,7 +447,7 @@ async fn anthropic_agent_run_executes_ping_tool_and_finishes_long() -> LlmResult
 async fn anthropic_agent_run_queues_messages_in_order_long() -> LlmResult<()> {
     let runner = runner_with_anthropic_model(&anthropic_model())?;
     let agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .build()
         .expect("agent");
 
@@ -516,7 +516,7 @@ async fn anthropic_agent_run_cancels_active_turn_long() -> LlmResult<()> {
     });
 
     let agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_tool_runner(tool_runner)
         .build()
         .expect("agent");
@@ -583,7 +583,7 @@ async fn anthropic_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<
     });
 
     let agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_tool_runner(tool_runner)
         .build()
         .expect("agent");
@@ -715,7 +715,7 @@ async fn anthropic_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> 
     });
 
     let mut agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_tool_runner(tool_runner)
         .build()
         .expect("agent");
@@ -843,7 +843,7 @@ async fn anthropic_agent_cancel_during_active_turn_long() -> LlmResult<()> {
     });
 
     let mut agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_tool_runner(tool_runner)
         .build()
         .expect("agent");

@@ -15,6 +15,7 @@ use crate::provider::LlmProvider;
 use crate::tools::{ToolCall, TypedTool};
 use crate::transcription::{AudioTranscriptionRequest, AudioTranscriptionResponse};
 
+#[derive(Clone)]
 pub struct LlmRunner {
     providers: Vec<Arc<dyn LlmProvider>>,
 }

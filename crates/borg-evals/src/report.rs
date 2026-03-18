@@ -125,16 +125,13 @@ impl IncrementalSuiteWriter {
         manifest: &RunManifest,
     ) -> EvalResult<Self> {
         let root = root.as_ref().to_path_buf();
-        let suite_dir = root
-            .join("results")
-            .join(suite_id)
-            .join(&manifest.run_id)
-            .join(&target.label);
-        fs::create_dir_all(&suite_dir)?;
+        let suite_dir = root.join(&manifest.run_id).join(suite_id).to_path_buf();
+        let target_dir = suite_dir.join(&target.label);
+        fs::create_dir_all(&target_dir)?;
 
-        let manifest_path = suite_dir.join("manifest.json");
-        let summary_path = suite_dir.join("suite-summary.json");
-        let markdown_path = suite_dir.join("suite-summary.md");
+        let manifest_path = target_dir.join("manifest.json");
+        let summary_path = target_dir.join("suite-summary.json");
+        let markdown_path = target_dir.join("suite-summary.md");
 
         let mut writer = Self {
             root,
@@ -156,7 +153,12 @@ impl IncrementalSuiteWriter {
     }
 
     pub(crate) fn write_trial(&mut self, trial: &TrialRecord) -> EvalResult<()> {
-        let trial_path = self.suite_dir.join(format!(
+        let trial_dir = self
+            .suite_dir
+            .join(&trial.eval_id)
+            .join(&trial.target.label);
+        fs::create_dir_all(&trial_dir)?;
+        let trial_path = trial_dir.join(format!(
             "trial-{:03}__{}__{}.json",
             trial.trial_index + 1,
             trial.eval_id,
@@ -213,15 +215,15 @@ impl SuiteRunReport {
     pub fn write_to(&self, root: impl AsRef<Path>) -> EvalResult<ArtifactIndex> {
         let root = root.as_ref();
         let suite_dir = root
-            .join("results")
-            .join(&self.suite.suite_id)
             .join(&self.manifest.run_id)
-            .join(&self.suite.target.label);
-        fs::create_dir_all(&suite_dir)?;
+            .join(&self.suite.suite_id)
+            .to_path_buf();
+        let target_dir = suite_dir.join(&self.suite.target.label);
+        fs::create_dir_all(&target_dir)?;
 
-        let manifest_path = suite_dir.join("manifest.json");
-        let summary_path = suite_dir.join("suite-summary.json");
-        let markdown_path = suite_dir.join("suite-summary.md");
+        let manifest_path = target_dir.join("manifest.json");
+        let summary_path = target_dir.join("suite-summary.json");
+        let markdown_path = target_dir.join("suite-summary.md");
         write_json(&summary_path, &self.suite)?;
         fs::write(&markdown_path, self.summary_markdown())?;
 
@@ -232,7 +234,11 @@ impl SuiteRunReport {
         ];
 
         for trial in &self.trials {
-            let trial_path = suite_dir.join(format!(
+            let trial_dir = suite_dir
+                .join(&trial.eval_id)
+                .join(&self.suite.target.label);
+            fs::create_dir_all(&trial_dir)?;
+            let trial_path = trial_dir.join(format!(
                 "trial-{:03}__{}__{}.json",
                 trial.trial_index + 1,
                 trial.eval_id,
@@ -597,16 +603,7 @@ impl EvalRunReport {
 
     pub fn write_to(&self, root: impl AsRef<Path>) -> EvalResult<ArtifactIndex> {
         let root = root.as_ref();
-        let manifest_dir = root
-            .join("results")
-            .join(
-                self.manifest
-                    .suites
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| "unknown-suite".to_string()),
-            )
-            .join(&self.manifest.run_id);
+        let manifest_dir = root.join(&self.manifest.run_id);
         fs::create_dir_all(&manifest_dir)?;
 
         let manifest_path = manifest_dir.join("manifest.json");

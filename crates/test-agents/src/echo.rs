@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use borg_agent::{
@@ -12,17 +14,19 @@ use serde::{Deserialize, Serialize};
 static DEFAULT_PROMPT: &str = "You are an echo agent. Always call the echo_text tool exactly once with the user's full text. Then reply as JSON matching the EchoRes schema with the same text in the `text` field.";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct EchoRequest(pub String);
+pub struct EchoRequest {
+    pub pepo: String,
+}
 
 impl From<EchoRequest> for InputItem {
     fn from(value: EchoRequest) -> Self {
-        InputItem::user_text(value.0)
+        InputItem::user_text(value.pepo)
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EchoResponseFormat {
-    pub text: String,
+    pub boogyboo: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, borg_macros::Tool)]
@@ -31,7 +35,7 @@ pub enum EchoToolCall {
         name = "echo_text",
         description = "Return the exact input text unchanged."
     )]
-    Echo { text: String },
+    Echo { fartson: String },
 }
 
 #[derive(Clone)]
@@ -44,8 +48,8 @@ impl ToolRunner<EchoToolCall, EchoToolResponse> for EchoToolRunner {
         call: ToolCallEnvelope<EchoToolCall>,
     ) -> AgentResult<ToolResultEnvelope<EchoToolResponse>> {
         let result = match call.call {
-            EchoToolCall::Echo { text } => ToolExecutionResult::Ok {
-                data: EchoToolResponse(text),
+            EchoToolCall::Echo { fartson } => ToolExecutionResult::Ok {
+                data: EchoToolResponse { nanana: fartson },
             },
         };
 
@@ -57,7 +61,9 @@ impl ToolRunner<EchoToolCall, EchoToolResponse> for EchoToolRunner {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct EchoToolResponse(String);
+pub struct EchoToolResponse {
+    nanana: String,
+}
 
 #[derive(borg_macros::Agent)]
 pub struct EchoAgent {
@@ -65,7 +71,7 @@ pub struct EchoAgent {
 }
 
 impl EchoAgent {
-    pub async fn new(runner: LlmRunner) -> Result<Self> {
+    pub async fn new(runner: Arc<LlmRunner>) -> Result<Self> {
         let agent = SessionAgent::builder()
             .with_llm_runner(runner)
             .with_tool_runner(EchoToolRunner)

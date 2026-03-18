@@ -128,7 +128,7 @@ async fn ollama_agent_send_completes_text_turn_long() -> LlmResult<()> {
     let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
 
     let mut agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .build()
         .expect("agent");
 
@@ -167,7 +167,7 @@ async fn ollama_agent_run_streams_text_turn_long() -> LlmResult<()> {
     let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
 
     let agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_execution_profile(ollama_profile())
         .build()
         .expect("agent");
@@ -225,7 +225,7 @@ async fn ollama_agent_run_executes_ping_tool_and_finishes_long() -> LlmResult<()
     });
 
     let agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_execution_profile(ollama_profile())
         .with_tool_runner(tool_runner)
         .build()
@@ -308,7 +308,7 @@ async fn ollama_agent_run_queues_messages_in_order_long() -> LlmResult<()> {
     let ctx = TestContext::shared(TestProvider::Ollama).await?;
     let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
     let agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_execution_profile(ollama_profile())
         .build()
         .expect("agent");
@@ -380,7 +380,7 @@ async fn ollama_agent_run_cancels_active_turn_long() -> LlmResult<()> {
     });
 
     let agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_execution_profile(ollama_profile())
         .with_tool_runner(tool_runner)
         .build()
@@ -450,7 +450,7 @@ async fn ollama_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<()>
     });
 
     let agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_execution_profile(ollama_profile())
         .with_tool_runner(tool_runner)
         .build()
@@ -536,7 +536,7 @@ async fn ollama_agent_static_context_provider_shapes_reply_long() -> LlmResult<(
         .with_context_manager(ContextManager::static_text(
             "Every final answer must start with the exact prefix CTX-OLLAMA: ",
         ))
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .build()
         .expect("agent");
 
@@ -572,7 +572,7 @@ async fn ollama_agent_send_twice_reuses_transcript_long() -> LlmResult<()> {
     let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
 
     let mut agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .build()
         .expect("agent");
 
@@ -634,7 +634,7 @@ async fn ollama_agent_send_decodes_typed_response_long() -> LlmResult<()> {
 
     let mut agent = Agent::builder()
         .with_response_type::<EchoResponse>()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .build()
         .expect("agent");
 
@@ -694,7 +694,7 @@ async fn ollama_agent_executes_ping_tool_and_finishes_long() -> LlmResult<()> {
     });
 
     let mut agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_tool_runner(tool_runner)
         .build()
         .expect("agent");
@@ -766,7 +766,7 @@ async fn ollama_agent_queues_message_behind_active_turn_long() -> LlmResult<()> 
     let runner = ctx.runner_for_model(OLLAMA_TEXT_MODEL).await?;
 
     let mut agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .build()
         .expect("agent");
 
@@ -880,7 +880,7 @@ async fn ollama_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
     });
 
     let mut agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_tool_runner(tool_runner)
         .build()
         .expect("agent");
@@ -993,7 +993,7 @@ async fn ollama_agent_cancel_during_active_turn_long() -> LlmResult<()> {
     });
 
     let mut agent = Agent::builder()
-        .with_llm_runner(runner)
+        .with_llm_runner(runner.into())
         .with_tool_runner(tool_runner)
         .build()
         .expect("agent");

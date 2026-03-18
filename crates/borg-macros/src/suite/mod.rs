@@ -10,6 +10,7 @@ pub fn expand(attr: TokenStream, item: ItemFn) -> Result<TokenStream> {
 
 struct SuiteArgs {
     kind: LitStr,
+    state_builder: Option<Path>,
     agent_builder: Path,
 }
 
@@ -17,6 +18,7 @@ impl Parse for SuiteArgs {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
         let exprs = input.parse_terminated(Expr::parse, Token![,])?;
         let mut kind = None;
+        let mut state_builder = None;
         let mut agent_builder = None;
 
         for expr in exprs {
@@ -30,6 +32,13 @@ impl Parse for SuiteArgs {
                     continue;
                 }
 
+                if matches!(*left, Expr::Path(ref path) if path.path.is_ident("state"))
+                    && let Expr::Path(path) = *right
+                {
+                    state_builder = Some(path.path);
+                    continue;
+                }
+
                 if matches!(*left, Expr::Path(ref path) if path.path.is_ident("agent"))
                     && let Expr::Path(path) = *right
                 {
@@ -40,6 +49,7 @@ impl Parse for SuiteArgs {
 
         Ok(Self {
             kind: kind.unwrap_or_else(|| LitStr::new("regression", proc_macro2::Span::call_site())),
+            state_builder,
             agent_builder: agent_builder.ok_or_else(|| {
                 syn::Error::new(
                     proc_macro2::Span::call_site(),
@@ -53,12 +63,18 @@ impl Parse for SuiteArgs {
 fn expand_suite(args: &SuiteArgs, item: &ItemFn) -> Result<TokenStream> {
     let fn_ident = &item.sig.ident;
     let wrapper_ident = format_ident!("__evals_make_suite_{}", fn_ident);
-    let state_ty = extract_result_inner_type(&item.sig.output)?;
     let suite_ctor = match args.kind.value().as_str() {
         "capability" => quote!(::borg_evals::Suite::capability),
         _ => quote!(::borg_evals::Suite::regression),
     };
     let _ = &args.agent_builder;
+    let (state_ty, state_expr) = match &args.state_builder {
+        Some(state_builder) => {
+            let state_ty = extract_result_inner_type_from_fn_path(state_builder, item)?;
+            (state_ty, quote!(#state_builder().await?))
+        }
+        None => (syn::parse_quote!(()), quote!(())),
+    };
 
     Ok(quote! {
         #item
@@ -66,10 +82,27 @@ fn expand_suite(args: &SuiteArgs, item: &ItemFn) -> Result<TokenStream> {
         pub async fn #wrapper_ident(suite_id: &str) -> ::anyhow::Result<::borg_evals::Suite<#state_ty>> {
             Ok(
                 #suite_ctor(suite_id)
-                    .state(#fn_ident().await?)
+                    .state(#state_expr)
             )
         }
     })
+}
+
+fn extract_result_inner_type_from_fn_path(state_builder: &Path, item: &ItemFn) -> Result<Type> {
+    if item.sig.ident
+        == state_builder
+            .segments
+            .last()
+            .expect("state builder segment")
+            .ident
+    {
+        return extract_result_inner_type(&item.sig.output);
+    }
+
+    Err(syn::Error::new_spanned(
+        state_builder,
+        "#[suite] currently requires state = the annotated async fn path",
+    ))
 }
 
 fn extract_result_inner_type(output: &syn::ReturnType) -> Result<Type> {
