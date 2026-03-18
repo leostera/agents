@@ -3,10 +3,9 @@ use std::net::TcpListener;
 use std::thread;
 
 use agents_codemode::{
-    CodeMode, CodeModeConfig, EnvironmentProvider, EnvironmentVariable, NativeFunctionRegistry,
-    Package, PackageProvider, RunCode, SearchCode,
+    CodeMode, CodeModeConfig, CodeModeResult, EnvironmentProvider, EnvironmentVariable,
+    NativeFunctionRegistry, Package, PackageProvider, RunCode, SearchCode,
 };
-use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::json;
 
@@ -15,7 +14,7 @@ struct StaticPackageProvider(Vec<Package>);
 
 #[async_trait]
 impl PackageProvider for StaticPackageProvider {
-    async fn fetch(&self) -> Result<Vec<Package>> {
+    async fn fetch(&self) -> CodeModeResult<Vec<Package>> {
         Ok(self.0.clone())
     }
 }
@@ -25,7 +24,7 @@ struct StaticEnvironmentProvider(Vec<EnvironmentVariable>);
 
 #[async_trait]
 impl EnvironmentProvider for StaticEnvironmentProvider {
-    async fn fetch(&self) -> Result<Vec<EnvironmentVariable>> {
+    async fn fetch(&self) -> CodeModeResult<Vec<EnvironmentVariable>> {
         Ok(self.0.clone())
     }
 }

@@ -12,10 +12,11 @@
 //!
 //! use agents_codemode::{CodeMode, CodeModeConfig, SearchCode};
 //!
-//! # tokio::runtime::Builder::new_current_thread()
+//! # let runtime = tokio::runtime::Builder::new_current_thread()
 //! #     .enable_all()
-//! #     .build()?
-//! #     .block_on(async {
+//! #     .build()
+//! #     .expect("tokio runtime");
+//! # runtime.block_on(async {
 //! let codemode = Arc::new(
 //!     CodeMode::builder()
 //!         .with_config(CodeModeConfig::default().multithreaded(true))
@@ -30,13 +31,14 @@
 //!     .await?;
 //!
 //! println!("{} matches", response.matches.len());
-//! # Ok::<(), anyhow::Error>(())
+//! # Ok::<(), agents_codemode::CodeModeError>(())
 //! # })?;
-//! # Ok::<(), anyhow::Error>(())
+//! # Ok::<(), agents_codemode::CodeModeError>(())
 //! ```
 
 mod config;
 mod engine;
+mod error;
 mod host;
 mod module_loader;
 mod native;
@@ -45,6 +47,7 @@ mod request;
 
 pub use config::CodeModeConfig;
 pub use engine::{CodeMode, CodeModeBuilder};
+pub use error::{CodeModeError, CodeModeResult};
 pub use native::{NativeFunction, NativeFunctionRegistry};
 pub use providers::{EnvironmentProvider, EnvironmentVariable, Package, PackageProvider};
 pub use request::{

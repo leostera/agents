@@ -1,17 +1,18 @@
-use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+
+use crate::error::CodeModeResult;
 
 /// Source of JavaScript packages available to the engine.
 #[async_trait]
 pub trait PackageProvider: Send + Sync + 'static {
-    async fn fetch(&self) -> Result<Vec<Package>>;
+    async fn fetch(&self) -> CodeModeResult<Vec<Package>>;
 }
 
 /// Source of environment variables exposed to the engine.
 #[async_trait]
 pub trait EnvironmentProvider: Send + Sync + 'static {
-    async fn fetch(&self) -> Result<Vec<EnvironmentVariable>>;
+    async fn fetch(&self) -> CodeModeResult<Vec<EnvironmentVariable>>;
 }
 
 /// JavaScript package made available to the engine.

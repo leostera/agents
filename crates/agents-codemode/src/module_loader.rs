@@ -6,6 +6,7 @@ use deno_core::{
 };
 use deno_error::JsErrorBox;
 
+use crate::error::CodeModeError;
 use crate::providers::Package;
 
 const PACKAGE_HOST: &str = "packages";
@@ -39,19 +40,30 @@ impl ModuleLoader for CodeModeModuleLoader {
         }
 
         if !self.allowed_imports.is_empty() && !self.allowed_imports.contains(specifier) {
-            return Err(JsErrorBox::generic(format!(
-                "import `{specifier}` is not allowed by this request"
-            )));
+            return Err(JsErrorBox::generic(
+                CodeModeError::ExecuteCode {
+                    reason: format!("import `{specifier}` is not allowed by this request"),
+                }
+                .to_string(),
+            ));
         }
 
         if !self.packages.contains_key(specifier) {
-            return Err(JsErrorBox::generic(format!(
-                "package not found for import `{specifier}`"
-            )));
+            return Err(JsErrorBox::generic(
+                CodeModeError::ExecuteCode {
+                    reason: format!("package not found for import `{specifier}`"),
+                }
+                .to_string(),
+            ));
         }
 
         ModuleSpecifier::parse(&format!("codemode://{PACKAGE_HOST}/{specifier}")).map_err(|error| {
-            JsErrorBox::generic(format!("failed to resolve import `{specifier}`: {error}"))
+            JsErrorBox::generic(
+                CodeModeError::ExecuteCode {
+                    reason: format!("failed to resolve import `{specifier}`: {error}"),
+                }
+                .to_string(),
+            )
         })
     }
 
@@ -64,16 +76,22 @@ impl ModuleLoader for CodeModeModuleLoader {
         if module_specifier.scheme() != "codemode"
             || module_specifier.host_str() != Some(PACKAGE_HOST)
         {
-            return ModuleLoadResponse::Sync(Err(JsErrorBox::generic(format!(
-                "unsupported module specifier `{module_specifier}`"
-            ))));
+            return ModuleLoadResponse::Sync(Err(JsErrorBox::generic(
+                CodeModeError::ExecuteCode {
+                    reason: format!("unsupported module specifier `{module_specifier}`"),
+                }
+                .to_string(),
+            )));
         }
 
         let package_name = module_specifier.path().trim_start_matches('/');
         let Some(code) = self.packages.get(package_name) else {
-            return ModuleLoadResponse::Sync(Err(JsErrorBox::generic(format!(
-                "package not found for `{package_name}`"
-            ))));
+            return ModuleLoadResponse::Sync(Err(JsErrorBox::generic(
+                CodeModeError::ExecuteCode {
+                    reason: format!("package not found for `{package_name}`"),
+                }
+                .to_string(),
+            )));
         };
 
         ModuleLoadResponse::Sync(Ok(ModuleSource::new(

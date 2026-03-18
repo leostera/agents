@@ -2,23 +2,24 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde_json::Value;
+
+use crate::error::{CodeModeError, CodeModeResult};
 
 /// Async host function exposed to JavaScript by [`CodeMode`](crate::CodeMode).
 #[async_trait]
 pub trait NativeFunction: Send + Sync + 'static {
-    async fn call(&self, args: Value) -> Result<Value>;
+    async fn call(&self, args: Value) -> CodeModeResult<Value>;
 }
 
 #[async_trait]
 impl<F, Fut> NativeFunction for F
 where
     F: Fn(Value) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<Value>> + Send + 'static,
+    Fut: Future<Output = CodeModeResult<Value>> + Send + 'static,
 {
-    async fn call(&self, args: Value) -> Result<Value> {
+    async fn call(&self, args: Value) -> CodeModeResult<Value> {
         (self)(args).await
     }
 }
@@ -47,9 +48,11 @@ impl NativeFunctionRegistry {
         self.functions.keys().cloned().collect()
     }
 
-    pub(crate) async fn call(&self, name: &str, args: Value) -> Result<Value> {
+    pub(crate) async fn call(&self, name: &str, args: Value) -> CodeModeResult<Value> {
         let Some(function) = self.functions.get(name) else {
-            return Err(anyhow!("native function not found: {name}"));
+            return Err(CodeModeError::NativeFunctionNotFound {
+                name: name.to_string(),
+            });
         };
         function.call(args).await
     }

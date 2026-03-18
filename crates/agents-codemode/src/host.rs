@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use anyhow::{Result, anyhow};
 use deno_core::{JsRuntime, OpState, op2};
 use deno_error::JsErrorBox;
 use reqwest::Method;
@@ -11,6 +10,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::error::{CodeModeError, CodeModeResult};
 use crate::native::NativeFunctionRegistry;
 use crate::providers::EnvironmentVariable;
 
@@ -69,7 +69,7 @@ fn op_fetch(#[serde] request: FetchRequest) -> Result<serde_json::Value, JsError
     let join = std::thread::spawn(move || fetch(request));
     match join.join() {
         Ok(result) => result.map_err(js_error),
-        Err(_) => Err(JsErrorBox::generic("fetch worker panicked")),
+        Err(_) => Err(js_error(CodeModeError::FetchWorkerPanicked)),
     }
 }
 
@@ -101,7 +101,7 @@ pub(crate) fn install_host_functions(
     runtime: &mut JsRuntime,
     env: Vec<EnvironmentVariable>,
     native_functions: NativeFunctionRegistry,
-) -> Result<()> {
+) -> CodeModeResult<()> {
     let env = env
         .into_iter()
         .map(|variable| (variable.name, variable.value))
@@ -115,13 +115,16 @@ pub(crate) fn install_host_functions(
     let bootstrap = bootstrap_script(native_functions.names())?;
     runtime
         .execute_script("file:///__agents_codemode_bootstrap__.js", bootstrap)
-        .map_err(|error| anyhow!("failed to install codemode globals: {error}"))?;
+        .map_err(|error| CodeModeError::InstallGlobals {
+            reason: error.to_string(),
+        })?;
 
     Ok(())
 }
 
-fn bootstrap_script(native_names: Vec<String>) -> Result<String> {
-    let native_names_json = serde_json::to_string(&native_names)?;
+fn bootstrap_script(native_names: Vec<String>) -> CodeModeResult<String> {
+    let native_names_json = serde_json::to_string(&native_names)
+        .map_err(|source| CodeModeError::NativeNamesSerialization { source })?;
     Ok(format!(
         r#"
 const __nativeNames = {native_names_json};
@@ -151,18 +154,22 @@ for (const name of __nativeNames) {{
     ))
 }
 
-fn js_error(error: anyhow::Error) -> JsErrorBox {
+fn js_error(error: CodeModeError) -> JsErrorBox {
     JsErrorBox::generic(error.to_string())
 }
 
-fn fetch(request: FetchRequest) -> Result<serde_json::Value> {
+fn fetch(request: FetchRequest) -> CodeModeResult<serde_json::Value> {
     let init = request.init.as_ref();
 
     let method = init
         .and_then(|value| value.method.as_deref())
         .unwrap_or("GET");
-    let method = Method::from_bytes(method.as_bytes())
-        .map_err(|error| anyhow!("invalid fetch method `{method}`: {error}"))?;
+    let method = Method::from_bytes(method.as_bytes()).map_err(|error| {
+        CodeModeError::InvalidFetchMethod {
+            method: method.to_string(),
+            reason: error.to_string(),
+        }
+    })?;
 
     let headers = parse_headers(init.and_then(|value| value.headers.as_ref()))?;
     let body = parse_body(init.and_then(|value| value.body.as_ref()))?;
@@ -202,7 +209,7 @@ fn fetch(request: FetchRequest) -> Result<serde_json::Value> {
     }))
 }
 
-fn parse_headers(value: Option<&serde_json::Value>) -> Result<HeaderMap> {
+fn parse_headers(value: Option<&serde_json::Value>) -> CodeModeResult<HeaderMap> {
     let mut headers = HeaderMap::new();
     let Some(value) = value else {
         return Ok(headers);
@@ -210,21 +217,29 @@ fn parse_headers(value: Option<&serde_json::Value>) -> Result<HeaderMap> {
 
     let obj = value
         .as_object()
-        .ok_or_else(|| anyhow!("fetch init.headers must be an object"))?;
+        .ok_or(CodeModeError::FetchHeadersNotObject)?;
     for (key, value) in obj {
-        let header_name = HeaderName::from_bytes(key.as_bytes())
-            .map_err(|error| anyhow!("invalid header name `{key}`: {error}"))?;
+        let header_name = HeaderName::from_bytes(key.as_bytes()).map_err(|error| {
+            CodeModeError::InvalidHeaderName {
+                key: key.clone(),
+                reason: error.to_string(),
+            }
+        })?;
         let header_value = value
             .as_str()
-            .ok_or_else(|| anyhow!("header `{key}` must be a string"))?;
-        let header_value = HeaderValue::from_str(header_value)
-            .map_err(|error| anyhow!("invalid value for header `{key}`: {error}"))?;
+            .ok_or_else(|| CodeModeError::HeaderValueNotString { key: key.clone() })?;
+        let header_value = HeaderValue::from_str(header_value).map_err(|error| {
+            CodeModeError::InvalidHeaderValue {
+                key: key.clone(),
+                reason: error.to_string(),
+            }
+        })?;
         headers.insert(header_name, header_value);
     }
     Ok(headers)
 }
 
-fn parse_body(value: Option<&serde_json::Value>) -> Result<Option<String>> {
+fn parse_body(value: Option<&serde_json::Value>) -> CodeModeResult<Option<String>> {
     let Some(value) = value else {
         return Ok(None);
     };

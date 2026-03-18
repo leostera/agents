@@ -22,7 +22,6 @@ dependencies = [
 name = "agents-codemode"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "borg-agent",
  "deno_core",
@@ -30,6 +29,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
