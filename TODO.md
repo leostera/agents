@@ -44,8 +44,8 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
      - `cargo evals list`
      - `cargo evals run`
 
-8. Feature-flag `borg_llm::testing`
-   - `borg-llm` should not pull `testcontainers` into normal binary dependency resolution.
+8. Feature-flag `agents::testing`
+   - `agents` should not pull `testcontainers` into normal binary dependency resolution.
    - The testing helpers should be behind an explicit feature or otherwise isolated to test-only use.
 
 ## Reporting and Cost Tracking
@@ -58,7 +58,7 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
 
 ## Future Work
 
-10. Explore `borg-llm` support for Cloudflare Workers AI
+10. Explore `agents::llm` support for Cloudflare Workers AI
 
 
 ---

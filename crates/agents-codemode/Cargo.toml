@@ -19,4 +19,4 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-borg-agent = { path = "../borg-agent" }
+agents = { path = "../agents" }

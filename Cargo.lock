@@ -13,16 +13,32 @@ name = "agents"
 version = "0.0.1"
 dependencies = [
  "agents-macros",
- "borg-agent",
- "borg-llm",
+ "async-trait",
+ "derive_builder",
+ "dotenvy",
+ "futures-util",
+ "infer",
+ "reqwest",
+ "reqwest-eventsource",
+ "schemars 1.2.1",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "swift-rs",
+ "tempfile",
+ "testcontainers",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
 name = "agents-codemode"
 version = "0.1.0"
 dependencies = [
+ "agents",
  "async-trait",
- "borg-agent",
  "deno_core",
  "deno_error",
  "reqwest",
@@ -444,50 +460,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "borg-agent"
-version = "0.0.1"
-dependencies = [
- "agents",
- "agents-macros",
- "anyhow",
- "async-trait",
- "borg-llm",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "serial_test",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
-name = "borg-llm"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "cargo-husky",
- "derive_builder",
- "dotenvy",
- "futures-util",
- "infer",
- "reqwest",
- "reqwest-eventsource",
- "schemars 1.2.1",
- "serde",
- "serde_derive",
- "serde_json",
- "serial_test",
- "swift-rs",
- "tempfile",
- "testcontainers",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "boxed_error"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -560,12 +532,6 @@ dependencies = [
  "evals",
  "tokio",
 ]
-
-[[package]]
-name = "cargo-husky"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b02b629252fe8ef6460461409564e2c21d0c8e77e0944f3d189ff06c4e932ad"
 
 [[package]]
 name = "castaway"
@@ -3362,15 +3328,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "scc"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46e6f046b7fef48e2660c57ed794263155d713de679057f2d0c169bfc6e756cc"
-dependencies = [
- "sdd",
-]
-
-[[package]]
 name = "schannel"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3421,12 +3378,6 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "sdd"
-version = "3.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
 
 [[package]]
 name = "security-framework"
@@ -3596,32 +3547,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3db8978e608f1fe7357e211969fd9abdcae80bac1ba7a3369bb7eb6b404eb65"
 dependencies = [
  "darling 0.23.0",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "serial_test"
-version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "911bd979bf1070a3f3aa7b691a3b3e9968f339ceeec89e08c280a8a22207a32f"
-dependencies = [
- "futures-executor",
- "futures-util",
- "log",
- "once_cell",
- "parking_lot",
- "scc",
- "serial_test_derive",
-]
-
-[[package]]
-name = "serial_test_derive"
-version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a7d91949b85b0d2fb687445e448b40d322b6b3e4af6b44a29b21d9a5f33e6d9"
-dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",

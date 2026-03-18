@@ -3,8 +3,6 @@ members = [
   "crates/agents", 
   "crates/agents-codemode",
   "crates/agents-macros",
-  "crates/borg-agent",
-  "crates/borg-llm", 
   "crates/cargo-evals", 
   "crates/evals",
   "crates/evals-macros",

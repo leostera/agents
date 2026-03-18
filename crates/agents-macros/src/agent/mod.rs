@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn expands_single_tuple_field_snapshot() {
         let input: DeriveInput = parse_quote! {
-            struct EchoAgent(::borg_agent::SessionAgent<EchoReq, EchoTool, String, EchoRes>);
+            struct EchoAgent(::agents::SessionAgent<EchoReq, EchoTool, String, EchoRes>);
         };
 
         let expanded = expand_agent(&input).expect("expand eval agent derive");
@@ -202,25 +202,25 @@ mod tests {
         assert_snapshot!(pretty, @r#"
         #[::async_trait::async_trait]
         impl ::agents::agent::Agent for EchoAgent {
-            type Input = <::borg_agent::SessionAgent<
+            type Input = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
             > as ::agents::agent::Agent>::Input;
-            type ToolCall = <::borg_agent::SessionAgent<
+            type ToolCall = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
             > as ::agents::agent::Agent>::ToolCall;
-            type ToolResult = <::borg_agent::SessionAgent<
+            type ToolResult = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
             > as ::agents::agent::Agent>::ToolResult;
-            type Output = <::borg_agent::SessionAgent<
+            type Output = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
@@ -264,7 +264,7 @@ mod tests {
         let input: DeriveInput = parse_quote! {
             struct EchoAgent {
                 #[agent]
-                agent: ::borg_agent::SessionAgent<EchoReq, EchoTool, String, EchoRes>,
+                agent: ::agents::SessionAgent<EchoReq, EchoTool, String, EchoRes>,
                 other: String,
             }
         };
@@ -276,25 +276,25 @@ mod tests {
         assert_snapshot!(pretty, @r#"
         #[::async_trait::async_trait]
         impl ::agents::agent::Agent for EchoAgent {
-            type Input = <::borg_agent::SessionAgent<
+            type Input = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
             > as ::agents::agent::Agent>::Input;
-            type ToolCall = <::borg_agent::SessionAgent<
+            type ToolCall = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
             > as ::agents::agent::Agent>::ToolCall;
-            type ToolResult = <::borg_agent::SessionAgent<
+            type ToolResult = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
             > as ::agents::agent::Agent>::ToolResult;
-            type Output = <::borg_agent::SessionAgent<
+            type Output = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
@@ -337,7 +337,7 @@ mod tests {
     fn expands_single_named_field_snapshot() {
         let input: DeriveInput = parse_quote! {
             struct EchoAgent {
-                agent: ::borg_agent::SessionAgent<EchoReq, EchoTool, String, EchoRes>,
+                agent: ::agents::SessionAgent<EchoReq, EchoTool, String, EchoRes>,
             }
         };
 
@@ -348,25 +348,25 @@ mod tests {
         assert_snapshot!(pretty, @r#"
         #[::async_trait::async_trait]
         impl ::agents::agent::Agent for EchoAgent {
-            type Input = <::borg_agent::SessionAgent<
+            type Input = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
             > as ::agents::agent::Agent>::Input;
-            type ToolCall = <::borg_agent::SessionAgent<
+            type ToolCall = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
             > as ::agents::agent::Agent>::ToolCall;
-            type ToolResult = <::borg_agent::SessionAgent<
+            type ToolResult = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
                 EchoRes,
             > as ::agents::agent::Agent>::ToolResult;
-            type Output = <::borg_agent::SessionAgent<
+            type Output = <::agents::SessionAgent<
                 EchoReq,
                 EchoTool,
                 String,
@@ -409,7 +409,7 @@ mod tests {
     fn rejects_multiple_unmarked_fields() {
         let input: DeriveInput = parse_quote! {
             struct EchoAgent {
-                agent: ::borg_agent::SessionAgent<EchoReq, EchoTool, String, EchoRes>,
+                agent: ::agents::SessionAgent<EchoReq, EchoTool, String, EchoRes>,
                 other: String,
             }
         };
