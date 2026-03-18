@@ -79,6 +79,33 @@ where
 {
     suite: &'a Suite<State, A>,
     config: RunConfig,
+    filter: TargetFilter,
+    artifact_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TargetFilter {
+    pub query: Option<String>,
+    pub model: Option<String>,
+}
+
+impl TargetFilter {
+    pub fn matches_target(&self, target: &ExecutionTarget) -> bool {
+        self.model.as_deref().is_none_or(|model| {
+            target.display_label() == model
+                || target.label == model
+                || format!("{}/{}", target.provider, target.model) == model
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct SuitePlan<State = (), A = NoAgent>
+where
+    A: EvalAgent,
+{
+    suite: Suite<State, A>,
+    config: RunConfig,
     artifact_root: Option<PathBuf>,
 }
 
@@ -88,12 +115,7 @@ where
     State: Send + Sync + 'static,
     A: EvalAgent,
 {
-    async fn run(
-        &self,
-        suite: &Suite<State, A>,
-        config: RunConfig,
-        artifact_root: Option<&Path>,
-    ) -> EvalResult<EvalRunReport>;
+    async fn run(&self, plan: SuitePlan<State, A>) -> EvalResult<EvalRunReport>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -221,6 +243,7 @@ where
         SuiteRunner {
             suite: self,
             config,
+            filter: TargetFilter::default(),
             artifact_root: None,
         }
     }
@@ -231,15 +254,90 @@ where
     State: Send + Sync + 'static,
     A: EvalAgent,
 {
+    pub fn filter(mut self, filter: TargetFilter) -> Self {
+        self.filter = filter;
+        self
+    }
+
     pub fn persist_to(mut self, root: impl AsRef<Path>) -> Self {
         self.artifact_root = Some(root.as_ref().to_path_buf());
         self
     }
 
+    pub fn plan(self) -> EvalResult<SuitePlan<State, A>> {
+        let mut suite = self.suite.clone();
+        let mut config = self.config;
+        config
+            .targets
+            .retain(|target| self.filter.matches_target(target));
+
+        if config.targets.is_empty() {
+            return if let Some(model) = self.filter.model {
+                Err(EvalError::message(format!(
+                    "no eval targets matched model {:?}",
+                    model
+                )))
+            } else {
+                Err(EvalError::message("run config has no targets configured"))
+            };
+        }
+
+        if let Some(query) = self.filter.query.as_deref() {
+            if !suite.id().contains(query) {
+                let mut matched_eval_ids = std::collections::BTreeSet::new();
+                config.targets.retain(|target| {
+                    let matching_eval_ids = suite
+                        .evals()
+                        .iter()
+                        .filter_map(|eval| {
+                            let search_key =
+                                format!("{}::{}::{}", suite.id(), target.label, eval.id());
+                            search_key.contains(query).then(|| eval.id().to_string())
+                        })
+                        .collect::<Vec<_>>();
+                    let target_has_match = !matching_eval_ids.is_empty();
+                    matched_eval_ids.extend(matching_eval_ids);
+                    target_has_match
+                });
+                suite
+                    .evals
+                    .retain(|eval| matched_eval_ids.contains(eval.id()));
+            }
+        }
+
+        if suite.evals.is_empty() || config.targets.is_empty() {
+            return if let Some(query) = self.filter.query {
+                Err(EvalError::message(format!(
+                    "no suites, models, or evals matched query {:?}",
+                    query
+                )))
+            } else {
+                Err(EvalError::message("suite has no evals configured"))
+            };
+        }
+
+        Ok(SuitePlan {
+            suite,
+            config,
+            artifact_root: self.artifact_root,
+        })
+    }
+
     pub async fn run(self) -> EvalResult<EvalRunReport> {
-        LocalExecutor
-            .run(self.suite, self.config, self.artifact_root.as_deref())
-            .await
+        LocalExecutor.run(self.plan()?).await
+    }
+}
+
+impl<State, A> SuitePlan<State, A>
+where
+    A: EvalAgent,
+{
+    pub fn suite(&self) -> &Suite<State, A> {
+        &self.suite
+    }
+
+    pub fn config(&self) -> &RunConfig {
+        &self.config
     }
 }
 
@@ -249,12 +347,12 @@ where
     State: Send + Sync + 'static,
     A: EvalAgent,
 {
-    async fn run(
-        &self,
-        suite: &Suite<State, A>,
-        config: RunConfig,
-        artifact_root: Option<&Path>,
-    ) -> EvalResult<EvalRunReport> {
+    async fn run(&self, plan: SuitePlan<State, A>) -> EvalResult<EvalRunReport> {
+        let SuitePlan {
+            suite,
+            config,
+            artifact_root,
+        } = plan;
         let started_at = now_since_epoch();
         let run_id = run_id();
         let mut variants = Vec::new();
@@ -285,11 +383,11 @@ where
 
         for target in &config.targets {
             let target = target.clone();
-            let suite = (*suite).clone();
+            let suite = suite.clone();
             let run_id = run_id.clone();
             let trials = config.trials;
             let local_target_semaphore = local_target_semaphore.clone();
-            let artifact_root = artifact_root.map(Path::to_path_buf);
+            let artifact_root = artifact_root.clone();
             jobs.spawn(async move {
                 let _local_permit = if target.provider == "ollama" {
                     Some(

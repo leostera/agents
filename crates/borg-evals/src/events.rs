@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
-use std::io::{Stdout, Write};
+use std::io::{IsTerminal, Stdout, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::thread;
+use std::time::Duration;
 
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Constraint;
@@ -22,6 +25,9 @@ pub enum RunEvent {
         targets: Vec<String>,
         trials: usize,
         output_dir: String,
+    },
+    RunPlanned {
+        suites: Vec<PlannedSuiteRun>,
     },
     SuiteStarted {
         suite_id: String,
@@ -69,6 +75,14 @@ pub enum RunEvent {
     },
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct PlannedSuiteRun {
+    pub crate_name: String,
+    pub suite_id: String,
+    pub target_labels: Vec<String>,
+    pub eval_ids: Vec<String>,
+}
+
 pub trait EventSink: Send + Sync + 'static {
     fn emit(&self, event: RunEvent);
 }
@@ -104,12 +118,13 @@ impl EventSink for JsonEventSink {
 }
 
 pub struct ProgressEventSink {
-    state: Mutex<ProgressState>,
+    state: Arc<Mutex<ProgressState>>,
+    running: Arc<AtomicBool>,
 }
 
 struct ProgressState {
     rows: BTreeMap<String, ProgressRow>,
-    terminal: CrosstermTerminal,
+    terminal: Option<CrosstermTerminal>,
     terminal_ready: bool,
 }
 
@@ -118,6 +133,7 @@ struct ProgressRow {
     eval_id: String,
     target_label: String,
     trials: usize,
+    status: ProgressStatus,
     marks: Vec<char>,
     total_score: f32,
     total_duration_ms: u128,
@@ -125,23 +141,60 @@ struct ProgressRow {
     mean_duration_ms: Option<u128>,
 }
 
+enum ProgressStatus {
+    Pending,
+    Running { frame: usize },
+    Finished { passed: bool },
+}
+
 impl ProgressEventSink {
     pub fn new() -> Self {
-        let backend = CrosstermBackend::new(std::io::stdout());
-        let terminal = Terminal::with_options(
-            backend,
-            TerminalOptions {
-                viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
-            },
-        )
-        .expect("create eval progress terminal");
-        Self {
-            state: Mutex::new(ProgressState {
-                rows: BTreeMap::new(),
-                terminal,
-                terminal_ready: true,
-            }),
+        let terminal = if std::io::stdout().is_terminal() {
+            let backend = CrosstermBackend::new(std::io::stdout());
+            Terminal::with_options(
+                backend,
+                TerminalOptions {
+                    viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
+                },
+            )
+            .ok()
+        } else {
+            None
+        };
+        let state = Arc::new(Mutex::new(ProgressState {
+            rows: BTreeMap::new(),
+            terminal,
+            terminal_ready: std::io::stdout().is_terminal(),
+        }));
+        let running = Arc::new(AtomicBool::new(true));
+
+        if std::io::stdout().is_terminal() {
+            let ticker_state = state.clone();
+            let ticker_running = running.clone();
+            thread::spawn(move || {
+                while ticker_running.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_millis(100));
+                    let Ok(mut state) = ticker_state.lock() else {
+                        break;
+                    };
+                    if !state.terminal_ready {
+                        break;
+                    }
+                    let mut advanced = false;
+                    for row in state.rows.values_mut() {
+                        if let ProgressStatus::Running { frame } = row.status {
+                            row.status = ProgressStatus::Running { frame: frame + 1 };
+                            advanced = true;
+                        }
+                    }
+                    if advanced {
+                        Self::render(&mut state);
+                    }
+                }
+            });
         }
+
+        Self { state, running }
     }
 
     fn key(suite_id: &str, eval_id: &str, target_label: &str) -> String {
@@ -150,6 +203,41 @@ impl ProgressEventSink {
 
     fn row_prefix(suite_id: &str, eval_id: &str, target_label: &str) -> String {
         format!("{suite_id} :: {target_label} :: {eval_id}")
+    }
+
+    fn row_label(row: &ProgressRow) -> Line<'static> {
+        let mut spans = Vec::new();
+        match row.status {
+            ProgressStatus::Pending => {
+                spans.push(Span::raw("  "));
+            }
+            ProgressStatus::Running { frame } => {
+                const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                spans.push(Span::styled(
+                    format!("{} ", SPINNER[frame % SPINNER.len()]),
+                    Style::default().fg(Color::Cyan),
+                ));
+            }
+            ProgressStatus::Finished { passed } => {
+                let (symbol, style) = if passed {
+                    (
+                        "✓ ",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    ("✗ ", Style::default().fg(Color::Red))
+                };
+                spans.push(Span::styled(symbol, style));
+            }
+        }
+        spans.push(Span::raw(Self::row_prefix(
+            &row.suite_id,
+            &row.eval_id,
+            &row.target_label,
+        )));
+        Line::from(spans)
     }
 
     fn row_marks_spans(row: &ProgressRow) -> Vec<Span<'static>> {
@@ -177,19 +265,18 @@ impl ProgressEventSink {
                 .map(|duration| format!("{duration}ms"))
                 .unwrap_or_default();
             Row::new(vec![
-                Cell::from(Self::row_prefix(
-                    &row.suite_id,
-                    &row.eval_id,
-                    &row.target_label,
-                )),
+                Cell::from(Self::row_label(row)),
                 Cell::from(Line::from(Self::row_marks_spans(row))),
                 Cell::from(score),
                 Cell::from(time_ms),
             ])
         });
 
-        state
-            .terminal
+        let Some(terminal) = state.terminal.as_mut() else {
+            return;
+        };
+
+        terminal
             .draw(|frame| {
                 let table = Table::new(
                     rows,
@@ -215,10 +302,9 @@ impl ProgressEventSink {
         if !state.terminal_ready {
             return;
         }
-        state
-            .terminal
-            .show_cursor()
-            .expect("show eval progress cursor");
+        if let Some(terminal) = state.terminal.as_mut() {
+            terminal.show_cursor().expect("show eval progress cursor");
+        }
         state.terminal_ready = false;
     }
 }
@@ -236,6 +322,27 @@ impl EventSink for ProgressEventSink {
             .lock()
             .expect("progress event sink lock poisoned");
         match event {
+            RunEvent::RunPlanned { suites } => {
+                for suite in suites {
+                    for target_label in suite.target_labels {
+                        for eval_id in &suite.eval_ids {
+                            let key = Self::key(&suite.suite_id, eval_id, &target_label);
+                            state.rows.entry(key).or_insert_with(|| ProgressRow {
+                                suite_id: suite.suite_id.clone(),
+                                eval_id: eval_id.clone(),
+                                target_label: target_label.clone(),
+                                trials: 0,
+                                status: ProgressStatus::Pending,
+                                marks: Vec::new(),
+                                total_score: 0.0,
+                                total_duration_ms: 0,
+                                mean_score: None,
+                                mean_duration_ms: None,
+                            });
+                        }
+                    }
+                }
+            }
             RunEvent::EvalStarted {
                 suite_id,
                 eval_id,
@@ -243,17 +350,24 @@ impl EventSink for ProgressEventSink {
                 trials,
             } => {
                 let key = Self::key(&suite_id, &eval_id, &target_label);
-                state.rows.entry(key).or_insert_with(|| ProgressRow {
-                    suite_id,
-                    eval_id,
-                    target_label,
-                    trials,
-                    marks: Vec::new(),
-                    total_score: 0.0,
-                    total_duration_ms: 0,
-                    mean_score: None,
-                    mean_duration_ms: None,
-                });
+                state
+                    .rows
+                    .entry(key.clone())
+                    .or_insert_with(|| ProgressRow {
+                        suite_id,
+                        eval_id,
+                        target_label,
+                        trials,
+                        status: ProgressStatus::Running { frame: 0 },
+                        marks: Vec::new(),
+                        total_score: 0.0,
+                        total_duration_ms: 0,
+                        mean_score: None,
+                        mean_duration_ms: None,
+                    });
+                let row = state.rows.get_mut(&key).expect("progress row inserted");
+                row.trials = trials;
+                row.status = ProgressStatus::Running { frame: 0 };
             }
             RunEvent::TrialFinished {
                 suite_id,
@@ -273,6 +387,7 @@ impl EventSink for ProgressEventSink {
                             eval_id,
                             target_label,
                             trials: 0,
+                            status: ProgressStatus::Pending,
                             marks: Vec::new(),
                             total_score: 0.0,
                             total_duration_ms: 0,
@@ -282,6 +397,12 @@ impl EventSink for ProgressEventSink {
                     );
                 }
                 let row = state.rows.get_mut(&key).expect("progress row inserted");
+                row.status = match row.status {
+                    ProgressStatus::Running { frame } => {
+                        ProgressStatus::Running { frame: frame + 1 }
+                    }
+                    _ => ProgressStatus::Running { frame: 0 },
+                };
                 row.marks.push(if passed { '.' } else { 'F' });
                 row.total_score += mean_score;
                 row.total_duration_ms += duration_ms;
@@ -307,6 +428,7 @@ impl EventSink for ProgressEventSink {
                             eval_id,
                             target_label,
                             trials: trial_count,
+                            status: ProgressStatus::Pending,
                             marks: Vec::new(),
                             total_score: 0.0,
                             total_duration_ms: 0,
@@ -317,6 +439,9 @@ impl EventSink for ProgressEventSink {
                 }
                 let row = state.rows.get_mut(&key).expect("progress row inserted");
                 row.trials = trial_count;
+                row.status = ProgressStatus::Finished {
+                    passed: mean_score > 0.8,
+                };
                 row.mean_score = Some(mean_score);
                 row.mean_duration_ms = Some(mean_duration_ms);
             }
@@ -333,6 +458,7 @@ impl EventSink for ProgressEventSink {
 
 impl Drop for ProgressEventSink {
     fn drop(&mut self) {
+        self.running.store(false, Ordering::Relaxed);
         if let Ok(mut state) = self.state.lock() {
             Self::finish(&mut state);
         }

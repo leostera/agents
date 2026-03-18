@@ -8,10 +8,11 @@ use quote::{format_ident, quote};
 use syn::{Expr, ExprAssign, File, Item, ItemFn, Meta, parse_quote};
 use walkdir::WalkDir;
 
-use crate::{EvalAgent, EvalRunReport, RunConfig, Suite};
+use crate::{EvalAgent, EvalRunReport, RunConfig, Suite, TargetFilter};
 
 pub type BoxSuiteFuture = Pin<Box<dyn Future<Output = Result<Box<dyn RunnableSuite>>> + Send>>;
 
+#[derive(Clone, Copy, Debug)]
 pub struct SuiteDescriptor {
     pub id: &'static str,
     pub eval_ids: &'static [&'static str],
@@ -36,8 +37,12 @@ impl SuiteDescriptor {
 pub trait RunnableSuite: Send {
     fn id(&self) -> &str;
     fn eval_ids(&self) -> Vec<String>;
-    async fn run_box(self: Box<Self>, config: RunConfig, output_dir: &str)
-    -> Result<EvalRunReport>;
+    async fn run_box(
+        self: Box<Self>,
+        config: RunConfig,
+        output_dir: &str,
+        filter: TargetFilter,
+    ) -> Result<EvalRunReport>;
 }
 
 #[async_trait]
@@ -61,8 +66,10 @@ where
         self: Box<Self>,
         config: RunConfig,
         output_dir: &str,
+        filter: TargetFilter,
     ) -> Result<EvalRunReport> {
         self.run_with(config)
+            .filter(filter)
             .persist_to(output_dir)
             .run()
             .await

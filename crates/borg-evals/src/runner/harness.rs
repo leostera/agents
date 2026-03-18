@@ -122,8 +122,23 @@ fn render_main(config: &EvalsFile, crates: &[EvalCrate]) -> Result<String> {
 
         #[tokio::main]
         async fn main() -> Result<()> {
-            let command = std::env::args().nth(1).unwrap_or_else(|| "run".to_string());
-            let json = std::env::args().any(|arg| arg == "--json");
+            let mut args = std::env::args().skip(1);
+            let command = args.next().unwrap_or_else(|| "run".to_string());
+            let mut json = false;
+            let mut model = None;
+            let mut query = None;
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--json" => json = true,
+                    "--model" => {
+                        model = Some(
+                            args.next().ok_or_else(|| anyhow::anyhow!("missing value for --model"))?
+                        );
+                    }
+                    value if query.is_none() => query = Some(value.to_string()),
+                    other => anyhow::bail!("unsupported harness argument: {}", other),
+                }
+            }
             let registries = vec![#(#registries),*];
             let run_config = ::borg_evals::RunConfig::new(vec![#(#targets),*]).with_trials(#trials);
 
@@ -136,7 +151,13 @@ fn render_main(config: &EvalsFile, crates: &[EvalCrate]) -> Result<String> {
                         registries,
                         run_config,
                         #output_dir,
-                        ::borg_evals::runner::RunOptions { json },
+                        ::borg_evals::runner::RunOptions {
+                            json,
+                            filter: ::borg_evals::TargetFilter {
+                                query,
+                                model,
+                            },
+                        },
                     ).await?;
                 }
                 other => {

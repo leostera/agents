@@ -9,15 +9,17 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
 use crate::{
-    EventSink, JsonEventSink, ProgressEventSink, RunConfig, SuiteDescriptor, set_global_sink,
+    EventSink, JsonEventSink, PlannedSuiteRun, ProgressEventSink, RunConfig, RunEvent,
+    SuiteDescriptor, TargetFilter, emit, set_global_sink,
 };
 use config::EvalsFile;
 use discovery::discover_eval_crates;
 use harness::generate_harness;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct RunOptions {
     pub json: bool,
+    pub filter: TargetFilter,
 }
 
 pub fn list_workspace(workspace_root: &Path, options: RunOptions) -> Result<()> {
@@ -50,6 +52,19 @@ pub fn list_workspace(workspace_root: &Path, options: RunOptions) -> Result<()> 
     Ok(())
 }
 
+pub fn list_models_workspace(workspace_root: &Path) -> Result<()> {
+    let evals_file = EvalsFile::load(workspace_root)?;
+    for target in evals_file.evals.targets {
+        println!(
+            "{}",
+            target
+                .label
+                .unwrap_or_else(|| format!("{}/{}", target.provider, target.model))
+        );
+    }
+    Ok(())
+}
+
 pub async fn run_workspace(workspace_root: &Path, options: RunOptions) -> Result<()> {
     let evals_file = EvalsFile::load(workspace_root)?;
     let crates = discover_eval_crates(workspace_root);
@@ -78,6 +93,12 @@ pub async fn run_workspace(workspace_root: &Path, options: RunOptions) -> Result
     command.arg("run");
     if options.json {
         command.arg("--json");
+    }
+    if let Some(model) = &options.filter.model {
+        command.arg("--model").arg(model);
+    }
+    if let Some(query) = &options.filter.query {
+        command.arg(query);
     }
 
     let status = command
@@ -188,17 +209,119 @@ pub async fn run_discovered(
     };
     set_global_sink(sink);
 
+    let plan = build_discovered_run_plan(&registries, &run_config, &options.filter)?;
+    emit(RunEvent::RunPlanned {
+        suites: plan
+            .iter()
+            .map(|suite| PlannedSuiteRun {
+                crate_name: suite.crate_name.to_string(),
+                suite_id: suite.descriptor.id.to_string(),
+                target_labels: suite
+                    .targets
+                    .iter()
+                    .map(|target| target.label.clone())
+                    .collect(),
+                eval_ids: suite.eval_ids.iter().map(|id| (*id).to_string()).collect(),
+            })
+            .collect(),
+    });
+
     let mut reports = Vec::new();
-    for (_crate_name, suites) in registries {
-        for suite in suites {
-            reports.push(
-                (suite.build)()
-                    .await?
-                    .run_box(run_config.clone(), output_dir)
-                    .await?,
-            );
-        }
+    for planned_suite in plan {
+        reports.push(
+            (planned_suite.descriptor.build)()
+                .await?
+                .run_box(
+                    RunConfig::new(planned_suite.targets).with_trials(run_config.trials),
+                    output_dir,
+                    options.filter.clone(),
+                )
+                .await?,
+        );
     }
+
     let _ = reports;
     Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct DiscoveredSuitePlan<'a> {
+    crate_name: &'a str,
+    descriptor: SuiteDescriptor,
+    targets: Vec<crate::ExecutionTarget>,
+    eval_ids: Vec<&'a str>,
+}
+
+fn build_discovered_run_plan<'a>(
+    registries: &'a [(&'a str, Vec<SuiteDescriptor>)],
+    run_config: &RunConfig,
+    filter: &TargetFilter,
+) -> Result<Vec<DiscoveredSuitePlan<'a>>> {
+    let mut plan = Vec::new();
+
+    for (crate_name, suites) in registries {
+        for descriptor in suites {
+            let mut targets = run_config
+                .targets
+                .iter()
+                .filter(|target| filter.matches_target(target))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            if targets.is_empty() {
+                continue;
+            }
+
+            let eval_ids = if let Some(query) = filter.query.as_deref() {
+                if descriptor.id.contains(query) {
+                    descriptor.eval_ids.to_vec()
+                } else {
+                    let mut matched_eval_ids = Vec::new();
+                    targets.retain(|target| {
+                        let matching_evals = descriptor
+                            .eval_ids
+                            .iter()
+                            .copied()
+                            .filter(|eval_id| {
+                                format!("{}::{}::{}", descriptor.id, target.label, eval_id)
+                                    .contains(query)
+                            })
+                            .collect::<Vec<_>>();
+                        for eval_id in &matching_evals {
+                            if !matched_eval_ids.contains(eval_id) {
+                                matched_eval_ids.push(*eval_id);
+                            }
+                        }
+                        !matching_evals.is_empty()
+                    });
+                    matched_eval_ids
+                }
+            } else {
+                descriptor.eval_ids.to_vec()
+            };
+
+            if targets.is_empty() || eval_ids.is_empty() {
+                continue;
+            }
+
+            plan.push(DiscoveredSuitePlan {
+                crate_name,
+                descriptor: *descriptor,
+                targets,
+                eval_ids,
+            });
+        }
+    }
+
+    if plan.is_empty() {
+        if let Some(query) = &filter.query {
+            bail!("no suites, models, or evals matched query {:?}", query);
+        }
+        if let Some(model) = &filter.model {
+            bail!("no eval targets matched model {:?}", model);
+        }
+        bail!("no eval suites matched the selected filters");
+    }
+
+    Ok(plan)
 }

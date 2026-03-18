@@ -17,8 +17,8 @@ pub use config::{ExecutionTarget, RunConfig};
 pub use error::{EvalError, EvalResult};
 pub use eval::{Eval, EvalAgent, EvalContext};
 pub use events::{
-    EventSink, JsonEventSink, NoopEventSink, ProgressEventSink, RunEvent, SharedEventSink, emit,
-    global_sink, set_global_sink,
+    EventSink, JsonEventSink, NoopEventSink, PlannedSuiteRun, ProgressEventSink, RunEvent,
+    SharedEventSink, emit, global_sink, set_global_sink,
 };
 pub use grade::{Grade, GradeResult, Grader, GraderFailure, GradingConfig, grade};
 pub use registry::{RunnableSuite, SuiteDescriptor, build};
@@ -26,7 +26,7 @@ pub use report::{
     ArtifactIndex, EvalAggregate, EvalRunReport, GraderAggregate, RunManifest, SCHEMA_VERSION,
     SuiteRunReport, SuiteSummary, TrialRecord,
 };
-pub use suite::{Suite, SuiteKind};
+pub use suite::{Suite, SuiteKind, SuitePlan, TargetFilter};
 pub use trajectory::{Step, Trajectory, TrajectoryBuilder};
 pub use trial::{
     AgentTrial, AgentTrialRecorder, RecordedEvent, RecordedMessageRole, RecordedToolCall,
@@ -74,11 +74,11 @@ pub mod prelude {
     pub use crate::{
         AgentTrial, AgentTrialRecorder, ArtifactIndex, Eval, EvalAgent, EvalAggregate, EvalContext,
         EvalError, EvalResult, EventSink, ExecutionTarget, Grade, GradeResult, Grader,
-        GraderFailure, GradingConfig, JsonEventSink, ProgressEventSink, RecordedEvent,
-        RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite, SharedEventSink,
-        Step, Suite, SuiteDescriptor, SuiteKind, SuiteRunReport, Trajectory, TrajectoryBuilder,
-        assistant, async_trait, build, emit, global_sink, grade, set_global_sink, setup,
-        trajectory, user,
+        GraderFailure, GradingConfig, JsonEventSink, PlannedSuiteRun, ProgressEventSink,
+        RecordedEvent, RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite,
+        SharedEventSink, Step, Suite, SuiteDescriptor, SuiteKind, SuitePlan, SuiteRunReport,
+        TargetFilter, Trajectory, TrajectoryBuilder, assistant, async_trait, build, emit,
+        global_sink, grade, set_global_sink, setup, trajectory, user,
     };
 }
 
@@ -97,7 +97,7 @@ mod tests {
 
     use crate::prelude::*;
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     struct DummyAgent;
 
     #[async_trait]
@@ -230,6 +230,112 @@ mod tests {
         assert_eq!(report.variants[0].suite.target.label, "qwen2.5");
         assert_eq!(report.variants[1].suite.target.label, "qwen3.5");
         assert_eq!(report.manifest.targets.len(), 2);
+    }
+
+    #[test]
+    fn suite_runner_plan_filters_evals_and_targets_before_execution() {
+        let suite = suite_with_dummy_agent("echo")
+            .eval(Eval::new("echoes_plain_text"))
+            .eval(Eval::new("preserves_newlines"))
+            .eval(Eval::new("preserves_empty_string"));
+
+        let plan = suite
+            .run_with(RunConfig::new(vec![
+                ExecutionTarget::ollama("llama3.2:1b", "llama3.2:1b"),
+                ExecutionTarget::ollama("llama3.2:3b", "llama3.2:3b"),
+            ]))
+            .filter(TargetFilter {
+                query: Some("preserves".to_string()),
+                model: Some("ollama/llama3.2:1b".to_string()),
+            })
+            .plan()
+            .expect("plan to succeed");
+
+        let eval_ids = plan
+            .suite()
+            .evals()
+            .iter()
+            .map(|eval| eval.id().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            eval_ids,
+            vec!["preserves_newlines", "preserves_empty_string"]
+        );
+        assert_eq!(plan.config().targets.len(), 1);
+        assert_eq!(plan.config().targets[0].label, "llama3.2:1b");
+    }
+
+    #[test]
+    fn suite_runner_plan_errors_when_no_query_matches() {
+        let suite = suite_with_dummy_agent("echo").eval(Eval::new("echoes_plain_text"));
+
+        let error = suite
+            .run_with(RunConfig::single(ExecutionTarget::ollama(
+                "llama3.2:1b",
+                "llama3.2:1b",
+            )))
+            .filter(TargetFilter {
+                query: Some("preserves".to_string()),
+                model: None,
+            })
+            .plan()
+            .expect_err("plan to fail");
+
+        assert_eq!(
+            error.to_string(),
+            "eval failed: no suites, models, or evals matched query \"preserves\""
+        );
+    }
+
+    #[test]
+    fn suite_runner_plan_errors_when_no_model_matches() {
+        let suite = suite_with_dummy_agent("echo").eval(Eval::new("echoes_plain_text"));
+
+        let error = suite
+            .run_with(RunConfig::single(ExecutionTarget::ollama(
+                "llama3.2:1b",
+                "llama3.2:1b",
+            )))
+            .filter(TargetFilter {
+                query: None,
+                model: Some("ollama/llama3.2:3b".to_string()),
+            })
+            .plan()
+            .expect_err("plan to fail");
+
+        assert_eq!(
+            error.to_string(),
+            "eval failed: no eval targets matched model \"ollama/llama3.2:3b\""
+        );
+    }
+
+    #[test]
+    fn suite_runner_plan_keeps_full_suite_when_query_matches_suite_id() {
+        let suite = suite_with_dummy_agent("echo")
+            .eval(Eval::new("echoes_plain_text"))
+            .eval(Eval::new("preserves_newlines"));
+
+        let plan = suite
+            .run_with(RunConfig::single(ExecutionTarget::ollama(
+                "llama3.2:1b",
+                "llama3.2:1b",
+            )))
+            .filter(TargetFilter {
+                query: Some("echo".to_string()),
+                model: None,
+            })
+            .plan()
+            .expect("plan to succeed");
+
+        let eval_ids = plan
+            .suite()
+            .evals()
+            .iter()
+            .map(|eval| eval.id().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(eval_ids, vec!["echoes_plain_text", "preserves_newlines"]);
     }
 
     #[test]
