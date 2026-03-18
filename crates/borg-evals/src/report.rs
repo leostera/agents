@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::ExecutionTarget;
 use crate::error::EvalResult;
 use crate::eval::Eval;
-use crate::grade::{GradeResult, GraderFailure};
+use crate::grade::{GradeResult, GraderFailure, is_passing_score};
 use crate::suite::Suite;
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -79,7 +79,7 @@ pub struct TrialRecord {
     pub mean_score: f32,
     pub trial: Option<serde_json::Value>,
     pub error: Option<String>,
-    pub grades: Vec<GradeResult>,
+    pub grades: BTreeMap<String, GradeResult>,
     #[serde(default)]
     pub grader_failures: Vec<GraderFailure>,
 }
@@ -487,7 +487,7 @@ where
         .chain(
             eval_trials
                 .iter()
-                .flat_map(|trial| trial.grades.iter().map(|grade| grade.name.clone())),
+                .flat_map(|trial| trial.grades.keys().cloned()),
         )
         .collect::<BTreeSet<_>>();
 
@@ -499,8 +499,7 @@ where
             let scores = eval_trials.iter().map(|trial| {
                 trial
                     .grades
-                    .iter()
-                    .find(|grade| grade.name == grader_name_for_score)
+                    .get(&grader_name_for_score)
                     .map(|grade| grade.score)
                     .unwrap_or(0.0)
             });
@@ -509,9 +508,8 @@ where
                 .filter(|trial| {
                     trial
                         .grades
-                        .iter()
-                        .find(|grade| grade.name == grader_name_for_pass)
-                        .map(|grade| grade.passed)
+                        .get(&grader_name_for_pass)
+                        .map(|grade| is_passing_score(grade.score))
                         .unwrap_or(false)
                 })
                 .count();

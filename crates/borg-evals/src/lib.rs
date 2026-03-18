@@ -27,7 +27,7 @@ pub use report::{
     SuiteRunReport, SuiteSummary, TrialRecord,
 };
 pub use suite::{Suite, SuiteKind};
-pub use trajectory::{Expectation, Step, Trajectory, TrajectoryBuilder};
+pub use trajectory::{Step, Trajectory, TrajectoryBuilder};
 pub use trial::{
     AgentTrial, AgentTrialRecorder, RecordedEvent, RecordedMessageRole, RecordedToolCall,
 };
@@ -35,7 +35,7 @@ pub use trial::{
 pub mod prelude {
     pub use crate::{
         AgentTrial, AgentTrialRecorder, ArtifactIndex, Eval, EvalAgent, EvalAggregate, EvalContext,
-        EvalError, EvalResult, EventSink, ExecutionTarget, Expectation, Grade, GradeResult, Grader,
+        EvalError, EvalResult, EventSink, ExecutionTarget, Grade, GradeResult, Grader,
         GraderFailure, GradingConfig, JsonEventSink, ProgressEventSink, RecordedEvent,
         RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite, SharedEventSink,
         Step, Suite, SuiteDescriptor, SuiteKind, SuiteRunReport, Trajectory, TrajectoryBuilder,
@@ -45,6 +45,7 @@ pub mod prelude {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -125,12 +126,15 @@ mod tests {
         let suite = suite_with_dummy_agent("calendar").trials(2).eval(
             Eval::new("happy-path")
                 .grading(grade("reply-is-done", |trial, _ctx| async move {
-                    Ok(GradeResult::pass_if(
-                        "reply-is-done",
-                        trial.final_reply.as_deref() == Some("done"),
-                        "reply should equal done",
-                        json!({ "reply": trial.final_reply }),
-                    ))
+                    Ok(GradeResult {
+                        score: if trial.final_reply.as_deref() == Some("done") {
+                            1.0
+                        } else {
+                            0.0
+                        },
+                        summary: "reply should equal done".to_string(),
+                        evidence: json!({ "reply": trial.final_reply }),
+                    })
                 }))
                 .run(|ctx, _agent| async move {
                     Ok(AgentTrial {
@@ -140,7 +144,7 @@ mod tests {
                         }],
                         final_reply: Some("done".to_string()),
                         tool_trace: Vec::new(),
-                        grades: Vec::new(),
+                        grades: BTreeMap::new(),
                         grader_failures: Vec::new(),
                         metadata: json!({ "trial_index": ctx.trial_index }),
                     })
@@ -160,7 +164,11 @@ mod tests {
         let suite = suite_with_dummy_agent("calendar").eval(
             Eval::new("matrix")
                 .grading(grade("always", |_, _ctx| async move {
-                    Ok(GradeResult::pass("always", "always"))
+                    Ok(GradeResult {
+                        score: 1.0,
+                        summary: "always".to_string(),
+                        evidence: serde_json::Value::Null,
+                    })
                 }))
                 .run(|ctx, _agent| async move {
                     Ok(AgentTrial::new(format!("target={}", ctx.target.label)))
@@ -215,7 +223,11 @@ mod tests {
         let suite = suite_with_dummy_agent("calendar").eval(
             Eval::new("compress-day")
                 .grading(grade("free-block", |_, _ctx| async move {
-                    Ok(GradeResult::pass("free-block", "always"))
+                    Ok(GradeResult {
+                        score: 1.0,
+                        summary: "always".to_string(),
+                        evidence: serde_json::Value::Null,
+                    })
                 }))
                 .run(|_, _agent| async move { Ok(AgentTrial::new("ok".to_string())) }),
         );
@@ -249,7 +261,11 @@ mod tests {
         let suite = suite_with_dummy_agent("calendar").trials(2).eval(
             Eval::new("compress-day")
                 .grading(grade("free-block", |_, _ctx| async move {
-                    Ok(GradeResult::pass("free-block", "always"))
+                    Ok(GradeResult {
+                        score: 1.0,
+                        summary: "always".to_string(),
+                        evidence: serde_json::Value::Null,
+                    })
                 }))
                 .run(|ctx, _agent| async move {
                     if ctx.trial_index == 0 {
@@ -281,7 +297,11 @@ mod tests {
             .eval(
                 Eval::new("still-runs")
                     .grading(grade("always", |_, _ctx| async move {
-                        Ok(GradeResult::pass("always", "always"))
+                        Ok(GradeResult {
+                            score: 1.0,
+                            summary: "always".to_string(),
+                            evidence: serde_json::Value::Null,
+                        })
                     }))
                     .run(|_, _agent| async move { Ok(AgentTrial::new("ok".to_string())) }),
             );
@@ -304,15 +324,17 @@ mod tests {
             .eval(
                 Eval::new("echoes").run(
                     Trajectory::<EchoAgent>::builder()
-                        .add_step(Step::user("hello".to_string()).expect(
-                            "echoes hello",
+                        .add_step(Step::user("hello".to_string()).grade(
                             GradingConfig::new().grade("echoes-hello", |trial, _ctx| async move {
-                                Ok(GradeResult::pass_if(
-                                    "echoes-hello",
-                                    trial.final_reply.as_deref() == Some("hello"),
-                                    "reply should equal hello",
-                                    json!({ "reply": trial.final_reply }),
-                                ))
+                                Ok(GradeResult {
+                                    score: if trial.final_reply.as_deref() == Some("hello") {
+                                        1.0
+                                    } else {
+                                        0.0
+                                    },
+                                    summary: "reply should equal hello".to_string(),
+                                    evidence: json!({ "reply": trial.final_reply }),
+                                })
                             }),
                         ))
                         .build()
@@ -330,7 +352,7 @@ mod tests {
 
         assert_eq!(variant.trials.len(), 1);
         assert_eq!(variant.trials[0].grades.len(), 1);
-        assert_eq!(variant.trials[0].grades[0].name, "echoes-hello");
+        assert!(variant.trials[0].grades.contains_key("echoes-hello"));
         assert_eq!(variant.suite.evals[0].grader_means.len(), 1);
         assert_eq!(variant.suite.evals[0].grader_means[0].name, "echoes-hello");
     }
@@ -348,7 +370,7 @@ mod tests {
                         }],
                         final_reply: None,
                         tool_trace: Vec::new(),
-                        grades: Vec::new(),
+                        grades: BTreeMap::new(),
                         grader_failures: Vec::new(),
                         metadata: json!({ "partial": true }),
                     },
@@ -405,7 +427,11 @@ mod tests {
         let suite = suite_with_dummy_agent("calendar").eval(
             Eval::new("write-artifacts")
                 .grading(grade("passes", |_, _ctx| async move {
-                    Ok(GradeResult::pass("passes", "always"))
+                    Ok(GradeResult {
+                        score: 1.0,
+                        summary: "always".to_string(),
+                        evidence: serde_json::Value::Null,
+                    })
                 }))
                 .run(|_, _agent| async move { Ok(AgentTrial::new("ok".to_string())) }),
         );
@@ -428,7 +454,11 @@ mod tests {
         let suite = suite_with_dummy_agent("calendar").eval(
             Eval::new("parallel")
                 .grading(grade("always", |_, _ctx| async move {
-                    Ok(GradeResult::pass("always", "always"))
+                    Ok(GradeResult {
+                        score: 1.0,
+                        summary: "always".to_string(),
+                        evidence: serde_json::Value::Null,
+                    })
                 }))
                 .run({
                     let in_flight = in_flight.clone();
@@ -475,7 +505,11 @@ mod tests {
         let suite = suite_with_dummy_agent("calendar").eval(
             Eval::new("mixed-targets")
                 .grading(grade("always", |_, _ctx| async move {
-                    Ok(GradeResult::pass("always", "always"))
+                    Ok(GradeResult {
+                        score: 1.0,
+                        summary: "always".to_string(),
+                        evidence: serde_json::Value::Null,
+                    })
                 }))
                 .run({
                     let local_in_flight = local_in_flight.clone();
@@ -530,7 +564,11 @@ mod tests {
         let suite = suite_with_dummy_agent("calendar").eval(
             Eval::new("incremental")
                 .grading(grade("always", |_, _ctx| async move {
-                    Ok(GradeResult::pass("always", "always"))
+                    Ok(GradeResult {
+                        score: 1.0,
+                        summary: "always".to_string(),
+                        evidence: serde_json::Value::Null,
+                    })
                 }))
                 .run(|ctx, _agent| async move {
                     if ctx.trial_index == 0 {

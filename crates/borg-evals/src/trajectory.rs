@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::collections::BTreeMap;
 use std::{future::Future, pin::Pin};
 
 use borg_agent::{AgentEvent, AgentInput};
@@ -24,12 +24,7 @@ fn event_kind<Tool, ToolResult, Output>(
 
 pub struct Step<A: EvalAgent, State = ()> {
     user: A::Input,
-    expect: Option<Expectation<State, A::Output>>,
-}
-
-pub struct Expectation<State = (), Output = String> {
-    description: Arc<str>,
-    grading: GradingConfig<State, Output>,
+    grade: Option<GradingConfig<State, A::Output>>,
 }
 
 pub struct Trajectory<A: EvalAgent, State = ()> {
@@ -48,16 +43,7 @@ where
     fn clone(&self) -> Self {
         Self {
             user: self.user.clone(),
-            expect: self.expect.clone(),
-        }
-    }
-}
-
-impl<State, Output> Clone for Expectation<State, Output> {
-    fn clone(&self) -> Self {
-        Self {
-            description: self.description.clone(),
-            grading: self.grading.clone(),
+            grade: self.grade.clone(),
         }
     }
 }
@@ -82,15 +68,7 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Step")
             .field("user", &self.user)
-            .field("expect", &self.expect)
-            .finish()
-    }
-}
-
-impl<State, Output> std::fmt::Debug for Expectation<State, Output> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Expectation")
-            .field("description", &self.description)
+            .field("grade", &self.grade)
             .finish()
     }
 }
@@ -123,24 +101,24 @@ impl<A: EvalAgent, State> Step<A, State> {
     pub fn user(message: A::Input) -> Self {
         Self {
             user: message,
-            expect: None,
+            grade: None,
         }
     }
 
-    pub fn expect(
-        mut self,
-        description: impl Into<String>,
-        grading: GradingConfig<State, A::Output>,
-    ) -> Self {
-        self.expect = Some(Expectation {
-            description: Arc::from(description.into()),
-            grading,
-        });
+    pub fn grade<G>(mut self, grading: G) -> Self
+    where
+        G: Into<GradingConfig<State, A::Output>>,
+    {
+        self.grade = Some(grading.into());
         self
     }
 }
 
 impl<A: EvalAgent, State> Trajectory<A, State> {
+    pub fn new(step: Step<A, State>) -> Self {
+        Self { steps: vec![step] }
+    }
+
     pub fn builder() -> TrajectoryBuilder<A, State> {
         TrajectoryBuilder { steps: Vec::new() }
     }
@@ -209,7 +187,7 @@ where
                     "agent run started"
                 );
                 let mut recorder = AgentTrialRecorder::default();
-                let mut collected_grades = Vec::new();
+                let mut collected_grades = BTreeMap::new();
                 let mut collected_grader_failures = Vec::new();
 
                 for (step_index, step) in trajectory.steps().iter().enumerate() {
@@ -295,7 +273,7 @@ where
                         ));
                     }
 
-                    if let Some(expectation) = &step.expect {
+                    if let Some(grading) = &step.grade {
                         debug!(
                             suite_id = %ctx.suite_id,
                             eval_id = %ctx.eval_id,
@@ -303,14 +281,10 @@ where
                             trial_index = ctx.trial_index,
                             target_label = %ctx.target.label,
                             step_index,
-                            expectation = %expectation.description,
-                            "running trajectory expectation"
+                            "running trajectory grade"
                         );
                         let snapshot = recorder.snapshot(Value::Null);
-                        let outcome = expectation
-                            .grading
-                            .run(snapshot.clone(), ctx.clone())
-                            .await?;
+                        let outcome = grading.run(snapshot.clone(), ctx.clone()).await?;
 
                         collected_grades.extend(outcome.grades.clone());
                         collected_grader_failures.extend(outcome.grader_failures.clone());
@@ -323,14 +297,10 @@ where
                                 trial_index = ctx.trial_index,
                                 target_label = %ctx.target.label,
                                 step_index,
-                                expectation = %expectation.description,
-                                "trajectory expectation failed"
+                                "trajectory grading failed"
                             );
                             return Err(EvalError::message_with_trial(
-                                format!(
-                                    "trajectory expectation '{}' failed",
-                                    expectation.description
-                                ),
+                                format!("trajectory grading failed at step {step_index}"),
                                 AgentTrial {
                                     grades: collected_grades.clone(),
                                     grader_failures: collected_grader_failures.clone(),

@@ -1,7 +1,9 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use async_trait::async_trait;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
@@ -12,6 +14,7 @@ use crate::config::{ExecutionTarget, RunConfig};
 use crate::error::{EvalError, EvalResult};
 use crate::eval::{Eval, EvalAgent, EvalContext, NoAgent};
 use crate::events::emit;
+use crate::grade::is_passing_score;
 use crate::report::{
     EvalRunReport, IncrementalSuiteWriter, RunManifest, SCHEMA_VERSION, SuiteRunReport,
     TrialRecord, build_summary, now_since_epoch, run_id,
@@ -78,6 +81,23 @@ where
     config: RunConfig,
     artifact_root: Option<PathBuf>,
 }
+
+#[async_trait]
+trait SuiteExecutor<State, A>: Send + Sync
+where
+    State: Send + Sync + 'static,
+    A: EvalAgent,
+{
+    async fn run(
+        &self,
+        suite: &Suite<State, A>,
+        config: RunConfig,
+        artifact_root: Option<&Path>,
+    ) -> EvalResult<EvalRunReport>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LocalExecutor;
 
 impl Suite<(), NoAgent> {
     pub fn new(id: impl Into<String>) -> Self {
@@ -217,6 +237,24 @@ where
     }
 
     pub async fn run(self) -> EvalResult<EvalRunReport> {
+        LocalExecutor
+            .run(self.suite, self.config, self.artifact_root.as_deref())
+            .await
+    }
+}
+
+#[async_trait]
+impl<State, A> SuiteExecutor<State, A> for LocalExecutor
+where
+    State: Send + Sync + 'static,
+    A: EvalAgent,
+{
+    async fn run(
+        &self,
+        suite: &Suite<State, A>,
+        config: RunConfig,
+        artifact_root: Option<&Path>,
+    ) -> EvalResult<EvalRunReport> {
         let started_at = now_since_epoch();
         let run_id = run_id();
         let mut variants = Vec::new();
@@ -224,36 +262,34 @@ where
 
         emit(RunEvent::RunStarted {
             suite_count: 1,
-            targets: self
-                .config
+            targets: config
                 .targets
                 .iter()
                 .map(|target| target.display_label())
                 .collect(),
-            trials: self.config.trials,
-            output_dir: self
-                .artifact_root
+            trials: config.trials,
+            output_dir: artifact_root
                 .as_ref()
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| ".evals".to_string()),
         });
 
         info!(
-            suite_id = %self.suite.id(),
-            targets = self.config.targets.len(),
-            trials = self.config.trials,
+            suite_id = %suite.id(),
+            targets = config.targets.len(),
+            trials = config.trials,
             "starting eval run"
         );
 
         let mut jobs = JoinSet::new();
 
-        for target in &self.config.targets {
+        for target in &config.targets {
             let target = target.clone();
-            let suite = (*self.suite).clone();
+            let suite = (*suite).clone();
             let run_id = run_id.clone();
-            let trials = self.config.trials;
+            let trials = config.trials;
             let local_target_semaphore = local_target_semaphore.clone();
-            let artifact_root = self.artifact_root.clone();
+            let artifact_root = artifact_root.map(Path::to_path_buf);
             jobs.spawn(async move {
                 let _local_permit = if target.provider == "ollama" {
                     Some(
@@ -281,12 +317,12 @@ where
             run_id,
             started_at,
             finished_at,
-            suites: vec![self.suite.id().to_string()],
-            targets: self.config.targets,
+            suites: vec![suite.id().to_string()],
+            targets: config.targets,
         };
 
         info!(
-            suite_id = %self.suite.id(),
+            suite_id = %suite.id(),
             variants = variants.len(),
             "finished eval run"
         );
@@ -530,12 +566,12 @@ where
                     let mut grader_failures = trajectory_grader_failures.clone();
                     grader_failures.extend(outcome.grader_failures);
                     let configured_grader_count = grades.len() + grader_failures.len();
-                    let passed =
-                        grader_failures.is_empty() && grades.iter().all(|grade| grade.passed);
+                    let passed = grader_failures.is_empty()
+                        && grades.values().all(|grade| is_passing_score(grade.score));
                     let mean_score = if configured_grader_count == 0 {
                         1.0
                     } else {
-                        grades.iter().map(|grade| grade.score).sum::<f32>()
+                        grades.values().map(|grade| grade.score).sum::<f32>()
                             / configured_grader_count as f32
                     };
                     (passed, mean_score, grades, grader_failures)
@@ -637,12 +673,12 @@ where
                     let mean_score = if grader_count == 0 {
                         0.0
                     } else {
-                        trial.grades.iter().map(|grade| grade.score).sum::<f32>()
+                        trial.grades.values().map(|grade| grade.score).sum::<f32>()
                             / grader_count as f32
                     };
                     (trial.grades, trial.grader_failures, mean_score)
                 })
-                .unwrap_or_else(|| (Vec::new(), Vec::new(), 0.0));
+                .unwrap_or_else(|| (BTreeMap::new(), Vec::new(), 0.0));
             let record = TrialRecord {
                 schema_version: SCHEMA_VERSION,
                 trial_id,

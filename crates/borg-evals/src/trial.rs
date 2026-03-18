@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use borg_agent::{AgentEvent, ToolExecutionResult};
 use borg_llm::completion::{OutputContent, OutputItem, Role};
 use schemars::JsonSchema;
@@ -12,7 +14,7 @@ pub struct AgentTrial<Output = String> {
     pub final_reply: Option<Output>,
     pub tool_trace: Vec<RecordedToolCall>,
     #[serde(default)]
-    pub grades: Vec<GradeResult>,
+    pub grades: BTreeMap<String, GradeResult>,
     #[serde(default)]
     pub grader_failures: Vec<GraderFailure>,
     #[serde(default)]
@@ -25,7 +27,7 @@ impl<Output> AgentTrial<Output> {
             transcript: Vec::new(),
             final_reply: Some(final_reply),
             tool_trace: Vec::new(),
-            grades: Vec::new(),
+            grades: BTreeMap::new(),
             grader_failures: Vec::new(),
             metadata: Value::Null,
         }
@@ -163,7 +165,7 @@ impl<Output> AgentTrialRecorder<Output> {
             transcript: self.transcript.clone(),
             final_reply: self.final_reply.clone(),
             tool_trace: self.tool_trace.clone(),
-            grades: Vec::new(),
+            grades: BTreeMap::new(),
             grader_failures: Vec::new(),
             metadata,
         }
@@ -174,7 +176,7 @@ impl<Output> AgentTrialRecorder<Output> {
             transcript: self.transcript,
             final_reply: self.final_reply,
             tool_trace: self.tool_trace,
-            grades: Vec::new(),
+            grades: BTreeMap::new(),
             grader_failures: Vec::new(),
             metadata,
         }

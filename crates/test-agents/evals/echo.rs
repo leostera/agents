@@ -12,9 +12,48 @@ async fn build_harness() -> Result<EchoHarness> {
     EchoHarness::new().await
 }
 
-async fn build_agent(_ctx: EvalContext<EchoHarness>) -> Result<EchoAgent> {
-    let runner = _ctx.state().runner_for(_ctx.target()).await?;
+async fn build_agent(ctx: EvalContext<EchoHarness>) -> Result<EchoAgent> {
+    let runner = ctx.state().runner_for(ctx.target()).await?;
     EchoAgent::new(runner).await
+}
+
+#[borg_macros::grade(name = "echoes-hello")]
+async fn echoes_hello(
+    trial: AgentTrial<EchoRes>,
+    _ctx: EvalContext<EchoHarness>,
+) -> EvalResult<GradeResult> {
+    let reply = trial.final_reply.expect("echo reply");
+    Ok(GradeResult {
+        score: if reply.text == "hello" { 1.0 } else { 0.0 },
+        summary: "echo agent should preserve the input text".to_string(),
+        evidence: json!({ "reply": reply.text }),
+    })
+}
+
+#[borg_macros::grade(name = "echoes-multiline")]
+async fn echoes_multiline(
+    trial: AgentTrial<EchoRes>,
+    _ctx: EvalContext<EchoHarness>,
+) -> EvalResult<GradeResult> {
+    let reply = trial.final_reply.expect("echo reply");
+    Ok(GradeResult {
+        score: if reply.text == "hello\nworld" { 1.0 } else { 0.0 },
+        summary: "echo agent should preserve multiline input".to_string(),
+        evidence: json!({ "reply": reply.text }),
+    })
+}
+
+#[borg_macros::grade(name = "echoes-empty")]
+async fn echoes_empty(
+    trial: AgentTrial<EchoRes>,
+    _ctx: EvalContext<EchoHarness>,
+) -> EvalResult<GradeResult> {
+    let reply = trial.final_reply.expect("echo reply");
+    Ok(GradeResult {
+        score: if reply.text.is_empty() { 1.0 } else { 0.0 },
+        summary: "echo agent should preserve empty string".to_string(),
+        evidence: json!({ "reply": reply.text }),
+    })
 }
 
 #[borg_macros::eval(
@@ -25,20 +64,9 @@ async fn build_agent(_ctx: EvalContext<EchoHarness>) -> Result<EchoAgent> {
 async fn echoes_plain_text(
     _ctx: EvalContext<EchoHarness>,
 ) -> Result<Trajectory<EchoAgent, EchoHarness>> {
-    Ok(Trajectory::builder()
-        .add_step(Step::user(EchoReq("hello".to_string())).expect(
-            "echo agent should return the same text",
-            GradingConfig::new().grade("echoes-hello", |trial, _ctx| async move {
-                let reply: EchoRes = trial.final_reply.unwrap();
-                Ok(GradeResult::pass_if(
-                    "echoes-hello",
-                    reply.text == "hello",
-                    "echo agent should preserve the input text",
-                    json!({ "reply": reply.text }),
-                ))
-            }),
-        ))
-        .build()?)
+    Ok(Trajectory::new(
+        Step::user(EchoReq("hello".to_string())).grade(echoes_hello()),
+    ))
 }
 
 #[borg_macros::eval(
@@ -49,20 +77,9 @@ async fn echoes_plain_text(
 async fn preserves_newlines(
     _ctx: EvalContext<EchoHarness>,
 ) -> Result<Trajectory<EchoAgent, EchoHarness>> {
-    Ok(Trajectory::builder()
-        .add_step(Step::user(EchoReq("hello\nworld".to_string())).expect(
-            "echo agent should preserve newlines",
-            GradingConfig::new().grade("echoes-multiline", |trial, _ctx| async move {
-                let reply: EchoRes = trial.final_reply.unwrap();
-                Ok(GradeResult::pass_if(
-                    "echoes-multiline",
-                    reply.text == "hello\nworld",
-                    "echo agent should preserve multiline input",
-                    json!({ "reply": reply.text }),
-                ))
-            }),
-        ))
-        .build()?)
+    Ok(Trajectory::new(
+        Step::user(EchoReq("hello\nworld".to_string())).grade(echoes_multiline()),
+    ))
 }
 
 #[borg_macros::eval(
@@ -70,26 +87,10 @@ async fn preserves_newlines(
     desc = "empty string is empty string",
     tags = ["echo", "multiline"],
 )]
-async fn preserves_empty_string(_ctx: EvalContext<EchoHarness>) -> Result<Trajectory<EchoAgent, EchoHarness>> {
-    Ok(Trajectory::builder()
-        .add_step(Step::user(EchoReq("".to_string())).expect(
-            "echo agent should respect empty string",
-            GradingConfig::new().grade("echoes-empty", |trial, _ctx| async move {
-                let reply: EchoRes = trial.final_reply.unwrap();
-                let passed = reply.text.is_empty();
-                let summary = if passed {
-                    "echo agent preserved the empty string"
-                } else {
-                    "echo agent should preserve empty string"
-                };
-                Ok(GradeResult {
-                    name: "echoes-empty".to_string(),
-                    passed,
-                    score: if passed { 1.0 } else { 0.0 },
-                    summary: summary.to_string(),
-                    evidence: json!({ "reply": reply.text }),
-                })
-            }),
-        ))
-        .build()?)
+async fn preserves_empty_string(
+    _ctx: EvalContext<EchoHarness>,
+) -> Result<Trajectory<EchoAgent, EchoHarness>> {
+    Ok(Trajectory::new(
+        Step::user(EchoReq("".to_string())).grade(echoes_empty()),
+    ))
 }

@@ -172,12 +172,11 @@ async fn main() -> Result<()> {
                 .grading(
                     GradingConfig::new().grade("returns-4", |trial, _ctx| async move {
                         let reply: CalcRes = trial.final_reply.unwrap();
-                        Ok(GradeResult::pass_if(
-                            "returns-4",
-                            reply.result == 4,
-                            "calculator should answer 2 + 2 with exactly 4",
-                            json!({ "reply": reply }),
-                        ))
+                        Ok(GradeResult {
+                            score: if reply.result == 4 { 1.0 } else { 0.0 },
+                            summary: "calculator should answer 2 + 2 with exactly 4".to_string(),
+                            evidence: json!({ "reply": reply }),
+                        })
                     }),
                 )
                 .run(

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -16,51 +17,16 @@ type GraderFn<State, Output> = dyn Fn(AgentTrial<Output>, EvalContext<State>) ->
     + Send
     + Sync;
 
+pub(crate) fn is_passing_score(score: f32) -> bool {
+    (score - 1.0).abs() < f32::EPSILON
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GradeResult {
-    pub name: String,
-    pub passed: bool,
     pub score: f32,
     pub summary: String,
     #[serde(default)]
     pub evidence: Value,
-}
-
-impl GradeResult {
-    pub fn pass(name: impl Into<String>, summary: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            passed: true,
-            score: 1.0,
-            summary: summary.into(),
-            evidence: Value::Null,
-        }
-    }
-
-    pub fn fail(name: impl Into<String>, summary: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            passed: false,
-            score: 0.0,
-            summary: summary.into(),
-            evidence: Value::Null,
-        }
-    }
-
-    pub fn pass_if(
-        name: impl Into<String>,
-        passed: bool,
-        summary: impl Into<String>,
-        evidence: Value,
-    ) -> Self {
-        Self {
-            name: name.into(),
-            passed,
-            score: if passed { 1.0 } else { 0.0 },
-            summary: summary.into(),
-            evidence,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -70,7 +36,7 @@ pub struct GraderFailure {
 }
 
 pub struct Grader<State = (), Output = String> {
-    name: Arc<str>,
+    name: String,
     run: Arc<GraderFn<State, Output>>,
 }
 
@@ -102,7 +68,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> Grader<State, 
         Fut: Future<Output = EvalResult<GradeResult>> + Send + 'static,
     {
         Self {
-            name: Arc::from(name.into()),
+            name: name.into(),
             run: Arc::new(move |trial, ctx| Box::pin(f(trial, ctx))),
         }
     }
@@ -146,7 +112,7 @@ impl<State, Output> Default for GradingConfig<State, Output> {
 
 #[derive(Clone, Debug)]
 pub struct Grade {
-    pub grades: Vec<GradeResult>,
+    pub grades: BTreeMap<String, GradeResult>,
     pub passed: bool,
     pub mean_score: f32,
     pub grader_failures: Vec<GraderFailure>,
@@ -182,7 +148,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
     where
         Output: Clone,
     {
-        let mut grades = Vec::with_capacity(self.graders.len());
+        let mut grades = BTreeMap::new();
         let mut grader_failures = Vec::new();
 
         for grader in &self.graders {
@@ -204,11 +170,11 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
                         trial_index = ctx.trial_index,
                         target_label = %ctx.target.label,
                         grader = %grader.name(),
-                        passed = grade.passed,
+                        passed = is_passing_score(grade.score),
                         score = grade.score,
                         "grader completed"
                     );
-                    grades.push(grade);
+                    grades.insert(grader.name().to_string(), grade);
                 }
                 Err(error) => {
                     warn!(
@@ -230,11 +196,12 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
         }
 
         let configured_grader_count = grades.len() + grader_failures.len();
-        let passed = grader_failures.is_empty() && grades.iter().all(|grade| grade.passed);
+        let passed = grader_failures.is_empty()
+            && grades.values().all(|grade| is_passing_score(grade.score));
         let mean_score = if configured_grader_count == 0 {
             1.0
         } else {
-            grades.iter().map(|grade| grade.score).sum::<f32>() / configured_grader_count as f32
+            grades.values().map(|grade| grade.score).sum::<f32>() / configured_grader_count as f32
         };
 
         Ok(Grade {
