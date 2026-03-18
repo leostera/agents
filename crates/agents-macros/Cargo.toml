@@ -19,6 +19,9 @@ syn.workspace = true
 [dev-dependencies]
 agents = { path = "../agents" }
 anyhow.workspace = true
+async-trait.workspace = true
 insta.workspace = true
 prettyplease.workspace = true
+schemars.workspace = true
+serde.workspace = true
 serde_json.workspace = true

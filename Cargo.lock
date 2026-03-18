@@ -42,10 +42,13 @@ version = "0.0.1"
 dependencies = [
  "agents",
  "anyhow",
+ "async-trait",
  "insta",
  "prettyplease",
  "proc-macro2",
  "quote",
+ "schemars 1.2.1",
+ "serde",
  "serde_json",
  "syn 2.0.117",
 ]

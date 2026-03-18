@@ -26,7 +26,11 @@ pub fn agent(item: TokenStream) -> TokenStream {
 /// Derives the typed tool metadata needed by `SessionAgent`.
 ///
 /// ```rust
+/// use schemars::JsonSchema;
+/// use serde::{Deserialize, Serialize};
+///
 /// #[derive(agents::Tool)]
+/// #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 /// enum EchoTool {
 ///     #[agent_tool(name = "echo_text", description = "Echo the provided text.")]
 ///     Echo { text: String },
