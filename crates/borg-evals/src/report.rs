@@ -12,6 +12,7 @@ use crate::error::EvalResult;
 use crate::eval::Eval;
 use crate::grade::{GradeResult, GraderFailure, is_passing_score};
 use crate::suite::Suite;
+use crate::trial::{AgentTrial, RecordedEvent, RecordedMessageRole};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -23,6 +24,8 @@ pub struct RunManifest {
     pub finished_at: Duration,
     pub suites: Vec<String>,
     pub targets: Vec<ExecutionTarget>,
+    #[serde(default)]
+    pub files: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -107,11 +110,11 @@ pub(crate) struct IncrementalSuiteWriter {
     manifest_path: PathBuf,
     summary_path: PathBuf,
     markdown_path: PathBuf,
-    artifact_index_path: PathBuf,
     files: Vec<String>,
     run_id: String,
     suite_id: String,
     target_label: String,
+    manifest: RunManifest,
 }
 
 impl IncrementalSuiteWriter {
@@ -132,8 +135,6 @@ impl IncrementalSuiteWriter {
         let manifest_path = suite_dir.join("manifest.json");
         let summary_path = suite_dir.join("suite-summary.json");
         let markdown_path = suite_dir.join("suite-summary.md");
-        let artifact_index_path = suite_dir.join("artifact-index.json");
-        write_json(&manifest_path, manifest)?;
 
         let mut writer = Self {
             root,
@@ -141,16 +142,16 @@ impl IncrementalSuiteWriter {
             manifest_path,
             summary_path,
             markdown_path,
-            artifact_index_path,
             files: Vec::new(),
             run_id: manifest.run_id.clone(),
             suite_id: suite_id.to_string(),
             target_label: target.display_label(),
+            manifest: manifest.clone(),
         };
         writer
             .files
             .push(relative_file(&writer.root, &writer.manifest_path));
-        writer.write_index()?;
+        writer.write_manifest()?;
         Ok(writer)
     }
 
@@ -161,9 +162,12 @@ impl IncrementalSuiteWriter {
             trial.eval_id,
             trial.trial_id
         ));
-        write_json(&trial_path, trial)?;
+        write_json(
+            &trial_path,
+            &PersistedTrialRecord::from_trial_record(trial)?,
+        )?;
         self.files.push(relative_file(&self.root, &trial_path));
-        self.write_index().map(|_| ())
+        self.write_manifest()
     }
 
     pub(crate) fn finish(&mut self, report: &SuiteRunReport) -> EvalResult<ArtifactIndex> {
@@ -173,19 +177,23 @@ impl IncrementalSuiteWriter {
             .push(relative_file(&self.root, &self.summary_path));
         self.files
             .push(relative_file(&self.root, &self.markdown_path));
-        self.write_index()
+        self.write_manifest()?;
+        Ok(self.current_index())
     }
 
-    fn write_index(&self) -> EvalResult<ArtifactIndex> {
-        let index = ArtifactIndex {
+    fn write_manifest(&mut self) -> EvalResult<()> {
+        self.manifest.files = self.files.clone();
+        write_json(&self.manifest_path, &self.manifest)
+    }
+
+    fn current_index(&self) -> ArtifactIndex {
+        ArtifactIndex {
             schema_version: SCHEMA_VERSION,
             run_id: self.run_id.clone(),
             suite_id: self.suite_id.clone(),
             target_label: Some(self.target_label.clone()),
             files: self.files.clone(),
-        };
-        write_json(&self.artifact_index_path, &index)?;
-        Ok(index)
+        }
     }
 }
 
@@ -214,8 +222,6 @@ impl SuiteRunReport {
         let manifest_path = suite_dir.join("manifest.json");
         let summary_path = suite_dir.join("suite-summary.json");
         let markdown_path = suite_dir.join("suite-summary.md");
-
-        write_json(&manifest_path, &self.manifest)?;
         write_json(&summary_path, &self.suite)?;
         fs::write(&markdown_path, self.summary_markdown())?;
 
@@ -232,7 +238,10 @@ impl SuiteRunReport {
                 trial.eval_id,
                 trial.trial_id
             ));
-            write_json(&trial_path, trial)?;
+            write_json(
+                &trial_path,
+                &PersistedTrialRecord::from_trial_record(trial)?,
+            )?;
             files.push(relative_file(root, &trial_path));
         }
 
@@ -243,9 +252,199 @@ impl SuiteRunReport {
             target_label: Some(self.suite.target.display_label()),
             files,
         };
-
-        write_json(&suite_dir.join("artifact-index.json"), &index)?;
+        let mut manifest = self.manifest.clone();
+        manifest.files = index.files.clone();
+        write_json(&manifest_path, &manifest)?;
         Ok(index)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+struct PersistedTrialRecord {
+    pub trial_id: String,
+    pub suite_id: String,
+    pub eval_id: String,
+    pub target: PersistedTrialTarget,
+    pub timing: PersistedTrialTiming,
+    pub grading: PersistedTrialGrading,
+    pub transcript: Vec<PersistedTranscriptEvent>,
+    pub final_reply: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+struct PersistedTrialTarget {
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+struct PersistedTrialTiming {
+    pub started_at_ms: u128,
+    pub finished_at_ms: u128,
+    pub duration_ms: u128,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+struct PersistedTrialGrading {
+    pub passed: bool,
+    pub mean_score: f32,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum PersistedTranscriptEvent {
+    System {
+        value: String,
+    },
+    User {
+        value: serde_json::Value,
+        step: Option<usize>,
+    },
+    Assistant {
+        value: String,
+    },
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    ToolResult {
+        id: String,
+        name: String,
+        result: serde_json::Value,
+    },
+    Grade {
+        name: String,
+        score: Option<f32>,
+        summary: Option<String>,
+        evidence: Option<serde_json::Value>,
+        failed: bool,
+        error: Option<String>,
+        step: Option<usize>,
+    },
+}
+
+impl PersistedTrialRecord {
+    fn from_trial_record(trial: &TrialRecord) -> EvalResult<Self> {
+        let parsed_trial = trial
+            .trial
+            .clone()
+            .map(serde_json::from_value::<AgentTrial<serde_json::Value>>)
+            .transpose()?;
+        let agent_trial = parsed_trial.unwrap_or_else(|| AgentTrial {
+            transcript: Vec::new(),
+            final_reply: None,
+            tool_trace: Vec::new(),
+            grades: BTreeMap::new(),
+            grader_failures: Vec::new(),
+            metadata: serde_json::Value::Null,
+        });
+
+        Ok(Self {
+            transcript: persisted_transcript(agent_trial.transcript),
+            trial_id: trial.trial_id.clone(),
+            suite_id: trial.suite_id.clone(),
+            eval_id: trial.eval_id.clone(),
+            target: PersistedTrialTarget {
+                label: trial.target.display_label(),
+            },
+            timing: PersistedTrialTiming {
+                started_at_ms: trial.started_at.as_millis(),
+                finished_at_ms: trial.finished_at.as_millis(),
+                duration_ms: trial.duration.as_millis(),
+            },
+            grading: PersistedTrialGrading {
+                passed: trial.passed,
+                mean_score: trial.mean_score,
+                error: trial.error.clone(),
+            },
+            final_reply: agent_trial.final_reply.unwrap_or(serde_json::Value::Null),
+        })
+    }
+}
+
+fn persisted_transcript(events: Vec<RecordedEvent>) -> Vec<PersistedTranscriptEvent> {
+    let mut transcript = Vec::new();
+    let mut current_step = None;
+
+    for event in events {
+        match event {
+            RecordedEvent::StepStarted { step_index, input } => {
+                current_step = Some(step_index);
+                transcript.push(PersistedTranscriptEvent::User {
+                    value: input,
+                    step: Some(step_index),
+                });
+            }
+            RecordedEvent::Message { role, content } => match role {
+                RecordedMessageRole::System => {
+                    transcript.push(PersistedTranscriptEvent::System { value: content })
+                }
+                RecordedMessageRole::User => {
+                    if current_step.is_none() {
+                        transcript.push(PersistedTranscriptEvent::User {
+                            value: serde_json::Value::String(content),
+                            step: None,
+                        });
+                    }
+                }
+                RecordedMessageRole::Assistant => {
+                    transcript.push(PersistedTranscriptEvent::Assistant { value: content })
+                }
+            },
+            RecordedEvent::ToolCallRequested {
+                id,
+                name,
+                arguments,
+            } => transcript.push(PersistedTranscriptEvent::ToolCall {
+                id,
+                name,
+                arguments,
+            }),
+            RecordedEvent::ToolExecutionCompleted { id, name, result } => {
+                transcript.push(PersistedTranscriptEvent::ToolResult { id, name, result })
+            }
+            RecordedEvent::GraderCompleted {
+                scope,
+                grader,
+                score,
+                summary,
+                evidence,
+            } => transcript.push(PersistedTranscriptEvent::Grade {
+                name: grader,
+                score: Some(score),
+                summary: Some(summary),
+                evidence: Some(evidence),
+                failed: false,
+                error: None,
+                step: grading_step(scope),
+            }),
+            RecordedEvent::GraderFailed {
+                scope,
+                grader,
+                error,
+            } => transcript.push(PersistedTranscriptEvent::Grade {
+                name: grader,
+                score: None,
+                summary: None,
+                evidence: None,
+                failed: true,
+                error: Some(error),
+                step: grading_step(scope),
+            }),
+            RecordedEvent::StepCompleted { .. }
+            | RecordedEvent::Completed { .. }
+            | RecordedEvent::GraderStarted { .. } => {}
+        }
+    }
+
+    transcript
+}
+
+fn grading_step(scope: crate::trial::RecordedGradingScope) -> Option<usize> {
+    match scope {
+        crate::trial::RecordedGradingScope::Eval => None,
+        crate::trial::RecordedGradingScope::TrajectoryStep { step_index } => Some(step_index),
     }
 }
 
@@ -398,8 +597,6 @@ impl EvalRunReport {
         fs::create_dir_all(&manifest_dir)?;
 
         let manifest_path = manifest_dir.join("manifest.json");
-        write_json(&manifest_path, &self.manifest)?;
-
         let mut files = vec![relative_file(root, &manifest_path)];
         for variant in &self.variants {
             let index = variant.write_to(root)?;
@@ -418,8 +615,9 @@ impl EvalRunReport {
             target_label: None,
             files,
         };
-
-        write_json(&manifest_dir.join("artifact-index.json"), &index)?;
+        let mut manifest = self.manifest.clone();
+        manifest.files = index.files.clone();
+        write_json(&manifest_path, &manifest)?;
         Ok(index)
     }
 }

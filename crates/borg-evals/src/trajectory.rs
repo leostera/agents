@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 use crate::error::EvalError;
 use crate::eval::EvalContext;
 use crate::grade::GradingConfig;
-use crate::trial::{AgentTrial, AgentTrialRecorder};
+use crate::trial::{AgentTrial, RecordedEvent, TranscriptAgent, TranscriptCollector};
 
 fn event_kind<Tool, ToolResult, Output>(
     event: &AgentEvent<Tool, ToolResult, Output>,
@@ -177,6 +177,8 @@ where
                     target_label = %ctx.target.label,
                     "starting agent run"
                 );
+                let (transcript_tx, mut transcript_collector) = TranscriptCollector::new(256);
+                let agent = TranscriptAgent::new(agent, transcript_tx.clone());
                 let (tx, mut rx) = agent
                     .spawn()
                     .await
@@ -189,9 +191,9 @@ where
                     target_label = %ctx.target.label,
                     "agent run started"
                 );
-                let mut recorder = AgentTrialRecorder::default();
                 let mut collected_grades = BTreeMap::new();
                 let mut collected_grader_failures = Vec::new();
+                let mut final_reply = None;
 
                 for (step_index, step) in trajectory.steps().iter().enumerate() {
                     debug!(
@@ -203,15 +205,24 @@ where
                         step_index,
                         "sending trajectory step"
                     );
-                    recorder.record_step_started(step_index, &step.user);
-                    tx.send(AgentInput::Message(step.user.clone()))
-                        .await
-                        .map_err(|error| {
-                            EvalError::message_with_trial(
-                                format!("send trajectory step: {error}"),
-                                recorder.snapshot(Value::Null),
-                            )
-                        })?;
+                    let _ = transcript_tx
+                        .send(RecordedEvent::StepStarted {
+                            step_index,
+                            input: serde_json::to_value(&step.user)
+                                .expect("serialize trajectory step input"),
+                        })
+                        .await;
+                    if let Err(error) = tx.send(AgentInput::Message(step.user.clone())).await {
+                        let transcript = transcript_collector.snapshot().await;
+                        return Err(EvalError::message_with_trial(
+                            format!("send trajectory step: {error}"),
+                            AgentTrial::from_transcript(
+                                transcript,
+                                final_reply.clone(),
+                                Value::Null,
+                            ),
+                        ));
+                    }
 
                     let mut step_completed = false;
                     while let Some(event) = rx.recv().await {
@@ -227,7 +238,9 @@ where
                                     event_kind = event_kind(&event),
                                     "received trajectory event"
                                 );
-                                recorder.record(&event);
+                                if let AgentEvent::Completed { reply } = &event {
+                                    final_reply = Some(reply.clone());
+                                }
                                 if matches!(event, AgentEvent::Completed { .. }) {
                                     step_completed = true;
                                     debug!(
@@ -239,7 +252,9 @@ where
                                     step_index,
                                         "trajectory step completed"
                                     );
-                                    recorder.record_step_completed(step_index);
+                                    let _ = transcript_tx
+                                        .send(RecordedEvent::StepCompleted { step_index })
+                                        .await;
                                     break;
                                 }
                             }
@@ -256,7 +271,11 @@ where
                                 );
                                 return Err(EvalError::message_with_trial(
                                     error.to_string(),
-                                    recorder.snapshot(Value::Null),
+                                    AgentTrial::from_transcript(
+                                        transcript_collector.snapshot().await,
+                                        final_reply.clone(),
+                                        Value::Null,
+                                    ),
                                 ));
                             }
                         }
@@ -274,7 +293,11 @@ where
                         );
                         return Err(EvalError::message_with_trial(
                             "agent finished without completing a trajectory step",
-                            recorder.snapshot(Value::Null),
+                            AgentTrial::from_transcript(
+                                transcript_collector.snapshot().await,
+                                final_reply.clone(),
+                                Value::Null,
+                            ),
                         ));
                     }
 
@@ -288,7 +311,11 @@ where
                             step_index,
                             "running trajectory grade"
                         );
-                        let snapshot = recorder.snapshot(Value::Null);
+                        let snapshot = AgentTrial::from_transcript(
+                            transcript_collector.snapshot().await,
+                            final_reply.clone(),
+                            Value::Null,
+                        );
                         let outcome = grading
                             .run_with_scope(
                                 snapshot.clone(),
@@ -297,7 +324,7 @@ where
                             )
                             .await?;
                         for event in outcome.recorded_events.clone() {
-                            recorder.push_recorded_event(event);
+                            let _ = transcript_tx.send(event).await;
                         }
 
                         collected_grades.extend(outcome.grades.clone());
@@ -313,19 +340,21 @@ where
                                 step_index,
                                 "trajectory grading failed"
                             );
+                            let mut failed_snapshot = AgentTrial::from_transcript(
+                                transcript_collector.snapshot().await,
+                                final_reply.clone(),
+                                Value::Null,
+                            );
+                            failed_snapshot.grades = collected_grades.clone();
+                            failed_snapshot.grader_failures = collected_grader_failures.clone();
                             return Err(EvalError::message_with_trial(
                                 format!("trajectory grading failed at step {step_index}"),
-                                AgentTrial {
-                                    grades: collected_grades.clone(),
-                                    grader_failures: collected_grader_failures.clone(),
-                                    ..snapshot
-                                },
+                                failed_snapshot,
                             ));
                         }
                     }
                 }
 
-                drop(tx);
                 info!(
                     suite_id = %ctx.suite_id,
                     eval_id = %ctx.eval_id,
@@ -334,7 +363,10 @@ where
                     target_label = %ctx.target.label,
                     "trajectory completed"
                 );
-                let mut trial = recorder.into_trial(Value::Null);
+                drop(tx);
+                drop(transcript_tx);
+                let transcript = transcript_collector.finish().await;
+                let mut trial = AgentTrial::from_transcript(transcript, final_reply, Value::Null);
                 trial.grades = collected_grades;
                 trial.grader_failures = collected_grader_failures;
                 Ok(trial)

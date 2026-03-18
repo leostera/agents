@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
-
-use borg_agent::{AgentEvent, ToolExecutionResult};
+use borg_agent::{Agent, AgentEvent, AgentInput, ToolExecutionResult};
 use borg_llm::completion::{OutputContent, OutputItem, Role};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
+use tokio::sync::mpsc;
 
 use crate::grade::{GradeResult, GraderFailure};
 
@@ -32,173 +32,158 @@ impl<Output> AgentTrial<Output> {
             metadata: Value::Null,
         }
     }
-}
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct AgentTrialRecorder<Output = String> {
-    transcript: Vec<RecordedEvent>,
-    final_reply: Option<Output>,
-    tool_trace: Vec<RecordedToolCall>,
-}
-
-impl<Output> Default for AgentTrialRecorder<Output> {
-    fn default() -> Self {
+    pub fn from_transcript(
+        transcript: Vec<RecordedEvent>,
+        final_reply: Option<Output>,
+        metadata: Value,
+    ) -> Self {
         Self {
-            transcript: Vec::new(),
-            final_reply: None,
-            tool_trace: Vec::new(),
+            tool_trace: build_tool_trace(&transcript),
+            transcript,
+            final_reply,
+            grades: BTreeMap::new(),
+            grader_failures: Vec::new(),
+            metadata,
         }
     }
 }
 
-impl<Output> AgentTrialRecorder<Output> {
-    pub fn record_step_started<Input>(&mut self, step_index: usize, input: &Input)
-    where
-        Input: Serialize,
-    {
-        self.transcript.push(RecordedEvent::StepStarted {
-            step_index,
-            input: serde_json::to_value(input).expect("serialize trajectory step input"),
-        });
-    }
+pub type TranscriptSender = mpsc::Sender<RecordedEvent>;
 
-    pub fn record_step_completed(&mut self, step_index: usize) {
-        self.transcript
-            .push(RecordedEvent::StepCompleted { step_index });
-    }
+pub struct TranscriptCollector {
+    receiver: mpsc::Receiver<RecordedEvent>,
+    store: Vec<RecordedEvent>,
+}
 
-    pub fn push_recorded_event(&mut self, event: RecordedEvent) {
-        self.transcript.push(event);
-    }
-
-    pub fn record<Tool, ToolResult>(&mut self, event: &AgentEvent<Tool, ToolResult, Output>)
-    where
-        ToolResult: Serialize,
-        Output: Clone + Serialize,
-    {
-        match event {
-            AgentEvent::ModelOutputItem { item } => match item {
-                OutputItem::Message { role, content } => {
-                    let text = content
-                        .iter()
-                        .filter_map(|content| match content {
-                            OutputContent::Text { text } => Some(text.clone()),
-                            OutputContent::Structured { .. } => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                        .trim()
-                        .to_string();
-
-                    if !text.is_empty() {
-                        self.transcript.push(RecordedEvent::Message {
-                            role: match role {
-                                Role::System => RecordedMessageRole::System,
-                                Role::User => RecordedMessageRole::User,
-                                Role::Assistant => RecordedMessageRole::Assistant,
-                            },
-                            content: text,
-                        });
-                    }
-                }
-                OutputItem::Reasoning { text } => {
-                    if !text.trim().is_empty() {
-                        self.transcript.push(RecordedEvent::Message {
-                            role: RecordedMessageRole::Assistant,
-                            content: text.trim().to_string(),
-                        });
-                    }
-                }
-                OutputItem::ToolCall { .. } => {}
+impl TranscriptCollector {
+    pub fn new(capacity: usize) -> (TranscriptSender, Self) {
+        let (tx, receiver) = mpsc::channel(capacity.max(1));
+        (
+            tx,
+            Self {
+                receiver,
+                store: Vec::new(),
             },
-            AgentEvent::ToolCallRequested { call } => {
-                let arguments = call.arguments.clone();
-                self.transcript.push(RecordedEvent::ToolCallRequested {
-                    id: call.call_id.clone(),
-                    name: call.name.clone(),
-                    arguments: arguments.clone(),
-                });
-                self.tool_trace.push(RecordedToolCall {
-                    id: call.call_id.clone(),
-                    name: call.name.clone(),
-                    arguments,
-                    result: None,
-                    error: None,
-                });
+        )
+    }
+
+    pub async fn snapshot(&mut self) -> Vec<RecordedEvent> {
+        self.drain_pending();
+        self.store.clone()
+    }
+
+    pub async fn finish(mut self) -> Vec<RecordedEvent> {
+        self.drain_pending();
+        while let Some(event) = self.receiver.recv().await {
+            self.store.push(event);
+        }
+        self.store
+    }
+
+    fn drain_pending(&mut self) {
+        while let Ok(event) = self.receiver.try_recv() {
+            self.store.push(event);
+        }
+    }
+}
+
+pub struct TranscriptAgent<A: Agent> {
+    inner: A,
+    transcript: TranscriptSender,
+}
+
+impl<A: Agent> TranscriptAgent<A> {
+    pub fn new(inner: A, transcript: TranscriptSender) -> Self {
+        Self { inner, transcript }
+    }
+
+    pub fn transcript_sender(&self) -> TranscriptSender {
+        self.transcript.clone()
+    }
+}
+
+#[borg_agent::async_trait]
+impl<A> Agent for TranscriptAgent<A>
+where
+    A: Agent,
+{
+    type Input = A::Input;
+    type ToolCall = A::ToolCall;
+    type ToolResult = A::ToolResult;
+    type Output = A::Output;
+
+    async fn send(&mut self, input: AgentInput<Self::Input>) -> borg_agent::AgentResult<()> {
+        self.inner.send(input.clone()).await?;
+        if let Some(event) = recorded_event_from_agent_input(&input) {
+            let _ = self.transcript.send(event).await;
+        }
+        Ok(())
+    }
+
+    async fn next(
+        &mut self,
+    ) -> borg_agent::AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>>
+    {
+        let event = self.inner.next().await?;
+        if let Some(event_ref) = event.as_ref() {
+            for recorded in recorded_events_from_agent_event(event_ref) {
+                let _ = self.transcript.send(recorded).await;
             }
-            AgentEvent::ToolExecutionCompleted { result } => {
-                let result_value = match &result.result {
-                    ToolExecutionResult::Ok { data } => serde_json::to_value(data)
-                        .expect("serialize tool result for trial recording"),
-                    ToolExecutionResult::Error { message } => {
-                        serde_json::json!({ "error": message })
-                    }
-                };
-                self.transcript.push(RecordedEvent::ToolExecutionCompleted {
-                    id: result.call_id.clone(),
-                    name: self
-                        .tool_trace
-                        .iter()
-                        .find(|tool| tool.id == result.call_id)
-                        .map(|tool| tool.name.clone())
-                        .unwrap_or_else(|| "unknown_tool".to_string()),
-                    result: result_value.clone(),
-                });
-                if let Some(tool) = self
-                    .tool_trace
-                    .iter_mut()
-                    .find(|tool| tool.id == result.call_id)
-                {
-                    match &result.result {
-                        ToolExecutionResult::Ok { data } => {
-                            tool.result = Some(
-                                serde_json::to_value(data)
-                                    .expect("serialize tool result for tool trace"),
-                            )
+        }
+        Ok(event)
+    }
+
+    async fn spawn(
+        self,
+    ) -> borg_agent::AgentResult<(
+        borg_agent::AgentRunInput<Self::Input>,
+        borg_agent::AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+    )> {
+        let transcript = self.transcript.clone();
+        let (inner_input, mut inner_output) = self.inner.spawn().await?;
+        let (input_tx, mut input_rx) = mpsc::channel(64);
+        let (event_tx, event_rx) = mpsc::channel(64);
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    maybe_input = input_rx.recv() => {
+                        match maybe_input {
+                            Some(input) => {
+                                if let Some(event) = recorded_event_from_agent_input(&input) {
+                                    let _ = transcript.send(event).await;
+                                }
+                                if inner_input.send(input).await.is_err() {
+                                    return;
+                                }
+                            }
+                            None => return,
                         }
-                        ToolExecutionResult::Error { message } => {
-                            tool.error = Some(message.clone())
+                    }
+                    maybe_event = inner_output.recv() => {
+                        match maybe_event {
+                            Some(Ok(event)) => {
+                                for recorded in recorded_events_from_agent_event(&event) {
+                                    let _ = transcript.send(recorded).await;
+                                }
+                                if event_tx.send(Ok(event)).await.is_err() {
+                                    return;
+                                }
+                            }
+                            Some(Err(error)) => {
+                                if event_tx.send(Err(error)).await.is_err() {
+                                    return;
+                                }
+                            }
+                            None => return,
                         }
                     }
                 }
             }
-            AgentEvent::Completed { reply } => {
-                self.transcript.push(RecordedEvent::Completed {
-                    reply: serde_json::to_value(reply).expect("serialize completed reply"),
-                });
-                self.final_reply = Some(reply.clone());
-            }
-            AgentEvent::Cancelled => {}
-        }
-    }
+        });
 
-    pub fn final_reply(&self) -> Option<&Output> {
-        self.final_reply.as_ref()
-    }
-
-    pub fn snapshot(&self, metadata: Value) -> AgentTrial<Output>
-    where
-        Output: Clone,
-    {
-        AgentTrial {
-            transcript: self.transcript.clone(),
-            final_reply: self.final_reply.clone(),
-            tool_trace: self.tool_trace.clone(),
-            grades: BTreeMap::new(),
-            grader_failures: Vec::new(),
-            metadata,
-        }
-    }
-
-    pub fn into_trial(self, metadata: Value) -> AgentTrial<Output> {
-        AgentTrial {
-            transcript: self.transcript,
-            final_reply: self.final_reply,
-            tool_trace: self.tool_trace,
-            grades: BTreeMap::new(),
-            grader_failures: Vec::new(),
-            metadata,
-        }
+        Ok((input_tx, event_rx))
     }
 }
 
@@ -269,4 +254,149 @@ pub struct RecordedToolCall {
     pub arguments: Value,
     pub result: Option<Value>,
     pub error: Option<String>,
+}
+
+fn recorded_event_from_agent_input<Input>(input: &AgentInput<Input>) -> Option<RecordedEvent>
+where
+    Input: Serialize,
+{
+    match input {
+        AgentInput::Message(message) => Some(RecordedEvent::Message {
+            role: RecordedMessageRole::User,
+            content: serde_json::to_string(message).expect("serialize agent input"),
+        }),
+        AgentInput::Steer(message) => Some(RecordedEvent::Message {
+            role: RecordedMessageRole::User,
+            content: serde_json::to_string(message).expect("serialize steer input"),
+        }),
+        AgentInput::Cancel => None,
+    }
+}
+
+fn recorded_events_from_agent_event<Tool, ToolResult, Output>(
+    event: &AgentEvent<Tool, ToolResult, Output>,
+) -> Vec<RecordedEvent>
+where
+    ToolResult: Serialize,
+    Output: Clone + Serialize,
+{
+    match event {
+        AgentEvent::ModelOutputItem { item } => match item {
+            OutputItem::Message { role, content } => {
+                let text = content
+                    .iter()
+                    .filter_map(|content| match content {
+                        OutputContent::Text { text } => Some(text.clone()),
+                        OutputContent::Structured { .. } => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .trim()
+                    .to_string();
+
+                if text.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![RecordedEvent::Message {
+                        role: match role {
+                            Role::System => RecordedMessageRole::System,
+                            Role::User => RecordedMessageRole::User,
+                            Role::Assistant => RecordedMessageRole::Assistant,
+                        },
+                        content: text,
+                    }]
+                }
+            }
+            OutputItem::Reasoning { text } => {
+                if text.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    vec![RecordedEvent::Message {
+                        role: RecordedMessageRole::Assistant,
+                        content: text.trim().to_string(),
+                    }]
+                }
+            }
+            OutputItem::ToolCall { .. } => Vec::new(),
+        },
+        AgentEvent::ToolCallRequested { call } => vec![RecordedEvent::ToolCallRequested {
+            id: call.call_id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+        }],
+        AgentEvent::ToolExecutionCompleted { result } => {
+            let result_value = match &result.result {
+                ToolExecutionResult::Ok { data } => {
+                    serde_json::to_value(data).expect("serialize tool result for transcript")
+                }
+                ToolExecutionResult::Error { message } => {
+                    serde_json::json!({ "error": message })
+                }
+            };
+            vec![RecordedEvent::ToolExecutionCompleted {
+                id: result.call_id.clone(),
+                name: "unknown_tool".to_string(),
+                result: result_value,
+            }]
+        }
+        AgentEvent::Completed { reply } => vec![RecordedEvent::Completed {
+            reply: serde_json::to_value(reply).expect("serialize completed reply"),
+        }],
+        AgentEvent::Cancelled => Vec::new(),
+    }
+}
+
+fn build_tool_trace(transcript: &[RecordedEvent]) -> Vec<RecordedToolCall> {
+    let mut tool_trace = Vec::new();
+
+    for event in transcript {
+        match event {
+            RecordedEvent::ToolCallRequested {
+                id,
+                name,
+                arguments,
+            } => {
+                tool_trace.push(RecordedToolCall {
+                    id: id.clone(),
+                    name: name.clone(),
+                    arguments: arguments.clone(),
+                    result: None,
+                    error: None,
+                });
+            }
+            RecordedEvent::ToolExecutionCompleted { id, name, result } => {
+                if let Some(tool) = tool_trace.iter_mut().find(|tool| tool.id == *id) {
+                    tool.name = name.clone();
+                    if let Some(error) = result.get("error").and_then(Value::as_str) {
+                        tool.error = Some(error.to_string());
+                    } else {
+                        tool.result = Some(result.clone());
+                    }
+                } else {
+                    let mut tool = RecordedToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        arguments: Value::Null,
+                        result: None,
+                        error: None,
+                    };
+                    if let Some(error) = result.get("error").and_then(Value::as_str) {
+                        tool.error = Some(error.to_string());
+                    } else {
+                        tool.result = Some(result.clone());
+                    }
+                    tool_trace.push(tool);
+                }
+            }
+            RecordedEvent::StepStarted { .. }
+            | RecordedEvent::StepCompleted { .. }
+            | RecordedEvent::Message { .. }
+            | RecordedEvent::Completed { .. }
+            | RecordedEvent::GraderStarted { .. }
+            | RecordedEvent::GraderCompleted { .. }
+            | RecordedEvent::GraderFailed { .. } => {}
+        }
+    }
+
+    tool_trace
 }

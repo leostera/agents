@@ -29,8 +29,8 @@ pub use report::{
 pub use suite::{Suite, SuiteKind, SuitePlan, TargetFilter};
 pub use trajectory::{Step, Trajectory, TrajectoryBuilder};
 pub use trial::{
-    AgentTrial, AgentTrialRecorder, RecordedEvent, RecordedGradingScope, RecordedMessageRole,
-    RecordedToolCall,
+    AgentTrial, RecordedEvent, RecordedGradingScope, RecordedMessageRole, RecordedToolCall,
+    TranscriptAgent, TranscriptCollector, TranscriptSender,
 };
 
 #[macro_export]
@@ -73,13 +73,14 @@ macro_rules! trajectory {
 
 pub mod prelude {
     pub use crate::{
-        AgentTrial, AgentTrialRecorder, ArtifactIndex, Eval, EvalAggregate, EvalContext, EvalError,
-        EvalResult, EventSink, ExecutionTarget, Grade, GradeResult, Grader, GraderFailure,
-        GradingConfig, JsonEventSink, PlannedSuiteRun, ProgressEventSink, RecordedEvent,
-        RecordedGradingScope, RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent,
-        RunnableSuite, SharedEventSink, Step, Suite, SuiteDescriptor, SuiteKind, SuitePlan,
-        SuiteRunReport, TargetFilter, Trajectory, TrajectoryBuilder, assistant, async_trait, build,
-        emit, global_sink, grade, set_global_sink, setup, trajectory, user,
+        AgentTrial, ArtifactIndex, Eval, EvalAggregate, EvalContext, EvalError, EvalResult,
+        EventSink, ExecutionTarget, Grade, GradeResult, Grader, GraderFailure, GradingConfig,
+        JsonEventSink, PlannedSuiteRun, ProgressEventSink, RecordedEvent, RecordedGradingScope,
+        RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite, SharedEventSink,
+        Step, Suite, SuiteDescriptor, SuiteKind, SuitePlan, SuiteRunReport, TargetFilter,
+        Trajectory, TrajectoryBuilder, TranscriptAgent, TranscriptCollector, TranscriptSender,
+        assistant, async_trait, build, emit, global_sink, grade, set_global_sink, setup,
+        trajectory, user,
     };
     pub use borg_agent::Agent;
 }
@@ -88,12 +89,12 @@ pub mod prelude {
 mod tests {
     use std::collections::BTreeMap;
     use std::fs;
-    use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use borg_agent::{AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
     use serde_json::json;
+    use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio::time::{Duration, Instant};
 
@@ -534,7 +535,6 @@ mod tests {
             .await
             .expect("report");
         let variant = &report.variants[0];
-
         assert_eq!(variant.trials.len(), 1);
         assert_eq!(variant.trials[0].grades.len(), 1);
         assert!(variant.trials[0].grades.contains_key("echoes-hello"));
@@ -573,29 +573,92 @@ mod tests {
             .run()
             .await
             .expect("report");
-        let trial = report.variants[0].trials[0]
-            .trial
-            .as_ref()
-            .expect("serialized trial");
+        let root = TempDir::new().expect("temp dir");
+        let index = report.write_to(root.path()).expect("artifacts to write");
+        let trial_path = root.path().join(
+            index
+                .files
+                .iter()
+                .find(|path| path.contains("trial-001__echoes__"))
+                .expect("trial artifact path"),
+        );
+        let trial: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&trial_path).expect("trial json"))
+                .expect("parsed trial json");
         let transcript = trial
             .get("transcript")
             .and_then(|value| value.as_array())
             .expect("transcript array");
 
         assert!(transcript.iter().any(|event| {
-            event.get("kind").and_then(|value| value.as_str()) == Some("step_started")
-                && event.get("step_index").and_then(|value| value.as_u64()) == Some(0)
-                && event.get("input") == Some(&json!("hello"))
+            event.get("type").and_then(|value| value.as_str()) == Some("user")
+                && event.get("step").and_then(|value| value.as_u64()) == Some(0)
+                && event.get("value") == Some(&json!("hello"))
         }));
         assert!(transcript.iter().any(|event| {
-            event.get("kind").and_then(|value| value.as_str()) == Some("grader_started")
-                && event.get("grader").and_then(|value| value.as_str()) == Some("echoes-hello")
-        }));
-        assert!(transcript.iter().any(|event| {
-            event.get("kind").and_then(|value| value.as_str()) == Some("grader_completed")
-                && event.get("grader").and_then(|value| value.as_str()) == Some("echoes-hello")
+            event.get("type").and_then(|value| value.as_str()) == Some("grade")
+                && event.get("name").and_then(|value| value.as_str()) == Some("echoes-hello")
                 && event.get("score").and_then(|value| value.as_f64()) == Some(1.0)
         }));
+    }
+
+    #[tokio::test]
+    async fn failed_trajectory_grading_is_preserved_in_persisted_transcript() {
+        let suite = Suite::new("echo")
+            .agent(|_ctx| async move { Ok::<EchoAgent, EvalError>(EchoAgent) })
+            .eval(
+                Eval::new("echoes").run(
+                    Trajectory::<EchoAgent>::builder()
+                        .add_step(Step::user("hello".to_string()).grade(
+                            GradingConfig::new().grade("echoes-hello", |trial, _ctx| async move {
+                                Ok(GradeResult {
+                                    score: if trial.final_reply.as_deref() == Some("goodbye") {
+                                        1.0
+                                    } else {
+                                        0.0
+                                    },
+                                    summary: "reply should equal goodbye".to_string(),
+                                    evidence: json!({ "reply": trial.final_reply }),
+                                })
+                            }),
+                        ))
+                        .build()
+                        .expect("trajectory")
+                        .runner(),
+                ),
+            );
+
+        let report = suite
+            .run_with(RunConfig::single(ExecutionTarget::ollama("echo", "echo")).with_trials(1))
+            .run()
+            .await
+            .expect("report");
+        let root = TempDir::new().expect("temp dir");
+        let index = report.write_to(root.path()).expect("artifacts to write");
+        let trial_path = root.path().join(
+            index
+                .files
+                .iter()
+                .find(|path| path.contains("trial-001__echoes__"))
+                .expect("trial artifact path"),
+        );
+        let trial: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&trial_path).expect("trial json"))
+                .expect("parsed trial json");
+        let transcript = trial
+            .get("transcript")
+            .and_then(|value| value.as_array())
+            .expect("transcript array");
+
+        let grade = transcript.iter().find(|event| {
+            event.get("type").and_then(|value| value.as_str()) == Some("grade")
+                && event.get("name").and_then(|value| value.as_str()) == Some("echoes-hello")
+        });
+
+        assert!(
+            grade.is_some(),
+            "expected grade event in transcript, got {transcript:?}"
+        );
     }
 
     #[test]
@@ -698,13 +761,11 @@ mod tests {
         );
 
         let report = suite.run().await.expect("suite to run");
-        let root = unique_test_dir("borg-evals");
-        let index = report.write_to(&root).expect("artifacts to write");
+        let root = TempDir::new().expect("temp dir");
+        let index = report.write_to(root.path()).expect("artifacts to write");
 
-        assert!(root.join(&index.files[0]).exists());
-        assert!(root.join("results/calendar").exists());
-
-        fs::remove_dir_all(root).expect("cleanup temp dir");
+        assert!(root.path().join(&index.files[0]).exists());
+        assert!(root.path().join("results/calendar").exists());
     }
 
     #[tokio::test]
@@ -821,7 +882,7 @@ mod tests {
 
     #[tokio::test]
     async fn persisted_runs_flush_trial_records_before_completion() {
-        let root = unique_test_dir("borg-evals-incremental");
+        let root = TempDir::new().expect("temp dir");
         let suite = suite_with_dummy_agent("calendar").eval(
             Eval::new("incremental")
                 .grading(grade("always", |_, _ctx| async move {
@@ -848,12 +909,12 @@ mod tests {
                 )
                 .with_trials(2),
             )
-            .persist_to(&root)
+            .persist_to(root.path())
             .run();
 
         let check_persisted_trial = async {
             tokio::time::sleep(Duration::from_millis(80)).await;
-            let results_dir = root.join("results").join("calendar");
+            let results_dir = root.path().join("results").join("calendar");
             let run_dir = fs::read_dir(&results_dir)
                 .expect("results dir should exist")
                 .next()
@@ -877,18 +938,5 @@ mod tests {
         let (report, ()) = tokio::join!(run, check_persisted_trial);
         let report = report.expect("persisted run");
         assert_eq!(report.variants[0].trials.len(), 2);
-
-        fs::remove_dir_all(root).expect("cleanup temp dir");
-    }
-
-    fn unique_test_dir(prefix: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "{}-{}-{}",
-            prefix,
-            std::process::id(),
-            crate::report::now_since_epoch().as_millis()
-        ));
-        fs::create_dir_all(&dir).expect("temp dir");
-        dir
     }
 }
