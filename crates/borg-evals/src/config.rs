@@ -56,10 +56,7 @@ impl ExecutionTarget {
     }
 
     pub fn display_label(&self) -> String {
-        match self.provider.as_str() {
-            "ollama" | "default" => self.label.clone(),
-            provider => format!("{provider}:{}", self.label),
-        }
+        self.label.clone()
     }
 }
 

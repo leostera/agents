@@ -114,7 +114,6 @@ pub(crate) struct IncrementalSuiteWriter {
     suite_dir: PathBuf,
     manifest_path: PathBuf,
     summary_path: PathBuf,
-    markdown_path: PathBuf,
     files: Vec<String>,
     run_id: String,
     suite_id: String,
@@ -136,14 +135,12 @@ impl IncrementalSuiteWriter {
 
         let manifest_path = target_dir.join("manifest.json");
         let summary_path = target_dir.join("suite-summary.json");
-        let markdown_path = target_dir.join("suite-summary.md");
 
         let mut writer = Self {
             root,
             suite_dir,
             manifest_path,
             summary_path,
-            markdown_path,
             files: Vec::new(),
             run_id: manifest.run_id.clone(),
             suite_id: suite_id.to_string(),
@@ -179,11 +176,8 @@ impl IncrementalSuiteWriter {
 
     pub(crate) fn finish(&mut self, report: &SuiteRunReport) -> EvalResult<ArtifactIndex> {
         write_json(&self.summary_path, &report.suite)?;
-        fs::write(&self.markdown_path, report.summary_markdown())?;
         self.files
             .push(relative_file(&self.root, &self.summary_path));
-        self.files
-            .push(relative_file(&self.root, &self.markdown_path));
         self.write_manifest()?;
         Ok(self.current_index())
     }
@@ -228,14 +222,11 @@ impl SuiteRunReport {
 
         let manifest_path = target_dir.join("manifest.json");
         let summary_path = target_dir.join("suite-summary.json");
-        let markdown_path = target_dir.join("suite-summary.md");
         write_json(&summary_path, &self.suite)?;
-        fs::write(&markdown_path, self.summary_markdown())?;
 
         let mut files = vec![
             relative_file(root, &manifest_path),
             relative_file(root, &summary_path),
-            relative_file(root, &markdown_path),
         ];
 
         for trial in &self.trials {

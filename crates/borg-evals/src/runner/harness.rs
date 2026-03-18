@@ -62,6 +62,7 @@ fn render_manifest(workspace_root: &Path, crates: &[EvalCrate]) -> String {
     out.push_str("[workspace]\n\n");
     out.push_str("[dependencies]\n");
     out.push_str("anyhow = \"1\"\n");
+    out.push_str("dotenvy = \"0\"\n");
     out.push_str("tokio = { version = \"1\", features = [\"macros\", \"rt-multi-thread\"] }\n");
     out.push_str(&format!(
         "borg-evals = {{ path = {:?} }}\n",
@@ -123,6 +124,7 @@ fn render_main(config: &EvalsFile, crates: &[EvalCrate]) -> Result<String> {
 
         #[tokio::main]
         async fn main() -> Result<()> {
+            let _ = dotenvy::dotenv();
             let mut args = std::env::args().skip(1);
             let command = args.next().unwrap_or_else(|| "run".to_string());
             let mut json = false;

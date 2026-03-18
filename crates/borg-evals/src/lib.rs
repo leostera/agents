@@ -585,11 +585,11 @@ mod tests {
     }
 
     #[test]
-    fn summary_markdown_prefixes_non_local_providers() {
+    fn display_label_returns_configured_label() {
         let hosted_target = ExecutionTarget::openrouter("kimi-k2.5", "moonshotai/kimi-k2.5");
         let local_target = ExecutionTarget::ollama("qwen3.5", "qwen3.5");
 
-        assert_eq!(hosted_target.display_label(), "openrouter:kimi-k2.5");
+        assert_eq!(hosted_target.display_label(), "kimi-k2.5");
         assert_eq!(local_target.display_label(), "qwen3.5");
     }
 
@@ -624,7 +624,7 @@ mod tests {
         assert!(table.contains("avg duration ⏱"));
         assert!(table.contains("final 🏁"));
         assert!(table.contains("grades 🔎"));
-        assert!(table.contains("openrouter:kimi-k2.5"));
+        assert!(table.contains("kimi-k2.5"));
         assert!(table.contains("ms  🥇") || table.contains("ms  🥈") || table.contains("ms  🥉"));
         assert!(table.contains("free-block"));
         assert!(table.contains("1.00"));

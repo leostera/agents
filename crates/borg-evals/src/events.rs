@@ -15,7 +15,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 type CrosstermTerminal = Terminal<CrosstermBackend<Stdout>>;
-const INLINE_VIEWPORT_HEIGHT: u16 = 12;
+const MIN_INLINE_VIEWPORT_HEIGHT: u16 = 4;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -126,6 +126,7 @@ struct ProgressState {
     rows: BTreeMap<String, ProgressRow>,
     terminal: Option<CrosstermTerminal>,
     terminal_ready: bool,
+    viewport_height: u16,
 }
 
 struct ProgressRow {
@@ -148,13 +149,18 @@ enum ProgressStatus {
 }
 
 impl ProgressEventSink {
+    const TRIALS_COLUMN_WIDTH: u16 = 32;
+    const SCORE_COLUMN_WIDTH: u16 = 8;
+    const TIME_COLUMN_WIDTH: u16 = 10;
+
     pub fn new() -> Self {
         let terminal = if std::io::stdout().is_terminal() {
             let backend = CrosstermBackend::new(std::io::stdout());
+            let viewport_height = MIN_INLINE_VIEWPORT_HEIGHT;
             Terminal::with_options(
                 backend,
                 TerminalOptions {
-                    viewport: Viewport::Inline(INLINE_VIEWPORT_HEIGHT),
+                    viewport: Viewport::Inline(viewport_height),
                 },
             )
             .ok()
@@ -165,6 +171,7 @@ impl ProgressEventSink {
             rows: BTreeMap::new(),
             terminal,
             terminal_ready: std::io::stdout().is_terminal(),
+            viewport_height: MIN_INLINE_VIEWPORT_HEIGHT,
         }));
         let running = Arc::new(AtomicBool::new(true));
 
@@ -205,7 +212,20 @@ impl ProgressEventSink {
         format!("{suite_id} :: {target_label} :: {eval_id}")
     }
 
-    fn row_label(row: &ProgressRow) -> Line<'static> {
+    fn truncate_label(label: &str, max_chars: usize) -> String {
+        let len = label.chars().count();
+        if len <= max_chars {
+            return label.to_string();
+        }
+        if max_chars <= 1 {
+            return "…".to_string();
+        }
+
+        let truncated: String = label.chars().take(max_chars - 1).collect();
+        format!("{truncated}…")
+    }
+
+    fn row_label(row: &ProgressRow, max_chars: usize) -> Line<'static> {
         let mut spans = Vec::new();
         match row.status {
             ProgressStatus::Pending => {
@@ -232,11 +252,8 @@ impl ProgressEventSink {
                 spans.push(Span::styled(symbol, style));
             }
         }
-        spans.push(Span::raw(Self::row_prefix(
-            &row.suite_id,
-            &row.eval_id,
-            &row.target_label,
-        )));
+        let label = Self::row_prefix(&row.suite_id, &row.eval_id, &row.target_label);
+        spans.push(Span::raw(Self::truncate_label(&label, max_chars)));
         Line::from(spans)
     }
 
@@ -255,22 +272,7 @@ impl ProgressEventSink {
             return;
         }
 
-        let rows = state.rows.values().map(|row| {
-            let score = row
-                .mean_score
-                .map(|score| format!("{score:.2}"))
-                .unwrap_or_default();
-            let time_ms = row
-                .mean_duration_ms
-                .map(|duration| format!("{duration}ms"))
-                .unwrap_or_default();
-            Row::new(vec![
-                Cell::from(Self::row_label(row)),
-                Cell::from(Line::from(Self::row_marks_spans(row))),
-                Cell::from(score),
-                Cell::from(time_ms),
-            ])
-        });
+        Self::ensure_viewport_height(state);
 
         let Some(terminal) = state.terminal.as_mut() else {
             return;
@@ -278,13 +280,37 @@ impl ProgressEventSink {
 
         terminal
             .draw(|frame| {
+                let fixed_width =
+                    Self::TRIALS_COLUMN_WIDTH + Self::SCORE_COLUMN_WIDTH + Self::TIME_COLUMN_WIDTH;
+                let label_width = frame
+                    .area()
+                    .width
+                    .saturating_sub(fixed_width)
+                    .saturating_sub(3);
+                let label_chars = label_width.max(1) as usize;
+                let rows = state.rows.values().map(|row| {
+                    let score = row
+                        .mean_score
+                        .map(|score| format!("{score:.2}"))
+                        .unwrap_or_default();
+                    let time_ms = row
+                        .mean_duration_ms
+                        .map(|duration| format!("{duration}ms"))
+                        .unwrap_or_default();
+                    Row::new(vec![
+                        Cell::from(Self::row_label(row, label_chars)),
+                        Cell::from(Line::from(Self::row_marks_spans(row))),
+                        Cell::from(score),
+                        Cell::from(time_ms),
+                    ])
+                });
                 let table = Table::new(
                     rows,
                     [
                         Constraint::Fill(1),
-                        Constraint::Length(32),
-                        Constraint::Length(8),
-                        Constraint::Length(10),
+                        Constraint::Length(Self::TRIALS_COLUMN_WIDTH),
+                        Constraint::Length(Self::SCORE_COLUMN_WIDTH),
+                        Constraint::Length(Self::TIME_COLUMN_WIDTH),
                     ],
                 )
                 .header(
@@ -296,6 +322,32 @@ impl ProgressEventSink {
                 frame.render_widget(table, frame.area());
             })
             .expect("draw eval progress table");
+    }
+
+    fn desired_viewport_height(row_count: usize) -> u16 {
+        let desired = row_count
+            .saturating_add(1)
+            .max(MIN_INLINE_VIEWPORT_HEIGHT as usize);
+        desired.min(u16::MAX as usize) as u16
+    }
+
+    fn ensure_viewport_height(state: &mut ProgressState) {
+        let desired = Self::desired_viewport_height(state.rows.len());
+        if desired == state.viewport_height {
+            return;
+        }
+
+        let _old_terminal = state.terminal.take();
+        let backend = CrosstermBackend::new(std::io::stdout());
+        state.terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(desired),
+            },
+        )
+        .ok();
+        state.viewport_height = desired;
+        state.terminal_ready = state.terminal.is_some();
     }
 
     fn finish(state: &mut ProgressState) {
