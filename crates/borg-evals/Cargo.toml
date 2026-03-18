@@ -1,14 +1,14 @@
 [package]
 name = "borg-evals"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-borg-agent = { path = "../borg-agent" }
-borg-macros = { path = "../borg-macros" }
-borg-llm = { path = "../borg-llm" }
+borg-agent = { path = "../borg-agent", package = "borg-agent", version = "0" }
+borg-llm = { path = "../borg-llm", package = "borg-llm", version = "0" }
+borg-macros = { path = "../borg-macros" , package = "borg-macros", version = "0" }
 chrono.workspace = true
 config.workspace = true
 crossterm.workspace = true
@@ -22,7 +22,7 @@ serde_json.workspace = true
 syn.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tracing.workspace = true
 tracing-subscriber.workspace = true
+tracing.workspace = true
 uuid.workspace = true
 walkdir.workspace = true

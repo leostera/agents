@@ -1,10 +1,10 @@
 [package]
 name = "cargo-evals"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
-borg-evals = { path = "../borg-evals" }
+borg-evals = { path = "../borg-evals", package = "borg-evals", version = "0" }
 clap.workspace = true
 tokio.workspace = true
