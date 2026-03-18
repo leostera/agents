@@ -125,7 +125,18 @@ where
         &mut self,
     ) -> borg_agent::AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>>
     {
-        let event = self.inner.next().await?;
+        let event = match self.inner.next().await {
+            Ok(event) => event,
+            Err(error) => {
+                let _ = self
+                    .transcript
+                    .send(RecordedEvent::Error {
+                        reason: error.to_string(),
+                    })
+                    .await;
+                return Err(error);
+            }
+        };
         if let Some(event_ref) = event.as_ref() {
             for recorded in recorded_events_from_agent_event(event_ref) {
                 let _ = self.transcript.send(recorded).await;
@@ -172,6 +183,11 @@ where
                                 }
                             }
                             Some(Err(error)) => {
+                                let _ = transcript
+                                    .send(RecordedEvent::Error {
+                                        reason: error.to_string(),
+                                    })
+                                    .await;
                                 if event_tx.send(Err(error)).await.is_err() {
                                     return;
                                 }
@@ -201,6 +217,9 @@ pub enum RecordedEvent {
         role: RecordedMessageRole,
         content: String,
     },
+    Thinking {
+        content: String,
+    },
     ToolCallRequested {
         id: String,
         name: String,
@@ -213,6 +232,9 @@ pub enum RecordedEvent {
     },
     Completed {
         reply: Value,
+    },
+    Error {
+        reason: String,
     },
     GraderStarted {
         scope: RecordedGradingScope,
@@ -311,8 +333,7 @@ where
                 if text.trim().is_empty() {
                     Vec::new()
                 } else {
-                    vec![RecordedEvent::Message {
-                        role: RecordedMessageRole::Assistant,
+                    vec![RecordedEvent::Thinking {
                         content: text.trim().to_string(),
                     }]
                 }
@@ -391,7 +412,9 @@ fn build_tool_trace(transcript: &[RecordedEvent]) -> Vec<RecordedToolCall> {
             RecordedEvent::StepStarted { .. }
             | RecordedEvent::StepCompleted { .. }
             | RecordedEvent::Message { .. }
+            | RecordedEvent::Thinking { .. }
             | RecordedEvent::Completed { .. }
+            | RecordedEvent::Error { .. }
             | RecordedEvent::GraderStarted { .. }
             | RecordedEvent::GraderCompleted { .. }
             | RecordedEvent::GraderFailed { .. } => {}

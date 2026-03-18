@@ -417,6 +417,7 @@ where
             finished_at,
             suites: vec![suite.id().to_string()],
             targets: config.targets,
+            files: Vec::new(),
         };
 
         info!(
@@ -477,6 +478,7 @@ where
         finished_at: started_at,
         suites: vec![suite.id().to_string()],
         targets: vec![target.clone()],
+        files: Vec::new(),
     };
     let mut incremental_writer = match artifact_root {
         Some(root) => Some(IncrementalSuiteWriter::new(
@@ -562,6 +564,7 @@ where
         finished_at,
         suites: vec![suite.id().to_string()],
         targets: vec![target.clone()],
+        files: Vec::new(),
     };
 
     let report = SuiteRunReport {

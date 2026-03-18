@@ -201,6 +201,66 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct FailingAgent;
+
+    #[async_trait]
+    impl Agent for FailingAgent {
+        type Input = String;
+        type ToolCall = ();
+        type ToolResult = ();
+        type Output = String;
+
+        async fn send(&mut self, _input: AgentInput<Self::Input>) -> Result<(), AgentError> {
+            Err(AgentError::Internal {
+                message: "failing test agent only supports spawn".to_string(),
+            })
+        }
+
+        async fn next(
+            &mut self,
+        ) -> Result<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>, AgentError>
+        {
+            Err(AgentError::Internal {
+                message: "failing test agent only supports spawn".to_string(),
+            })
+        }
+
+        async fn spawn(
+            self,
+        ) -> Result<
+            (
+                AgentRunInput<Self::Input>,
+                AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+            ),
+            AgentError,
+        > {
+            let (input_tx, mut input_rx) = mpsc::channel(16);
+            let (event_tx, event_rx) = mpsc::channel(16);
+
+            tokio::spawn(async move {
+                while let Some(input) = input_rx.recv().await {
+                    match input {
+                        AgentInput::Message(_) | AgentInput::Steer(_) => {
+                            let _ = event_tx
+                                .send(Err(AgentError::Internal {
+                                    message: "decode failure".to_string(),
+                                }))
+                                .await;
+                            break;
+                        }
+                        AgentInput::Cancel => {
+                            let _ = event_tx.send(Ok(AgentEvent::Cancelled)).await;
+                            break;
+                        }
+                    }
+                }
+            });
+
+            Ok((input_tx, event_rx))
+        }
+    }
+
     #[tokio::test]
     async fn suite_runs_trials_and_aggregates_scores() {
         let suite = suite_with_dummy_agent("calendar").trials(2).eval(
@@ -596,6 +656,10 @@ mod tests {
                 && event.get("value") == Some(&json!("hello"))
         }));
         assert!(transcript.iter().any(|event| {
+            event.get("type").and_then(|value| value.as_str()) == Some("assistant")
+                && event.get("value") == Some(&json!("hello"))
+        }));
+        assert!(transcript.iter().any(|event| {
             event.get("type").and_then(|value| value.as_str()) == Some("grade")
                 && event.get("name").and_then(|value| value.as_str()) == Some("echoes-hello")
                 && event.get("score").and_then(|value| value.as_f64()) == Some(1.0)
@@ -661,6 +725,51 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn runtime_failures_are_preserved_in_persisted_transcript() {
+        let suite = Suite::new("echo")
+            .agent(|_ctx| async move { Ok::<FailingAgent, EvalError>(FailingAgent) })
+            .eval(
+                Eval::new("fails").run(
+                    Trajectory::<FailingAgent>::builder()
+                        .add_step(Step::user("hello".to_string()))
+                        .build()
+                        .expect("trajectory")
+                        .runner(),
+                ),
+            );
+
+        let report = suite
+            .run_with(RunConfig::single(ExecutionTarget::ollama("echo", "echo")).with_trials(1))
+            .run()
+            .await
+            .expect("report");
+        let root = TempDir::new().expect("temp dir");
+        let index = report.write_to(root.path()).expect("artifacts to write");
+        let trial_path = root.path().join(
+            index
+                .files
+                .iter()
+                .find(|path| path.contains("trial-001__fails__"))
+                .expect("trial artifact path"),
+        );
+        let trial: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&trial_path).expect("trial json"))
+                .expect("parsed trial json");
+        let transcript = trial
+            .get("transcript")
+            .and_then(|value| value.as_array())
+            .expect("transcript array");
+
+        assert!(transcript.iter().any(|event| {
+            event.get("type").and_then(|value| value.as_str()) == Some("error")
+                && event
+                    .get("reason")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|reason| reason.contains("decode failure"))
+        }));
+    }
+
     #[test]
     fn trajectory_macro_builds_linear_steps() {
         let grading = GradingConfig::<(), String>::new().grade("always", |_, _| async move {
@@ -709,13 +818,19 @@ mod tests {
             Some("eval failed: agent never finished")
         );
         assert!(trial.trial.is_some());
-        assert_eq!(
-            trial
-                .trial
-                .as_ref()
-                .and_then(|trial| trial.get("final_reply")),
-            Some(&serde_json::Value::Null)
+        let root = TempDir::new().expect("temp dir");
+        let index = report.write_to(root.path()).expect("artifacts to write");
+        let trial_path = root.path().join(
+            index
+                .files
+                .iter()
+                .find(|path| path.contains("trial-001__partial__"))
+                .expect("trial artifact path"),
         );
+        let persisted_trial: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&trial_path).expect("trial json"))
+                .expect("parsed trial json");
+        assert!(persisted_trial.get("final_reply").is_none());
     }
 
     #[tokio::test]

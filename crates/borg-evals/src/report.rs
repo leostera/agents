@@ -268,7 +268,6 @@ struct PersistedTrialRecord {
     pub timing: PersistedTrialTiming,
     pub grading: PersistedTrialGrading,
     pub transcript: Vec<PersistedTranscriptEvent>,
-    pub final_reply: serde_json::Value,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -301,6 +300,9 @@ enum PersistedTranscriptEvent {
         step: Option<usize>,
     },
     Assistant {
+        value: serde_json::Value,
+    },
+    Thinking {
         value: String,
     },
     ToolCall {
@@ -321,6 +323,9 @@ enum PersistedTranscriptEvent {
         failed: bool,
         error: Option<String>,
         step: Option<usize>,
+    },
+    Error {
+        reason: String,
     },
 }
 
@@ -358,7 +363,6 @@ impl PersistedTrialRecord {
                 mean_score: trial.mean_score,
                 error: trial.error.clone(),
             },
-            final_reply: agent_trial.final_reply.unwrap_or(serde_json::Value::Null),
         })
     }
 }
@@ -389,9 +393,14 @@ fn persisted_transcript(events: Vec<RecordedEvent>) -> Vec<PersistedTranscriptEv
                     }
                 }
                 RecordedMessageRole::Assistant => {
-                    transcript.push(PersistedTranscriptEvent::Assistant { value: content })
+                    transcript.push(PersistedTranscriptEvent::Assistant {
+                        value: serde_json::Value::String(content),
+                    })
                 }
             },
+            RecordedEvent::Thinking { content } => {
+                transcript.push(PersistedTranscriptEvent::Thinking { value: content })
+            }
             RecordedEvent::ToolCallRequested {
                 id,
                 name,
@@ -432,9 +441,13 @@ fn persisted_transcript(events: Vec<RecordedEvent>) -> Vec<PersistedTranscriptEv
                 error: Some(error),
                 step: grading_step(scope),
             }),
-            RecordedEvent::StepCompleted { .. }
-            | RecordedEvent::Completed { .. }
-            | RecordedEvent::GraderStarted { .. } => {}
+            RecordedEvent::Completed { reply } => {
+                transcript.push(PersistedTranscriptEvent::Assistant { value: reply })
+            }
+            RecordedEvent::Error { reason } => {
+                transcript.push(PersistedTranscriptEvent::Error { reason })
+            }
+            RecordedEvent::StepCompleted { .. } | RecordedEvent::GraderStarted { .. } => {}
         }
     }
 
