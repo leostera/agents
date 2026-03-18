@@ -117,7 +117,7 @@ fn render_main(crates: &[EvalCrate]) -> Result<String> {
                 }
             }
             let registries = vec![#(#registries),*];
-            let workspace_root = std::env::current_dir()?;
+            let workspace_root = ::borg_evals::runner::resolve_workspace_root(&std::env::current_dir()?)?;
             let loaded = ::borg_evals::runner::load_workspace_run_config(&workspace_root)?;
             let run_config = loaded.run_config;
             let output_dir = loaded.output_dir;

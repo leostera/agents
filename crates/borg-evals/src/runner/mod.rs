@@ -27,6 +27,33 @@ pub struct WorkspaceRunConfig {
     pub output_dir: String,
 }
 
+pub fn resolve_workspace_root(start_dir: &Path) -> Result<std::path::PathBuf> {
+    let output = Command::new("cargo")
+        .arg("metadata")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--no-deps")
+        .current_dir(start_dir)
+        .output()
+        .context("run cargo metadata to resolve workspace root")?;
+
+    if !output.status.success() {
+        bail!(
+            "cargo metadata failed while resolving workspace root: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let metadata = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+        .context("parse cargo metadata while resolving workspace root")?;
+    let workspace_root = metadata
+        .get("workspace_root")
+        .and_then(serde_json::Value::as_str)
+        .context("cargo metadata did not return workspace_root")?;
+
+    Ok(std::path::PathBuf::from(workspace_root))
+}
+
 pub fn load_workspace_run_config(workspace_root: &Path) -> Result<WorkspaceRunConfig> {
     let evals_file = EvalsFile::load(workspace_root)?;
     Ok(WorkspaceRunConfig {

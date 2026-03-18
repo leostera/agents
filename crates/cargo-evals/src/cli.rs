@@ -3,7 +3,9 @@ use std::ffi::OsString;
 use anyhow::{Context, Result};
 use borg_evals::{
     TargetFilter,
-    runner::{RunOptions, list_models_workspace, list_workspace, run_workspace},
+    runner::{
+        RunOptions, list_models_workspace, list_workspace, resolve_workspace_root, run_workspace,
+    },
 };
 use clap::Parser;
 
@@ -54,7 +56,8 @@ impl Cli {
     }
 
     pub async fn run(self) -> Result<()> {
-        let workspace_root = std::env::current_dir().context("resolve workspace root")?;
+        let cwd = std::env::current_dir().context("resolve current working directory")?;
+        let workspace_root = resolve_workspace_root(&cwd)?;
 
         match self {
             Cli::List(args) => list_workspace(

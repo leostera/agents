@@ -172,6 +172,11 @@ fn expand_eval(args: &EvalArgs, input: &ItemFn) -> Result<TokenStream> {
         ));
     }
     let tags = args.tags.iter();
+    let tags_expr = if args.tags.is_empty() {
+        quote!()
+    } else {
+        quote!(.tags([#(#tags),*]))
+    };
 
     Ok(quote! {
         #input
@@ -179,7 +184,7 @@ fn expand_eval(args: &EvalArgs, input: &ItemFn) -> Result<TokenStream> {
         pub async fn #wrapper_ident() -> ::anyhow::Result<::borg_evals::Eval<#state_ty, #agent_ty>> {
             Ok(
                 ::borg_evals::Eval::new(#eval_id)
-                    .tags([#(#tags),*])
+                    #tags_expr
                     .run(|ctx, agent| async move {
                         let trajectory = #fn_ident(ctx.clone())
                             .await
@@ -243,6 +248,29 @@ mod tests {
             )
         }
         "#);
+    }
+
+    #[test]
+    fn expands_eval_wrapper_without_tags() {
+        let args: EvalArgs = syn::parse2(quote! {
+            agent = EchoAgent
+        })
+        .expect("parse eval args");
+        let input: ItemFn = parse_quote! {
+            async fn smoke_eval(
+                ctx: EvalContext<()>,
+            ) -> Result<Trajectory<EchoAgent, ()>> {
+                let _ = ctx;
+                todo!()
+            }
+        };
+
+        let expanded = expand_eval(&args, &input).expect("expand eval");
+        let file: syn::File = syn::parse2(expanded).expect("parse expanded file");
+        let pretty = prettyplease::unparse(&file);
+
+        assert!(pretty.contains("::borg_evals::Eval::new(\"smoke_eval\")"));
+        assert!(!pretty.contains(".tags(["));
     }
 
     #[test]
