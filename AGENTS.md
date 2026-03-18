@@ -13,9 +13,11 @@ Use it as a router: pick the most relevant existing AGENTS file before making ch
 2. LLM providers, typed tools, and model-facing APIs:
    - [`crates/borg-llm/AGENTS.md`](crates/borg-llm/AGENTS.md)
 3. Evals, runner workflow, cargo-evals, and macro-generated suite wiring:
-   - [`crates/borg-evals/AGENTS.md`](crates/borg-evals/AGENTS.md)
-   - this route also covers `borg-macros` work for `#[suite]`, `#[eval]`, `#[grade]`, and `#[derive(AgentTool)]`
-4. Workspace-wide changes without a more specific AGENTS file:
+   - [`crates/evals/AGENTS.md`](crates/evals/AGENTS.md)
+   - this route also covers `evals-macros` work for `#[suite]`, `#[eval]`, and `#[grade]`
+4. Agent-facing proc macros for `#[derive(Agent)]` and `#[derive(Tool)]`:
+   - use this root file and inspect [`crates/agents-macros`](crates/agents-macros) directly
+5. Workspace-wide changes without a more specific AGENTS file:
    - use this root file and inspect nearby crate code directly
 
 ## Global Rules (Apply Everywhere)

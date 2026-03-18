@@ -2,11 +2,12 @@
 members = [
   "crates/agents", 
   "crates/agents-codemode",
+  "crates/agents-macros",
   "crates/borg-agent",
-  "crates/borg-evals",
   "crates/borg-llm", 
-  "crates/borg-macros",
   "crates/cargo-evals", 
+  "crates/evals",
+  "crates/evals-macros",
   "crates/test-agents", 
 ]
 resolver = "2"

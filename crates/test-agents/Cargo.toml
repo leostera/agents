@@ -13,10 +13,11 @@ readme = "README.md"
 anyhow.workspace = true
 async-trait.workspace = true
 agents = { path = "../agents" }
+evals = { path = "../evals", package = "evals" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
 [build-dependencies]
-agents = { path = "../agents" }
+evals = { path = "../evals", package = "evals" }

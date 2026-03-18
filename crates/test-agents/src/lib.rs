@@ -1,3 +1,3 @@
-agents::evals::setup!();
+evals::setup!();
 
 pub mod echo;

@@ -14,7 +14,6 @@ version = "0.0.1"
 dependencies = [
  "agents-macros",
  "borg-agent",
- "borg-evals",
  "borg-llm",
 ]
 
@@ -462,36 +461,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "borg-evals"
-version = "0.0.1"
-dependencies = [
- "agents",
- "agents-macros",
- "anyhow",
- "async-trait",
- "borg-agent",
- "borg-llm",
- "chrono",
- "config",
- "crossterm",
- "prettyplease",
- "proc-macro2",
- "quote",
- "ratatui",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "syn 2.0.117",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "walkdir",
-]
-
-[[package]]
 name = "borg-llm"
 version = "0.0.1"
 dependencies = [
@@ -587,8 +556,8 @@ name = "cargo-evals"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "borg-evals",
  "clap",
+ "evals",
  "tokio",
 ]
 
@@ -1331,6 +1300,48 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df61bf483e837f88d5c2291dcf55c67be7e676b3a51acc48db3a7b163b91ed63"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "evals"
+version = "0.0.1"
+dependencies = [
+ "agents",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "config",
+ "crossterm",
+ "evals-macros",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "ratatui",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "syn 2.0.117",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "evals-macros"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "evals",
+ "insta",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4014,6 +4025,7 @@ dependencies = [
  "agents",
  "anyhow",
  "async-trait",
+ "evals",
  "schemars 1.2.1",
  "serde",
  "serde_json",

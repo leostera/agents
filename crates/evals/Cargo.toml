@@ -1,0 +1,39 @@
+[package]
+name = "evals"
+version = "0.0.1"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Typed agent eval runtime, artifacts, and cargo-evals integration"
+readme = "README.md"
+
+[lib]
+name = "evals"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+agents = { path = "../agents", version = "=0.0.1" }
+evals-macros = { path = "../evals-macros" , package = "evals-macros", version = "=0.0.1" }
+chrono.workspace = true
+config.workspace = true
+crossterm.workspace = true
+prettyplease.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true
+ratatui.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+syn.workspace = true
+thiserror.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+agents = { path = "../agents" }

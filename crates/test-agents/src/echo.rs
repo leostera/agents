@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use agents::prelude::*;
+use agents::{
+    Agent, AgentResult, ContextManager, InputItem, LlmRunner, SessionAgent, Tool, ToolCallEnvelope,
+    ToolExecutionResult, ToolResultEnvelope, ToolRunner,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -62,6 +65,7 @@ pub struct EchoToolResponse {
 
 #[derive(Agent)]
 pub struct EchoAgent {
+    #[agent]
     agent: SessionAgent<EchoRequest, EchoToolCall, EchoToolResponse, EchoResponseFormat>,
 }
 

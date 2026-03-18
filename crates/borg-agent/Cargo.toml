@@ -11,7 +11,7 @@ readme = "README.md"
 [dependencies]
 async-trait.workspace = true
 borg-llm = { path = "../borg-llm", package = "borg-llm", version = "=0.0.1" }
-agents-macros = { path = "../borg-macros", package = "agents-macros", version = "=0.0.1" }
+agents-macros = { path = "../agents-macros", package = "agents-macros", version = "=0.0.1" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

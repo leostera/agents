@@ -1,9 +1,11 @@
 use crate::echo::{EchoAgent, EchoRequest, EchoResponseFormat};
-use agents::prelude::*;
 use anyhow::Result;
+use evals::{AgentTrial, EvalContext, EvalResult, GradeResult, GradingConfig, Trajectory, judge};
+#[allow(unused_imports)]
+use evals::{assistant, trajectory, user};
 use serde_json::json;
 
-#[suite(
+#[evals::suite(
     kind = "regression",
     agent = new_agent,
 )]
@@ -12,7 +14,7 @@ async fn new_agent(ctx: EvalContext<()>) -> Result<EchoAgent> {
     EchoAgent::new(ctx.llm_runner()).await
 }
 
-#[grade(name = "echoes-hello")]
+#[evals::grade(name = "echoes-hello")]
 async fn echoes_hello(
     trial: AgentTrial<EchoResponseFormat>,
     _ctx: EvalContext<()>,
@@ -25,7 +27,7 @@ async fn echoes_hello(
     })
 }
 
-#[grade(name = "echoes-multiline")]
+#[evals::grade(name = "echoes-multiline")]
 async fn echoes_multiline(
     trial: AgentTrial<EchoResponseFormat>,
     _ctx: EvalContext<()>,
@@ -42,7 +44,7 @@ async fn echoes_multiline(
     })
 }
 
-#[grade(name = "echoes-empty")]
+#[evals::grade(name = "echoes-empty")]
 async fn echoes_empty(
     trial: AgentTrial<EchoResponseFormat>,
     _ctx: EvalContext<()>,
@@ -55,7 +57,7 @@ async fn echoes_empty(
     })
 }
 
-#[eval(
+#[evals::eval(
     agent = EchoAgent,
     desc = "we are testing out a very simple 1-step trajectory",
     tags = ["echo", "baseline"],
@@ -72,7 +74,7 @@ async fn echoes_plain_text(_ctx: EvalContext<()>) -> Result<Trajectory<EchoAgent
     ])
 }
 
-#[eval(
+#[evals::eval(
     agent = EchoAgent,
     desc = "multiline strings are preserved",
     tags = ["echo", "multiline"],
@@ -90,7 +92,7 @@ async fn preserves_newlines(_ctx: EvalContext<()>) -> Result<Trajectory<EchoAgen
     ])
 }
 
-#[eval(
+#[evals::eval(
     agent = EchoAgent,
     desc = "empty string is empty string",
     tags = ["echo", "multiline"],

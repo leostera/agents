@@ -1,0 +1,33 @@
+mod eval;
+mod grade;
+mod suite;
+
+use proc_macro::TokenStream;
+use syn::{ItemFn, parse_macro_input};
+
+/// Defines an eval suite factory.
+#[proc_macro_attribute]
+pub fn suite(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemFn);
+    suite::expand(attr.into(), input)
+        .unwrap_or_else(|error| error.into_compile_error())
+        .into()
+}
+
+/// Defines an eval.
+#[proc_macro_attribute]
+pub fn eval(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemFn);
+    eval::expand(attr.into(), input)
+        .unwrap_or_else(|error| error.into_compile_error())
+        .into()
+}
+
+/// Defines a reusable deterministic grader helper.
+#[proc_macro_attribute]
+pub fn grade(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemFn);
+    grade::expand(attr.into(), input)
+        .unwrap_or_else(|error| error.into_compile_error())
+        .into()
+}

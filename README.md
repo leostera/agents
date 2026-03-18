@@ -112,10 +112,11 @@ let reply = agent
 ```toml
 [dependencies]
 agents = "0.0.1"
+evals = "0.0.1"
 anyhow = "1"
 
 [build-dependencies]
-agents = "0.0.1"
+evals = "0.0.1"
 anyhow = "1"
 ```
 
@@ -123,7 +124,7 @@ Register eval discovery in `build.rs`:
 
 ```rust
 fn main() -> anyhow::Result<()> {
-    agents::evals::build()?;
+    evals::build()?;
     Ok(())
 }
 ```
@@ -131,17 +132,17 @@ fn main() -> anyhow::Result<()> {
 Expose the generated registry in `src/lib.rs`:
 
 ```rust
-agents::evals::setup!();
+evals::setup!();
 ```
 
 Then define suites under `evals/**/*.rs`:
 
 ```rust
 use agents::{
-    agent::SessionAgent,
-    evals::{EvalContext, Trajectory, eval, suite, trajectory},
+    SessionAgent,
 };
 use anyhow::Result;
+use evals::{EvalContext, Trajectory, eval, suite, trajectory, user};
 
 type BasicAgent = SessionAgent<String, (), (), String>;
 

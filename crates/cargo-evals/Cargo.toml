@@ -10,6 +10,6 @@ readme = "README.md"
 
 [dependencies]
 anyhow.workspace = true
-borg-evals = { path = "../borg-evals", package = "borg-evals", version = "=0.0.1" }
+evals = { path = "../evals", package = "evals", version = "=0.0.1" }
 clap.workspace = true
 tokio.workspace = true

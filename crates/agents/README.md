@@ -4,9 +4,9 @@
 
 It gives you one dependency for:
 
-- `agents::agent` for the runtime
+- `agents::agent` for the agent implementation
 - `agents::llm` for provider integrations and completion types
-- `agents::evals` for suites, evals, and runner support
+- flat root re-exports for the most common types like `SessionAgent` and `LlmRunner`
 
 ## Add it
 
@@ -14,7 +14,7 @@ It gives you one dependency for:
 cargo add agents
 ```
 
-If you want to use eval discovery, also add it to `build-dependencies`.
+If you want evals, add the separate `evals` crate as well.
 
 ## Agent example
 
@@ -86,26 +86,4 @@ impl TypedAgent {
 }
 ```
 
-## Evals example
-
-```rust
-use agents::{
-    agent::SessionAgent,
-    evals::{EvalContext, Trajectory, eval, suite, trajectory},
-};
-use anyhow::Result;
-
-type BasicAgent = SessionAgent<String, (), (), String>;
-
-#[suite(kind = "regression", agent = new_agent)]
-async fn new_agent(ctx: EvalContext<()>) -> Result<BasicAgent> {
-    Ok(SessionAgent::builder()
-        .with_llm_runner(ctx.llm_runner())
-        .build()?)
-}
-
-#[eval(agent = BasicAgent, desc = "dummy eval", tags = ["smoke"])]
-async fn dummy_eval(_ctx: EvalContext<()>) -> Result<Trajectory<BasicAgent, ()>> {
-    Ok(trajectory![user!("hello world"),])
-}
-```
+For evals, use the `evals` crate. `agents` no longer re-exports the eval runner surface.

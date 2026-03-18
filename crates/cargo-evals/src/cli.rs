@@ -1,13 +1,13 @@
 use std::ffi::OsString;
 
 use anyhow::{Context, Result};
-use borg_evals::{
+use clap::Parser;
+use evals::{
     TargetFilter,
     runner::{
         RunOptions, list_models_workspace, list_workspace, resolve_workspace_root, run_workspace,
     },
 };
-use clap::Parser;
 
 #[derive(Debug)]
 pub enum Cli {

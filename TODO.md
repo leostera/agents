@@ -16,7 +16,7 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
    - `cargo evals run` should fail clearly when there are no configured targets.
    - Distinguish “no suites discovered”, “no targets configured”, and “no matches for the selected filters”.
 
-4. Split `crates/borg-evals/src/suite.rs`
+4. Split `crates/evals/src/suite.rs`
    - `suite.rs` is still doing too much.
    - Likely split:
      - `suite/mod.rs`

@@ -2,19 +2,19 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use borg_agent::{
+use agents::agent::{
     Agent, AgentEvent, AgentInput, CallbackToolRunner, ContextManager, ExecutionProfile,
     ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope,
 };
-use borg_evals_core::prelude::*;
-use borg_llm::completion::{InputItem, ModelSelector, Temperature, TokenLimit};
-use borg_llm::error::{Error as LlmError, LlmResult};
-use borg_llm::runner::LlmRunner;
-use borg_llm::testing::{
+use evals_core::prelude::*;
+use agents::llm::completion::{InputItem, ModelSelector, Temperature, TokenLimit};
+use agents::llm::error::{Error as LlmError, LlmResult};
+use agents::llm::runner::LlmRunner;
+use agents::llm::testing::{
     TestContext, TestProvider, optional_test_env, runner_with_anthropic_model,
     runner_with_openai_model, runner_with_openrouter_model,
 };
-use borg_llm::tools::{RawToolDefinition, TypedTool};
+use agents::llm::tools::{RawToolDefinition, TypedTool};
 use agents_macros::Tool;
 use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
 use schemars::JsonSchema;
