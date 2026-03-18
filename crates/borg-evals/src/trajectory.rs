@@ -203,6 +203,7 @@ where
                         step_index,
                         "sending trajectory step"
                     );
+                    recorder.record_step_started(step_index, &step.user);
                     tx.send(AgentInput::Message(step.user.clone()))
                         .await
                         .map_err(|error| {
@@ -235,9 +236,10 @@ where
                                         trial_id = %ctx.trial_id,
                                         trial_index = ctx.trial_index,
                                         target_label = %ctx.target.label,
-                                        step_index,
+                                    step_index,
                                         "trajectory step completed"
                                     );
+                                    recorder.record_step_completed(step_index);
                                     break;
                                 }
                             }
@@ -287,7 +289,16 @@ where
                             "running trajectory grade"
                         );
                         let snapshot = recorder.snapshot(Value::Null);
-                        let outcome = grading.run(snapshot.clone(), ctx.clone()).await?;
+                        let outcome = grading
+                            .run_with_scope(
+                                snapshot.clone(),
+                                ctx.clone(),
+                                crate::trial::RecordedGradingScope::TrajectoryStep { step_index },
+                            )
+                            .await?;
+                        for event in outcome.recorded_events.clone() {
+                            recorder.push_recorded_event(event);
+                        }
 
                         collected_grades.extend(outcome.grades.clone());
                         collected_grader_failures.extend(outcome.grader_failures.clone());

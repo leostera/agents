@@ -29,7 +29,8 @@ pub use report::{
 pub use suite::{Suite, SuiteKind, SuitePlan, TargetFilter};
 pub use trajectory::{Step, Trajectory, TrajectoryBuilder};
 pub use trial::{
-    AgentTrial, AgentTrialRecorder, RecordedEvent, RecordedMessageRole, RecordedToolCall,
+    AgentTrial, AgentTrialRecorder, RecordedEvent, RecordedGradingScope, RecordedMessageRole,
+    RecordedToolCall,
 };
 
 #[macro_export]
@@ -75,10 +76,10 @@ pub mod prelude {
         AgentTrial, AgentTrialRecorder, ArtifactIndex, Eval, EvalAggregate, EvalContext, EvalError,
         EvalResult, EventSink, ExecutionTarget, Grade, GradeResult, Grader, GraderFailure,
         GradingConfig, JsonEventSink, PlannedSuiteRun, ProgressEventSink, RecordedEvent,
-        RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite, SharedEventSink,
-        Step, Suite, SuiteDescriptor, SuiteKind, SuitePlan, SuiteRunReport, TargetFilter,
-        Trajectory, TrajectoryBuilder, assistant, async_trait, build, emit, global_sink, grade,
-        set_global_sink, setup, trajectory, user,
+        RecordedGradingScope, RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent,
+        RunnableSuite, SharedEventSink, Step, Suite, SuiteDescriptor, SuiteKind, SuitePlan,
+        SuiteRunReport, TargetFilter, Trajectory, TrajectoryBuilder, assistant, async_trait, build,
+        emit, global_sink, grade, set_global_sink, setup, trajectory, user,
     };
     pub use borg_agent::Agent;
 }
@@ -539,6 +540,62 @@ mod tests {
         assert!(variant.trials[0].grades.contains_key("echoes-hello"));
         assert_eq!(variant.suite.evals[0].grader_means.len(), 1);
         assert_eq!(variant.suite.evals[0].grader_means[0].name, "echoes-hello");
+    }
+
+    #[tokio::test]
+    async fn trajectory_trials_record_step_inputs_and_grading_events() {
+        let suite = Suite::new("echo")
+            .agent(|_ctx| async move { Ok::<EchoAgent, EvalError>(EchoAgent) })
+            .eval(
+                Eval::new("echoes").run(
+                    Trajectory::<EchoAgent>::builder()
+                        .add_step(Step::user("hello".to_string()).grade(
+                            GradingConfig::new().grade("echoes-hello", |trial, _ctx| async move {
+                                Ok(GradeResult {
+                                    score: if trial.final_reply.as_deref() == Some("hello") {
+                                        1.0
+                                    } else {
+                                        0.0
+                                    },
+                                    summary: "reply should equal hello".to_string(),
+                                    evidence: json!({ "reply": trial.final_reply }),
+                                })
+                            }),
+                        ))
+                        .build()
+                        .expect("trajectory")
+                        .runner(),
+                ),
+            );
+
+        let report = suite
+            .run_with(RunConfig::single(ExecutionTarget::ollama("echo", "echo")).with_trials(1))
+            .run()
+            .await
+            .expect("report");
+        let trial = report.variants[0].trials[0]
+            .trial
+            .as_ref()
+            .expect("serialized trial");
+        let transcript = trial
+            .get("transcript")
+            .and_then(|value| value.as_array())
+            .expect("transcript array");
+
+        assert!(transcript.iter().any(|event| {
+            event.get("kind").and_then(|value| value.as_str()) == Some("step_started")
+                && event.get("step_index").and_then(|value| value.as_u64()) == Some(0)
+                && event.get("input") == Some(&json!("hello"))
+        }));
+        assert!(transcript.iter().any(|event| {
+            event.get("kind").and_then(|value| value.as_str()) == Some("grader_started")
+                && event.get("grader").and_then(|value| value.as_str()) == Some("echoes-hello")
+        }));
+        assert!(transcript.iter().any(|event| {
+            event.get("kind").and_then(|value| value.as_str()) == Some("grader_completed")
+                && event.get("grader").and_then(|value| value.as_str()) == Some("echoes-hello")
+                && event.get("score").and_then(|value| value.as_f64()) == Some(1.0)
+        }));
     }
 
     #[test]

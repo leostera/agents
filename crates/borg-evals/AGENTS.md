@@ -7,6 +7,7 @@ Typed eval runtime, report artifacts, suite registry generation, and the shared 
 ```
 src/
 ├── eval.rs        # Eval, EvalAgent, EvalContext
+├── eval.rs        # Eval and EvalContext
 ├── suite.rs       # Suite orchestration and trial execution
 ├── trajectory.rs  # Linear trajectory builder and runner
 ├── grade.rs       # Grader, GradingConfig, GradeResult
@@ -27,6 +28,7 @@ src/
 ### Trajectories
 - `Trajectory<Agent, State>` is the declarative runner path.
 - Step expectations grade partial trials immediately and those grades must be preserved even when the trial fails later.
+- Record trajectory step inputs and grading lifecycle into the trial transcript so failed artifacts explain both what was sent and how it was graded.
 - `trajectory.runner()` should remain a thin closure adapter over the typed runtime.
 - For hand-written one-step evals, prefer `Trajectory::new(Step::user(...).grade(...))` over the full builder.
 
@@ -38,6 +40,7 @@ src/
 ### Reports and artifacts
 - Runtime stays typed through `AgentTrial<Output>`.
 - Reports erase to JSON only at the artifact boundary.
+- `AgentTrial.transcript` should include trajectory step boundaries plus grader start/completion/failure events, not just raw agent output.
 - Trial logs and artifact filenames should always carry `trial_id` so terminal output maps back to `.evals` files.
 
 ### Runner split
@@ -53,7 +56,7 @@ src/
 ### Proc macros
 - `#[suite]` and `#[eval]` live in `borg-macros`, but they generate `borg-evals` runtime objects.
 - `#[grade]` should stay thin: take a normal async Rust function and wrap it as a reusable `Grader`.
-- `#[derive(AgentTool)]` currently targets tool enums; keep the generated `TypedTool` impl predictable and inspectable.
+- `#[derive(Tool)]` targets tool enums; keep the generated `TypedTool` impl predictable and inspectable.
 
 ## Crate integration
 

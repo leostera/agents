@@ -10,7 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::error::EvalResult;
 use crate::eval::EvalContext;
-use crate::trial::AgentTrial;
+use crate::trial::{AgentTrial, RecordedEvent, RecordedGradingScope};
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 type GraderFn<State, Output> = dyn Fn(AgentTrial<Output>, EvalContext<State>) -> BoxFuture<EvalResult<GradeResult>>
@@ -116,6 +116,7 @@ pub struct Grade {
     pub passed: bool,
     pub mean_score: f32,
     pub grader_failures: Vec<GraderFailure>,
+    pub recorded_events: Vec<RecordedEvent>,
 }
 
 impl<State, Output> GradingConfig<State, Output> {
@@ -148,10 +149,28 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
     where
         Output: Clone,
     {
+        self.run_with_scope(trial, ctx, RecordedGradingScope::Eval)
+            .await
+    }
+
+    pub async fn run_with_scope(
+        &self,
+        trial: AgentTrial<Output>,
+        ctx: EvalContext<State>,
+        scope: RecordedGradingScope,
+    ) -> EvalResult<Grade>
+    where
+        Output: Clone,
+    {
         let mut grades = BTreeMap::new();
         let mut grader_failures = Vec::new();
+        let mut recorded_events = Vec::new();
 
         for grader in &self.graders {
+            recorded_events.push(RecordedEvent::GraderStarted {
+                scope: scope.clone(),
+                grader: grader.name().to_string(),
+            });
             debug!(
                 suite_id = %ctx.suite_id,
                 eval_id = %ctx.eval_id,
@@ -163,6 +182,13 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
             );
             match grader.grade(trial.clone(), ctx.clone()).await {
                 Ok(grade) => {
+                    recorded_events.push(RecordedEvent::GraderCompleted {
+                        scope: scope.clone(),
+                        grader: grader.name().to_string(),
+                        score: grade.score,
+                        summary: grade.summary.clone(),
+                        evidence: grade.evidence.clone(),
+                    });
                     info!(
                         suite_id = %ctx.suite_id,
                         eval_id = %ctx.eval_id,
@@ -177,6 +203,11 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
                     grades.insert(grader.name().to_string(), grade);
                 }
                 Err(error) => {
+                    recorded_events.push(RecordedEvent::GraderFailed {
+                        scope: scope.clone(),
+                        grader: grader.name().to_string(),
+                        error: error.to_string(),
+                    });
                     warn!(
                         suite_id = %ctx.suite_id,
                         eval_id = %ctx.eval_id,
@@ -209,6 +240,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
             passed,
             mean_score,
             grader_failures,
+            recorded_events,
         })
     }
 }

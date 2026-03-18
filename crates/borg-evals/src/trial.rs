@@ -52,6 +52,25 @@ impl<Output> Default for AgentTrialRecorder<Output> {
 }
 
 impl<Output> AgentTrialRecorder<Output> {
+    pub fn record_step_started<Input>(&mut self, step_index: usize, input: &Input)
+    where
+        Input: Serialize,
+    {
+        self.transcript.push(RecordedEvent::StepStarted {
+            step_index,
+            input: serde_json::to_value(input).expect("serialize trajectory step input"),
+        });
+    }
+
+    pub fn record_step_completed(&mut self, step_index: usize) {
+        self.transcript
+            .push(RecordedEvent::StepCompleted { step_index });
+    }
+
+    pub fn push_recorded_event(&mut self, event: RecordedEvent) {
+        self.transcript.push(event);
+    }
+
     pub fn record<Tool, ToolResult>(&mut self, event: &AgentEvent<Tool, ToolResult, Output>)
     where
         ToolResult: Serialize,
@@ -186,6 +205,13 @@ impl<Output> AgentTrialRecorder<Output> {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RecordedEvent {
+    StepStarted {
+        step_index: usize,
+        input: Value,
+    },
+    StepCompleted {
+        step_index: usize,
+    },
     Message {
         role: RecordedMessageRole,
         content: String,
@@ -203,6 +229,29 @@ pub enum RecordedEvent {
     Completed {
         reply: Value,
     },
+    GraderStarted {
+        scope: RecordedGradingScope,
+        grader: String,
+    },
+    GraderCompleted {
+        scope: RecordedGradingScope,
+        grader: String,
+        score: f32,
+        summary: String,
+        evidence: Value,
+    },
+    GraderFailed {
+        scope: RecordedGradingScope,
+        grader: String,
+        error: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "scope", rename_all = "snake_case")]
+pub enum RecordedGradingScope {
+    Eval,
+    TrajectoryStep { step_index: usize },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

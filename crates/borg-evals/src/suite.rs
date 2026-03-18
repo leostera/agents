@@ -650,15 +650,20 @@ where
 
     match execution {
         Ok(trial) => {
-            let trial = Arc::new(trial);
+            let mut trial = trial;
             let trajectory_grades = trial.grades.clone();
             let trajectory_grader_failures = trial.grader_failures.clone();
             let outcome = eval
                 .grading_config()
-                .run((*trial).clone(), ctx.clone())
+                .run_with_scope(
+                    trial.clone(),
+                    ctx.clone(),
+                    crate::trial::RecordedGradingScope::Eval,
+                )
                 .await;
             let (passed, mean_score, grades, grader_failures) = match outcome {
                 Ok(outcome) => {
+                    trial.transcript.extend(outcome.recorded_events);
                     let mut grades = trajectory_grades.clone();
                     grades.extend(outcome.grades);
                     let mut grader_failures = trajectory_grader_failures.clone();
@@ -728,7 +733,7 @@ where
                 duration: started_at_instant.elapsed(),
                 passed,
                 mean_score,
-                trial: Some(serde_json::to_value(trial.as_ref()).expect("serialize trial")),
+                trial: Some(serde_json::to_value(&trial).expect("serialize trial")),
                 error,
                 grades,
                 grader_failures,
