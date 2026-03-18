@@ -8,11 +8,9 @@ use borg_agent::{
 };
 use borg_evals::prelude::*;
 use borg_llm::completion::InputItem;
-use borg_llm::error::{Error, LlmResult};
 use borg_llm::runner::LlmRunner;
 use borg_llm::testing::{TestContext, TestProvider};
-use borg_llm::tools::{RawToolDefinition, TypedTool};
-use schemars::{JsonSchema, schema_for};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
@@ -27,33 +25,9 @@ const DEFAULT_OLLAMA_MODELS: &[(&str, &str)] = &[
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AddArgs(u32, u32);
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, borg_macros::AgentTool)]
 pub enum CalcOp {
     ToolAdd(AddArgs),
-}
-
-// This manual impl is the reference shape that a future `borg_macros::AgentTool` derive should
-// generate for typed tools.
-impl TypedTool for CalcOp {
-    fn tool_definitions() -> Vec<borg_llm::tools::RawToolDefinition> {
-        vec![RawToolDefinition::function(
-            "tool_add",
-            Some("adds two numbers"),
-            serde_json::to_value(schema_for!(AddArgs)).unwrap(),
-        )]
-    }
-
-    fn decode_tool_call(name: &str, arguments: serde_json::Value) -> LlmResult<Self> {
-        match name {
-            "tool_add" => Ok(CalcOp::ToolAdd(
-                serde_json::from_value::<AddArgs>(arguments)
-                    .map_err(|e| Error::parse("tool arguments", e))?,
-            )),
-            other => Err(Error::InvalidResponse {
-                reason: format!("unexpected tool name: {other}"),
-            }),
-        }
-    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]

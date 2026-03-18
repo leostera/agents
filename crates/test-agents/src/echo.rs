@@ -7,11 +7,9 @@ use borg_agent::{
 };
 use borg_evals::{EvalAgent, EvalError, EvalResult, ExecutionTarget, async_trait};
 use borg_llm::completion::InputItem;
-use borg_llm::error::{Error, LlmResult};
 use borg_llm::runner::LlmRunner;
 use borg_llm::testing::{TestContext, TestProvider};
-use borg_llm::tools::{RawToolDefinition, TypedTool};
-use schemars::{JsonSchema, schema_for};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
@@ -54,31 +52,13 @@ pub struct EchoArgs {
     pub text: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, borg_macros::AgentTool)]
 pub enum EchoTool {
+    #[agent_tool(
+        name = "echo_text",
+        description = "Return the exact input text unchanged."
+    )]
     Echo(EchoArgs),
-}
-
-impl TypedTool for EchoTool {
-    fn tool_definitions() -> Vec<RawToolDefinition> {
-        vec![RawToolDefinition::function(
-            "echo_text",
-            Some("Return the exact input text unchanged."),
-            serde_json::to_value(schema_for!(EchoArgs)).expect("serialize EchoArgs schema"),
-        )]
-    }
-
-    fn decode_tool_call(name: &str, arguments: serde_json::Value) -> LlmResult<Self> {
-        match name {
-            "echo_text" => Ok(Self::Echo(
-                serde_json::from_value::<EchoArgs>(arguments)
-                    .map_err(|error| Error::parse("tool arguments", error))?,
-            )),
-            other => Err(Error::InvalidResponse {
-                reason: format!("unexpected tool name: {other}"),
-            }),
-        }
-    }
 }
 
 #[derive(Clone)]
