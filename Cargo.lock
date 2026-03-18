@@ -400,7 +400,6 @@ dependencies = [
 name = "borg-macros"
 version = "0.0.1"
 dependencies = [
- "cargo-husky",
  "insta",
  "prettyplease",
  "proc-macro2",
