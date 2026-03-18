@@ -20,7 +20,7 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::RunEvent;
-use crate::config::{ExecutionTarget, RunConfig};
+use crate::config::{ExecutionTarget, ProviderConfigs, RunConfig};
 use crate::error::{EvalError, EvalResult};
 use crate::eval::{Eval, EvalContext, NoAgent};
 use crate::events::emit;
@@ -30,12 +30,22 @@ use crate::report::{
     TrialRecord, build_summary, now_since_epoch, run_id,
 };
 
-fn llm_runner_for_target(target: &ExecutionTarget) -> EvalResult<LlmRunner> {
+fn llm_runner_for_target(
+    target: &ExecutionTarget,
+    provider_configs: &ProviderConfigs,
+) -> EvalResult<LlmRunner> {
     let runner = match target.provider.as_str() {
         "default" => LlmRunner::builder().build(),
         "ollama" => {
             let mut config = OllamaConfig::new(target.model.clone());
-            if let Some(base_url) = optional_env(&["BORG_LLM_OLLAMA_BASE_URL", "OLLAMA_BASE_URL"]) {
+            if let Some(base_url) = optional_env(&["BORG_LLM_OLLAMA_BASE_URL", "OLLAMA_BASE_URL"])
+                .or_else(|| {
+                    provider_configs
+                        .ollama
+                        .as_ref()
+                        .map(|config| config.url.clone())
+                })
+            {
                 config = config.with_base_url(base_url);
             }
             LlmRunner::builder()
@@ -350,7 +360,15 @@ where
 
     pub async fn run(&self) -> EvalResult<SuiteRunReport> {
         let run_id = run_id();
-        run_single_target(self, run_id, &ExecutionTarget::default(), self.trials, None).await
+        run_single_target(
+            self,
+            run_id,
+            &ExecutionTarget::default(),
+            &ProviderConfigs::default(),
+            self.trials,
+            None,
+        )
+        .await
     }
 
     pub fn run_with(&self, config: RunConfig) -> SuiteRunner<'_, State, A> {
@@ -499,6 +517,7 @@ where
             let suite = suite.clone();
             let run_id = run_id.clone();
             let trials = config.trials;
+            let provider_configs = config.provider.clone();
             let local_target_semaphore = local_target_semaphore.clone();
             let artifact_root = artifact_root.clone();
             jobs.spawn(async move {
@@ -512,7 +531,15 @@ where
                 } else {
                     None
                 };
-                run_single_target(&suite, run_id, &target, trials, artifact_root.as_deref()).await
+                run_single_target(
+                    &suite,
+                    run_id,
+                    &target,
+                    &provider_configs,
+                    trials,
+                    artifact_root.as_deref(),
+                )
+                .await
             });
         }
 
@@ -552,6 +579,7 @@ async fn run_single_target<State, A>(
     suite: &Suite<State, A>,
     run_id: String,
     target: &ExecutionTarget,
+    provider_configs: &ProviderConfigs,
     default_trials: usize,
     artifact_root: Option<&Path>,
 ) -> EvalResult<SuiteRunReport>
@@ -629,6 +657,7 @@ where
             let run_id = run_id.clone();
             let state = suite.shared_state().clone();
             let agent_factory = suite.agent_factory.clone();
+            let provider_configs = provider_configs.clone();
 
             jobs.spawn(async move {
                 let _permit = semaphore.acquire_owned().await.expect("semaphore permit");
@@ -637,6 +666,7 @@ where
                     suite_id,
                     state,
                     target,
+                    provider_configs,
                     eval,
                     agent_factory,
                     trial_index,
@@ -718,6 +748,7 @@ async fn execute_trial<State, A>(
     suite_id: String,
     state: Arc<State>,
     target: ExecutionTarget,
+    provider_configs: ProviderConfigs,
     eval: Eval<State, A>,
     agent_factory: Option<AgentFactory<State, A>>,
     trial_index: usize,
@@ -729,7 +760,7 @@ where
     let trial_id = Uuid::now_v7().to_string();
     let started_at_wall = now_since_epoch();
     let started_at_instant = Instant::now();
-    let llm_runner = match llm_runner_for_target(&target) {
+    let llm_runner = match llm_runner_for_target(&target, &provider_configs) {
         Ok(runner) => Arc::new(runner),
         Err(error) => {
             let finished_at_wall = now_since_epoch();

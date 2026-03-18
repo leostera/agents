@@ -3,6 +3,7 @@ mod error;
 mod eval;
 mod events;
 mod grade;
+mod judge;
 mod registry;
 mod report;
 pub mod runner;
@@ -13,14 +14,15 @@ mod trial;
 pub use crate as core;
 pub use async_trait::async_trait;
 pub use borg_macros::{eval, suite};
-pub use config::{ExecutionTarget, RunConfig};
+pub use config::{ExecutionTarget, OllamaProviderConfig, ProviderConfigs, RunConfig};
 pub use error::{EvalError, EvalResult};
 pub use eval::{Eval, EvalContext};
 pub use events::{
     EventSink, JsonEventSink, NoopEventSink, PlannedSuiteRun, ProgressEventSink, RunEvent,
     SharedEventSink, emit, global_sink, set_global_sink,
 };
-pub use grade::{Grade, GradeResult, Grader, GraderFailure, GradingConfig, grade};
+pub use grade::{Grade, GradeResult, Grader, GraderFailure, GradingConfig, grade, predicate};
+pub use judge::{JudgeAgent, JudgeInput, JudgeVerdict, judge};
 pub use registry::{RunnableSuite, SuiteDescriptor, build};
 pub use report::{
     ArtifactIndex, EvalAggregate, EvalRunReport, GraderAggregate, RunManifest, SCHEMA_VERSION,
@@ -75,12 +77,13 @@ pub mod prelude {
     pub use crate::{
         AgentTrial, ArtifactIndex, Eval, EvalAggregate, EvalContext, EvalError, EvalResult,
         EventSink, ExecutionTarget, Grade, GradeResult, Grader, GraderFailure, GradingConfig,
-        JsonEventSink, PlannedSuiteRun, ProgressEventSink, RecordedEvent, RecordedGradingScope,
+        JsonEventSink, JudgeAgent, JudgeInput, JudgeVerdict, OllamaProviderConfig, PlannedSuiteRun,
+        ProgressEventSink, ProviderConfigs, RecordedEvent, RecordedGradingScope,
         RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite, SharedEventSink,
         Step, Suite, SuiteDescriptor, SuiteKind, SuitePlan, SuiteRunReport, TargetFilter,
         Trajectory, TrajectoryBuilder, TranscriptAgent, TranscriptCollector, TranscriptSender,
-        assistant, async_trait, build, emit, global_sink, grade, set_global_sink, setup,
-        trajectory, user,
+        assistant, async_trait, build, emit, global_sink, grade, judge, predicate, set_global_sink,
+        setup, trajectory, user,
     };
     pub use borg_agent::Agent;
 }
@@ -93,6 +96,16 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use borg_agent::{AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
+    use borg_llm::capability::Capability;
+    use borg_llm::completion::{
+        FinishReason, ProviderType, RawCompletionRequest, RawCompletionResponse, RawOutputContent,
+        RawOutputItem, Role, Usage,
+    };
+    use borg_llm::error::{Error as LlmError, LlmResult};
+    use borg_llm::model::Model;
+    use borg_llm::provider::LlmProvider;
+    use borg_llm::runner::LlmRunner;
+    use borg_llm::transcription::{AudioTranscriptionRequest, AudioTranscriptionResponse};
     use serde_json::json;
     use tempfile::TempDir;
     use tokio::sync::mpsc;
@@ -203,6 +216,64 @@ mod tests {
 
     #[derive(Clone)]
     struct FailingAgent;
+
+    struct JudgeTestProvider;
+
+    #[async_trait]
+    impl LlmProvider for JudgeTestProvider {
+        fn provider_type(&self) -> ProviderType {
+            ProviderType::OpenAI
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "judge-test"
+        }
+
+        fn capabilities(&self) -> &[Capability] {
+            static CAPABILITIES: [Capability; 1] = [Capability::ChatCompletion];
+            &CAPABILITIES
+        }
+
+        async fn available_models(&self) -> LlmResult<Vec<Model>> {
+            Ok(vec![Model::new("judge-test-model")])
+        }
+
+        async fn chat_raw(&self, _req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
+            Ok(RawCompletionResponse {
+                provider: ProviderType::OpenAI,
+                model: "judge-test-model".to_string(),
+                output: vec![RawOutputItem::Message {
+                    role: Role::Assistant,
+                    content: vec![RawOutputContent::Json {
+                        value: json!({
+                            "score": 0.75,
+                            "summary": "judge says partial pass",
+                            "evidence": { "kind": "judge-test" }
+                        }),
+                    }],
+                }],
+                usage: Usage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                },
+                finish_reason: FinishReason::Stop,
+            })
+        }
+
+        async fn transcribe(
+            &self,
+            _req: AudioTranscriptionRequest,
+        ) -> LlmResult<AudioTranscriptionResponse> {
+            Err(LlmError::InvalidRequest {
+                reason: "judge test provider does not support transcription".to_string(),
+            })
+        }
+    }
+
+    fn judge_test_runner() -> Arc<LlmRunner> {
+        Arc::new(LlmRunner::builder().add_provider(JudgeTestProvider).build())
+    }
 
     #[async_trait]
     impl Agent for FailingAgent {
@@ -321,6 +392,40 @@ mod tests {
         let report = suite.run().await.expect("suite should run");
         assert_eq!(report.trials.len(), 1);
         assert!(saw_runner.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn judge_uses_context_runner_and_returns_normal_grade() {
+        let grader = judge::<(), String>(
+            "judge-echo",
+            "Did the assistant preserve the input text exactly?",
+        );
+        let ctx = EvalContext {
+            suite_id: "echo".to_string(),
+            eval_id: "echoes_plain_text".to_string(),
+            trial_id: "trial-judge".to_string(),
+            trial_index: 0,
+            target: ExecutionTarget::openai("judge-test", "judge-test-model"),
+            llm_runner: judge_test_runner(),
+            state: Arc::new(()),
+        };
+        let trial = AgentTrial {
+            transcript: vec![RecordedEvent::Message {
+                role: RecordedMessageRole::User,
+                content: "hello".to_string(),
+            }],
+            final_reply: Some("hello".to_string()),
+            tool_trace: Vec::new(),
+            grades: BTreeMap::new(),
+            grader_failures: Vec::new(),
+            metadata: serde_json::Value::Null,
+        };
+
+        let grade = grader.grade(trial, ctx).await.expect("judge grade");
+
+        assert!((grade.score - 0.75).abs() < f32::EPSILON);
+        assert_eq!(grade.summary, "judge says partial pass");
+        assert_eq!(grade.evidence, json!({ "kind": "judge-test" }));
     }
 
     #[tokio::test]
@@ -1066,7 +1171,7 @@ mod tests {
             let trial_path = run_dir
                 .join("calendar")
                 .join("incremental")
-                .join("gpt")
+                .join("openai@gpt-5.3-codex")
                 .read_dir()
                 .expect("trial dir should exist")
                 .filter_map(|entry| entry.ok().map(|entry| entry.path()))

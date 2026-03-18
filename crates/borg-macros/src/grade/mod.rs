@@ -129,7 +129,7 @@ fn expand_grade(args: &GradeArgs, input: &ItemFn) -> Result<TokenStream> {
 
     let wrapper_fn: ItemFn = parse_quote! {
         pub fn #wrapper_ident() -> ::borg_evals::Grader<#state_ty, #output_ty> {
-            ::borg_evals::grade(#grade_name, |trial, ctx| async move {
+            ::borg_evals::predicate(#grade_name, |trial, ctx| async move {
                 #impl_ident(trial, ctx).await
             })
         }
@@ -186,7 +186,7 @@ mod tests {
             })
         }
         pub fn echoes_empty() -> ::borg_evals::Grader<EchoHarness, EchoRes> {
-            ::borg_evals::grade(
+            ::borg_evals::predicate(
                 "echoes-empty",
                 |trial, ctx| async move { __borg_grade_impl_echoes_empty(trial, ctx).await },
             )

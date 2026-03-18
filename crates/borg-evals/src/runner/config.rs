@@ -8,6 +8,8 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub(super) struct EvalsFile {
     pub evals: EvalsConfig,
+    #[serde(default)]
+    pub provider: ProviderConfigSet,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +30,16 @@ pub(super) struct TargetConfig {
     pub concurrency: Option<usize>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct ProviderConfigSet {
+    pub ollama: Option<OllamaProviderConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct OllamaProviderConfig {
+    pub url: String,
+}
+
 impl EvalsFile {
     pub(super) fn load(workspace_root: &Path) -> Result<Self> {
         let path = workspace_root.join("evals.toml");
@@ -41,9 +53,37 @@ impl EvalsFile {
         Ok(file)
     }
 
+    pub(super) fn provider_expr(&self) -> proc_macro2::TokenStream {
+        let ollama = self
+            .provider
+            .ollama
+            .as_ref()
+            .map(|config| {
+                let url = &config.url;
+                quote::quote! {
+                    Some(::borg_evals::OllamaProviderConfig {
+                        url: #url.to_string(),
+                    })
+                }
+            })
+            .unwrap_or_else(|| quote::quote!(None));
+
+        quote::quote! {
+            ::borg_evals::ProviderConfigs {
+                ollama: #ollama,
+            }
+        }
+    }
+
     fn validate(&mut self) -> Result<()> {
         for target in &mut self.evals.targets {
             target.validate()?;
+        }
+        if let Some(ollama) = &mut self.provider.ollama {
+            ollama.url = ollama.url.trim().to_string();
+            if ollama.url.is_empty() {
+                bail!("provider.ollama.url cannot be empty");
+            }
         }
         Ok(())
     }
@@ -97,4 +137,36 @@ fn default_trials() -> usize {
 
 fn default_output_dir() -> String {
     ".evals".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::EvalsFile;
+
+    #[test]
+    fn loads_provider_ollama_url_from_evals_toml() {
+        let dir = TempDir::new().expect("tempdir");
+        fs::write(
+            dir.path().join("evals.toml"),
+            r#"
+[evals]
+targets = [{ provider = "ollama", model = "llama3.2:1b" }]
+
+[provider.ollama]
+url = "http://localhost:1234"
+"#,
+        )
+        .expect("write evals.toml");
+
+        let file = EvalsFile::load(dir.path()).expect("load evals.toml");
+
+        assert_eq!(
+            file.provider.ollama.expect("ollama config").url,
+            "http://localhost:1234"
+        );
+    }
 }

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use borg_agent::Agent;
+use chrono::SecondsFormat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -104,6 +105,10 @@ pub struct SuiteRunReport {
     pub trials: Vec<TrialRecord>,
 }
 
+fn target_path_key(target: &ExecutionTarget) -> String {
+    format!("{}@{}", target.provider, target.model)
+}
+
 pub(crate) struct IncrementalSuiteWriter {
     root: PathBuf,
     suite_dir: PathBuf,
@@ -126,7 +131,7 @@ impl IncrementalSuiteWriter {
     ) -> EvalResult<Self> {
         let root = root.as_ref().to_path_buf();
         let suite_dir = root.join(&manifest.run_id).join(suite_id).to_path_buf();
-        let target_dir = suite_dir.join(&target.label);
+        let target_dir = suite_dir.join(target_path_key(target));
         fs::create_dir_all(&target_dir)?;
 
         let manifest_path = target_dir.join("manifest.json");
@@ -156,7 +161,7 @@ impl IncrementalSuiteWriter {
         let trial_dir = self
             .suite_dir
             .join(&trial.eval_id)
-            .join(&trial.target.label);
+            .join(target_path_key(&trial.target));
         fs::create_dir_all(&trial_dir)?;
         let trial_path = trial_dir.join(format!(
             "trial-{:03}__{}__{}.json",
@@ -218,7 +223,7 @@ impl SuiteRunReport {
             .join(&self.manifest.run_id)
             .join(&self.suite.suite_id)
             .to_path_buf();
-        let target_dir = suite_dir.join(&self.suite.target.label);
+        let target_dir = suite_dir.join(target_path_key(&self.suite.target));
         fs::create_dir_all(&target_dir)?;
 
         let manifest_path = target_dir.join("manifest.json");
@@ -236,7 +241,7 @@ impl SuiteRunReport {
         for trial in &self.trials {
             let trial_dir = suite_dir
                 .join(&trial.eval_id)
-                .join(&self.suite.target.label);
+                .join(target_path_key(&self.suite.target));
             fs::create_dir_all(&trial_dir)?;
             let trial_path = trial_dir.join(format!(
                 "trial-{:03}__{}__{}.json",
@@ -639,7 +644,12 @@ pub(crate) fn now_since_epoch() -> Duration {
 }
 
 pub(crate) fn run_id() -> String {
-    format!("run-{}", now_since_epoch().as_millis())
+    let now = chrono::Utc::now();
+    format!(
+        "run-{}",
+        now.to_rfc3339_opts(SecondsFormat::Secs, true)
+            .replace(':', "-")
+    )
 }
 
 pub(crate) fn build_summary<State, A>(

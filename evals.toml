@@ -9,3 +9,6 @@ targets = [
   # { provider = "openai", model = "gpt-5.3-codex" },
   # { provider = "openrouter", model = "google/gemini-3-flash" },
 ]
+
+[provider.ollama]
+url = "http://192.168.0.2:11434"

@@ -253,7 +253,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> From<Grader<St
     }
 }
 
-pub fn grade<State, Output, F, Fut>(name: impl Into<String>, f: F) -> Grader<State, Output>
+pub fn predicate<State, Output, F, Fut>(name: impl Into<String>, f: F) -> Grader<State, Output>
 where
     State: Send + Sync + 'static,
     Output: Send + Sync + 'static,
@@ -262,3 +262,5 @@ where
 {
     Grader::new(name, f)
 }
+
+pub use predicate as grade;

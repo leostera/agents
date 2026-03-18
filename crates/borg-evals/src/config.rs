@@ -1,6 +1,16 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ProviderConfigs {
+    pub ollama: Option<OllamaProviderConfig>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OllamaProviderConfig {
+    pub url: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ExecutionTarget {
     pub label: String,
@@ -63,11 +73,16 @@ impl Default for ExecutionTarget {
 pub struct RunConfig {
     pub targets: Vec<ExecutionTarget>,
     pub trials: usize,
+    pub provider: ProviderConfigs,
 }
 
 impl RunConfig {
     pub fn new(targets: Vec<ExecutionTarget>) -> Self {
-        Self { targets, trials: 1 }
+        Self {
+            targets,
+            trials: 1,
+            provider: ProviderConfigs::default(),
+        }
     }
 
     pub fn single(target: ExecutionTarget) -> Self {
@@ -76,6 +91,11 @@ impl RunConfig {
 
     pub fn with_trials(mut self, trials: usize) -> Self {
         self.trials = trials.max(1);
+        self
+    }
+
+    pub fn with_provider_configs(mut self, provider: ProviderConfigs) -> Self {
+        self.provider = provider;
         self
     }
 }

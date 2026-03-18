@@ -61,14 +61,15 @@ async fn echoes_empty(
     desc = "we are testing out a very simple 1-step trajectory",
     tags = ["echo", "baseline"],
 )]
-async fn echoes_plain_text(
-    _ctx: EvalContext<()>,
-) -> Result<Trajectory<EchoAgent, ()>> {
+async fn echoes_plain_text(_ctx: EvalContext<()>) -> Result<Trajectory<EchoAgent, ()>> {
     Ok(trajectory![
         user!(EchoRequest {
             pepo: "hello".to_string()
         }),
-        assistant!(echoes_hello()),
+        assistant!(GradingConfig::new().grader(echoes_hello()).grader(judge(
+            "judge-echoes-hello",
+            "Did the assistant preserve the exact input text `hello`?",
+        ))),
     ])
 }
 
@@ -77,9 +78,7 @@ async fn echoes_plain_text(
     desc = "multiline strings are preserved",
     tags = ["echo", "multiline"],
 )]
-async fn preserves_newlines(
-    _ctx: EvalContext<()>,
-) -> Result<Trajectory<EchoAgent, ()>> {
+async fn preserves_newlines(_ctx: EvalContext<()>) -> Result<Trajectory<EchoAgent, ()>> {
     Ok(trajectory![
         user!(EchoRequest {
             pepo: "hello\nworld".to_string()
@@ -97,9 +96,7 @@ async fn preserves_newlines(
     desc = "empty string is empty string",
     tags = ["echo", "multiline"],
 )]
-async fn preserves_empty_string(
-    _ctx: EvalContext<()>,
-) -> Result<Trajectory<EchoAgent, ()>> {
+async fn preserves_empty_string(_ctx: EvalContext<()>) -> Result<Trajectory<EchoAgent, ()>> {
     Ok(trajectory![
         user!(EchoRequest {
             pepo: "".to_string()

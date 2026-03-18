@@ -10,7 +10,8 @@ src/
 ├── eval.rs        # Eval and EvalContext
 ├── suite.rs       # Suite orchestration and trial execution
 ├── trajectory.rs  # Linear trajectory builder and runner
-├── grade.rs       # Grader, GradingConfig, GradeResult
+├── grade.rs       # Grader, GradingConfig, GradeResult, predicate helper
+├── judge.rs       # built-in JudgeAgent and judge(...) grader helper
 ├── events.rs      # RunEvent schema and global event sink
 ├── runner/        # Workspace discovery, config loading, harness generation, run/list flow
 ├── registry.rs    # build.rs support plus generated registry helpers
@@ -34,6 +35,7 @@ src/
 
 ### Grading
 - Deterministic graders should read like ordinary Rust code returning `GradeResult { score, summary, evidence }`.
+- Prefer `predicate(name, |trial, ctx| ...)` for deterministic grading and `judge(name, rubric)` for LLM-based grading.
 - `Grader` owns the grade name; `GradeResult` should not duplicate it.
 - Prefer reusable `#[borg_macros::grade]` functions when the same deterministic grader is used in more than one eval.
 

@@ -114,6 +114,7 @@ fn render_main(config: &EvalsFile, crates: &[EvalCrate]) -> Result<String> {
 
     let trials = config.evals.trials;
     let output_dir = &config.evals.output_dir;
+    let provider_configs = config.provider_expr();
 
     let file: syn::File = parse_quote! {
         use anyhow::Result;
@@ -140,7 +141,9 @@ fn render_main(config: &EvalsFile, crates: &[EvalCrate]) -> Result<String> {
                 }
             }
             let registries = vec![#(#registries),*];
-            let run_config = ::borg_evals::RunConfig::new(vec![#(#targets),*]).with_trials(#trials);
+            let run_config = ::borg_evals::RunConfig::new(vec![#(#targets),*])
+                .with_trials(#trials)
+                .with_provider_configs(#provider_configs);
 
             match command.as_str() {
                 "list" => {
