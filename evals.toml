@@ -3,11 +3,11 @@ trials = 20
 targets = [
   { provider = "ollama", model = "llama3.2:1b" },
   { provider = "ollama", model = "llama3.2:3b" },
+  { provider = "ollama", model = "llama3.3:70b" },
+  { provider = "ollama", model = "qwen3.5:35b-a3b" },
   { provider = "ollama", model = "mistral-nemo" },
-  # Hosted providers stay disabled here until the local test harness no longer assumes
-  # container-managed Ollama setup for every target.
-  # { provider = "openai", model = "gpt-5.3-codex" },
-  # { provider = "openrouter", model = "google/gemini-3-flash" },
+  { provider = "openai", model = "gpt-5.3-codex" },
+  { provider = "openrouter", model = "google/gemini-3-flash" },
 ]
 
 [provider.ollama]

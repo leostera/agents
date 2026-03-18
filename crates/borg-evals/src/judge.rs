@@ -9,14 +9,13 @@ use borg_llm::runner::LlmRunner;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::error::{EvalError, EvalResult};
 use crate::eval::EvalContext;
 use crate::grade::{GradeResult, Grader, predicate};
 use crate::trial::{AgentTrial, RecordedEvent};
 
-const DEFAULT_JUDGE_PROMPT: &str = "You are an evaluation judge. Read the rubric and transcript carefully. Return a JSON verdict with score in [0.0, 1.0], a short summary, and JSON evidence. Score 1.0 only when the assistant fully satisfies the rubric. Score 0.0 when it clearly fails. Use intermediate values only when the result is partially correct.";
+const DEFAULT_JUDGE_PROMPT: &str = "You are an evaluation judge. Read the rubric and transcript carefully. Return a JSON verdict with score in [0.0, 1.0], a short summary, and an `evidence` array of short strings. Score 1.0 only when the assistant fully satisfies the rubric. Score 0.0 when it clearly fails. Use intermediate values only when the result is partially correct.";
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct JudgeInput<Output> {
@@ -43,7 +42,7 @@ pub struct JudgeVerdict {
     pub score: f32,
     pub summary: String,
     #[serde(default)]
-    pub evidence: Value,
+    pub evidence: Vec<String>,
 }
 
 pub struct JudgeAgent<Output>
@@ -138,7 +137,7 @@ where
                 Ok(GradeResult {
                     score: verdict.score,
                     summary: verdict.summary,
-                    evidence: verdict.evidence,
+                    evidence: verdict.evidence.into(),
                 })
             }
         },

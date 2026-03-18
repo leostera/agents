@@ -248,7 +248,7 @@ mod tests {
                         value: json!({
                             "score": 0.75,
                             "summary": "judge says partial pass",
-                            "evidence": { "kind": "judge-test" }
+                            "evidence": ["kind: judge-test"]
                         }),
                     }],
                 }],
@@ -425,7 +425,7 @@ mod tests {
 
         assert!((grade.score - 0.75).abs() < f32::EPSILON);
         assert_eq!(grade.summary, "judge says partial pass");
-        assert_eq!(grade.evidence, json!({ "kind": "judge-test" }));
+        assert_eq!(grade.evidence, json!(["kind: judge-test"]));
     }
 
     #[tokio::test]
