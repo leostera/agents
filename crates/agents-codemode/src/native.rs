@@ -1,13 +1,10 @@
 use std::collections::BTreeMap;
 use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use serde_json::Value;
-
-type NativeFuture = Pin<Box<dyn Future<Output = Result<Value>> + Send + 'static>>;
 
 /// Async host function exposed to JavaScript by [`CodeMode`](crate::CodeMode).
 #[async_trait]

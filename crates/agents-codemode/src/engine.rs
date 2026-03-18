@@ -1,12 +1,17 @@
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::{Result, anyhow};
+use deno_core::{JsRuntime, PollEventLoopOptions, RuntimeOptions, serde_v8, v8};
 
 use crate::config::CodeModeConfig;
+use crate::host::{extension as host_extension, install_host_functions};
+use crate::module_loader::CodeModeModuleLoader;
 use crate::native::NativeFunctionRegistry;
 use crate::providers::{EnvironmentProvider, EnvironmentVariable, Package, PackageProvider};
-use crate::request::{PackageMatch, Request, Response, RunCodeResult, SearchCodeResult};
+use crate::request::{PackageMatch, RunCode, RunCodeResult, SearchCode, SearchCodeResult};
 
 /// Embeddable codemode engine.
 #[derive(Clone)]
@@ -36,27 +41,17 @@ impl CodeMode {
         }
     }
 
-    /// Executes one codemode request.
-    pub async fn execute(&self, request: Request) -> Result<Response> {
-        match request {
-            Request::RunCode(_request) => Err(anyhow!(
-                "RunCode is not implemented yet; build the deno_core execution slice next"
-            )),
-            Request::SearchCode(request) => Ok(Response::SearchCode(
-                self.search_code(request.query, request.limit).await?,
-            )),
-        }
-    }
-
     /// Returns the engine configuration.
     pub fn config(&self) -> &CodeModeConfig {
         &self.config
     }
 
+    #[cfg(test)]
     pub(crate) fn native_function_names(&self) -> Vec<String> {
         self.native_functions.names()
     }
 
+    #[cfg(test)]
     pub(crate) async fn call_native_function(
         &self,
         name: &str,
@@ -65,14 +60,18 @@ impl CodeMode {
         self.native_functions.call(name, args).await
     }
 
-    async fn search_code(&self, query: String, limit: Option<usize>) -> Result<SearchCodeResult> {
-        let query = query.trim();
+    /// Searches package names and package source snippets exposed by package providers.
+    pub async fn search_code(&self, request: SearchCode) -> Result<SearchCodeResult> {
+        let query = request.query.trim();
         if query.is_empty() {
             return Err(anyhow!("SearchCode requires a non-empty query"));
         }
 
         let query_lower = query.to_lowercase();
-        let limit = limit.unwrap_or_else(|| self.config.search_limit()).max(1);
+        let limit = request
+            .limit
+            .unwrap_or_else(|| self.config.search_limit())
+            .max(1);
         let packages = self.fetch_packages().await?;
         let mut matches = Vec::new();
 
@@ -102,7 +101,33 @@ impl CodeMode {
         Ok(packages)
     }
 
+    #[cfg(test)]
     pub(crate) async fn fetch_environment(&self) -> Result<Vec<EnvironmentVariable>> {
+        let mut vars = Vec::new();
+        for provider in &self.environment_providers {
+            vars.extend(provider.fetch().await?);
+        }
+        Ok(vars)
+    }
+
+    /// Executes one JavaScript async zero-argument closure inside the codemode isolate.
+    pub async fn run_code(&self, request: RunCode) -> Result<RunCodeResult> {
+        let packages = self.fetch_packages().await?;
+        let env = self.fetch_environment_all().await?;
+        let native_functions = self.native_functions.clone();
+        let multithreaded = self.config.is_multithreaded();
+
+        let work = move || execute_run_code(request, packages, env, native_functions);
+        if multithreaded {
+            tokio::task::spawn_blocking(work)
+                .await
+                .map_err(|error| anyhow!("codemode worker join error: {error}"))?
+        } else {
+            work()
+        }
+    }
+
+    async fn fetch_environment_all(&self) -> Result<Vec<EnvironmentVariable>> {
         let mut vars = Vec::new();
         for provider in &self.environment_providers {
             vars.extend(provider.fetch().await?);
@@ -161,15 +186,76 @@ fn snippet_for_query(code: &str, query: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-#[allow(dead_code)]
-fn zero_duration() -> Duration {
-    Duration::ZERO
-}
+fn execute_run_code(
+    request: RunCode,
+    packages: Vec<Package>,
+    env: Vec<EnvironmentVariable>,
+    native_functions: NativeFunctionRegistry,
+) -> Result<RunCodeResult> {
+    let execution = catch_unwind(AssertUnwindSafe(|| {
+        let entered_runtime = tokio::runtime::Handle::try_current().is_err();
+        let owned_runtime = if entered_runtime {
+            Some(
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| anyhow!("failed to create codemode tokio runtime: {error}"))?,
+            )
+        } else {
+            None
+        };
+        let _runtime_guard = owned_runtime.as_ref().map(tokio::runtime::Runtime::enter);
 
-#[allow(dead_code)]
-fn empty_result() -> RunCodeResult {
-    RunCodeResult {
-        value: serde_json::Value::Null,
-        duration: Duration::ZERO,
+        let started_at = Instant::now();
+        let loader = Rc::new(CodeModeModuleLoader::new(packages, request.imports));
+        let mut runtime = JsRuntime::new(RuntimeOptions {
+            extensions: vec![host_extension()],
+            module_loader: Some(loader),
+            ..RuntimeOptions::default()
+        });
+
+        install_host_functions(&mut runtime, env, native_functions)?;
+
+        let function = runtime
+            .execute_script(
+                "file:///__agents_codemode_exec__.js",
+                format!("({})", request.code),
+            )
+            .map_err(|error| anyhow!("failed to compile code: {error}"))?;
+
+        let function = {
+            deno_core::scope!(scope, runtime);
+            let local = v8::Local::new(scope, function);
+            if !local.is_function() {
+                return Err(anyhow!(
+                    "RunCode.code must be an async zero-arg function expression"
+                ));
+            }
+            let function = v8::Local::<v8::Function>::try_from(local)
+                .map_err(|_| anyhow!("RunCode.code did not resolve to a callable function"))?;
+            v8::Global::new(scope, function)
+        };
+
+        let call = runtime.call(&function);
+        let value = deno_core::futures::executor::block_on(
+            runtime.with_event_loop_promise(call, PollEventLoopOptions::default()),
+        )
+        .map_err(|error| anyhow!("failed to execute code: {error}"))?;
+
+        let value = {
+            deno_core::scope!(scope, runtime);
+            let local = v8::Local::new(scope, value);
+            serde_v8::from_v8(scope, local).unwrap_or(serde_json::Value::Null)
+        };
+
+        Ok(RunCodeResult {
+            value,
+            duration: started_at.elapsed(),
+        })
+    }));
+
+    match execution {
+        Ok(result) => result,
+        Err(_) => Err(anyhow!("codemode isolate panicked during execution")),
     }
 }

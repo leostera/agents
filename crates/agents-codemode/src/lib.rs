@@ -10,7 +10,7 @@
 //! ```rust,no_run
 //! use std::sync::Arc;
 //!
-//! use agents_codemode::{CodeMode, CodeModeConfig, Request, Response};
+//! use agents_codemode::{CodeMode, CodeModeConfig, SearchCode};
 //!
 //! let codemode = Arc::new(
 //!     CodeMode::builder()
@@ -19,23 +19,20 @@
 //! );
 //!
 //! let response = codemode
-//!     .execute(Request::SearchCode(agents_codemode::SearchCode {
+//!     .search_code(SearchCode {
 //!         query: "fetch".to_string(),
 //!         limit: Some(5),
-//!     }))
+//!     })
 //!     .await?;
 //!
-//! match response {
-//!     Response::SearchCode(result) => {
-//!         println!("{} matches", result.matches.len());
-//!     }
-//!     Response::RunCode(_) => unreachable!(),
-//! }
+//! println!("{} matches", response.matches.len());
 //! # Ok::<(), anyhow::Error>(())
 //! ```
 
 mod config;
 mod engine;
+mod host;
+mod module_loader;
 mod native;
 mod providers;
 mod request;

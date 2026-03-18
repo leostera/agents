@@ -313,15 +313,28 @@ mod tests {
         impl ::agents::llm::tools::TypedTool for TestTools {
             fn tool_definitions() -> Vec<::agents::llm::tools::ToolDefinition> {
                 vec![
-                    ::agents::llm::tools::ToolDefinition::function("ping", Some("Ping tool"),
-                    ::serde_json::to_value(::schemars::schema_for!(__BorgAgentToolArgsTestToolsPing))
-                    .expect("serialize tool schema"),),
-                    ::agents::llm::tools::ToolDefinition::function("echo_text",
-                    Some("Echo tool"), ::serde_json::to_value(::schemars::schema_for!(EchoArgs))
-                    .expect("serialize tool schema"),),
-                    ::agents::llm::tools::ToolDefinition::function("list_events", None,
-                    ::serde_json::json!({ "type" : "object", "properties" : {},
-                    "additionalProperties" : false }),)
+                    ::agents::llm::tools::ToolDefinition::function(
+                        "ping",
+                        Some("Ping tool"),
+                        ::serde_json::to_value(
+                                ::schemars::schema_for!(__BorgAgentToolArgsTestToolsPing),
+                            )
+                            .expect("serialize tool schema"),
+                    ),
+                    ::agents::llm::tools::ToolDefinition::function(
+                        "echo_text",
+                        Some("Echo tool"),
+                        ::serde_json::to_value(::schemars::schema_for!(EchoArgs))
+                            .expect("serialize tool schema"),
+                    ),
+                    ::agents::llm::tools::ToolDefinition::function(
+                        "list_events",
+                        None,
+                        ::serde_json::json!(
+                            { "type" : "object", "properties" : {}, "additionalProperties" :
+                            false }
+                        ),
+                    ),
                 ]
             }
             fn decode_tool_call(
