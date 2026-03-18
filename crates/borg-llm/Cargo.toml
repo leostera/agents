@@ -26,4 +26,5 @@ tracing-subscriber.workspace = true
 swift-rs = { workspace = true, features = ["build"] }
 
 [dev-dependencies]
+cargo-husky = "1.5.0"
 serial_test.workspace = true

@@ -375,6 +375,7 @@ name = "borg-llm"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "cargo-husky",
  "derive_builder",
  "dotenvy",
  "futures-util",
@@ -399,6 +400,7 @@ dependencies = [
 name = "borg-macros"
 version = "0.0.1"
 dependencies = [
+ "cargo-husky",
  "insta",
  "prettyplease",
  "proc-macro2",
@@ -439,6 +441,12 @@ dependencies = [
  "clap",
  "tokio",
 ]
+
+[[package]]
+name = "cargo-husky"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b02b629252fe8ef6460461409564e2c21d0c8e77e0944f3d189ff06c4e932ad"
 
 [[package]]
 name = "castaway"

@@ -12,22 +12,10 @@ is_rust_change() {
   echo "$STAGED_FILES" | grep -Eq '^(crates/|Cargo\.toml|Cargo\.lock|\.cargo/)'
 }
 
-is_web_change() {
-  echo "$STAGED_FILES" | grep -Eq '^(packages/|package\.json|bun\.lock|bunfig\.toml|vite\.config\.(ts|js)|tsconfig(\..+)?\.json)'
-}
-
 if is_rust_change; then
   echo "pre-commit: running Rust checks"
   cargo fmt --all --check
   cargo check
   cargo clippy
   cargo nextest run --workspace --lib --tests --bins -E 'not test(/e2e/) and not test(/_long$/)'
-fi
-
-if is_web_change; then
-  echo "pre-commit: running web checks"
-  bun run lint
-  bun run check
-  bun run format:check
-  bun run test
 fi

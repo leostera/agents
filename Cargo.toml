@@ -58,3 +58,9 @@ tracing-subscriber = { version = "0", features = ["fmt", "env-filter"] }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
 walkdir = "2"
+
+
+[workspace.dev-dependencies.cargo-husky
+version = "1"
+default-features = false
+features = [ "user-hooks" ]
