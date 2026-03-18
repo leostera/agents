@@ -1,0 +1,165 @@
+mod session;
+
+use async_trait::async_trait;
+use schemars::JsonSchema;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
+use crate::error::{AgentError, AgentResult};
+
+pub use session::{
+    AgentBuilder, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput, ExecutionProfile,
+    SessionAgent,
+};
+
+#[async_trait]
+pub trait Agent: Send + 'static {
+    type Input: Clone + Serialize + DeserializeOwned + Send + Sync + 'static;
+    type ToolCall: Clone + Serialize + DeserializeOwned + Send + Sync + 'static;
+    type ToolResult: Clone + Serialize + DeserializeOwned + Send + Sync + 'static;
+    type Output: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static;
+
+    async fn send(&mut self, input: AgentInput<Self::Input>) -> AgentResult<()>;
+
+    async fn next(
+        &mut self,
+    ) -> AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>>;
+
+    async fn cast(&mut self, input: Self::Input) -> AgentResult<()> {
+        self.send(AgentInput::Message(input)).await
+    }
+
+    async fn call(&mut self, input: Self::Input) -> AgentResult<Self::Output> {
+        self.send(AgentInput::Message(input)).await?;
+        loop {
+            match self.next().await? {
+                Some(AgentEvent::Completed { reply }) => return Ok(reply),
+                Some(AgentEvent::Cancelled) => return Err(AgentError::Cancelled),
+                Some(_) => {}
+                None => {
+                    return Err(AgentError::Internal {
+                        message: "agent ended turn without a terminal event".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    async fn steer(&mut self, input: Self::Input) -> AgentResult<Self::Output> {
+        self.send(AgentInput::Steer(input)).await?;
+        loop {
+            match self.next().await? {
+                Some(AgentEvent::Completed { reply }) => return Ok(reply),
+                Some(AgentEvent::Cancelled) => return Err(AgentError::Cancelled),
+                Some(_) => {}
+                None => {
+                    return Err(AgentError::Internal {
+                        message: "agent ended steered turn without a terminal event".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    async fn cancel(&mut self) -> AgentResult<()> {
+        self.send(AgentInput::Cancel).await?;
+        loop {
+            match self.next().await? {
+                Some(AgentEvent::Cancelled) => return Ok(()),
+                Some(AgentEvent::Completed { .. }) => {
+                    return Err(AgentError::Internal {
+                        message: "cancel completed without observing cancellation".to_string(),
+                    });
+                }
+                Some(_) => {}
+                None => {
+                    return Err(AgentError::Internal {
+                        message: "agent ended without observing cancellation".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    async fn spawn(
+        self,
+    ) -> AgentResult<(
+        AgentRunInput<Self::Input>,
+        AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+    )>
+    where
+        Self: Sized,
+    {
+        let (input_tx, mut input_rx) = tokio::sync::mpsc::channel(64);
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(64);
+
+        tokio::spawn(async move {
+            let mut agent = self;
+            let mut input_closed = false;
+
+            loop {
+                while let Ok(input) = input_rx.try_recv() {
+                    if let Err(error) = agent.send(input).await
+                        && event_tx.send(Err(error)).await.is_err()
+                    {
+                        return;
+                    }
+                }
+
+                match agent.next().await {
+                    Ok(Some(event)) => {
+                        if event_tx.send(Ok(event)).await.is_err() {
+                            return;
+                        }
+
+                        if !input_closed {
+                            tokio::select! {
+                                biased;
+                                maybe_input = input_rx.recv() => {
+                                    match maybe_input {
+                                        Some(input) => {
+                                            if let Err(error) = agent.send(input).await
+                                                && event_tx.send(Err(error)).await.is_err()
+                                            {
+                                                return;
+                                            }
+                                        }
+                                        None => {
+                                            input_closed = true;
+                                        }
+                                    }
+                                }
+                                _ = tokio::task::yield_now() => {}
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        if input_closed {
+                            return;
+                        }
+
+                        match input_rx.recv().await {
+                            Some(input) => {
+                                if let Err(error) = agent.send(input).await
+                                    && event_tx.send(Err(error)).await.is_err()
+                                {
+                                    return;
+                                }
+                            }
+                            None => {
+                                input_closed = true;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        if event_tx.send(Err(error)).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok((input_tx, event_rx))
+    }
+}

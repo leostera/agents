@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use borg_agent::{
-    Agent, AgentResult, ContextManager, ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope,
-    ToolRunner,
+    AgentResult, ContextManager, SessionAgent, ToolCallEnvelope, ToolExecutionResult,
+    ToolResultEnvelope, ToolRunner,
 };
 use borg_evals::prelude::*;
 use borg_llm::completion::InputItem;
@@ -66,12 +66,12 @@ impl ToolRunner<CalcOp, u32> for CalcToolRunner {
 
 #[derive(borg_macros::EvalAgent)]
 pub struct CalculatorAgent {
-    agent: Agent<CalcReq, CalcOp, u32, CalcRes>,
+    agent: SessionAgent<CalcReq, CalcOp, u32, CalcRes>,
 }
 
 impl CalculatorAgent {
     pub async fn new(runner: LlmRunner) -> Result<Self> {
-        let agent = Agent::builder()
+        let agent = SessionAgent::builder()
             .with_tool_runner(CalcToolRunner)
             .with_llm_runner(runner)
             .with_context_manager(ContextManager::static_text(

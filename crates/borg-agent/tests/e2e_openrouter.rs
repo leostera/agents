@@ -1,5 +1,5 @@
 use borg_agent::{
-    Agent, AgentEvent, AgentInput, AgentResult, CallbackToolRunner, ContextManager,
+    AgentEvent, AgentInput, AgentResult, CallbackToolRunner, ContextManager, SessionAgent as Agent,
     ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope,
 };
 use borg_llm::completion::InputItem;
@@ -7,6 +7,7 @@ use borg_llm::error::LlmResult;
 use borg_llm::testing::{optional_test_env, runner_with_openrouter_model};
 use borg_llm::tools::{RawToolDefinition, TypedTool};
 use schemars::JsonSchema;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -93,9 +94,9 @@ async fn next_event<M, C, T, R>(
     agent: &mut Agent<M, C, T, R>,
 ) -> LlmResult<Option<AgentEvent<C, T, R>>>
 where
-    M: Into<InputItem> + Send + Sync + 'static,
-    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
-    T: Clone + Serialize + Send + Sync + 'static,
+    M: Clone + Serialize + DeserializeOwned + Into<InputItem> + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
     R: Clone + Serialize + for<'de> Deserialize<'de> + JsonSchema + Send + Sync + 'static,
 {
     agent
@@ -110,9 +111,9 @@ async fn next_nonempty_event<M, C, T, R>(
     agent: &mut Agent<M, C, T, R>,
 ) -> LlmResult<Option<AgentEvent<C, T, R>>>
 where
-    M: Into<InputItem> + Send + Sync + 'static,
-    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
-    T: Clone + Serialize + Send + Sync + 'static,
+    M: Clone + Serialize + DeserializeOwned + Into<InputItem> + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
     R: Clone + Serialize + for<'de> Deserialize<'de> + JsonSchema + Send + Sync + 'static,
 {
     loop {
@@ -179,7 +180,7 @@ async fn openrouter_agent_run_streams_text_turn_long() -> LlmResult<()> {
         .build()
         .expect("agent");
 
-    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    let (tx, mut rx) = map_agent_error(agent.spawn().await)?;
     tx.send(AgentInput::Message(InputItem::user_text(
         "Reply with a short plain-text acknowledgment. Do not return JSON.",
     )))
@@ -236,7 +237,7 @@ async fn openrouter_agent_run_executes_ping_tool_and_finishes_long() -> LlmResul
         .build()
         .expect("agent");
 
-    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    let (tx, mut rx) = map_agent_error(agent.spawn().await)?;
     tx.send(AgentInput::Message(InputItem::user_text(
         "First call the ping tool exactly once with value=\"hello-tool\". Do not explain the plan before calling it, and do not call the tool more than once. After receiving the tool result, reply in plain text and include the returned pong value.",
     )))
@@ -316,7 +317,7 @@ async fn openrouter_agent_run_queues_messages_in_order_long() -> LlmResult<()> {
         .build()
         .expect("agent");
 
-    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    let (tx, mut rx) = map_agent_error(agent.spawn().await)?;
     tx.send(AgentInput::Message(InputItem::user_text(
         "Reply with exactly FIRST and nothing else.",
     )))
@@ -387,7 +388,7 @@ async fn openrouter_agent_run_cancels_active_turn_long() -> LlmResult<()> {
         .build()
         .expect("agent");
 
-    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    let (tx, mut rx) = map_agent_error(agent.spawn().await)?;
     tx.send(AgentInput::Message(InputItem::user_text(
         "Call the ping tool exactly once with value=\"hello-tool\". Do not explain the plan before calling it.",
     )))
@@ -455,7 +456,7 @@ async fn openrouter_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult
         .build()
         .expect("agent");
 
-    let (tx, mut rx) = map_agent_error(agent.run().await)?;
+    let (tx, mut rx) = map_agent_error(agent.spawn().await)?;
     tx.send(AgentInput::Message(InputItem::user_text(
         "First call the ping tool exactly once with value=\"hello-tool\". Then explain the result.",
     )))

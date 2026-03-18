@@ -332,6 +332,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "borg-llm",
+ "borg-macros",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -3347,6 +3348,7 @@ name = "test-agents"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "borg-agent",
  "borg-evals",
  "borg-llm",

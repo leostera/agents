@@ -279,11 +279,12 @@ async fn ollama_runner_typed_response_with_defaulted_nested_fields_long() -> Llm
         .chat::<(), DefaultedJudgeResponse>(
             CompletionRequest::new(
                 vec![InputItem::user_text(
-                    "Return valid JSON with fields passed, score, summary, and nested evidence containing strengths and concerns arrays.",
+                    "Return only valid JSON for this exact schema: {\"passed\":true,\"score\":0.5,\"summary\":\"...\",\"evidence\":{\"strengths\":[],\"concerns\":[]}}. All four top-level fields are required. The nested evidence object is required. Both strengths and concerns keys must always be present, even when empty.",
                 )],
                 ModelSelector::from_model(OLLAMA_STRUCTURED_OUTPUT_MODEL),
             )
             .with_max_tokens(128)
+            .with_temperature(0.0)
             .with_typed_response(TypedResponse::new("agent_response")),
         )
         .await?;

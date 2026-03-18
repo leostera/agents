@@ -27,6 +27,8 @@ use crate::tools::{
     NoToolRunner, ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope, ToolRunner,
 };
 
+use super::Agent as AgentTrait;
+
 #[derive(Debug, Clone)]
 pub enum AgentInput<M> {
     Message(M),
@@ -122,8 +124,8 @@ impl Default for AgentBuilder<InputItem, (), (), String> {
 impl<M, C, T, R> AgentBuilder<M, C, T, R>
 where
     M: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
-    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
-    T: Clone + Serialize + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
     R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
 {
     pub fn with_llm_runner(mut self, llm: LlmRunner) -> Self {
@@ -187,8 +189,8 @@ where
 
     pub fn with_tool_runner<C2, T2, Runner>(self, tool_runner: Runner) -> AgentBuilder<M, C2, T2, R>
     where
-        C2: Clone + Send + Sync + 'static,
-        T2: Clone + Serialize + Send + Sync + 'static,
+        C2: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+        T2: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
         Runner: ToolRunner<C2, T2> + 'static,
     {
         AgentBuilder {
@@ -203,7 +205,7 @@ where
         }
     }
 
-    pub fn build(self) -> AgentResult<Agent<M, C, T, R>>
+    pub fn build(self) -> AgentResult<SessionAgent<M, C, T, R>>
     where
         M: Into<InputItem>,
     {
@@ -216,7 +218,7 @@ where
         let context_manager = self.context_manager;
         context_manager.attach_llm_runner(llm.clone());
 
-        Ok(Agent {
+        Ok(SessionAgent {
             llm,
             context_manager: Arc::new(context_manager),
             execution_profile: self.execution_profile,
@@ -232,11 +234,11 @@ where
     }
 }
 
-pub struct Agent<M, C, T, R>
+pub struct SessionAgent<M, C, T, R>
 where
-    M: Into<InputItem> + Send + Sync + 'static,
-    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
-    T: Clone + Serialize + Send + Sync + 'static,
+    M: Clone + Serialize + DeserializeOwned + Into<InputItem> + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
     R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
 {
     llm: Arc<LlmRunner>,
@@ -325,11 +327,11 @@ impl<C, T, R> TurnState<C, T, R> {
     }
 }
 
-impl<M, C, T, R> Agent<M, C, T, R>
+impl<M, C, T, R> SessionAgent<M, C, T, R>
 where
-    M: Into<InputItem> + Send + Sync + 'static,
-    C: TypedTool + Clone + Serialize + Send + Sync + 'static,
-    T: Clone + Serialize + Send + Sync + 'static,
+    M: Clone + Serialize + DeserializeOwned + Into<InputItem> + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
     R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
 {
     pub async fn send(&mut self, input: AgentInput<M>) -> AgentResult<()> {
@@ -518,7 +520,7 @@ where
         }
     }
 
-    pub async fn run(mut self) -> AgentResult<(AgentRunInput<M>, AgentRunOutput<C, T, R>)> {
+    pub async fn spawn(mut self) -> AgentResult<(AgentRunInput<M>, AgentRunOutput<C, T, R>)> {
         let (input_tx, mut input_rx) = mpsc::channel(self.run_channel_capacity);
         let (event_tx, event_rx) = mpsc::channel(self.run_channel_capacity);
 
@@ -776,9 +778,42 @@ where
     }
 }
 
-impl Agent<InputItem, (), (), String> {
+impl SessionAgent<InputItem, (), (), String> {
     pub fn builder() -> AgentBuilder<InputItem, (), (), String> {
         AgentBuilder::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl<M, C, T, R> AgentTrait for SessionAgent<M, C, T, R>
+where
+    M: Clone + Serialize + DeserializeOwned + Into<InputItem> + Send + Sync + 'static,
+    C: TypedTool + Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+    R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
+{
+    type Input = M;
+    type ToolCall = C;
+    type ToolResult = T;
+    type Output = R;
+
+    async fn send(&mut self, input: AgentInput<Self::Input>) -> AgentResult<()> {
+        SessionAgent::send(self, input).await
+    }
+
+    async fn next(
+        &mut self,
+    ) -> AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>> {
+        SessionAgent::next(self).await
+    }
+
+    async fn spawn(
+        self,
+    ) -> AgentResult<(
+        AgentRunInput<Self::Input>,
+        AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+    )> {
+        SessionAgent::spawn(self).await
     }
 }
 
@@ -885,6 +920,8 @@ mod tests {
     use crate::context::{ContextManager, ContextStrategy, StaticContextProvider};
     use crate::storage::{InMemoryStorageAdapter, StorageEvent, StorageInput, StorageRecord};
     use crate::tools::{CallbackToolRunner, ToolExecutionResult};
+
+    type Agent<M, C, T, R> = SessionAgent<M, C, T, R>;
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
     struct EchoResponse {
@@ -1396,7 +1433,7 @@ mod tests {
             .build()
             .expect("agent");
 
-        let (tx, mut rx) = agent.run().await.expect("run");
+        let (tx, mut rx) = agent.spawn().await.expect("spawn");
         tx.send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("send input");
@@ -1428,7 +1465,7 @@ mod tests {
             .build()
             .expect("agent");
 
-        let (tx, mut rx) = agent.run().await.expect("run");
+        let (tx, mut rx) = agent.spawn().await.expect("spawn");
         tx.send(AgentInput::Message(InputItem::user_text("ping please")))
             .await
             .expect("send input");
@@ -1467,7 +1504,7 @@ mod tests {
             .build()
             .expect("agent");
 
-        let (tx, mut rx) = agent.run().await.expect("run");
+        let (tx, mut rx) = agent.spawn().await.expect("spawn");
         tx.send(AgentInput::Message(InputItem::user_text("one")))
             .await
             .expect("first input");
@@ -1565,7 +1602,7 @@ mod tests {
             .build()
             .expect("agent");
 
-        let (tx, mut rx) = agent.run().await.expect("run");
+        let (tx, mut rx) = agent.spawn().await.expect("spawn");
         tx.send(AgentInput::Message(InputItem::user_text("one")))
             .await
             .expect("first input");
@@ -1648,7 +1685,7 @@ mod tests {
             .build()
             .expect("agent");
 
-        let (tx, mut rx) = agent.run().await.expect("run");
+        let (tx, mut rx) = agent.spawn().await.expect("spawn");
         tx.send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("input");

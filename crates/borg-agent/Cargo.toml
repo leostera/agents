@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 async-trait.workspace = true
 borg-llm = { path = "../borg-llm" }
+borg-macros = { path = "../borg-macros" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -6,7 +6,10 @@ mod tools;
 
 pub use agent::{
     Agent, AgentBuilder, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput, ExecutionProfile,
+    SessionAgent,
 };
+pub use async_trait::async_trait;
+pub use borg_macros::Agent;
 pub use context::{
     ContextChunk, ContextManager, ContextManagerBuilder, ContextProvider, ContextRole,
     ContextStrategy, ContextWindow, StaticContextProvider,

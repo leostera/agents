@@ -90,7 +90,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-    use borg_agent::{AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
+    use borg_agent::{AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
     use serde_json::json;
     use tokio::sync::mpsc;
     use tokio::time::{Duration, Instant};
@@ -107,13 +107,33 @@ mod tests {
         type ToolResult = serde_json::Value;
         type Output = String;
 
-        async fn run(
+        async fn send(&mut self, _input: AgentInput<Self::Input>) -> Result<(), AgentError> {
+            Err(AgentError::Internal {
+                message: "dummy agent should not be run directly".to_string(),
+            })
+        }
+
+        async fn next(
+            &mut self,
+        ) -> Result<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>, AgentError>
+        {
+            Err(AgentError::Internal {
+                message: "dummy agent should not be run directly".to_string(),
+            })
+        }
+
+        async fn spawn(
             self,
-        ) -> EvalResult<(
-            borg_agent::AgentRunInput<Self::Input>,
-            borg_agent::AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
-        )> {
-            Err(EvalError::message("dummy agent should not be run directly"))
+        ) -> Result<
+            (
+                borg_agent::AgentRunInput<Self::Input>,
+                borg_agent::AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+            ),
+            AgentError,
+        > {
+            Err(AgentError::Internal {
+                message: "dummy agent should not be run directly".to_string(),
+            })
         }
     }
 
@@ -131,12 +151,30 @@ mod tests {
         type ToolResult = ();
         type Output = String;
 
-        async fn run(
+        async fn send(&mut self, _input: AgentInput<Self::Input>) -> Result<(), AgentError> {
+            Err(AgentError::Internal {
+                message: "echo test agent only supports spawn".to_string(),
+            })
+        }
+
+        async fn next(
+            &mut self,
+        ) -> Result<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>, AgentError>
+        {
+            Err(AgentError::Internal {
+                message: "echo test agent only supports spawn".to_string(),
+            })
+        }
+
+        async fn spawn(
             self,
-        ) -> EvalResult<(
-            AgentRunInput<Self::Input>,
-            AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
-        )> {
+        ) -> Result<
+            (
+                AgentRunInput<Self::Input>,
+                AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+            ),
+            AgentError,
+        > {
             let (input_tx, mut input_rx) = mpsc::channel(16);
             let (event_tx, event_rx) = mpsc::channel(16);
 

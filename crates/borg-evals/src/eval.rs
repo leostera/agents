@@ -2,79 +2,57 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use borg_agent::{Agent, AgentRunInput, AgentRunOutput};
-use borg_llm::completion::InputItem;
-use borg_llm::tools::TypedTool;
-use schemars::JsonSchema;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
-use tracing::{debug, info};
+use borg_agent::{
+    Agent as SharedAgent, AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput,
+};
+use tracing::debug;
 
 use crate::config::ExecutionTarget;
-use crate::error::{EvalError, EvalResult};
+use crate::error::EvalResult;
 use crate::grade::GradingConfig;
 use crate::trial::AgentTrial;
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
+pub use borg_agent::Agent as EvalAgent;
+
 #[derive(Clone, Debug)]
 pub struct NoAgent;
 
-#[async_trait]
-impl EvalAgent for NoAgent {
+#[borg_agent::async_trait]
+impl SharedAgent for NoAgent {
     type Input = serde_json::Value;
     type ToolCall = serde_json::Value;
     type ToolResult = serde_json::Value;
     type Output = String;
 
-    async fn run(
-        self,
-    ) -> EvalResult<(
-        AgentRunInput<Self::Input>,
-        AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
-    )> {
-        Err(EvalError::message("no agent factory configured"))
+    async fn send(&mut self, _input: AgentInput<Self::Input>) -> Result<(), AgentError> {
+        Err(AgentError::Internal {
+            message: "no agent factory configured".to_string(),
+        })
     }
-}
 
-#[async_trait]
-pub trait EvalAgent: Send + 'static {
-    type Input: Clone + Serialize + DeserializeOwned + Send + Sync + 'static;
-    type ToolCall: Clone + Serialize + DeserializeOwned + Send + Sync + 'static;
-    type ToolResult: Clone + Serialize + DeserializeOwned + Send + Sync + 'static;
-    type Output: Clone + Serialize + DeserializeOwned + Send + Sync + 'static;
+    async fn next(
+        &mut self,
+    ) -> Result<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>, AgentError>
+    {
+        Err(AgentError::Internal {
+            message: "no agent factory configured".to_string(),
+        })
+    }
 
-    async fn run(
+    async fn spawn(
         self,
-    ) -> EvalResult<(
-        AgentRunInput<Self::Input>,
-        AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
-    )>;
-}
-
-#[async_trait]
-impl<MI, TC, TR, MO> EvalAgent for Agent<MI, TC, TR, MO>
-where
-    MI: Into<InputItem> + Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
-    TC: TypedTool + Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
-    TR: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
-    MO: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
-{
-    type Input = MI;
-    type ToolCall = TC;
-    type ToolResult = TR;
-    type Output = MO;
-
-    async fn run(
-        self,
-    ) -> EvalResult<(
-        AgentRunInput<Self::Input>,
-        AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
-    )> {
-        Agent::run(self)
-            .await
-            .map_err(|error| EvalError::message(error.to_string()))
+    ) -> Result<
+        (
+            AgentRunInput<Self::Input>,
+            AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+        ),
+        AgentError,
+    > {
+        Err(AgentError::Internal {
+            message: "no agent factory configured".to_string(),
+        })
     }
 }
 
@@ -259,14 +237,6 @@ where
         );
         let run = self.run.as_ref().expect("eval missing run function");
         let trial = run(ctx.clone(), agent).await?;
-        info!(
-            suite_id = %ctx.suite_id,
-            eval_id = %ctx.eval_id,
-            trial_id = %ctx.trial_id,
-            trial_index = ctx.trial_index,
-            target_label = %ctx.target.label,
-            "eval completed"
-        );
         Ok(trial)
     }
 }

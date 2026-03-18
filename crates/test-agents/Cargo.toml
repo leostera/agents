@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 borg-agent = { path = "../borg-agent" }
 borg-evals = { path = "../borg-evals" }
 borg-llm = { path = "../borg-llm" }

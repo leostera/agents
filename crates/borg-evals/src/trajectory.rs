@@ -177,7 +177,10 @@ where
                     target_label = %ctx.target.label,
                     "starting agent run"
                 );
-                let (tx, mut rx) = agent.run().await?;
+                let (tx, mut rx) = agent
+                    .spawn()
+                    .await
+                    .map_err(|error| EvalError::message(error.to_string()))?;
                 debug!(
                     suite_id = %ctx.suite_id,
                     eval_id = %ctx.eval_id,

@@ -6,7 +6,9 @@ Session-first typed agent runtime over `borg-llm`.
 
 ```
 src/
-├── agent.rs      # AgentBuilder, Agent, run loop, turn state machine
+├── agent/
+│   ├── mod.rs    # Agent trait plus shared spawn/call/cast/steer/cancel helpers
+│   └── session.rs # AgentBuilder, SessionAgent, turn state machine, spawn loop
 ├── context.rs    # ContextManager, ContextChunk, ContextProvider
 ├── storage.rs    # StorageAdapter and storage event model
 ├── tools.rs      # ToolRunner plus typed tool envelopes/results
@@ -16,13 +18,16 @@ src/
 ## Key Contracts
 
 ### Agent typing
-- `Agent<M, C, T, R>` is the concrete typed runtime.
-- The agent type itself now carries the same bounds the runtime needs:
-  - `M: Into<InputItem>`
-  - `C: TypedTool + Clone + Serialize`
-  - `T: Clone + Serialize`
-  - `R: Clone + Serialize + DeserializeOwned + JsonSchema`
-- Keep those constraints aligned with the actual `send`, `next`, and `run` requirements.
+- `Agent` is the shared trait boundary used by app code, wrappers, and evals.
+- `SessionAgent<M, C, T, R>` is the built-in concrete typed runtime.
+- Keep the trait-associated-type contract aligned with the actual runtime needs:
+  - `Input: Clone + Serialize + DeserializeOwned`
+  - `ToolCall: Clone + Serialize + DeserializeOwned`
+  - `ToolResult: Clone + Serialize + DeserializeOwned`
+  - `Output: Clone + Serialize + DeserializeOwned + JsonSchema`
+- Preserve the layering:
+  - `send` + `next` are the semantic core
+  - `cast`, `call`, `steer`, `cancel`, and `spawn` are convenience/default surfaces
 
 ### Turn ownership
 - `TurnState` owns the pending-tool bookkeeping.
@@ -34,7 +39,7 @@ src/
   - model output items first
   - tool call request events before tool execution completion
   - final `Completed` or `Cancelled` event last
-- If you change turn execution, update the unit tests in `agent.rs` that assert event sequencing and transcript reuse.
+- If you change turn execution, update the unit tests in `src/agent/session.rs` that assert event sequencing and transcript reuse.
 
 ### Context model
 - `ContextManager` history only contains session history.
@@ -48,4 +53,4 @@ cargo build -p borg-agent
 cargo test -p borg-agent
 ```
 
-Provider-backed e2e tests live under `tests/` and are slower than the unit suite in `src/agent.rs`.
+Provider-backed e2e tests live under `tests/` and are slower than the unit suite under `src/agent/`.

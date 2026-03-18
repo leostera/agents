@@ -13,16 +13,16 @@ Unify the current `borg-evals`-local `EvalAgent` concept with the main `borg-age
 
 Today we have two concepts for “something that behaves like an agent”:
 
-- `borg_agent::Agent<M, C, T, R>`
+- `borg_agent::SessionAgent<M, C, T, R>`
 - `borg_evals::EvalAgent`
 
 That split is workable, but it is bad DX and it fights the structure the code already has.
 
-The current `borg-agent` implementation in `crates/borg-agent/src/agent.rs` already has a clear semantic center:
+The current `borg-agent` implementation in `crates/borg-agent/src/agent/session.rs` already has a clear semantic center:
 
 - `send(&mut self, AgentInput<M>)`
 - `next(&mut self)`
-- `run(self)` as a spawned adapter over the same turn machine
+- `spawn(self)` as a spawned adapter over the same turn machine
 
 So the real problem is not missing semantics. The problem is that the shared agent abstraction does not exist at the crate boundary.
 
@@ -74,7 +74,7 @@ while let Some(event) = agent.next().await? {
 Streaming remains available:
 
 ```rust
-let (tx, rx) = agent.run().await?;
+let (tx, rx) = agent.spawn().await?;
 ```
 
 But that streaming API should be defined in terms of the turn API, not as a separate implementation path.
@@ -90,7 +90,7 @@ So contributors can choose the right level:
 
 - `send` / `next` for precise control
 - `cast` / `call` / `steer` / `cancel` for common turn operations
-- `run` for streaming integration
+- `spawn` for streaming integration
 
 ## Reference-level explanation
 
@@ -124,7 +124,7 @@ pub trait Agent: Send + 'static {
 
     async fn cancel(&mut self) -> AgentResult<()>;
 
-    async fn run(
+    async fn spawn(
         self,
     ) -> AgentResult<(
         AgentRunInput<Self::Input>,
@@ -141,11 +141,11 @@ pub trait Agent: Send + 'static {
 - `call` sends a normal message and then drives `next()` until the turn completes
 - `steer` sends a steering message and then drives `next()` until the turn resolves
 - `cancel` sends `AgentInput::Cancel` and then drives `next()` until cancellation is observed
-- `run(self)` remains a spawned adapter over `send` and `next`
+- `spawn(self)` remains a spawned adapter over `send` and `next`
 
-The current `borg_agent::Agent<M, C, T, R>` should be renamed to `SessionAgent<M, C, T, R>` and should implement the trait directly.
+`SessionAgent<M, C, T, R>` should implement the trait directly and remain the built-in runtime.
 
-The default implementation of `run(self)` should stay a thin spawned adapter around `send` and `next`, because that is already how the runtime works today.
+The default implementation of `spawn(self)` should stay a thin spawned adapter around `send` and `next`, because that is already how the runtime works today.
 
 `borg-evals` should then:
 
@@ -185,7 +185,7 @@ That is worse because:
 - judges become special instead of ordinary agents
 - evals keep depending on a separate contract from production code
 
-Another alternative is to make `run(self)` the only shared trait method.
+Another alternative is to make `spawn(self)` the only shared trait method.
 
 That is worse because:
 
@@ -197,7 +197,7 @@ The current runtime already shows the right layering: turn machine first, stream
 
 ## Unresolved questions
 
-- Should `run(self)` be a required trait method or a provided default implementation?
+- Should `spawn(self)` be a required trait method or a provided default implementation?
 - Should the derive macro be named `#[derive(Agent)]` immediately, or migrate in two steps?
 - Do we want an additional erased/object-safe adapter later, or is the typed trait enough for now?
 
