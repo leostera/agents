@@ -83,7 +83,7 @@ pub struct TrialRecord {
     pub passed: bool,
     pub mean_score: f32,
     pub trial: Option<serde_json::Value>,
-    pub error: Option<String>,
+    pub error: Option<RecordedError>,
     pub grades: BTreeMap<String, GradeResult>,
     #[serde(default)]
     pub grader_failures: Vec<GraderFailure>,
@@ -288,7 +288,7 @@ struct PersistedTrialTiming {
 struct PersistedTrialGrading {
     pub passed: bool,
     pub mean_score: f32,
-    pub error: Option<String>,
+    pub error: Option<RecordedError>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -323,7 +323,7 @@ enum PersistedTranscriptEvent {
         summary: Option<String>,
         evidence: Option<serde_json::Value>,
         failed: bool,
-        error: Option<String>,
+        error: Option<RecordedError>,
         step: Option<usize>,
     },
     Error {

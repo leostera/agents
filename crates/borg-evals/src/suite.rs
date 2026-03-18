@@ -29,6 +29,7 @@ use crate::report::{
     EvalRunReport, IncrementalSuiteWriter, RunManifest, SCHEMA_VERSION, SuiteRunReport,
     TrialRecord, build_summary, now_since_epoch, run_id,
 };
+use crate::trial::RecordedError;
 
 fn llm_runner_for_target(
     target: &ExecutionTarget,
@@ -849,7 +850,7 @@ where
                 passed: false,
                 mean_score: 0.0,
                 trial: None,
-                error: Some(error.to_string()),
+                error: Some(RecordedError::from_eval_error(&error)),
                 grades: BTreeMap::new(),
                 grader_failures: Vec::new(),
             };
@@ -862,7 +863,7 @@ where
                 passed: record.passed,
                 mean_score: record.mean_score,
                 duration_ms: record.duration.as_millis(),
-                error: record.error.clone(),
+                error: record.error.as_ref().map(ToString::to_string),
             });
             return record;
         }
@@ -951,7 +952,7 @@ where
                     let mut grader_failures = trajectory_grader_failures.clone();
                     grader_failures.push(crate::grade::GraderFailure {
                         name: "grading".to_string(),
-                        error: error.to_string(),
+                        error: RecordedError::from_eval_error(&error),
                     });
                     grader_failures
                 }),
@@ -960,7 +961,10 @@ where
             let error = if grader_failures.is_empty() {
                 None
             } else {
-                Some(format!("{} graders failed", grader_failures.len()))
+                Some(RecordedError::eval_message(format!(
+                    "{} graders failed",
+                    grader_failures.len()
+                )))
             };
 
             if let Some(error) = &error {
@@ -1015,7 +1019,7 @@ where
                 passed: record.passed,
                 mean_score: record.mean_score,
                 duration_ms: record.duration.as_millis(),
-                error: record.error.clone(),
+                error: record.error.as_ref().map(ToString::to_string),
             });
             record
         }
@@ -1064,7 +1068,7 @@ where
                 passed: false,
                 mean_score,
                 trial: partial_trial,
-                error: Some(error.to_string()),
+                error: Some(RecordedError::from_eval_error(&error)),
                 grades,
                 grader_failures,
             };
@@ -1077,7 +1081,7 @@ where
                 passed: record.passed,
                 mean_score: record.mean_score,
                 duration_ms: record.duration.as_millis(),
-                error: record.error.clone(),
+                error: record.error.as_ref().map(ToString::to_string),
             });
             record
         }

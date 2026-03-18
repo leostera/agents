@@ -436,7 +436,7 @@ impl LlmProvider for Ollama {
                     }
                     Ok(None) => break,
                     Err(error) => {
-                        let _ = sender.send(Err(Error::Http { source: error })).await;
+                        let _ = sender.send(Err(Error::from(error))).await;
                         return;
                     }
                 }

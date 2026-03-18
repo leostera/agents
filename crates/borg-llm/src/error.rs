@@ -1,39 +1,41 @@
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum OpenAIConfigError {
     #[error("API key is required")]
     MissingApiKey,
 }
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum AnthropicConfigError {
     #[error("API key is required")]
     MissingApiKey,
 }
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum OpenRouterConfigError {
     #[error("API key is required")]
     MissingApiKey,
 }
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum LmStudioConfigError {
     #[error("Base URL is required")]
     MissingBaseUrl,
 }
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum OllamaConfigError {
     #[error("Base URL is required")]
     MissingBaseUrl,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ParseError {
     pub value: String,
-    pub error: serde_json::Error,
+    pub error: String,
 }
 
 impl std::fmt::Display for ParseError {
@@ -47,14 +49,10 @@ impl std::fmt::Display for ParseError {
     }
 }
 
-impl std::error::Error for ParseError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.error)
-    }
-}
+impl std::error::Error for ParseError {}
 
 /// Error returned by provider setup, request execution, or response decoding.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum Error {
     #[error(transparent)]
     OpenAIConfig(OpenAIConfigError),
@@ -74,11 +72,8 @@ pub enum Error {
     #[error("Configuration error: {0}")]
     Configuration(String),
 
-    #[error("HTTP error: {source}")]
-    Http {
-        #[from]
-        source: reqwest::Error,
-    },
+    #[error("HTTP error: {message}")]
+    Http { message: String },
 
     #[error("Failed to parse response: {source}")]
     Parse {
@@ -123,7 +118,7 @@ impl Error {
         Error::Parse {
             source: ParseError {
                 value: value.into(),
-                error,
+                error: error.to_string(),
             },
         }
     }
@@ -134,7 +129,7 @@ impl Error {
     ) -> Self {
         let provider = provider.into();
         match error {
-            reqwest_eventsource::Error::Transport(source) => Error::Http { source },
+            reqwest_eventsource::Error::Transport(source) => Error::from(source),
             reqwest_eventsource::Error::InvalidStatusCode(status, _) => Error::Provider {
                 provider,
                 status: status.as_u16(),
@@ -192,6 +187,14 @@ impl Error {
             Error::RateLimited { .. } => true,
             Error::Provider { status, .. } => *status == 429 || (500..=599).contains(status),
             _ => false,
+        }
+    }
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(value: reqwest::Error) -> Self {
+        Self::Http {
+            message: value.to_string(),
         }
     }
 }

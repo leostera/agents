@@ -1,8 +1,10 @@
 use borg_llm::error::Error as LlmError;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Errors returned while driving an agent.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum AgentError {
     #[error("LLM error: {0}")]
     Llm(#[from] LlmError),

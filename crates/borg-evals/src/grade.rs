@@ -10,7 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::error::EvalResult;
 use crate::eval::EvalContext;
-use crate::trial::{AgentTrial, RecordedEvent, RecordedGradingScope};
+use crate::trial::{AgentTrial, RecordedError, RecordedEvent, RecordedGradingScope};
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 type GraderFn<State, Output> = dyn Fn(AgentTrial<Output>, EvalContext<State>) -> BoxFuture<EvalResult<GradeResult>>
@@ -34,7 +34,7 @@ pub struct GradeResult {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GraderFailure {
     pub name: String,
-    pub error: String,
+    pub error: RecordedError,
 }
 
 /// A reusable grading function for an eval trial.
@@ -225,7 +225,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
                     recorded_events.push(RecordedEvent::GraderFailed {
                         scope: scope.clone(),
                         grader: grader.name().to_string(),
-                        error: error.to_string(),
+                        error: RecordedError::from_eval_error(&error),
                     });
                     warn!(
                         suite_id = %ctx.suite_id,
@@ -239,7 +239,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
                     );
                     grader_failures.push(GraderFailure {
                         name: grader.name().to_string(),
-                        error: error.to_string(),
+                        error: RecordedError::from_eval_error(&error),
                     });
                 }
             }

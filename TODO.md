@@ -8,20 +8,15 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
    - Timeout plumbing exists, but the end-to-end behavior and UX still need tightening.
    - Keep the API in `Duration`, and make the failure mode obvious in both terminal output and trial artifacts.
 
-2. Finish structured transcript errors
-   - Stop flattening runtime failures into strings too early.
-   - Keep typed errors internally for as long as possible, then serialize them cleanly into transcript `error` events.
-   - Longer term, relevant error enums should implement `Serialize`.
-
-3. Finish removing remaining Ollama-local coupling
+2. Finish removing remaining Ollama-local coupling
    - Normal eval execution should not depend on any Ollama-specific assumptions.
    - Hosted targets and local targets should both be cleanly supported without special-case runtime behavior.
 
-4. Improve empty-config and filter errors
+3. Improve empty-config and filter errors
    - `cargo evals run` should fail clearly when there are no configured targets.
    - Distinguish “no suites discovered”, “no targets configured”, and “no matches for the selected filters”.
 
-5. Split `crates/borg-evals/src/suite.rs`
+4. Split `crates/borg-evals/src/suite.rs`
    - `suite.rs` is still doing too much.
    - Likely split:
      - `suite/mod.rs`
@@ -31,17 +26,17 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
      - `suite/trial.rs`
      - `suite/llm.rs`
 
-6. Expand `AgentEvent` into the full runtime event stream
+5. Expand `AgentEvent` into the full runtime event stream
    - The current event model is still too output-oriented.
    - We want a complete stream of agent/runtime events so transcript recording can rely on the agent event stream directly.
 
-7. Capture system/context materialization in transcripts
+6. Capture system/context materialization in transcripts
    - Transcripts still do not show the real system/context window seen by the model.
    - This depends on the fuller `AgentEvent` work.
 
 ## Validation and Packaging
 
-8. Keep validating external-workspace support
+7. Keep validating external-workspace support
    - `borg-evals`, `borg-macros`, and `cargo-evals` must work from another project, not just this workspace.
    - Continue adding smoke coverage for:
      - external path dependencies
@@ -49,13 +44,13 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
      - `cargo evals list`
      - `cargo evals run`
 
-9. Feature-flag `borg_llm::testing`
+8. Feature-flag `borg_llm::testing`
    - `borg-llm` should not pull `testcontainers` into normal binary dependency resolution.
    - The testing helpers should be behind an explicit feature or otherwise isolated to test-only use.
 
 ## Reporting and Cost Tracking
 
-10. Add usage/cost tracking on `LlmRunner`
+9. Add usage/cost tracking on `LlmRunner`
    - We want visibility into:
      - token counts
      - provider/model usage
@@ -63,7 +58,7 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
 
 ## Future Work
 
-11. Explore `borg-llm` support for Cloudflare Workers AI
+10. Explore `borg-llm` support for Cloudflare Workers AI
 
 
 ---

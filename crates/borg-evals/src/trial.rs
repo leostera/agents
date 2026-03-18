@@ -5,8 +5,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use thiserror::Error;
 use tokio::sync::mpsc;
 
+use crate::error::EvalError;
 use crate::grade::{GradeResult, GraderFailure};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -247,67 +249,30 @@ pub enum RecordedEvent {
     GraderFailed {
         scope: RecordedGradingScope,
         grader: String,
-        error: String,
+        error: RecordedError,
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Clone, Debug, Error, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", content = "error", rename_all = "snake_case")]
 pub enum RecordedError {
-    Agent {
-        category: String,
-        message: String,
-        provider: Option<String>,
-        status: Option<u16>,
-    },
+    #[error(transparent)]
+    AgentError(AgentError),
+    #[error(transparent)]
+    EvalError(EvalError),
 }
 
 impl RecordedError {
-    fn from_agent_error(error: &AgentError) -> Self {
-        match error {
-            AgentError::Llm(llm_error) => Self::Agent {
-                category: "llm".to_string(),
-                message: llm_error.to_string(),
-                provider: llm_error.provider_name().map(ToString::to_string),
-                status: llm_error.provider_status(),
-            },
-            AgentError::InvalidInput { reason } => Self::Agent {
-                category: "invalid_input".to_string(),
-                message: reason.clone(),
-                provider: None,
-                status: None,
-            },
-            AgentError::InvalidResponse { reason } => Self::Agent {
-                category: "invalid_response".to_string(),
-                message: reason.clone(),
-                provider: None,
-                status: None,
-            },
-            AgentError::ToolExecution { reason } => Self::Agent {
-                category: "tool_execution".to_string(),
-                message: reason.clone(),
-                provider: None,
-                status: None,
-            },
-            AgentError::ToolResultEncoding { reason } => Self::Agent {
-                category: "tool_result_encoding".to_string(),
-                message: reason.clone(),
-                provider: None,
-                status: None,
-            },
-            AgentError::Cancelled => Self::Agent {
-                category: "cancelled".to_string(),
-                message: "cancelled".to_string(),
-                provider: None,
-                status: None,
-            },
-            AgentError::Internal { message } => Self::Agent {
-                category: "internal".to_string(),
-                message: message.clone(),
-                provider: None,
-                status: None,
-            },
-        }
+    pub(crate) fn from_agent_error(error: &AgentError) -> Self {
+        Self::AgentError(error.clone())
+    }
+
+    pub(crate) fn from_eval_error(error: &EvalError) -> Self {
+        Self::EvalError(error.clone())
+    }
+
+    pub(crate) fn eval_message(message: impl Into<String>) -> Self {
+        Self::EvalError(EvalError::message(message))
     }
 }
 

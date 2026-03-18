@@ -960,6 +960,13 @@ mod tests {
             event.get("type").and_then(|value| value.as_str()) == Some("error")
                 && event
                     .get("error")
+                    .and_then(|value| value.get("kind"))
+                    .and_then(|value| value.as_str())
+                    == Some("agent_error")
+                && event
+                    .get("error")
+                    .and_then(|value| value.get("error"))
+                    .and_then(|value| value.get("Internal"))
                     .and_then(|value| value.get("message"))
                     .and_then(|value| value.as_str())
                     .is_some_and(|message| message.contains("decode failure"))
@@ -1009,10 +1016,11 @@ mod tests {
 
         let report = suite.run().await.expect("suite should not abort");
         let trial = &report.trials[0];
-        assert_eq!(
-            trial.error.as_deref(),
-            Some("eval failed: agent never finished")
-        );
+        assert!(matches!(
+            trial.error.as_ref(),
+            Some(RecordedError::EvalError(EvalError::MessageWithTrial { message, .. }))
+                if message == "agent never finished"
+        ));
         assert!(trial.trial.is_some());
         let root = TempDir::new().expect("temp dir");
         let index = report.write_to(root.path()).expect("artifacts to write");
