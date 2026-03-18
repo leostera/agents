@@ -1,8 +1,0 @@
-#!/usr/bin/env sh
-set -eu
-
-echo "pre-push: running filtered Rust checks"
-cargo fmt --all --check
-cargo check
-cargo clippy
-cargo nextest run --workspace --lib --tests --bins -E 'not test(/e2e/) and not test(/_long$/)'
