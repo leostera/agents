@@ -1,11 +1,13 @@
 [workspace]
 members = [
+  "crates/agents", 
+  "crates/agents-codemode",
   "crates/borg-agent",
   "crates/borg-evals",
-  "crates/borg-macros",
   "crates/borg-llm", 
+  "crates/borg-macros",
   "crates/cargo-evals", 
-  "crates/test-agents", "crates/borg-codemode", "crates/agents",
+  "crates/test-agents", 
 ]
 resolver = "2"
 
