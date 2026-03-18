@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc f0a672a8319f5d127eb625bcc3371ba4577b3b24df1f3ca17ea50477502ce415 # shrinks to entity = "borg:a:a", field = "borg:a:a", value = Object {"uri": String("borg:a:fp_2_")}

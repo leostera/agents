@@ -1,1 +1,0 @@
-ALTER TABLE apps ADD COLUMN auth_config_json TEXT NOT NULL DEFAULT '{}';
