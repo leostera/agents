@@ -24,6 +24,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "borg-agent",
  "deno_core",
  "deno_error",
  "reqwest",

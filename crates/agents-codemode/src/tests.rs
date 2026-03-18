@@ -1,8 +1,12 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use borg_agent::{
+    AgentError, AgentResult, ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope, ToolRunner,
+};
 use serde_json::json;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::sync::Arc;
 use std::thread;
 
 use crate::{
@@ -27,6 +31,51 @@ struct StaticEnvironmentProvider(Vec<EnvironmentVariable>);
 impl EnvironmentProvider for StaticEnvironmentProvider {
     async fn fetch(&self) -> Result<Vec<EnvironmentVariable>> {
         Ok(self.0.clone())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum TestToolCall {
+    CodeMode(crate::Request),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum TestToolResult {
+    CodeMode(crate::Response),
+}
+
+struct CodeModeToolRunner {
+    codemode: Arc<CodeMode>,
+}
+
+#[async_trait]
+impl ToolRunner<TestToolCall, TestToolResult> for CodeModeToolRunner {
+    async fn run(
+        &self,
+        call: ToolCallEnvelope<TestToolCall>,
+    ) -> AgentResult<ToolResultEnvelope<TestToolResult>> {
+        let result = match call.call {
+            TestToolCall::CodeMode(crate::Request::RunCode(request)) => self
+                .codemode
+                .run_code(request)
+                .await
+                .map(crate::Response::RunCode),
+            TestToolCall::CodeMode(crate::Request::SearchCode(request)) => self
+                .codemode
+                .search_code(request)
+                .await
+                .map(crate::Response::SearchCode),
+        }
+        .map_err(|error| AgentError::ToolExecution {
+            reason: error.to_string(),
+        })?;
+
+        Ok(ToolResultEnvelope {
+            call_id: call.call_id,
+            result: ToolExecutionResult::Ok {
+                data: TestToolResult::CodeMode(result),
+            },
+        })
     }
 }
 
@@ -255,6 +304,37 @@ async fn run_code_exposes_built_in_fetch() {
             .and_then(|value| value.get("source")),
         Some(&json!("test"))
     );
+}
+
+#[tokio::test]
+async fn codemode_embeds_cleanly_in_custom_tool_runner() {
+    let runner = CodeModeToolRunner {
+        codemode: Arc::new(CodeMode::builder().build().expect("codemode")),
+    };
+
+    let result = runner
+        .run(ToolCallEnvelope {
+            call_id: "call-1".to_string(),
+            name: "codemode".to_string(),
+            arguments: json!({
+                "kind": "run_code",
+                "code": "async () => 42",
+                "imports": [],
+            }),
+            call: TestToolCall::CodeMode(crate::Request::RunCode(RunCode {
+                code: "async () => 42".to_string(),
+                imports: Vec::new(),
+            })),
+        })
+        .await
+        .expect("tool run succeeds");
+
+    match result.result {
+        ToolExecutionResult::Ok {
+            data: TestToolResult::CodeMode(crate::Response::RunCode(response)),
+        } => assert_eq!(response.value, json!(42)),
+        other => panic!("unexpected tool result: {other:?}"),
+    }
 }
 
 fn spawn_json_server(body: &'static str) -> String {
