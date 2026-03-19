@@ -1292,7 +1292,6 @@ name = "evals"
 version = "0.0.1"
 dependencies = [
  "agents",
- "agents-test",
  "anyhow",
  "async-trait",
  "chrono",

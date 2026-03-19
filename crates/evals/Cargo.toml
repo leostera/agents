@@ -11,15 +11,10 @@ readme = "README.md"
 [lib]
 name = "evals"
 
-[features]
-default = []
-testing-examples = ["dep:agents-test"]
-
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
 agents = { path = "../agents", version = "=0.0.1" }
-agents-test = { path = "../agents-test", optional = true }
 evals-macros = { path = "../evals-macros" , package = "evals-macros", version = "=0.0.1" }
 chrono.workspace = true
 config.workspace = true
@@ -46,4 +41,3 @@ agents = { path = "../agents" }
 
 [[example]]
 name = "calculator_agent"
-required-features = ["testing-examples"]

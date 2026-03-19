@@ -4,7 +4,6 @@ use agents::{
     AgentResult, ContextManager, LlmRunner, SessionAgent, ToolCallEnvelope, ToolExecutionResult,
     ToolResultEnvelope, ToolRunner, completion::InputItem,
 };
-use agents_test::{TestContext, TestProvider};
 use anyhow::Result;
 use async_trait::async_trait;
 use evals::{
@@ -86,39 +85,16 @@ impl CalculatorAgent {
     }
 }
 
-struct CalculatorHarness {
-    ollama: Arc<TestContext>,
-}
-
-impl CalculatorHarness {
-    async fn runner_for(&self, target: &ExecutionTarget) -> Result<Arc<LlmRunner>> {
-        self.ollama
-            .runner_for_model(&target.model)
-            .await
-            .map(Arc::new)
-            .map_err(|error| anyhow::anyhow!(error.to_string()))
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
 
-    let ollama = TestContext::shared(TestProvider::Ollama)
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-
     let suite = Suite::regression("calculator-agent")
         .trials(DEFAULT_TRIALS)
-        .state(CalculatorHarness { ollama })
         .agent(|ctx| async move {
-            let runner = ctx
-                .state()
-                .runner_for(ctx.target())
+            CalculatorAgent::new(ctx.llm_runner())
                 .await
-                .map_err(|error| EvalError::message(error.to_string()))?;
-
-            CalculatorAgent::new(runner).await
+                .map_err(|error| EvalError::message(error.to_string()))
         })
         .eval(
             Eval::new("adds-two-integers")
