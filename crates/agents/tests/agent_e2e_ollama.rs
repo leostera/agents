@@ -551,6 +551,10 @@ async fn ollama_agent_static_context_provider_shapes_reply_long() -> LlmResult<(
         .expect("turn");
 
     let _ = next_event(&mut agent).await?;
+    assert!(matches!(
+        next_event(&mut agent).await?,
+        Some(AgentEvent::ModelOutputItem { .. })
+    ));
     match next_event(&mut agent).await? {
         Some(AgentEvent::Completed { reply, .. }) => {
             assert!(
