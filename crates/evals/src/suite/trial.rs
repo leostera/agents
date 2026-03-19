@@ -7,6 +7,10 @@ use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use super::*;
+use crate::events::emit;
+use crate::grade::is_passing_score;
+use crate::report::TrialRecord;
+use crate::trial::RecordedError;
 
 pub(super) struct TrialExecution<State, A>
 where
