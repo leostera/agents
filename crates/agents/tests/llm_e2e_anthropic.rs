@@ -279,7 +279,7 @@ async fn anthropic_runner_typed_response_with_defaulted_nested_fields_long() -> 
         .chat::<(), DefaultedJudgeResponse>(
             CompletionRequest::new(
                 vec![InputItem::user_text(
-                    "Return valid JSON with fields passed, score, summary, and nested evidence containing strengths and concerns arrays.",
+                    "Return valid JSON with passed=true, score=0.5, summary=\"ready\", and evidence as an empty object {}. Do not use null.",
                 )],
                 ModelSelector::from_model(model),
             )
@@ -297,10 +297,11 @@ async fn anthropic_runner_typed_response_with_defaulted_nested_fields_long() -> 
         OutputItem::ToolCall { .. } | OutputItem::Reasoning { .. } => None,
     });
 
-    assert!(
-        structured.is_some(),
-        "expected defaulted nested structured response, got {:?}",
-        response.output
-    );
+    let structured = structured.expect("expected defaulted nested structured response");
+    assert!(structured.passed);
+    assert_eq!(structured.score, 0.5);
+    assert_eq!(structured.summary, "ready");
+    assert!(structured.evidence.strengths.is_empty());
+    assert!(structured.evidence.concerns.is_empty());
     Ok(())
 }
