@@ -18,7 +18,7 @@ cargo evals run
 cargo evals preserves
 ```
 
-## Setup
+## Minimal Setup
 
 Your crate needs:
 
@@ -27,3 +27,36 @@ Your crate needs:
 - suites under `evals/**/*.rs`
 
 With that in place, `cargo evals` will discover and run the generated registry automatically.
+
+## External Project Example
+
+`build.rs`:
+
+```rust
+fn main() -> anyhow::Result<()> {
+    evals::build()?;
+    Ok(())
+}
+```
+
+`src/lib.rs`:
+
+```rust
+evals::setup!();
+```
+
+`evals.toml`:
+
+```toml
+[[targets]]
+provider = "ollama"
+model = "llama3.2:3b"
+```
+
+Then:
+
+```bash
+cargo build
+cargo evals list
+cargo evals run
+```

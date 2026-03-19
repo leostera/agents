@@ -15,6 +15,25 @@ It includes:
 cargo add agents
 ```
 
+## Provider Setup
+
+`LlmRunner` is provider-neutral. Add one or more providers and pick them at request time with `ModelSelector`.
+
+```rust,no_run
+use agents::{
+    LlmRunner,
+    provider::openai::{OpenAI, OpenAIConfig},
+};
+
+# fn demo() -> anyhow::Result<()> {
+let runner = LlmRunner::builder()
+    .add_provider(OpenAI::new(OpenAIConfig::new("sk-...")?))
+    .build();
+# let _ = runner;
+# Ok(())
+# }
+```
+
 ## String agent
 
 ```rust
@@ -106,8 +125,48 @@ impl EchoAgent {
 }
 ```
 
+Run one turn directly:
+
+```rust,no_run
+# use std::sync::Arc;
+# use agents::{Agent, InputItem, LlmRunner, SessionAgent};
+# use schemars::JsonSchema;
+# use serde::{Deserialize, Serialize};
+# #[derive(Clone, Serialize, Deserialize)]
+# struct EchoRequest { text: String }
+# impl From<EchoRequest> for InputItem {
+#     fn from(value: EchoRequest) -> Self { InputItem::user_text(value.text) }
+# }
+# #[derive(Clone, Serialize, Deserialize, JsonSchema)]
+# struct EchoResponse { text: String }
+# #[derive(agents::Agent)]
+# struct EchoAgent {
+#     #[agent]
+#     inner: SessionAgent<EchoRequest, (), (), EchoResponse>,
+# }
+# impl EchoAgent {
+#     fn new(llm: Arc<LlmRunner>) -> anyhow::Result<Self> {
+#         Ok(Self {
+#             inner: SessionAgent::builder()
+#                 .with_llm_runner(llm)
+#                 .with_message_type::<EchoRequest>()
+#                 .with_response_type::<EchoResponse>()
+#                 .build()?,
+#         })
+#     }
+# }
+# async fn demo(llm: Arc<LlmRunner>) -> anyhow::Result<()> {
+let mut agent = EchoAgent::new(llm)?;
+let reply = agent.call(EchoRequest {
+    text: "hello".to_string(),
+}).await?;
+assert_eq!(reply.text, "hello");
+# Ok(())
+# }
+```
+
 ## Related crates
 
 - use `evals` for suites, trajectories, predicates, and judges
-- use `agents-macros` directly only if you want the proc macro crate itself
+- use `agents-proc-macros` directly only if you want the proc macro crate itself
 - use `agents-test` for provider-specific test helpers

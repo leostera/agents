@@ -39,6 +39,8 @@ In `src/lib.rs`:
 evals::setup!();
 ```
 
+Then create files under `evals/**/*.rs`. `cargo-evals` discovers the generated registry from your main crate automatically.
+
 ## Example
 
 ```rust
@@ -71,6 +73,20 @@ async fn smoke(_ctx: EvalContext<()>) -> Result<Trajectory<BasicAgent, ()>> {
         })),
     ])
 }
+```
+
+## Timeouts
+
+Use a run-wide timeout in `evals.toml`:
+
+```toml
+timeout = "30s"
+```
+
+Or override per eval:
+
+```rust
+#[eval(agent = BasicAgent, desc = "slow case", timeout = "10s")]
 ```
 
 ## Running evals

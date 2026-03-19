@@ -6,7 +6,7 @@
 //! - tool, context, and storage integration
 //! - agent-side derive macros like `#[derive(Agent)]` and `#[derive(Tool)]`
 
-pub use agents_macros::{Agent, Tool};
+pub use agents_proc_macros::{Agent, Tool};
 
 pub mod agent;
 pub mod llm;

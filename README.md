@@ -9,6 +9,14 @@ The public crates are:
 - `cargo-evals` for listing and running eval suites
 - `codemode` for embeddable JavaScript execution and code search
 
+## What This Repo Gives You
+
+- a typed `LlmRunner` with multiple providers
+- a built-in `SessionAgent<M, C, T, R>`
+- eval suites and artifacts that live next to your crate
+- a Cargo subcommand for listing and running evals
+- an embeddable codemode engine for code tools
+
 ## Install
 
 ```toml
@@ -20,6 +28,12 @@ anyhow = "1"
 [build-dependencies]
 evals = "0.0.1"
 anyhow = "1"
+```
+
+Install the CLI with:
+
+```bash
+cargo install cargo-evals
 ```
 
 ## Build an agent
@@ -170,7 +184,7 @@ cargo evals --model ollama/llama3.2:3b smoke
 
 Artifacts are written under `.evals/`.
 
-## Crates
+## Release Surface
 
 - [`crates/agents`](crates/agents) is the main runtime crate
 - [`crates/evals`](crates/evals) is the eval runtime crate

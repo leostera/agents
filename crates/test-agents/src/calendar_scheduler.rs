@@ -15,7 +15,7 @@ use agents::llm::testing::{
     runner_with_openai_model, runner_with_openrouter_model,
 };
 use agents::llm::tools::{RawToolDefinition, TypedTool};
-use agents_macros::Tool;
+use agents_proc_macros::Tool;
 use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

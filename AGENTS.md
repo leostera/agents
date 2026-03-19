@@ -14,7 +14,7 @@ Use it as a router: pick the most relevant existing AGENTS file before making ch
    - [`crates/evals/AGENTS.md`](crates/evals/AGENTS.md)
    - this route also covers `evals-macros` work for `#[suite]`, `#[eval]`, and `#[grade]`
 3. Agent-facing proc macros for `#[derive(Agent)]` and `#[derive(Tool)]`:
-   - use this root file and inspect [`crates/agents-macros`](crates/agents-macros) directly
+   - use this root file and inspect [`crates/agents-proc-macros`](crates/agents-proc-macros) directly
 4. Workspace-wide changes without a more specific AGENTS file:
    - use this root file and inspect nearby crate code directly
 

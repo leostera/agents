@@ -7,12 +7,13 @@ repository.workspace = true
 homepage.workspace = true
 description = "Spike workspace member for exploring Cloudflare Workers deployment"
 readme = "README.md"
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-agents = { path = "../../crates/agents", default-features = false }
+agents = { path = "../../crates/agents", default-features = false, version = "0", package = "agents" }
 anyhow.workspace = true
 async-trait.workspace = true
 schemars.workspace = true

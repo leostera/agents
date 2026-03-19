@@ -12,7 +12,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "agents"
 version = "0.0.1"
 dependencies = [
- "agents-macros",
+ "agents-proc-macros",
  "agents-test",
  "anyhow",
  "async-trait",
@@ -42,7 +42,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "agents-macros"
+name = "agents-proc-macros"
 version = "0.0.1"
 dependencies = [
  "agents",

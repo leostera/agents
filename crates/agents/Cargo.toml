@@ -14,7 +14,7 @@ apple = ["dep:swift-rs"]
 live-provider-tests = []
 
 [dependencies]
-agents-macros = { path = "../agents-macros", package = "agents-macros", version = "0"}
+agents-proc-macros = { path = "../agents-proc-macros", package = "agents-proc-macros", version = "0"}
 async-trait.workspace = true
 derive_builder.workspace = true
 dotenvy.workspace = true

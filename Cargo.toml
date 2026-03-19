@@ -1,13 +1,14 @@
 [workspace]
 members = [
   "crates/agents", 
+  "crates/agents-proc-macros",
   "crates/agents-test",
-  "crates/codemode",
-  "crates/agents-macros",
   "crates/cargo-evals", 
+  "crates/codemode",
   "crates/evals",
   "crates/evals-macros",
-  "crates/test-agents", "examples/cloudflare-worker-agent", 
+  "crates/test-agents", 
+  "examples/cloudflare-worker-agent", 
 ]
 resolver = "2"
 

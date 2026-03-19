@@ -4,7 +4,7 @@
 //!
 //! 1. build a [`SessionAgent`] for your input/output types
 //! 2. wrap it in your own struct
-//! 3. derive [`Agent`](agents_macros::Agent) to delegate the trait
+//! 3. derive [`Agent`](agents_proc_macros::Agent) to delegate the trait
 //!
 //! # String-in, string-out agent
 //!
@@ -69,7 +69,7 @@ mod runtime;
 mod storage;
 mod tools;
 
-pub use agents_macros::Agent;
+pub use agents_proc_macros::Agent;
 pub use context::{
     ContextChunk, ContextManager, ContextManagerBuilder, ContextProvider, ContextRole,
     ContextStrategy, ContextWindow, StaticContextProvider,

@@ -1,6 +1,6 @@
-# agents-macros
+# agents-proc-macros
 
-`agents-macros` contains the proc macros used across the workspace.
+`agents-proc-macros` contains the proc macros used across the workspace.
 
 It provides:
 
