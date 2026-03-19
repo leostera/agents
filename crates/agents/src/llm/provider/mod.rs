@@ -4,6 +4,7 @@ pub mod lm_studio;
 pub mod ollama;
 pub mod openai;
 pub mod openrouter;
+pub mod workers_ai;
 
 use async_trait::async_trait;
 

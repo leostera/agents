@@ -21,6 +21,14 @@ pub enum OpenRouterConfigError {
 }
 
 #[derive(Error, Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub enum WorkersAIConfigError {
+    #[error("API token is required")]
+    MissingApiToken,
+    #[error("Account ID is required")]
+    MissingAccountId,
+}
+
+#[derive(Error, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub enum LmStudioConfigError {
     #[error("Base URL is required")]
     MissingBaseUrl,
@@ -62,6 +70,9 @@ pub enum Error {
 
     #[error(transparent)]
     OpenRouterConfig(OpenRouterConfigError),
+
+    #[error(transparent)]
+    WorkersAIConfig(WorkersAIConfigError),
 
     #[error(transparent)]
     LmStudioConfig(LmStudioConfigError),

@@ -10,6 +10,7 @@ pub struct ProviderConfigs {
     pub openai: Option<OpenAIProviderConfig>,
     pub anthropic: Option<AnthropicProviderConfig>,
     pub openrouter: Option<OpenRouterProviderConfig>,
+    pub workers_ai: Option<WorkersAIProviderConfig>,
     pub lm_studio: Option<LmStudioProviderConfig>,
 }
 
@@ -39,6 +40,14 @@ pub struct AnthropicProviderConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct OpenRouterProviderConfig {
     pub api_key: Option<String>,
+    pub base_url: Option<String>,
+}
+
+/// Runtime override for Workers AI targets.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct WorkersAIProviderConfig {
+    pub api_token: Option<String>,
+    pub account_id: Option<String>,
     pub base_url: Option<String>,
 }
 
@@ -87,6 +96,10 @@ impl ExecutionTarget {
 
     pub fn openrouter(label: impl Into<String>, model: impl Into<String>) -> Self {
         Self::new(label, "openrouter", model)
+    }
+
+    pub fn workers_ai(label: impl Into<String>, model: impl Into<String>) -> Self {
+        Self::new(label, "workers_ai", model)
     }
 
     pub fn with_max_in_flight(mut self, max_in_flight: usize) -> Self {

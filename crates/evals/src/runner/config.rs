@@ -7,6 +7,7 @@ use crate::{
     OllamaProviderConfig as PublicOllamaProviderConfig,
     OpenAIProviderConfig as PublicOpenAIProviderConfig,
     OpenRouterProviderConfig as PublicOpenRouterProviderConfig, ProviderConfigs, RunConfig,
+    WorkersAIProviderConfig as PublicWorkersAIProviderConfig,
 };
 use agents::llm::completion::ProviderType;
 use anyhow::{Context, Result, bail};
@@ -55,6 +56,7 @@ pub(super) struct ProviderConfigSet {
     pub openai: Option<OpenAIProviderConfig>,
     pub anthropic: Option<AnthropicProviderConfig>,
     pub openrouter: Option<OpenRouterProviderConfig>,
+    pub workers_ai: Option<WorkersAIProviderConfig>,
     pub lm_studio: Option<LmStudioProviderConfig>,
 }
 
@@ -80,6 +82,13 @@ pub(super) struct AnthropicProviderConfig {
 #[derive(Debug, Deserialize)]
 pub(super) struct OpenRouterProviderConfig {
     pub api_key: Option<String>,
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct WorkersAIProviderConfig {
+    pub api_token: Option<String>,
+    pub account_id: Option<String>,
     pub base_url: Option<String>,
 }
 
@@ -157,6 +166,13 @@ impl EvalsFile {
                     base_url: config.base_url.clone(),
                 }
             }),
+            workers_ai: self.provider.workers_ai.as_ref().map(|config| {
+                PublicWorkersAIProviderConfig {
+                    api_token: config.api_token.clone(),
+                    account_id: config.account_id.clone(),
+                    base_url: config.base_url.clone(),
+                }
+            }),
             lm_studio: self.provider.lm_studio.as_ref().map(|config| {
                 PublicLmStudioProviderConfig {
                     url: config.url.clone(),
@@ -192,6 +208,11 @@ impl EvalsFile {
             trim_optional_string(&mut openrouter.api_key);
             trim_optional_string(&mut openrouter.base_url);
         }
+        if let Some(workers_ai) = &mut self.provider.workers_ai {
+            trim_optional_string(&mut workers_ai.api_token);
+            trim_optional_string(&mut workers_ai.account_id);
+            trim_optional_string(&mut workers_ai.base_url);
+        }
         if let Some(lm_studio) = &mut self.provider.lm_studio {
             trim_optional_string(&mut lm_studio.url);
             trim_optional_string(&mut lm_studio.api_token);
@@ -211,7 +232,7 @@ impl TargetConfig {
         let provider = self.provider.trim();
         if !supported_provider(provider) {
             bail!(
-                "unsupported eval target provider {:?}; expected one of: openai, anthropic, openrouter, lm_studio, ollama, apple",
+                "unsupported eval target provider {:?}; expected one of: openai, anthropic, openrouter, workers_ai, lm_studio, ollama, apple",
                 self.provider
             );
         }
@@ -240,6 +261,7 @@ fn supported_provider(provider: &str) -> bool {
         ProviderType::OpenAI,
         ProviderType::Anthropic,
         ProviderType::OpenRouter,
+        ProviderType::WorkersAI,
         ProviderType::LmStudio,
         ProviderType::Ollama,
         ProviderType::Apple,
@@ -330,6 +352,34 @@ url = "http://localhost:1234"
         assert_eq!(
             file.provider.ollama.expect("ollama config").url,
             "http://localhost:1234"
+        );
+    }
+
+    #[test]
+    fn loads_workers_ai_provider_config_from_evals_toml() {
+        let dir = TempDir::new().expect("tempdir");
+        fs::write(
+            dir.path().join("evals.toml"),
+            r#"
+[evals]
+targets = [{ provider = "workers_ai", model = "@cf/meta/llama-3.1-8b-instruct" }]
+
+[provider.workers_ai]
+api_token = "token"
+account_id = "account"
+base_url = "https://example.com/ai/v1"
+"#,
+        )
+        .expect("write evals.toml");
+
+        let file = EvalsFile::load(dir.path()).expect("load evals.toml");
+        let workers_ai = file.provider.workers_ai.expect("workers_ai config");
+
+        assert_eq!(workers_ai.api_token.as_deref(), Some("token"));
+        assert_eq!(workers_ai.account_id.as_deref(), Some("account"));
+        assert_eq!(
+            workers_ai.base_url.as_deref(),
+            Some("https://example.com/ai/v1")
         );
     }
 

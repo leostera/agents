@@ -44,6 +44,7 @@ pub use crate as core;
 pub use config::{
     AnthropicProviderConfig, ExecutionTarget, LmStudioProviderConfig, OllamaProviderConfig,
     OpenAIProviderConfig, OpenRouterProviderConfig, ProviderConfigs, RunConfig,
+    WorkersAIProviderConfig,
 };
 pub use error::{EvalError, EvalResult};
 pub use eval::{Eval, EvalContext};

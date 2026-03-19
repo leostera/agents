@@ -8,6 +8,7 @@ use agents::llm::provider::lm_studio::{LmStudio, LmStudioConfig};
 use agents::llm::provider::ollama::{Ollama, OllamaConfig};
 use agents::llm::provider::openai::{OpenAI, OpenAIConfig};
 use agents::llm::provider::openrouter::{OpenRouter, OpenRouterConfig};
+use agents::llm::provider::workers_ai::{WorkersAI, WorkersAIConfig};
 
 use super::*;
 
@@ -163,6 +164,46 @@ pub(super) fn llm_runner_for_target(
             }
             LlmRunner::builder()
                 .add_provider(OpenRouter::new(config))
+                .build()
+        }
+        "workers_ai" => {
+            let Some(api_token) =
+                optional_env(&["BORG_LLM_WORKERS_AI_API_TOKEN", "CLOUDFLARE_API_TOKEN"]).or_else(
+                    || {
+                        provider_configs
+                            .workers_ai
+                            .as_ref()
+                            .and_then(|config| config.api_token.clone())
+                    },
+                )
+            else {
+                return Ok(LlmRunner::builder().build());
+            };
+            let Some(account_id) =
+                optional_env(&["BORG_LLM_WORKERS_AI_ACCOUNT_ID", "CLOUDFLARE_ACCOUNT_ID"]).or_else(
+                    || {
+                        provider_configs
+                            .workers_ai
+                            .as_ref()
+                            .and_then(|config| config.account_id.clone())
+                    },
+                )
+            else {
+                return Ok(LlmRunner::builder().build());
+            };
+            let mut config = WorkersAIConfig::new(api_token, account_id, target.model.clone())
+                .map_err(LlmError::WorkersAIConfig)
+                .map_err(|error| EvalError::message(error.to_string()))?;
+            if let Some(base_url) = optional_env(&["BORG_LLM_WORKERS_AI_BASE_URL"]).or_else(|| {
+                provider_configs
+                    .workers_ai
+                    .as_ref()
+                    .and_then(|config| config.base_url.clone())
+            }) {
+                config = config.with_base_url(base_url);
+            }
+            LlmRunner::builder()
+                .add_provider(WorkersAI::new(config))
                 .build()
         }
         "apple" => LlmRunner::builder()
