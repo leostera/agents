@@ -1,4 +1,5 @@
 pub mod anthropic;
+#[cfg(all(feature = "apple", target_os = "macos"))]
 pub mod apple;
 pub mod lm_studio;
 pub mod ollama;
@@ -6,9 +7,8 @@ pub mod openai;
 pub mod openrouter;
 pub mod workers_ai;
 
-use async_trait::async_trait;
-
 use crate::llm::capability::Capability;
+use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use crate::llm::completion::{
@@ -19,7 +19,8 @@ use crate::llm::error::LlmResult;
 use crate::llm::model::Model;
 use crate::llm::transcription::{AudioTranscriptionRequest, AudioTranscriptionResponse};
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait LlmProvider: Send + Sync {
     fn provider_type(&self) -> ProviderType;
 

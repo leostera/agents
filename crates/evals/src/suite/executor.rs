@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use agents::agent::Agent;
-use async_trait::async_trait;
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
 use tracing::info;
 
 use super::planning::SuitePlan;
@@ -13,7 +12,6 @@ use crate::error::EvalResult;
 use crate::events::emit;
 use crate::report::{EvalRunReport, RunManifest, SCHEMA_VERSION, now_since_epoch, run_id};
 
-#[async_trait]
 pub(super) trait SuiteExecutor<State, A>: Send + Sync
 where
     State: Send + Sync + 'static,
@@ -25,7 +23,6 @@ where
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct LocalExecutor;
 
-#[async_trait]
 impl<State, A> SuiteExecutor<State, A> for LocalExecutor
 where
     State: Send + Sync + 'static,
@@ -63,7 +60,7 @@ where
             "starting eval run"
         );
 
-        let mut jobs = JoinSet::new();
+        let mut jobs = FuturesUnordered::new();
 
         for target in &config.targets {
             let target = target.clone();
@@ -73,7 +70,7 @@ where
             let provider_configs = config.provider.clone();
             let local_target_semaphore = local_target_semaphore.clone();
             let artifact_root = artifact_root.clone();
-            jobs.spawn(async move {
+            jobs.push(async move {
                 let _local_permit = if target.is_local() {
                     Some(
                         local_target_semaphore
@@ -97,8 +94,8 @@ where
             });
         }
 
-        while let Some(result) = jobs.join_next().await {
-            variants.push(result.expect("target task panicked")?);
+        while let Some(result) = jobs.next().await {
+            variants.push(result?);
         }
 
         variants.sort_by(|left, right| left.suite.target.label.cmp(&right.suite.target.label));

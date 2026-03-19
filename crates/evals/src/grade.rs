@@ -12,7 +12,7 @@ use crate::error::EvalResult;
 use crate::eval::EvalContext;
 use crate::trial::{AgentTrial, RecordedError, RecordedEvent, RecordedGradingScope};
 
-type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + 'static>>;
 type GraderFn<State, Output> = dyn Fn(AgentTrial<Output>, EvalContext<State>) -> BoxFuture<EvalResult<GradeResult>>
     + Send
     + Sync;
@@ -73,7 +73,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> Grader<State, 
     pub fn new<F, Fut>(name: impl Into<String>, f: F) -> Self
     where
         F: Fn(AgentTrial<Output>, EvalContext<State>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = EvalResult<GradeResult>> + Send + 'static,
+        Fut: Future<Output = EvalResult<GradeResult>> + 'static,
     {
         Self {
             name: name.into(),
@@ -157,7 +157,7 @@ impl<State: Send + Sync + 'static, Output: Send + Sync + 'static> GradingConfig<
     pub fn grade<F, Fut>(self, name: impl Into<String>, f: F) -> Self
     where
         F: Fn(AgentTrial<Output>, EvalContext<State>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = EvalResult<GradeResult>> + Send + 'static,
+        Fut: Future<Output = EvalResult<GradeResult>> + 'static,
     {
         self.grader(Grader::new(name, f))
     }
@@ -294,7 +294,7 @@ where
     State: Send + Sync + 'static,
     Output: Send + Sync + 'static,
     F: Fn(AgentTrial<Output>, EvalContext<State>) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = EvalResult<GradeResult>> + Send + 'static,
+    Fut: Future<Output = EvalResult<GradeResult>> + 'static,
 {
     Grader::new(name, f)
 }

@@ -656,6 +656,13 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 name = "cloudflare-worker-agent"
 version = "0.1.0"
 dependencies = [
+ "agents",
+ "anyhow",
+ "async-trait",
+ "evals",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
  "worker",
 ]
 
@@ -1305,6 +1312,7 @@ dependencies = [
  "config",
  "crossterm",
  "evals-macros",
+ "futures-util",
  "humantime",
  "prettyplease",
  "proc-macro2",

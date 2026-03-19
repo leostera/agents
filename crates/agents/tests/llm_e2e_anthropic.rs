@@ -1,3 +1,5 @@
+#![cfg(feature = "live-provider-tests")]
+
 mod common;
 
 use agents::completion::{

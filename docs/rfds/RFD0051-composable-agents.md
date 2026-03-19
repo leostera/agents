@@ -97,7 +97,7 @@ So contributors can choose the right level:
 Introduce a new trait in `borg-agent`:
 
 ```rust
-#[async_trait]
+
 pub trait Agent: Send + 'static {
     type Input;
     type ToolCall;

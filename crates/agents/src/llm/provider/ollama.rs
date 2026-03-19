@@ -326,7 +326,8 @@ impl Ollama {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl LlmProvider for Ollama {
     fn provider_type(&self) -> ProviderType {
         ProviderType::Ollama
@@ -352,22 +353,15 @@ impl LlmProvider for Ollama {
     }
 
     async fn chat_raw(&self, req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
-        let mut stream = self.chat_raw_stream(req).await?;
-
-        while let Some(event) = stream.recv().await {
-            match event? {
-                RawCompletionEvent::Done(response) => return Ok(response),
-                RawCompletionEvent::TextDelta { .. }
-                | RawCompletionEvent::ReasoningDelta { .. }
-                | RawCompletionEvent::ToolCall { .. } => {}
-            }
-        }
-
-        Err(Error::InvalidResponse {
-            reason: "Ollama stream ended without a final response".to_string(),
-        })
+        let (model, mut chat_req) = self.build_chat_request(req)?;
+        chat_req.stream = Some(false);
+        let response = self.chat(&chat_req).await?;
+        let mut raw = raw_response_from_chat(response);
+        raw.model = model;
+        Ok(raw)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     async fn chat_raw_stream(
         &self,
         req: RawCompletionRequest,

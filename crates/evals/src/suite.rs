@@ -31,7 +31,7 @@ pub enum SuiteKind {
 
 type AgentFactory<State, A> =
     Arc<dyn Fn(EvalContext<State>) -> BoxFuture<EvalResult<A>> + Send + Sync>;
-type BoxFuture<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'static>>;
+type BoxFuture<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'static>>;
 
 /// A collection of related evals that share state and an agent factory.
 pub struct Suite<State = (), A = NoAgent>

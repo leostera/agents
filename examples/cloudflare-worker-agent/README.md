@@ -8,18 +8,23 @@ It is intentionally separate from `agents` itself. `agents` currently assumes a 
 
 ## Current status
 
-This crate is now a real `workers-rs` Worker crate:
+This crate now has two target-gated roles:
 
-- it uses the `worker` crate
-- it exports a Worker `fetch` handler
-- it compiles to `wasm32-unknown-unknown`
+- `wasm32-unknown-unknown`
+  - real `workers-rs` Worker crate
+  - exports a Worker `fetch` handler
+- native targets
+  - real `agents` + `evals` example package
+  - includes a small echo agent and a tiny eval suite
 
-It is still a runtime spike, not an `agents` integration.
+It is still a runtime spike, not a claim that the whole `agents` runtime is wasm-safe.
 
 What we already support:
 
 - `agents` can talk to Workers AI as an LLM provider
 - `evals` can target `workers_ai` models
+- this example package can compile as a real Worker on wasm
+- this example package can also run a native eval suite locally
 
 What is still open:
 
@@ -65,6 +70,8 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 
 ```bash
 cargo check --target wasm32-unknown-unknown -p cloudflare-worker-agent
+cargo check -p cloudflare-worker-agent
+cargo evals list
 ```
 
 ## References

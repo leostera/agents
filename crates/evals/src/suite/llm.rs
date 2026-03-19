@@ -3,6 +3,7 @@ use std::env;
 use agents::llm::LlmRunner;
 use agents::llm::error::Error as LlmError;
 use agents::llm::provider::anthropic::{Anthropic, AnthropicConfig};
+#[cfg(target_os = "macos")]
 use agents::llm::provider::apple::{Apple, AppleConfig};
 use agents::llm::provider::lm_studio::{LmStudio, LmStudioConfig};
 use agents::llm::provider::ollama::{Ollama, OllamaConfig};
@@ -195,9 +196,20 @@ pub(super) fn llm_runner_for_target(
                 .add_provider(WorkersAI::new(config))
                 .build()
         }
-        "apple" => LlmRunner::builder()
-            .add_provider(Apple::new(AppleConfig::new()))
-            .build(),
+        "apple" => {
+            #[cfg(target_os = "macos")]
+            {
+                LlmRunner::builder()
+                    .add_provider(Apple::new(AppleConfig::new()))
+                    .build()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(EvalError::message(
+                    "apple provider is only available on macOS builds".to_string(),
+                ));
+            }
+        }
         provider => {
             return Err(EvalError::message(format!(
                 "unsupported eval target provider {:?}",

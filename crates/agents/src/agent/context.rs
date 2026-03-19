@@ -155,7 +155,8 @@ impl ContextWindow {
 }
 
 /// Source of additional context chunks for an agent.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait ContextProvider: Send + Sync {
     async fn provide(&self) -> AgentResult<Vec<ContextChunk>>;
 }
@@ -269,7 +270,8 @@ impl StaticContextProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl ContextProvider for StaticContextProvider {
     async fn provide(&self) -> AgentResult<Vec<ContextChunk>> {
         Ok(self.chunks.clone())
@@ -294,7 +296,8 @@ mod tests {
 
     struct FailingProvider;
 
-    #[async_trait]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl ContextProvider for FailingProvider {
         async fn provide(&self) -> AgentResult<Vec<ContextChunk>> {
             Err(AgentError::Internal {

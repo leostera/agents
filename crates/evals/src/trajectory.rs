@@ -149,7 +149,7 @@ impl<A: Agent, State> TrajectoryBuilder<A, State> {
     }
 }
 
-type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + 'static>>;
 type TrajectoryRunFuture<Output> = BoxFuture<Result<AgentTrial<Output>, EvalError>>;
 
 impl<A, State> Trajectory<A, State>

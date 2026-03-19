@@ -1,6 +1,4 @@
 mod session;
-
-use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -40,7 +38,6 @@ pub use session::{
 /// #         })
 /// #     }
 /// # }
-/// # #[async_trait::async_trait]
 /// # impl Agent for EchoAgent {
 /// #     type Input = String;
 /// #     type ToolCall = ();
@@ -53,6 +50,11 @@ pub use session::{
 /// #         &mut self,
 /// #     ) -> AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>> {
 /// #         self.inner.next().await
+/// #     }
+/// #     async fn spawn(
+/// #         self,
+/// #     ) -> AgentResult<(agents::AgentRunInput<Self::Input>, agents::AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>)> {
+/// #         self.inner.spawn().await
 /// #     }
 /// # }
 /// # async fn demo(llm: Arc<LlmRunner>) -> anyhow::Result<()> {
@@ -81,7 +83,6 @@ pub use session::{
 ///     }
 /// }
 ///
-/// #[async_trait::async_trait]
 /// impl Agent for EchoAgent {
 ///     type Input = String;
 ///     type ToolCall = ();
@@ -96,6 +97,12 @@ pub use session::{
 ///         &mut self,
 ///     ) -> AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>> {
 ///         self.inner.next().await
+///     }
+///
+///     async fn spawn(
+///         self,
+///     ) -> AgentResult<(AgentRunInput<Self::Input>, AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>)> {
+///         self.inner.spawn().await
 ///     }
 /// }
 ///
@@ -116,7 +123,7 @@ pub use session::{
 /// }
 /// # Ok(()) }
 /// ```
-#[async_trait]
+#[allow(async_fn_in_trait)]
 pub trait Agent: Send + 'static {
     /// Input message type accepted by the agent.
     type Input: Clone + Serialize + DeserializeOwned + Send + Sync + 'static;
@@ -204,77 +211,5 @@ pub trait Agent: Send + 'static {
     )>
     where
         Self: Sized,
-    {
-        let (input_tx, mut input_rx) = tokio::sync::mpsc::channel(64);
-        let (event_tx, event_rx) = tokio::sync::mpsc::channel(64);
-
-        tokio::spawn(async move {
-            let mut agent = self;
-            let mut input_closed = false;
-
-            loop {
-                while let Ok(input) = input_rx.try_recv() {
-                    if let Err(error) = agent.send(input).await
-                        && event_tx.send(Err(error)).await.is_err()
-                    {
-                        return;
-                    }
-                }
-
-                match agent.next().await {
-                    Ok(Some(event)) => {
-                        if event_tx.send(Ok(event)).await.is_err() {
-                            return;
-                        }
-
-                        if !input_closed {
-                            tokio::select! {
-                                biased;
-                                maybe_input = input_rx.recv() => {
-                                    match maybe_input {
-                                        Some(input) => {
-                                            if let Err(error) = agent.send(input).await
-                                                && event_tx.send(Err(error)).await.is_err()
-                                            {
-                                                return;
-                                            }
-                                        }
-                                        None => {
-                                            input_closed = true;
-                                        }
-                                    }
-                                }
-                                _ = tokio::task::yield_now() => {}
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        if input_closed {
-                            return;
-                        }
-
-                        match input_rx.recv().await {
-                            Some(input) => {
-                                if let Err(error) = agent.send(input).await
-                                    && event_tx.send(Err(error)).await.is_err()
-                                {
-                                    return;
-                                }
-                            }
-                            None => {
-                                input_closed = true;
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        if event_tx.send(Err(error)).await.is_err() {
-                            return;
-                        }
-                    }
-                }
-            }
-        });
-
-        Ok((input_tx, event_rx))
-    }
+        Self: Sized;
 }

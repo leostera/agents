@@ -63,7 +63,8 @@ where
 }
 
 /// Executes tool calls on behalf of an agent.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait ToolRunner<C, T>: Send + Sync {
     async fn run(&self, call: ToolCallEnvelope<C>) -> AgentResult<ToolResultEnvelope<T>>;
 }
@@ -71,7 +72,8 @@ pub trait ToolRunner<C, T>: Send + Sync {
 /// Tool runner that rejects all tool calls.
 pub struct NoToolRunner;
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<C, R> ToolRunner<C, R> for NoToolRunner
 where
     C: Send + Sync + 'static,
@@ -104,7 +106,8 @@ impl<C, T> CallbackToolRunner<C, T> {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<C, T> ToolRunner<C, T> for CallbackToolRunner<C, T>
 where
     C: Send + Sync + 'static,

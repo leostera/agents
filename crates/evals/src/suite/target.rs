@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agents::agent::Agent;
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
 use tracing::info;
 
 use super::trial::TrialExecution;
@@ -70,7 +70,7 @@ where
     };
 
     let semaphore = Arc::new(Semaphore::new(target.max_in_flight.max(1)));
-    let mut jobs = JoinSet::new();
+    let mut jobs = FuturesUnordered::new();
 
     for eval in suite.evals() {
         let trial_count = eval.configured_trials().unwrap_or(default_trials);
@@ -98,7 +98,7 @@ where
             let agent_factory = suite.agent_factory.clone();
             let provider_configs = provider_configs.clone();
 
-            jobs.spawn(async move {
+            jobs.push(async move {
                 let _permit = semaphore.acquire_owned().await.expect("semaphore permit");
                 TrialExecution {
                     run_id,
@@ -117,8 +117,7 @@ where
         }
     }
 
-    while let Some(result) = jobs.join_next().await {
-        let trial_record = result.expect("trial task panicked");
+    while let Some(trial_record) = jobs.next().await {
         if let Some(writer) = incremental_writer.as_mut() {
             writer.write_trial(&trial_record)?;
         }

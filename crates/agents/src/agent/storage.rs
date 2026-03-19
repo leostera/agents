@@ -61,7 +61,8 @@ pub enum StorageRecord {
 }
 
 /// Sink for structured agent instrumentation records.
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait StorageAdapter: Send + Sync {
     async fn record(&self, record: StorageRecord) -> AgentResult<()>;
 }
@@ -69,7 +70,8 @@ pub trait StorageAdapter: Send + Sync {
 /// Storage adapter that discards all records.
 pub struct NoopStorageAdapter;
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl StorageAdapter for NoopStorageAdapter {
     async fn record(&self, _record: StorageRecord) -> AgentResult<()> {
         Ok(())
@@ -96,7 +98,8 @@ impl InMemoryStorageAdapter {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl StorageAdapter for InMemoryStorageAdapter {
     async fn record(&self, record: StorageRecord) -> AgentResult<()> {
         self.records.lock().expect("storage records").push(record);

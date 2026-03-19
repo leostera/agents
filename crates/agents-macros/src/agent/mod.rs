@@ -12,7 +12,6 @@ fn expand_agent(input: &DeriveInput) -> Result<TokenStream> {
     let field_ty = find_agent_field_type(input)?;
 
     Ok(quote! {
-        #[::async_trait::async_trait]
         impl ::agents::agent::Agent for #struct_ident {
             type Input = <#field_ty as ::agents::agent::Agent>::Input;
             type ToolCall = <#field_ty as ::agents::agent::Agent>::ToolCall;
@@ -200,7 +199,6 @@ mod tests {
         let pretty = prettyplease::unparse(&file);
 
         assert_snapshot!(pretty, @r#"
-        #[::async_trait::async_trait]
         impl ::agents::agent::Agent for EchoAgent {
             type Input = <::agents::SessionAgent<
                 EchoReq,
@@ -274,7 +272,6 @@ mod tests {
         let pretty = prettyplease::unparse(&file);
 
         assert_snapshot!(pretty, @r#"
-        #[::async_trait::async_trait]
         impl ::agents::agent::Agent for EchoAgent {
             type Input = <::agents::SessionAgent<
                 EchoReq,
@@ -346,7 +343,6 @@ mod tests {
         let pretty = prettyplease::unparse(&file);
 
         assert_snapshot!(pretty, @r#"
-        #[::async_trait::async_trait]
         impl ::agents::agent::Agent for EchoAgent {
             type Input = <::agents::SessionAgent<
                 EchoReq,

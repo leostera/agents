@@ -19,6 +19,7 @@ evals-macros = { path = "../evals-macros" , package = "evals-macros", version = 
 chrono.workspace = true
 config.workspace = true
 crossterm.workspace = true
+futures-util.workspace = true
 humantime.workspace = true
 prettyplease.workspace = true
 proc-macro2.workspace = true

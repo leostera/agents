@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -13,13 +12,12 @@ use crate::error::EvalResult;
 use crate::grade::GradingConfig;
 use crate::trial::AgentTrial;
 
-type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + 'static>>;
 
 /// Marker agent used before a suite installs its real agent factory.
 #[derive(Clone, Debug)]
 pub struct NoAgent;
 
-#[async_trait]
 impl Agent for NoAgent {
     type Input = serde_json::Value;
     type ToolCall = serde_json::Value;
@@ -254,7 +252,7 @@ where
     pub fn run<F, Fut>(mut self, run: F) -> Self
     where
         F: Fn(EvalContext<State>, A) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = EvalResult<AgentTrial<A::Output>>> + Send + 'static,
+        Fut: Future<Output = EvalResult<AgentTrial<A::Output>>> + 'static,
     {
         self.run = Some(Arc::new(move |ctx, agent| Box::pin(run(ctx, agent))));
         self

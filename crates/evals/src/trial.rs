@@ -2,7 +2,6 @@ use agents::agent::{
     Agent, AgentError, AgentEvent, AgentInput, ContextChunk, PreparedRequest, ToolExecutionResult,
 };
 use agents::llm::completion::{OutputContent, OutputItem, Role, UsageMetrics};
-use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -104,7 +103,6 @@ impl<A: Agent> TranscriptAgent<A> {
     }
 }
 
-#[async_trait]
 impl<A> Agent for TranscriptAgent<A>
 where
     A: Agent,

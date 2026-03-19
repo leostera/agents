@@ -1,3 +1,5 @@
+#![cfg(feature = "live-provider-tests")]
+
 use agents::completion::InputItem;
 use agents::error::LlmResult;
 use agents::tools::{RawToolDefinition, TypedTool};

@@ -8,6 +8,11 @@ homepage.workspace = true
 description = "Facade crate for building typed Rust agents"
 readme = "README.md"
 
+[features]
+default = ["apple"]
+apple = ["dep:swift-rs"]
+live-provider-tests = []
+
 [dependencies]
 agents-macros = { path = "../agents-macros", package = "agents-macros", version = "=0.0.1"}
 async-trait.workspace = true
@@ -23,12 +28,17 @@ serde_derive.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-[target.'cfg(target_os = "macos")'.build-dependencies]
-swift-rs = { workspace = true, features = ["build"] }
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "signal", "time", "fs", "io-util", "sync"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "time", "io-util", "sync"] }
+
+[build-dependencies]
+swift-rs = { workspace = true, features = ["build"], optional = true }
 
 [dev-dependencies]
 anyhow.workspace = true

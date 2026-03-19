@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 
 use crate::{EvalRunReport, RunConfig, Suite, TargetFilter};
 
-pub type BoxSuiteFuture = Pin<Box<dyn Future<Output = Result<Box<dyn RunnableSuite>>> + Send>>;
+pub type BoxSuiteFuture = Pin<Box<dyn Future<Output = Result<Box<dyn RunnableSuite>>>>>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SuiteDescriptor {
@@ -34,7 +34,7 @@ impl SuiteDescriptor {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 pub trait RunnableSuite: Send {
     fn id(&self) -> &str;
     fn eval_ids(&self) -> Vec<String>;
@@ -46,7 +46,7 @@ pub trait RunnableSuite: Send {
     ) -> Result<EvalRunReport>;
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<State, A> RunnableSuite for Suite<State, A>
 where
     State: Send + Sync + 'static,

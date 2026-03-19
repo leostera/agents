@@ -6,7 +6,6 @@ use agents::agent::{
 };
 use agents::llm::LlmRunner;
 use agents::llm::completion::InputItem;
-use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -83,7 +82,6 @@ where
     }
 }
 
-#[async_trait]
 impl<Output> Agent for JudgeAgent<Output>
 where
     Output: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,

@@ -604,6 +604,7 @@ where
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn spawn(mut self) -> AgentResult<(AgentRunInput<M>, AgentRunOutput<C, T, R>)> {
         let (input_tx, mut input_rx) = mpsc::channel(self.run_channel_capacity);
         let (event_tx, event_rx) = mpsc::channel(self.run_channel_capacity);
@@ -675,6 +676,13 @@ where
         });
 
         Ok((input_tx, event_rx))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn spawn(self) -> AgentResult<(AgentRunInput<M>, AgentRunOutput<C, T, R>)> {
+        Err(AgentError::Internal {
+            message: "SessionAgent::spawn is not supported on wasm32".to_string(),
+        })
     }
 
     pub async fn transcript(&self) -> AgentResult<Vec<InputItem>> {
@@ -898,7 +906,6 @@ impl SessionAgent<InputItem, (), (), String> {
     }
 }
 
-#[async_trait::async_trait]
 impl<M, C, T, R> AgentTrait for SessionAgent<M, C, T, R>
 where
     M: Clone + Serialize + DeserializeOwned + Into<InputItem> + Send + Sync + 'static,
@@ -1178,7 +1185,8 @@ mod tests {
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl LlmProvider for FakeProvider {
         fn provider_type(&self) -> ProviderType {
             ProviderType::OpenAI
@@ -2395,7 +2403,8 @@ mod tests {
 
     struct ArcBackedFakeProvider(Arc<FakeProvider>);
 
-    #[async_trait]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl LlmProvider for ArcBackedFakeProvider {
         fn provider_type(&self) -> ProviderType {
             self.0.provider_type()

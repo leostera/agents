@@ -486,7 +486,8 @@ impl OpenRouter {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl LlmProvider for OpenRouter {
     fn provider_type(&self) -> ProviderType {
         ProviderType::OpenRouter
@@ -575,6 +576,7 @@ impl LlmProvider for OpenRouter {
         raw_response_from_chat(chat_res)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     async fn chat_raw_stream(
         &self,
         req: RawCompletionRequest,

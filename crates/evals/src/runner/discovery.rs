@@ -29,6 +29,7 @@ struct MetadataPackage {
 #[derive(Debug, Deserialize)]
 struct MetadataTarget {
     kind: Vec<String>,
+    crate_types: Vec<String>,
 }
 
 pub(super) fn discover_eval_crates(workspace_root: &Path) -> Result<Vec<EvalCrate>> {
@@ -55,11 +56,7 @@ pub(super) fn discover_eval_crates(workspace_root: &Path) -> Result<Vec<EvalCrat
             continue;
         }
 
-        if !package
-            .targets
-            .iter()
-            .any(|target| target.kind.iter().any(|kind| kind == "lib"))
-        {
+        if !package.targets.iter().any(is_library_target) {
             bail!(
                 "workspace package {:?} defines evals/ but has no library target; add a [lib] target so cargo-evals can import __evals_registry()",
                 package.name
@@ -76,6 +73,14 @@ pub(super) fn discover_eval_crates(workspace_root: &Path) -> Result<Vec<EvalCrat
     }
 
     Ok(crates.into_values().collect())
+}
+
+fn is_library_target(target: &MetadataTarget) -> bool {
+    target
+        .kind
+        .iter()
+        .chain(target.crate_types.iter())
+        .any(|kind| matches!(kind.as_str(), "lib" | "rlib" | "cdylib" | "dylib"))
 }
 
 fn cargo_metadata(workspace_root: &Path) -> Result<Metadata> {

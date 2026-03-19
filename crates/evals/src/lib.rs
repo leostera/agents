@@ -195,7 +195,6 @@ mod tests {
     #[derive(Clone, Debug)]
     struct DummyAgent;
 
-    #[async_trait]
     impl Agent for DummyAgent {
         type Input = serde_json::Value;
         type ToolCall = serde_json::Value;
@@ -239,7 +238,6 @@ mod tests {
     #[derive(Clone)]
     struct EchoAgent;
 
-    #[async_trait]
     impl Agent for EchoAgent {
         type Input = String;
         type ToolCall = ();
@@ -311,7 +309,8 @@ mod tests {
 
     struct JudgeTestProvider;
 
-    #[async_trait]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl LlmProvider for JudgeTestProvider {
         fn provider_type(&self) -> ProviderType {
             ProviderType::OpenAI
@@ -369,7 +368,8 @@ mod tests {
 
     struct SessionTestProvider;
 
-    #[async_trait]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl LlmProvider for SessionTestProvider {
         fn provider_type(&self) -> ProviderType {
             ProviderType::OpenAI
@@ -425,7 +425,6 @@ mod tests {
         )
     }
 
-    #[async_trait]
     impl Agent for FailingAgent {
         type Input = String;
         type ToolCall = ();

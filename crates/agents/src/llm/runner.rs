@@ -271,6 +271,7 @@ impl LlmRunner {
     }
 
     /// Runs a typed completion request and returns a stream of events.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn chat_stream<C, R>(
         &self,
         req: CompletionRequest<C, R>,
@@ -320,6 +321,27 @@ impl LlmRunner {
             }
         });
 
+        Ok(CompletionEventStream::new(receiver))
+    }
+
+    /// Runs a typed completion request and returns a buffered single-event stream on `wasm32`.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn chat_stream<C, R>(
+        &self,
+        req: CompletionRequest<C, R>,
+    ) -> LlmResult<CompletionEventStream<C, R>>
+    where
+        C: TypedTool,
+        R: DeserializeOwned + JsonSchema + 'static,
+    {
+        let response = self.chat(req).await?;
+        let (sender, receiver) = mpsc::channel(1);
+        sender
+            .send(Ok(CompletionEvent::Done(response)))
+            .await
+            .map_err(|_| Error::Internal {
+                message: "failed to deliver buffered stream response".to_string(),
+            })?;
         Ok(CompletionEventStream::new(receiver))
     }
 
@@ -431,7 +453,8 @@ mod tests {
         supports_transcription: bool,
     }
 
-    #[async_trait]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl LlmProvider for StreamingTestProvider {
         fn provider_type(&self) -> ProviderType {
             ProviderType::Ollama
@@ -523,7 +546,8 @@ mod tests {
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl LlmProvider for OpenAITestProvider {
         fn provider_type(&self) -> ProviderType {
             ProviderType::OpenAI
@@ -557,7 +581,8 @@ mod tests {
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl LlmProvider for AnthropicTestProvider {
         fn provider_type(&self) -> ProviderType {
             ProviderType::Anthropic
@@ -591,7 +616,8 @@ mod tests {
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl LlmProvider for StaticRawProvider {
         fn provider_type(&self) -> ProviderType {
             self.provider_type
@@ -639,7 +665,8 @@ mod tests {
         }
     }
 
-    #[async_trait]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl LlmProvider for TranscriptionTestProvider {
         fn provider_type(&self) -> ProviderType {
             self.provider_type

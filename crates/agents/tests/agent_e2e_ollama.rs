@@ -3,8 +3,9 @@ use agents::completion::{InputItem, ModelSelector, TokenLimit};
 use agents::error::LlmResult;
 use agents::tools::{RawToolDefinition, TypedTool};
 use agents::{
-    AgentEvent, AgentInput, AgentResult, CallbackToolRunner, ContextManager, ExecutionProfile,
-    SessionAgent as Agent, ToolCallEnvelope, ToolExecutionResult, ToolResultEnvelope,
+    AgentEvent, AgentInput, AgentResult, AgentRunOutput, CallbackToolRunner, ContextManager,
+    ExecutionProfile, SessionAgent as Agent, ToolCallEnvelope, ToolExecutionResult,
+    ToolResultEnvelope,
 };
 use agents_test::{TestContext, TestProvider};
 use schemars::JsonSchema;
@@ -107,12 +108,29 @@ where
     T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
     R: Clone + Serialize + for<'de> Deserialize<'de> + JsonSchema + Send + Sync + 'static,
 {
-    agent
-        .next()
-        .await
-        .map_err(|error| agents::error::Error::Internal {
-            message: error.to_string(),
-        })
+    loop {
+        let event = agent
+            .next()
+            .await
+            .map_err(|error| agents::error::Error::Internal {
+                message: error.to_string(),
+            })?;
+        match event {
+            Some(AgentEvent::ContextWindowMaterialized { .. })
+            | Some(AgentEvent::RequestPrepared { .. }) => {}
+            other => return Ok(other),
+        }
+    }
+}
+
+async fn recv_event<C, T, R>(rx: &mut AgentRunOutput<C, T, R>) -> LlmResult<AgentEvent<C, T, R>> {
+    loop {
+        let event = map_agent_error(rx.recv().await.expect("agent event"))?;
+        match event {
+            AgentEvent::ContextWindowMaterialized { .. } | AgentEvent::RequestPrepared { .. } => {}
+            other => return Ok(other),
+        }
+    }
 }
 
 fn map_agent_error<T>(result: AgentResult<T>) -> LlmResult<T> {
@@ -181,10 +199,10 @@ async fn ollama_agent_run_streams_text_turn_long() -> LlmResult<()> {
     drop(tx);
 
     assert!(matches!(
-        map_agent_error(rx.recv().await.expect("model item"))?,
+        recv_event(&mut rx).await?,
         AgentEvent::ModelOutputItem { .. }
     ));
-    match map_agent_error(rx.recv().await.expect("completed"))? {
+    match recv_event(&mut rx).await? {
         AgentEvent::Completed { reply, .. } => {
             assert!(
                 !reply.trim().is_empty(),
@@ -239,7 +257,7 @@ async fn ollama_agent_run_executes_ping_tool_and_finishes_long() -> LlmResult<()
     .expect("send");
     drop(tx);
 
-    let first = map_agent_error(rx.recv().await.expect("first event"))?;
+    let first = recv_event(&mut rx).await?;
     let tool_call_id = match first {
         AgentEvent::ToolCallRequested { call, .. } => {
             assert_eq!(
@@ -250,26 +268,24 @@ async fn ollama_agent_run_executes_ping_tool_and_finishes_long() -> LlmResult<()
             );
             call.call_id
         }
-        AgentEvent::ModelOutputItem { .. } => {
-            match map_agent_error(rx.recv().await.expect("tool call"))? {
-                AgentEvent::ToolCallRequested { call, .. } => {
-                    assert_eq!(
-                        call.call,
-                        TestTools::Ping {
-                            value: "hello-tool".to_string()
-                        }
-                    );
-                    call.call_id
-                }
-                other => {
-                    panic!("expected tool call event after initial model output, got {other:?}")
-                }
+        AgentEvent::ModelOutputItem { .. } => match recv_event(&mut rx).await? {
+            AgentEvent::ToolCallRequested { call, .. } => {
+                assert_eq!(
+                    call.call,
+                    TestTools::Ping {
+                        value: "hello-tool".to_string()
+                    }
+                );
+                call.call_id
             }
-        }
+            other => {
+                panic!("expected tool call event after initial model output, got {other:?}")
+            }
+        },
         other => panic!("expected tool call event, got {other:?}"),
     };
 
-    match map_agent_error(rx.recv().await.expect("tool result"))? {
+    match recv_event(&mut rx).await? {
         AgentEvent::ToolExecutionCompleted { result } => {
             assert_eq!(result.call_id, tool_call_id);
             match result.result {
@@ -288,7 +304,7 @@ async fn ollama_agent_run_executes_ping_tool_and_finishes_long() -> LlmResult<()
     }
 
     let completed = loop {
-        match map_agent_error(rx.recv().await.expect("follow-up event"))? {
+        match recv_event(&mut rx).await? {
             AgentEvent::ModelOutputItem { .. } => continue,
             AgentEvent::Completed { reply, .. } => break reply,
             other => panic!("expected final reply after tool execution, got {other:?}"),
@@ -327,7 +343,7 @@ async fn ollama_agent_run_queues_messages_in_order_long() -> LlmResult<()> {
     drop(tx);
 
     let first_reply = loop {
-        match map_agent_error(rx.recv().await.expect("first turn event"))? {
+        match recv_event(&mut rx).await? {
             AgentEvent::ModelOutputItem { .. } => continue,
             AgentEvent::Completed { reply, .. } => break reply,
             other => panic!("expected first completed event, got {other:?}"),
@@ -339,7 +355,7 @@ async fn ollama_agent_run_queues_messages_in_order_long() -> LlmResult<()> {
     );
 
     let second_reply = loop {
-        match map_agent_error(rx.recv().await.expect("second turn event"))? {
+        match recv_event(&mut rx).await? {
             AgentEvent::ModelOutputItem { .. } => continue,
             AgentEvent::Completed { reply, .. } => break reply,
             other => panic!("expected second completed event, got {other:?}"),
@@ -393,29 +409,24 @@ async fn ollama_agent_run_cancels_active_turn_long() -> LlmResult<()> {
     .await
     .expect("send");
 
-    match map_agent_error(rx.recv().await.expect("first event"))? {
+    match recv_event(&mut rx).await? {
         AgentEvent::ToolCallRequested { .. } => {}
-        AgentEvent::ModelOutputItem { .. } => {
-            match map_agent_error(rx.recv().await.expect("tool call"))? {
-                AgentEvent::ToolCallRequested { .. } => {}
-                other => {
-                    panic!("expected tool call event after initial model output, got {other:?}")
-                }
+        AgentEvent::ModelOutputItem { .. } => match recv_event(&mut rx).await? {
+            AgentEvent::ToolCallRequested { .. } => {}
+            other => {
+                panic!("expected tool call event after initial model output, got {other:?}")
             }
-        }
+        },
         other => panic!("expected tool call event, got {other:?}"),
     }
 
     tx.send(AgentInput::Cancel).await.expect("cancel");
     drop(tx);
 
-    match map_agent_error(rx.recv().await.expect("post-cancel event"))? {
+    match recv_event(&mut rx).await? {
         AgentEvent::Cancelled => {}
         AgentEvent::ToolExecutionCompleted { .. } => {
-            assert!(matches!(
-                map_agent_error(rx.recv().await.expect("cancelled"))?,
-                AgentEvent::Cancelled
-            ));
+            assert!(matches!(recv_event(&mut rx).await?, AgentEvent::Cancelled));
         }
         other => panic!("expected cancellation path event, got {other:?}"),
     }
@@ -463,7 +474,7 @@ async fn ollama_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<()>
     .await
     .expect("send");
 
-    match map_agent_error(rx.recv().await.expect("first event"))? {
+    match recv_event(&mut rx).await? {
         AgentEvent::ToolCallRequested { call, .. } => {
             assert_eq!(
                 call.call,
@@ -481,7 +492,7 @@ async fn ollama_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<()>
     .await
     .expect("steer");
 
-    let rerouted_call_id = match map_agent_error(rx.recv().await.expect("rerouted event"))? {
+    let rerouted_call_id = match recv_event(&mut rx).await? {
         AgentEvent::ToolCallRequested { call, .. } => {
             let call_id = call.call_id;
             assert_eq!(
@@ -498,7 +509,7 @@ async fn ollama_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<()>
         other => panic!("expected rerouted tool call event, got {other:?}"),
     };
 
-    match map_agent_error(rx.recv().await.expect("rerouted tool result"))? {
+    match recv_event(&mut rx).await? {
         AgentEvent::ToolExecutionCompleted { result } => {
             assert_eq!(result.call_id, rerouted_call_id);
             match result.result {
@@ -518,10 +529,7 @@ async fn ollama_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<()>
 
     tx.send(AgentInput::Cancel).await.expect("cancel");
     drop(tx);
-    assert!(matches!(
-        map_agent_error(rx.recv().await.expect("cancelled"))?,
-        AgentEvent::Cancelled
-    ));
+    assert!(matches!(recv_event(&mut rx).await?, AgentEvent::Cancelled));
     assert!(rx.recv().await.is_none());
     Ok(())
 }
@@ -550,7 +558,6 @@ async fn ollama_agent_static_context_provider_shapes_reply_long() -> LlmResult<(
         .await
         .expect("turn");
 
-    let _ = next_event(&mut agent).await?;
     assert!(matches!(
         next_event(&mut agent).await?,
         Some(AgentEvent::ModelOutputItem { .. })

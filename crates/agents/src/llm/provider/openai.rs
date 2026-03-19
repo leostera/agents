@@ -483,7 +483,8 @@ impl OpenAI {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl LlmProvider for OpenAI {
     fn provider_type(&self) -> ProviderType {
         ProviderType::OpenAI
@@ -525,6 +526,7 @@ impl LlmProvider for OpenAI {
         parse_responses_response(response)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     async fn chat_raw_stream(
         &self,
         req: RawCompletionRequest,
