@@ -134,6 +134,7 @@ impl Error {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_eventsource(
         provider: impl Into<String>,
         error: reqwest_eventsource::Error,
@@ -164,6 +165,7 @@ impl Error {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_eventsource_builder(
         provider: impl Into<String>,
         error: reqwest_eventsource::CannotCloneRequestError,

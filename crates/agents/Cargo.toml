@@ -14,14 +14,13 @@ apple = ["dep:swift-rs"]
 live-provider-tests = []
 
 [dependencies]
-agents-macros = { path = "../agents-macros", package = "agents-macros", version = "=0.0.1"}
+agents-macros = { path = "../agents-macros", package = "agents-macros", version = "0"}
 async-trait.workspace = true
 derive_builder.workspace = true
 dotenvy.workspace = true
 futures-util.workspace = true
 infer.workspace = true
 reqwest.workspace = true
-reqwest-eventsource.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
@@ -32,10 +31,16 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest-eventsource.workspace = true
 tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread", "signal", "time", "fs", "io-util", "sync"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1", default-features = false, features = ["macros", "rt", "time", "io-util", "sync"] }
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+worker = "0"
 
 [build-dependencies]
 swift-rs = { workspace = true, features = ["build"], optional = true }

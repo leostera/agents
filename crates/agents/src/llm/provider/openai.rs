@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use derive_builder::Builder;
 use futures_util::StreamExt;
 use reqwest::Client;
+#[cfg(not(target_arch = "wasm32"))]
 use reqwest_eventsource::{Event, RequestBuilderExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

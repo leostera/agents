@@ -1,11 +1,11 @@
 pub mod anthropic;
 #[cfg(all(feature = "apple", target_os = "macos"))]
 pub mod apple;
+pub mod cloudflare;
 pub mod lm_studio;
 pub mod ollama;
 pub mod openai;
 pub mod openrouter;
-pub mod workers_ai;
 
 use crate::llm::capability::Capability;
 use async_trait::async_trait;

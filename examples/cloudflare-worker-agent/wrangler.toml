@@ -7,3 +7,6 @@ command = "cargo install -q worker-build && worker-build --release"
 
 [observability.logs]
 enabled = true
+
+[ai]
+binding = "AI"

@@ -11,10 +11,10 @@ use std::sync::{Arc, Once};
 use agents::LlmRunner;
 use agents::error::{Error as LlmError, LlmResult};
 use agents::provider::anthropic::{Anthropic, AnthropicConfig};
+use agents::provider::cloudflare::workers_ai::{WorkersAI, WorkersAIConfig};
 use agents::provider::ollama::{Ollama, OllamaConfig};
 use agents::provider::openai::{OpenAI, OpenAIConfig};
 use agents::provider::openrouter::{OpenRouter, OpenRouterConfig};
-use agents::provider::workers_ai::{WorkersAI, WorkersAIConfig};
 use ollama_container::LlmContainer;
 use tokio::sync::{Mutex, OnceCell};
 

@@ -1,5 +1,5 @@
 #[cfg(not(target_arch = "wasm32"))]
-use crate::echo::{CloudEchoAgent, CloudEchoRequest, CloudEchoResponse};
+use crate::echo::{CloudEchoAgent, CloudEchoRequest};
 #[cfg(not(target_arch = "wasm32"))]
 use anyhow::Result;
 #[cfg(not(target_arch = "wasm32"))]
@@ -22,12 +22,12 @@ async fn new_agent(ctx: EvalContext<()>) -> Result<CloudEchoAgent> {
 #[cfg(not(target_arch = "wasm32"))]
 #[evals::grade(name = "echoes-hello")]
 async fn echoes_hello(
-    trial: AgentTrial<CloudEchoResponse>,
+    trial: AgentTrial<String>,
     _ctx: EvalContext<()>,
 ) -> EvalResult<GradeResult> {
     let reply = trial.final_reply.expect("echo reply");
     Ok(GradeResult {
-        score: if reply.text == "hello from the worker example" {
+        score: if reply == "hello from the worker example" {
             1.0
         } else {
             0.0

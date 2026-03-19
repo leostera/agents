@@ -1,17 +1,42 @@
-#![cfg(not(target_arch = "wasm32"))]
-
 use std::sync::Arc;
 
 use agents::{
-    Agent, AgentResult, ContextManager, InputItem, LlmRunner, SessionAgent, Tool, ToolCallEnvelope,
-    ToolExecutionResult, ToolResultEnvelope, ToolRunner,
+    Agent, AgentEvent, AgentInput, AgentResult, AgentRunInput, AgentRunOutput, ContextManager,
+    InputItem, LlmRunner, SessionAgent,
 };
 use anyhow::Result;
-use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-static DEFAULT_PROMPT: &str = "You are an echo agent. Always call the echo_text tool exactly once with the user's full text. Then reply as JSON matching the CloudEchoResponse schema with the same text in the `text` field.";
+#[cfg(target_arch = "wasm32")]
+macro_rules! echo_info {
+    ($($arg:tt)*) => {
+        worker::console_log!($($arg)*);
+    };
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+macro_rules! echo_info {
+    ($($arg:tt)*) => {
+        tracing::info!($($arg)*);
+    };
+}
+
+#[cfg(target_arch = "wasm32")]
+macro_rules! echo_debug {
+    ($($arg:tt)*) => {
+        worker::console_debug!($($arg)*);
+    };
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+macro_rules! echo_debug {
+    ($($arg:tt)*) => {
+        tracing::debug!($($arg)*);
+    };
+}
+
+static DEFAULT_PROMPT: &str = "You are an echo agent. Reply as JSON matching the CloudEchoResponse schema with the exact same text from the user's message in the `text` field.";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CloudEchoRequest {
@@ -29,59 +54,50 @@ pub struct CloudEchoResponse {
     pub text: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Tool)]
-pub enum CloudEchoToolCall {
-    #[agent_tool(
-        name = "echo_text",
-        description = "Return the exact input text unchanged."
-    )]
-    Echo { text: String },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct CloudEchoToolResponse {
-    text: String,
-}
-
-#[derive(Clone)]
-struct CloudEchoToolRunner;
-
-#[async_trait]
-impl ToolRunner<CloudEchoToolCall, CloudEchoToolResponse> for CloudEchoToolRunner {
-    async fn run(
-        &self,
-        call: ToolCallEnvelope<CloudEchoToolCall>,
-    ) -> AgentResult<ToolResultEnvelope<CloudEchoToolResponse>> {
-        let result = match call.call {
-            CloudEchoToolCall::Echo { text } => ToolExecutionResult::Ok {
-                data: CloudEchoToolResponse { text },
-            },
-        };
-
-        Ok(ToolResultEnvelope {
-            call_id: call.call_id,
-            result,
-        })
-    }
-}
-
-#[derive(Agent)]
 pub struct CloudEchoAgent {
-    #[agent]
-    agent:
-        SessionAgent<CloudEchoRequest, CloudEchoToolCall, CloudEchoToolResponse, CloudEchoResponse>,
+    agent: SessionAgent<CloudEchoRequest, (), (), String>,
 }
 
 impl CloudEchoAgent {
     pub async fn new(runner: Arc<LlmRunner>) -> Result<Self> {
+        echo_info!("constructing CloudEchoAgent");
         let agent = SessionAgent::builder()
             .with_llm_runner(runner)
-            .with_tool_runner(CloudEchoToolRunner)
             .with_context_manager(ContextManager::static_text(DEFAULT_PROMPT))
             .with_message_type::<CloudEchoRequest>()
-            .with_response_type::<CloudEchoResponse>()
+            .with_response_type::<String>()
             .build()?;
 
         Ok(Self { agent })
+    }
+}
+
+impl Agent for CloudEchoAgent {
+    type Input = CloudEchoRequest;
+    type ToolCall = ();
+    type ToolResult = ();
+    type Output = String;
+
+    async fn send(&mut self, input: AgentInput<Self::Input>) -> AgentResult<()> {
+        echo_debug!("CloudEchoAgent::send input={:?}", input);
+        self.agent.send(input).await
+    }
+
+    async fn next(
+        &mut self,
+    ) -> AgentResult<Option<AgentEvent<Self::ToolCall, Self::ToolResult, Self::Output>>> {
+        let event = self.agent.next().await?;
+        echo_debug!("CloudEchoAgent::next event={:?}", event);
+        Ok(event)
+    }
+
+    async fn spawn(
+        self,
+    ) -> AgentResult<(
+        AgentRunInput<Self::Input>,
+        AgentRunOutput<Self::ToolCall, Self::ToolResult, Self::Output>,
+    )> {
+        echo_info!("CloudEchoAgent::spawn");
+        self.agent.spawn().await
     }
 }

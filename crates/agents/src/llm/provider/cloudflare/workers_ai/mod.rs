@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{Value, json};
+#[cfg(target_arch = "wasm32")]
+use worker::Ai;
 
 use crate::llm::capability::Capability;
 use crate::llm::completion::{
@@ -16,12 +18,43 @@ use crate::llm::response::RawResponseFormat;
 use crate::llm::tools::{RawToolCall, RawToolDefinition};
 use crate::llm::transcription::{AudioTranscriptionRequest, AudioTranscriptionResponse};
 
+#[cfg(target_arch = "wasm32")]
+mod workers_ai_binding;
+mod workers_ai_rest;
+
 #[derive(Debug, Clone)]
 pub struct WorkersAIConfig {
-    pub api_token: String,
-    pub account_id: String,
-    pub base_url: String,
+    pub transport: WorkersAITransport,
     pub default_model: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum WorkersAITransport {
+    Rest {
+        api_token: String,
+        account_id: String,
+        base_url: String,
+    },
+    #[cfg(target_arch = "wasm32")]
+    Binding { binding: String },
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn set_transport_base_url(transport: &mut WorkersAITransport, base_url: String) {
+    let WorkersAITransport::Rest {
+        base_url: current, ..
+    } = transport;
+    *current = normalize_base_url(base_url);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn set_transport_base_url(transport: &mut WorkersAITransport, base_url: String) {
+    if let WorkersAITransport::Rest {
+        base_url: current, ..
+    } = transport
+    {
+        *current = normalize_base_url(base_url);
+    }
 }
 
 impl WorkersAIConfig {
@@ -41,15 +74,35 @@ impl WorkersAIConfig {
         }
 
         Ok(Self {
-            api_token,
-            base_url: default_base_url(&account_id),
-            account_id,
+            transport: WorkersAITransport::Rest {
+                api_token,
+                base_url: default_base_url(&account_id),
+                account_id,
+            },
             default_model: default_model.into(),
         })
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
-        self.base_url = normalize_base_url(base_url.into());
+        set_transport_base_url(&mut self.transport, base_url.into());
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn from_binding(default_model: impl Into<String>) -> Self {
+        Self {
+            transport: WorkersAITransport::Binding {
+                binding: "AI".to_string(),
+            },
+            default_model: default_model.into(),
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn with_binding(mut self, binding: impl Into<String>) -> Self {
+        self.transport = WorkersAITransport::Binding {
+            binding: binding.into(),
+        };
         self
     }
 }
@@ -57,6 +110,8 @@ impl WorkersAIConfig {
 pub struct WorkersAI {
     client: Client,
     config: WorkersAIConfig,
+    #[cfg(target_arch = "wasm32")]
+    binding: Option<Ai>,
 }
 
 impl WorkersAI {
@@ -66,6 +121,32 @@ impl WorkersAI {
                 .build()
                 .expect("failed to build reqwest client"),
             config,
+            #[cfg(target_arch = "wasm32")]
+            binding: None,
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn with_binding(mut self, binding: Ai) -> Self {
+        self.binding = Some(binding);
+        self
+    }
+
+    async fn execute_run_request(&self, model: &str, body: Value) -> LlmResult<RunResult> {
+        match &self.config.transport {
+            WorkersAITransport::Rest {
+                api_token,
+                base_url,
+                ..
+            } => {
+                workers_ai_rest::execute_run_request(&self.client, model, body, api_token, base_url)
+                    .await
+            }
+            #[cfg(target_arch = "wasm32")]
+            WorkersAITransport::Binding { binding } => {
+                workers_ai_binding::execute_run_request(self.binding.as_ref(), model, body, binding)
+                    .await
+            }
         }
     }
 }
@@ -102,37 +183,9 @@ impl LlmProvider for WorkersAI {
             });
         }
 
-        let url = format!("{}/run/{model}", self.config.base_url);
-        let body = build_run_request(req);
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_token))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
+        let result = self
+            .execute_run_request(&model, build_run_request(req))
             .await?;
-
-        let status = response.status();
-        let body = response.text().await?;
-        if !status.is_success() {
-            return Err(Error::Provider {
-                provider: "workers_ai".to_string(),
-                status: status.as_u16(),
-                message: body,
-            });
-        }
-
-        let envelope: RunResponseEnvelope =
-            serde_json::from_str(&body).map_err(|error| Error::parse(&body, error))?;
-        if !envelope.success {
-            return Err(Error::Provider {
-                provider: "workers_ai".to_string(),
-                status: status.as_u16(),
-                message: body,
-            });
-        }
-        let result = envelope.result;
         let tool_calls = result
             .tool_calls
             .clone()
@@ -384,7 +437,9 @@ fn default_tool_call_id() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{WorkersAI, WorkersAIConfig, default_base_url, normalize_base_url};
+    use super::{
+        WorkersAI, WorkersAIConfig, WorkersAITransport, default_base_url, normalize_base_url,
+    };
     use crate::llm::completion::ProviderType;
     use crate::llm::provider::LlmProvider;
 
@@ -392,7 +447,10 @@ mod tests {
     fn workers_ai_config_builds_default_base_url() {
         let config = WorkersAIConfig::new("token", "account", "@cf/meta/llama-3.1-8b-instruct")
             .expect("config");
-        assert_eq!(config.base_url, default_base_url("account"));
+        let WorkersAITransport::Rest { base_url, .. } = config.transport else {
+            panic!("expected rest transport");
+        };
+        assert_eq!(base_url, default_base_url("account"));
     }
 
     #[test]
@@ -400,8 +458,11 @@ mod tests {
         let config = WorkersAIConfig::new("token", "account", "@cf/meta/llama-3.1-8b-instruct")
             .expect("config")
             .with_base_url("https://api.cloudflare.com/client/v4/accounts/account/ai/v1");
+        let WorkersAITransport::Rest { base_url, .. } = config.transport else {
+            panic!("expected rest transport");
+        };
         assert_eq!(
-            config.base_url,
+            base_url,
             "https://api.cloudflare.com/client/v4/accounts/account/ai"
         );
         assert_eq!(

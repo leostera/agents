@@ -5,11 +5,11 @@ use agents::llm::error::Error as LlmError;
 use agents::llm::provider::anthropic::{Anthropic, AnthropicConfig};
 #[cfg(target_os = "macos")]
 use agents::llm::provider::apple::{Apple, AppleConfig};
+use agents::llm::provider::cloudflare::workers_ai::{WorkersAI, WorkersAIConfig};
 use agents::llm::provider::lm_studio::{LmStudio, LmStudioConfig};
 use agents::llm::provider::ollama::{Ollama, OllamaConfig};
 use agents::llm::provider::openai::{OpenAI, OpenAIConfig};
 use agents::llm::provider::openrouter::{OpenRouter, OpenRouterConfig};
-use agents::llm::provider::workers_ai::{WorkersAI, WorkersAIConfig};
 
 use super::*;
 

@@ -20,10 +20,12 @@ dependencies = [
  "dotenvy",
  "futures-util",
  "infer",
+ "js-sys",
  "reqwest",
  "reqwest-eventsource",
  "schemars 1.2.1",
  "serde",
+ "serde-wasm-bindgen",
  "serde_derive",
  "serde_json",
  "serial_test",
@@ -34,6 +36,9 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "worker",
 ]
 
 [[package]]
@@ -663,6 +668,7 @@ dependencies = [
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "tracing",
  "worker",
 ]
 
