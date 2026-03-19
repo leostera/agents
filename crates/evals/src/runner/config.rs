@@ -26,9 +26,19 @@ pub(super) struct EvalsConfig {
     pub trials: usize,
     #[serde(default = "default_output_dir")]
     pub output_dir: String,
+    pub timeout: Option<DurationValue>,
     pub timeout_secs: Option<u64>,
+    #[serde(skip)]
+    pub resolved_timeout: Option<Duration>,
     #[serde(default)]
     pub targets: Vec<TargetConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub(super) enum DurationValue {
+    Human(String),
+    Seconds(u64),
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,7 +119,7 @@ impl EvalsFile {
         )
         .with_trials(self.evals.trials)
         .with_provider_configs(self.provider_configs())
-        .with_optional_timeout(self.evals.timeout_secs.map(Duration::from_secs))
+        .with_optional_timeout(self.evals.resolved_timeout)
     }
 
     pub(super) fn output_dir(&self) -> &str {
@@ -157,13 +167,10 @@ impl EvalsFile {
     }
 
     fn validate(&mut self) -> Result<()> {
+        self.evals.resolved_timeout =
+            resolve_timeout(&self.evals.timeout, self.evals.timeout_secs)?;
         for target in &mut self.evals.targets {
             target.validate()?;
-        }
-        if let Some(timeout_secs) = &mut self.evals.timeout_secs
-            && *timeout_secs == 0
-        {
-            bail!("evals.timeout_secs must be greater than zero");
         }
         if let Some(ollama) = &mut self.provider.ollama {
             ollama.url = ollama.url.trim().to_string();
@@ -249,9 +256,55 @@ fn default_output_dir() -> String {
     ".evals".to_string()
 }
 
+fn resolve_timeout(
+    timeout: &Option<DurationValue>,
+    timeout_secs: Option<u64>,
+) -> Result<Option<Duration>> {
+    if timeout.is_some() && timeout_secs.is_some() {
+        bail!("use evals.timeout instead of combining it with evals.timeout_secs");
+    }
+
+    match (timeout, timeout_secs) {
+        (Some(timeout), None) => parse_duration_value("evals.timeout", timeout).map(Some),
+        (None, Some(timeout_secs)) => {
+            if timeout_secs == 0 {
+                bail!("evals.timeout_secs must be greater than zero");
+            }
+            Ok(Some(Duration::from_secs(timeout_secs)))
+        }
+        (None, None) => Ok(None),
+        (Some(_), Some(_)) => unreachable!("handled above"),
+    }
+}
+
+fn parse_duration_value(field_name: &str, value: &DurationValue) -> Result<Duration> {
+    match value {
+        DurationValue::Human(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                bail!("{field_name} cannot be empty");
+            }
+            let duration = humantime::parse_duration(trimmed).with_context(|| {
+                format!("parse {field_name} as a duration like \"30s\" or \"2m\"")
+            })?;
+            if duration.is_zero() {
+                bail!("{field_name} must be greater than zero");
+            }
+            Ok(duration)
+        }
+        DurationValue::Seconds(seconds) => {
+            if *seconds == 0 {
+                bail!("{field_name} must be greater than zero");
+            }
+            Ok(Duration::from_secs(*seconds))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::time::Duration;
 
     use tempfile::TempDir;
 
@@ -277,6 +330,46 @@ url = "http://localhost:1234"
         assert_eq!(
             file.provider.ollama.expect("ollama config").url,
             "http://localhost:1234"
+        );
+    }
+
+    #[test]
+    fn loads_human_timeout_from_evals_toml() {
+        let dir = TempDir::new().expect("tempdir");
+        fs::write(
+            dir.path().join("evals.toml"),
+            r#"
+[evals]
+timeout = "90s"
+targets = [{ provider = "ollama", model = "llama3.2:1b" }]
+"#,
+        )
+        .expect("write evals.toml");
+
+        let file = EvalsFile::load(dir.path()).expect("load evals.toml");
+
+        assert_eq!(file.evals.resolved_timeout, Some(Duration::from_secs(90)));
+    }
+
+    #[test]
+    fn rejects_timeout_and_timeout_secs_together() {
+        let dir = TempDir::new().expect("tempdir");
+        fs::write(
+            dir.path().join("evals.toml"),
+            r#"
+[evals]
+timeout = "30s"
+timeout_secs = 30
+targets = [{ provider = "ollama", model = "llama3.2:1b" }]
+"#,
+        )
+        .expect("write evals.toml");
+
+        let error = EvalsFile::load(dir.path()).expect_err("load to fail");
+        assert!(
+            error
+                .to_string()
+                .contains("use evals.timeout instead of combining it with evals.timeout_secs")
         );
     }
 }

@@ -591,6 +591,10 @@ mod tests {
             error.to_string(),
             "eval failed: no suites, models, or evals matched query \"preserves\""
         );
+        assert!(matches!(
+            error,
+            EvalError::NoMatchesForQuery { ref query } if query == "preserves"
+        ));
     }
 
     #[test]
@@ -613,6 +617,10 @@ mod tests {
             error.to_string(),
             "eval failed: no eval targets matched model \"ollama/llama3.2:3b\""
         );
+        assert!(matches!(
+            error,
+            EvalError::NoTargetsMatchedModel { ref model } if model == "ollama/llama3.2:3b"
+        ));
     }
 
     #[test]
@@ -1271,5 +1279,32 @@ mod tests {
         let (report, ()) = tokio::join!(run, check_persisted_trial);
         let report = report.expect("persisted run");
         assert_eq!(report.variants[0].trials.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn suite_runner_records_structured_timeout_errors() {
+        let suite = suite_with_dummy_agent("calendar").eval(Eval::new("slow").run(
+            |_, _agent| async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(AgentTrial::new("ok".to_string()))
+            },
+        ));
+
+        let report = suite
+            .run_with(
+                RunConfig::single(ExecutionTarget::openai("gpt", "gpt-5.3-codex"))
+                    .with_timeout(Duration::from_millis(20)),
+            )
+            .run()
+            .await
+            .expect("timed run to complete with a failed trial");
+
+        let trial = &report.variants[0].trials[0];
+        assert!(!trial.passed);
+        assert!(matches!(
+            trial.error.as_ref(),
+            Some(RecordedError::EvalError(EvalError::TrialTimedOut { duration_ms }))
+                if *duration_ms == 20
+        ));
     }
 }

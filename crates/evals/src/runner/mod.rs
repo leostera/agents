@@ -8,6 +8,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
+use crate::error::EvalError;
 use crate::{
     EventSink, JsonEventSink, PlannedSuiteRun, ProgressEventSink, RunConfig, RunEvent,
     SuiteDescriptor, TargetFilter, emit, set_global_sink,
@@ -240,6 +241,13 @@ pub async fn run_discovered(
     output_dir: &str,
     options: RunOptions,
 ) -> Result<()> {
+    if run_config.targets.is_empty() {
+        return Err(anyhow::Error::new(EvalError::NoTargetsConfigured));
+    }
+    if registries.iter().all(|(_, suites)| suites.is_empty()) {
+        return Err(anyhow::Error::new(EvalError::NoSuitesDiscovered));
+    }
+
     let sink: std::sync::Arc<dyn EventSink> = if options.json {
         std::sync::Arc::new(JsonEventSink::stdout())
     } else {
@@ -356,12 +364,16 @@ fn build_discovered_run_plan<'a>(
 
     if plan.is_empty() {
         if let Some(query) = &filter.query {
-            bail!("no suites, models, or evals matched query {:?}", query);
+            return Err(anyhow::Error::new(EvalError::no_matches_for_query(
+                query.clone(),
+            )));
         }
         if let Some(model) = &filter.model {
-            bail!("no eval targets matched model {:?}", model);
+            return Err(anyhow::Error::new(EvalError::no_targets_matched_model(
+                model.clone(),
+            )));
         }
-        bail!("no eval suites matched the selected filters");
+        return Err(anyhow::Error::new(EvalError::NoSuitesMatchedFilters));
     }
 
     Ok(plan)

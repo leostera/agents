@@ -5,16 +5,17 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
 ## Current Priority
 
 1. Finish eval timeouts
-   - Timeout plumbing exists, but the end-to-end behavior and UX still need tightening.
-   - Keep the API in `Duration`, and make the failure mode obvious in both terminal output and trial artifacts.
+   - [x] Runtime `RunConfig` uses `Duration`.
+   - [x] `evals.toml` supports `evals.timeout = "30s"` style durations.
+   - [x] Timeout failures are structured in trial artifacts.
 
 2. Finish removing remaining Ollama-local coupling
    - Normal eval execution should not depend on any Ollama-specific assumptions.
    - Hosted targets and local targets should both be cleanly supported without special-case runtime behavior.
 
 3. Improve empty-config and filter errors
-   - `cargo evals run` should fail clearly when there are no configured targets.
-   - Distinguish “no suites discovered”, “no targets configured”, and “no matches for the selected filters”.
+   - [x] `cargo evals run` fails clearly when there are no configured targets.
+   - [x] Distinguish “no suites discovered”, “no targets configured”, and “no matches for the selected filters”.
 
 4. Split `crates/evals/src/suite.rs`
    - `suite.rs` is still doing too much.
@@ -44,13 +45,9 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
      - `cargo evals list`
      - `cargo evals run`
 
-8. Feature-flag `agents::testing`
-   - `agents` should not pull `testcontainers` into normal binary dependency resolution.
-   - The testing helpers should be behind an explicit feature or otherwise isolated to test-only use.
-
 ## Reporting and Cost Tracking
 
-9. Add usage/cost tracking on `LlmRunner`
+7. Add usage/cost tracking on `LlmRunner`
    - We want visibility into:
      - token counts
      - provider/model usage
@@ -58,7 +55,7 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
 
 ## Future Work
 
-10. Explore `agents::llm` support for Cloudflare Workers AI
+8. Explore `agents::llm` support for Cloudflare Workers AI
 
 
 ---

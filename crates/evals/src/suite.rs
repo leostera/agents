@@ -482,18 +482,20 @@ where
     pub(crate) fn plan(self) -> EvalResult<SuitePlan<State, A>> {
         let mut suite = self.suite.clone();
         let mut config = self.config;
+        let had_targets_before_filter = !config.targets.is_empty();
         config
             .targets
             .retain(|target| self.filter.matches_target(target));
 
         if config.targets.is_empty() {
-            return if let Some(model) = self.filter.model {
-                Err(EvalError::message(format!(
-                    "no eval targets matched model {:?}",
-                    model
-                )))
+            return if had_targets_before_filter {
+                if let Some(model) = self.filter.model {
+                    Err(EvalError::no_targets_matched_model(model))
+                } else {
+                    Err(EvalError::NoTargetsConfigured)
+                }
             } else {
-                Err(EvalError::message("run config has no targets configured"))
+                Err(EvalError::NoTargetsConfigured)
             };
         }
 
@@ -521,12 +523,9 @@ where
 
         if suite.evals.is_empty() || config.targets.is_empty() {
             return if let Some(query) = self.filter.query {
-                Err(EvalError::message(format!(
-                    "no suites, models, or evals matched query {:?}",
-                    query
-                )))
+                Err(EvalError::no_matches_for_query(query))
             } else {
-                Err(EvalError::message("suite has no evals configured"))
+                Err(EvalError::suite_has_no_evals(suite.id()))
             };
         }
 
@@ -918,10 +917,7 @@ where
         let execution = match self.timeout {
             Some(timeout) => match tokio::time::timeout(timeout, execution_future).await {
                 Ok(result) => result,
-                Err(_) => Err(EvalError::message(format!(
-                    "trial timed out after {}s",
-                    timeout.as_secs()
-                ))),
+                Err(_) => Err(EvalError::trial_timed_out(timeout)),
             },
             None => execution_future.await,
         };
