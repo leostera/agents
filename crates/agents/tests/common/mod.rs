@@ -48,6 +48,7 @@ pub struct PingArgs {
     pub value: String,
 }
 
+#[allow(dead_code)]
 pub async fn assert_streamed_typed_response(
     stream: &mut agents::completion::CompletionEventStream<(), EchoResponse>,
 ) -> LlmResult<()> {
@@ -93,6 +94,7 @@ pub async fn assert_streamed_typed_response(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn assert_streamed_ping_tool_call(
     stream: &mut agents::completion::CompletionEventStream<TestTools, String>,
 ) -> LlmResult<()> {
