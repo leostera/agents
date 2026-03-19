@@ -1,40 +1,35 @@
 # agents
 
-`agents` is a Rust toolkit for building, running, and evaluating typed LLM agents.
+`agents` is a Rust toolkit for building typed agent systems and evaluating them.
 
-There are two user-facing entrypoints:
+The public crates are:
 
-- `agents` for code
-- `cargo-evals` for running eval suites
+- `agents` for LLMs, sessions, tools, context, and storage
+- `evals` for suites, trajectories, grading, judges, and artifacts
+- `cargo-evals` for listing and running eval suites
+- `codemode` for embeddable JavaScript execution and code search
 
-## What it gives you
+## Install
 
-- A single `Agent` trait for typed agents
-- `SessionAgent` for the default model-backed runtime
-- Typed tool calling and structured replies
-- A turn-based API for tests and a spawned runtime for long-running systems
-- Reusable eval suites with deterministic predicates and LLM judges
-- JSON artifacts under `.evals/` for every run
+```toml
+[dependencies]
+agents = "0.0.1"
+evals = "0.0.1"
+anyhow = "1"
 
-## Quick start
-
-Add the crate:
-
-```
-cargo add agents
+[build-dependencies]
+evals = "0.0.1"
+anyhow = "1"
 ```
 
-If you want to run evals with `cargo evals`, also add it to your `build-dependencies`.
+## Build an agent
 
-### Untyped agent
-
-For simple cases, use `String` input and `String` output:
+For simple cases, use `String` input and output:
 
 ```rust
 use std::sync::Arc;
 
-use agents::agent::SessionAgent;
-use agents::llm::LlmRunner;
+use agents::{LlmRunner, SessionAgent};
 
 type BasicAgent = SessionAgent<String, (), (), String>;
 
@@ -47,38 +42,54 @@ fn new_agent(llm: Arc<LlmRunner>) -> anyhow::Result<BasicAgent> {
 
 Run one turn directly:
 
-```rust
+```rust,no_run
+# use std::sync::Arc;
+# use agents::{LlmRunner, SessionAgent};
+# type BasicAgent = SessionAgent<String, (), (), String>;
+# async fn demo(llm: Arc<LlmRunner>) -> anyhow::Result<()> {
+# let mut agent = SessionAgent::builder().with_llm_runner(llm).build()?;
 let reply = agent.call("hello world".to_string()).await?;
+# let _ = reply;
+# Ok(())
+# }
 ```
 
-Or spawn it and drive it through channels:
+Or spawn it and consume the event stream:
 
-```rust
-use agents::agent::AgentInput;
+```rust,no_run
+# use std::sync::Arc;
+use agents::{AgentInput, LlmRunner, SessionAgent};
 
+# async fn demo(llm: Arc<LlmRunner>) -> anyhow::Result<()> {
+let agent = SessionAgent::builder().with_llm_runner(llm).build()?;
 let (tx, mut rx) = agent.spawn().await?;
 tx.send(AgentInput::Message("hello world".to_string())).await?;
 
 while let Some(event) = rx.recv().await {
     println!("{event:?}");
 }
+# Ok(())
+# }
 ```
 
-### Typed agent
-
-For stricter contracts, provide a message type and a response type:
+For stricter contracts, use typed input and output:
 
 ```rust
 use std::sync::Arc;
 
-use agents::agent::SessionAgent;
-use agents::llm::LlmRunner;
+use agents::{InputItem, LlmRunner, SessionAgent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct EchoRequest {
     text: String,
+}
+
+impl From<EchoRequest> for InputItem {
+    fn from(value: EchoRequest) -> Self {
+        InputItem::user_text(value.text)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -97,28 +108,7 @@ fn new_typed_agent(llm: Arc<LlmRunner>) -> anyhow::Result<TypedAgent> {
 }
 ```
 
-Then call it with the typed input:
-
-```rust
-let reply = agent
-    .call(EchoRequest {
-        text: "hello world".to_string(),
-    })
-    .await?;
-```
-
-## Evals Setup
-
-```toml
-[dependencies]
-agents = "0.0.1"
-evals = "0.0.1"
-anyhow = "1"
-
-[build-dependencies]
-evals = "0.0.1"
-anyhow = "1"
-```
+## Evaluate it
 
 Register eval discovery in `build.rs`:
 
@@ -138,11 +128,11 @@ evals::setup!();
 Then define suites under `evals/**/*.rs`:
 
 ```rust
-use agents::{
-    SessionAgent,
-};
+use agents::SessionAgent;
 use anyhow::Result;
-use evals::{EvalContext, Trajectory, eval, suite, trajectory, user};
+use evals::{
+    EvalContext, GradeResult, Trajectory, assistant, eval, predicate, suite, trajectory, user,
+};
 
 type BasicAgent = SessionAgent<String, (), (), String>;
 
@@ -153,16 +143,36 @@ async fn new_agent(ctx: EvalContext<()>) -> Result<BasicAgent> {
         .build()?)
 }
 
-#[eval(agent = BasicAgent, desc = "dummy eval", tags = ["smoke"])]
-async fn dummy_eval(_ctx: EvalContext<()>) -> Result<Trajectory<BasicAgent, ()>> {
-    Ok(trajectory![user!("hello world"),])
+#[eval(agent = BasicAgent, desc = "echoes the input", tags = ["smoke"], timeout = "30s")]
+async fn smoke(_ctx: EvalContext<()>) -> Result<Trajectory<BasicAgent, ()>> {
+    Ok(trajectory![
+        user!("hello world"),
+        assistant!(predicate("echoes-input", |trial, _ctx| async move {
+            let reply = trial.final_reply.expect("reply");
+            Ok(GradeResult {
+                score: if reply == "hello world" { 1.0 } else { 0.0 },
+                summary: "agent should echo the input".to_string(),
+                evidence: serde_json::json!({ "reply": reply }),
+            })
+        })),
+    ])
 }
 ```
 
-List or run the discovered evals:
+Run them with `cargo-evals`:
 
 ```bash
 cargo evals list
+cargo evals models
 cargo evals run
-cargo evals --model ollama/llama3.2:3b echo
+cargo evals --model ollama/llama3.2:3b smoke
 ```
+
+Artifacts are written under `.evals/`.
+
+## Crates
+
+- [`crates/agents`](crates/agents) is the main runtime crate
+- [`crates/evals`](crates/evals) is the eval runtime crate
+- [`crates/cargo-evals`](crates/cargo-evals) is the CLI
+- [`crates/codemode`](crates/codemode) is the embeddable code execution engine

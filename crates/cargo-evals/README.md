@@ -1,6 +1,6 @@
 # cargo-evals
 
-`cargo-evals` is the Cargo subcommand for running `agents` eval suites.
+`cargo-evals` is the Cargo subcommand for running `evals` suites for `agents`.
 
 It can:
 
