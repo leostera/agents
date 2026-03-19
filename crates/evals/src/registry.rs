@@ -297,7 +297,7 @@ fn render_registry(suites: &[SuiteSource]) -> Result<String> {
                 .map(|eval| {
                     let wrapper = syn::Ident::new(&eval.wrapper_fn, proc_macro2::Span::call_site());
                     quote! {
-                        suite = suite.eval(#wrapper().await.map_err(::anyhow::Error::from)?);
+                        suite = suite.eval(#wrapper().await?);
                     }
                 })
                 .collect::<Vec<_>>();
@@ -319,7 +319,7 @@ fn render_registry(suites: &[SuiteSource]) -> Result<String> {
                             || Box::pin(async {
                                 let mut suite = #suite_wrapper(#suite_id)
                                     .await
-                                    .map_err(::anyhow::Error::from)?
+                                    ?
                                     .agent(|ctx| async move { #agent_builder(ctx).await });
                                 #(#eval_lines)*
                                 Ok(Box::new(suite) as Box<dyn ::evals::RunnableSuite>)

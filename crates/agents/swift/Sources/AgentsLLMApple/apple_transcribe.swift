@@ -1,17 +1,17 @@
 import Foundation
 import Speech
 
-public typealias BorgTranscriptCallback = @convention(c) (UnsafePointer<CChar>?, Int32) -> Void
+public typealias AgentsTranscriptCallback = @convention(c) (UnsafePointer<CChar>?, Int32) -> Void
 
 private func emit(_ callbackPtr: UnsafeRawPointer, text: String, isFinal: Bool) {
-    let callback = unsafeBitCast(callbackPtr, to: BorgTranscriptCallback.self)
+    let callback = unsafeBitCast(callbackPtr, to: AgentsTranscriptCallback.self)
     text.withCString { cString in
         callback(cString, isFinal ? 1 : 0)
     }
 }
 
 private func emitDebug(_ callbackPtr: UnsafeRawPointer, text: String) {
-    let callback = unsafeBitCast(callbackPtr, to: BorgTranscriptCallback.self)
+    let callback = unsafeBitCast(callbackPtr, to: AgentsTranscriptCallback.self)
     text.withCString { cString in
         callback(cString, -1)
     }
@@ -28,8 +28,8 @@ private func waitSpeechAuthorization() -> Bool {
     return allowed
 }
 
-@_cdecl("borg_apple_transcribe_file")
-public func borg_apple_transcribe_file(
+@_cdecl("agents_apple_transcribe_file")
+public func agents_apple_transcribe_file(
     _ pathPtr: UnsafePointer<CChar>?,
     _ localePtr: UnsafePointer<CChar>?,
     _ callbackPtr: UnsafeRawPointer?
@@ -56,7 +56,7 @@ public func borg_apple_transcribe_file(
     }
 
     let callbackQueue = OperationQueue()
-    callbackQueue.name = "borg.llm.apple.transcription"
+    callbackQueue.name = "agents.llm.apple.transcription"
     callbackQueue.maxConcurrentOperationCount = 1
     recognizer.queue = callbackQueue
 

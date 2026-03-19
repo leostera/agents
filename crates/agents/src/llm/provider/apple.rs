@@ -139,7 +139,7 @@ unsafe extern "C" {}
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    fn borg_apple_transcribe_file(
+    fn agents_apple_transcribe_file(
         path: *const c_char,
         locale: *const c_char,
         callback: *const c_void,
@@ -313,7 +313,7 @@ impl LlmProvider for Apple {
 
             let _ = take_callback_messages();
             let code = unsafe {
-                borg_apple_transcribe_file(
+                agents_apple_transcribe_file(
                     c_path.as_ptr(),
                     c_locale
                         .as_ref()

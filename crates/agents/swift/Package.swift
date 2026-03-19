@@ -2,20 +2,20 @@
 import PackageDescription
 
 let package = Package(
-    name: "BorgLLMApple",
+    name: "AgentsLLMApple",
     platforms: [
         .macOS(.v10_15),
     ],
     products: [
         .library(
-            name: "BorgLLMApple",
+            name: "AgentsLLMApple",
             type: .static,
-            targets: ["BorgLLMApple"]
+            targets: ["AgentsLLMApple"]
         ),
     ],
     targets: [
         .target(
-            name: "BorgLLMApple"
+            name: "AgentsLLMApple"
         ),
     ]
 )

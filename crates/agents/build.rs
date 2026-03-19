@@ -6,7 +6,7 @@ fn main() {
     #[cfg(target_os = "macos")]
     {
         SwiftLinker::new("10.15")
-            .with_package("BorgLLMApple", "swift")
+            .with_package("AgentsLLMApple", "swift")
             .link();
     }
 }
