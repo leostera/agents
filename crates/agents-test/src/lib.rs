@@ -14,6 +14,7 @@ use agents::provider::anthropic::{Anthropic, AnthropicConfig};
 use agents::provider::ollama::{Ollama, OllamaConfig};
 use agents::provider::openai::{OpenAI, OpenAIConfig};
 use agents::provider::openrouter::{OpenRouter, OpenRouterConfig};
+use agents::provider::workers_ai::{WorkersAI, WorkersAIConfig};
 use ollama_container::LlmContainer;
 use tokio::sync::{Mutex, OnceCell};
 
@@ -158,5 +159,41 @@ pub fn runner_with_anthropic_model(model: &str) -> LlmResult<LlmRunner> {
 pub fn runner_with_openrouter_model(model: &str) -> LlmResult<LlmRunner> {
     Ok(LlmRunner::builder()
         .add_provider(openrouter_provider_for_model(model)?)
+        .build())
+}
+
+pub fn workers_ai_provider_for_model(model: &str) -> LlmResult<WorkersAI> {
+    let api_token = optional_test_env("BORG_TEST_WORKERS_AI_API_TOKEN")
+        .or_else(|| optional_test_env("BORG_LLM_WORKERS_AI_API_TOKEN"))
+        .or_else(|| optional_test_env("CLOUDFLARE_API_TOKEN"))
+        .ok_or_else(|| {
+            LlmError::Configuration(
+                "missing Workers AI API token (expected BORG_TEST_WORKERS_AI_API_TOKEN, BORG_LLM_WORKERS_AI_API_TOKEN, or CLOUDFLARE_API_TOKEN)".to_string(),
+            )
+        })?;
+    let account_id = optional_test_env("BORG_TEST_WORKERS_AI_ACCOUNT_ID")
+        .or_else(|| optional_test_env("BORG_LLM_WORKERS_AI_ACCOUNT_ID"))
+        .or_else(|| optional_test_env("CLOUDFLARE_ACCOUNT_ID"))
+        .ok_or_else(|| {
+            LlmError::Configuration(
+                "missing Workers AI account id (expected BORG_TEST_WORKERS_AI_ACCOUNT_ID, BORG_LLM_WORKERS_AI_ACCOUNT_ID, or CLOUDFLARE_ACCOUNT_ID)".to_string(),
+            )
+        })?;
+
+    let mut config = WorkersAIConfig::new(api_token, account_id, model.to_string())
+        .map_err(LlmError::WorkersAIConfig)?;
+
+    if let Some(base_url) = optional_test_env("BORG_TEST_WORKERS_AI_BASE_URL")
+        .or_else(|| optional_test_env("BORG_LLM_WORKERS_AI_BASE_URL"))
+    {
+        config = config.with_base_url(base_url);
+    }
+
+    Ok(WorkersAI::new(config))
+}
+
+pub fn runner_with_workers_ai_model(model: &str) -> LlmResult<LlmRunner> {
+    Ok(LlmRunner::builder()
+        .add_provider(workers_ai_provider_for_model(model)?)
         .build())
 }
