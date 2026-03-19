@@ -1328,7 +1328,7 @@ mod tests {
                         let local_peak = local_peak.clone();
                         let hosted_saw_local_running = hosted_saw_local_running.clone();
                         async move {
-                            if ctx.target.provider == "ollama" {
+                            if ctx.target.is_local() {
                                 let current = local_in_flight.fetch_add(1, Ordering::SeqCst) + 1;
                                 local_peak.fetch_max(current, Ordering::SeqCst);
                                 tokio::time::sleep(Duration::from_millis(120)).await;
