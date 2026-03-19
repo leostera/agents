@@ -97,6 +97,10 @@ impl ExecutionTarget {
     pub fn display_label(&self) -> String {
         self.label.clone()
     }
+
+    pub fn is_local(&self) -> bool {
+        is_local_provider(&self.provider)
+    }
 }
 
 impl Default for ExecutionTarget {
@@ -150,10 +154,11 @@ impl RunConfig {
 }
 
 fn default_max_in_flight(provider: &str) -> usize {
-    match provider {
-        "ollama" => 1,
-        _ => 5,
-    }
+    if is_local_provider(provider) { 1 } else { 5 }
+}
+
+fn is_local_provider(provider: &str) -> bool {
+    matches!(provider, "ollama" | "lm_studio" | "apple")
 }
 
 impl Default for RunConfig {

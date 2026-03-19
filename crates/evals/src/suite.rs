@@ -204,10 +204,6 @@ fn optional_env(keys: &[&str]) -> Option<String> {
         .find_map(|key| env::var(key).ok().filter(|value| !value.trim().is_empty()))
 }
 
-fn is_local_provider(provider: &str) -> bool {
-    matches!(provider, "ollama" | "lm_studio" | "apple")
-}
-
 /// High-level suite classification.
 #[derive(Clone, Copy, Debug, Default)]
 pub enum SuiteKind {
@@ -590,7 +586,7 @@ where
             let local_target_semaphore = local_target_semaphore.clone();
             let artifact_root = artifact_root.clone();
             jobs.spawn(async move {
-                let _local_permit = if is_local_provider(&target.provider) {
+                let _local_permit = if target.is_local() {
                     Some(
                         local_target_semaphore
                             .acquire_owned()

@@ -671,9 +671,17 @@ mod tests {
     fn display_label_returns_configured_label() {
         let hosted_target = ExecutionTarget::openrouter("kimi-k2.5", "moonshotai/kimi-k2.5");
         let local_target = ExecutionTarget::ollama("qwen3.5", "qwen3.5");
+        let lm_studio_target = ExecutionTarget::new("local-studio", "lm_studio", "qwen");
+        let apple_target = ExecutionTarget::new("apple", "apple", "speech");
 
         assert_eq!(hosted_target.display_label(), "kimi-k2.5");
         assert_eq!(local_target.display_label(), "qwen3.5");
+        assert!(!hosted_target.is_local());
+        assert!(local_target.is_local());
+        assert!(lm_studio_target.is_local());
+        assert!(apple_target.is_local());
+        assert_eq!(lm_studio_target.max_in_flight, 1);
+        assert_eq!(apple_target.max_in_flight, 1);
     }
 
     #[tokio::test]
