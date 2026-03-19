@@ -1,4 +1,4 @@
-use agents::completion::{CompletionEvent, OutputContent, OutputItem};
+use agents::completion::{CompletionEvent, CompletionResponse, OutputContent, OutputItem, Usage};
 use agents::error::{Error, LlmResult};
 use agents::tools::{RawToolDefinition, TypedTool};
 use schemars::JsonSchema;
@@ -64,6 +64,7 @@ pub async fn assert_streamed_typed_response(
             CompletionEvent::ReasoningDelta { .. } => {}
             CompletionEvent::ToolCall { .. } => {}
             CompletionEvent::Done(response) => {
+                assert_usage_reported(&response.usage);
                 final_response = response.output.iter().find_map(|item| match item {
                     OutputItem::Message { content, .. } => {
                         content.iter().find_map(|content| match content {
@@ -108,6 +109,7 @@ pub async fn assert_streamed_ping_tool_call(
                 }
             }
             CompletionEvent::Done(response) => {
+                assert_usage_reported(&response.usage);
                 final_tool_calls = response
                     .output
                     .into_iter()
@@ -132,4 +134,34 @@ pub async fn assert_streamed_ping_tool_call(
     );
 
     Ok(())
+}
+
+pub fn assert_completion_usage_reported<Tool, Response>(
+    response: &CompletionResponse<Tool, Response>,
+) {
+    assert_usage_reported(&response.usage);
+}
+
+pub fn assert_usage_reported(usage: &Usage) {
+    assert!(
+        usage.prompt_tokens > 0,
+        "expected provider to report prompt tokens, got {:?}",
+        usage
+    );
+    assert!(
+        usage.total_tokens >= usage.prompt_tokens,
+        "expected total_tokens >= prompt_tokens, got {:?}",
+        usage
+    );
+    assert!(
+        usage.total_tokens >= usage.completion_tokens,
+        "expected total_tokens >= completion_tokens, got {:?}",
+        usage
+    );
+    assert_eq!(
+        usage.total_tokens,
+        usage.prompt_tokens + usage.completion_tokens,
+        "expected total_tokens to equal prompt_tokens + completion_tokens, got {:?}",
+        usage
+    );
 }

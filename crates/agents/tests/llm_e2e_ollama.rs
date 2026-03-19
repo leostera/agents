@@ -11,7 +11,8 @@ use agents::response::TypedResponse;
 use agents::tools::{RawToolDefinition, TypedToolSet};
 use agents_test::{TestContext, TestProvider};
 use common::{
-    EchoResponse, TestTools, assert_streamed_ping_tool_call, assert_streamed_typed_response,
+    EchoResponse, TestTools, assert_completion_usage_reported, assert_streamed_ping_tool_call,
+    assert_streamed_typed_response,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -101,6 +102,7 @@ async fn ollama_runner_typed_response_round_trip_long() -> LlmResult<()> {
             .with_typed_response(TypedResponse::new("echo_response")),
         )
         .await?;
+    assert_completion_usage_reported(&response);
 
     let structured = response.output.iter().find_map(|item| match item {
         OutputItem::Message { content, .. } => content.iter().find_map(|content| match content {
@@ -136,6 +138,7 @@ async fn ollama_runner_decodes_typed_tool_calls_long() -> LlmResult<()> {
             .with_tools(TypedToolSet::new()),
         )
         .await?;
+    assert_completion_usage_reported(&response);
 
     let tool_calls = response
         .output
@@ -288,6 +291,7 @@ async fn ollama_runner_typed_response_with_defaulted_nested_fields_long() -> Llm
             .with_typed_response(TypedResponse::new("agent_response")),
         )
         .await?;
+    assert_completion_usage_reported(&response);
 
     let structured = response.output.iter().find_map(|item| match item {
         OutputItem::Message { content, .. } => content.iter().find_map(|content| match content {
