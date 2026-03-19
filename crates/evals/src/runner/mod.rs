@@ -2,6 +2,7 @@ mod config;
 mod discovery;
 mod harness;
 
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -27,6 +28,56 @@ pub struct WorkspaceRunConfig {
     pub run_config: RunConfig,
     pub output_dir: String,
 }
+
+const EVALS_TOML_TEMPLATE: &str = r#"[evals]
+trials = 10
+timeout = "30s"
+output_dir = ".evals"
+
+[[evals.targets]]
+provider = "ollama"
+model = "llama3.2:3b"
+
+# Hosted provider examples:
+#
+# [[evals.targets]]
+# provider = "openai"
+# model = "gpt-5-mini"
+#
+# [[evals.targets]]
+# provider = "anthropic"
+# model = "claude-sonnet-4-5"
+#
+# [[evals.targets]]
+# provider = "openrouter"
+# model = "openai/gpt-5-mini"
+#
+# [[evals.targets]]
+# provider = "workers_ai"
+# model = "@cf/meta/llama-3.2-3b-instruct"
+#
+# [[evals.targets]]
+# provider = "lm_studio"
+# model = "local-model"
+#
+# Provider-specific configuration:
+#
+# [provider.openai]
+# api_key = "sk-..."
+#
+# [provider.anthropic]
+# api_key = "sk-ant-..."
+#
+# [provider.openrouter]
+# api_key = "sk-or-..."
+#
+# [provider.workers_ai]
+# api_token = "..."
+# account_id = "..."
+#
+# [provider.lm_studio]
+# url = "http://127.0.0.1:1234"
+"#;
 
 pub fn resolve_workspace_root(start_dir: &Path) -> Result<std::path::PathBuf> {
     let output = Command::new("cargo")
@@ -61,6 +112,20 @@ pub fn load_workspace_run_config(workspace_root: &Path) -> Result<WorkspaceRunCo
         run_config: evals_file.run_config(),
         output_dir: evals_file.output_dir().to_string(),
     })
+}
+
+pub fn init_workspace(workspace_root: &Path, force: bool) -> Result<()> {
+    let path = workspace_root.join("evals.toml");
+    if path.exists() && !force {
+        bail!(
+            "{} already exists; rerun with --force to overwrite it",
+            path.display()
+        );
+    }
+
+    fs::write(&path, EVALS_TOML_TEMPLATE).with_context(|| format!("write {}", path.display()))?;
+    println!("wrote {}", path.display());
+    Ok(())
 }
 
 pub fn list_workspace(workspace_root: &Path, options: RunOptions) -> Result<()> {
@@ -377,4 +442,38 @@ fn build_discovered_run_plan<'a>(
     }
 
     Ok(plan)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::init_workspace;
+
+    #[test]
+    fn init_workspace_writes_example_config() {
+        let dir = TempDir::new().expect("tempdir");
+
+        init_workspace(dir.path(), false).expect("init workspace");
+
+        let content = fs::read_to_string(dir.path().join("evals.toml")).expect("read evals.toml");
+        assert!(content.contains("[evals]"));
+        assert!(content.contains("[[evals.targets]]"));
+        assert!(content.contains("provider = \"ollama\""));
+    }
+
+    #[test]
+    fn init_workspace_requires_force_to_overwrite() {
+        let dir = TempDir::new().expect("tempdir");
+        fs::write(dir.path().join("evals.toml"), "existing = true").expect("write evals.toml");
+
+        let error = init_workspace(dir.path(), false).expect_err("init to fail");
+        assert!(error.to_string().contains("already exists"));
+
+        init_workspace(dir.path(), true).expect("force init workspace");
+        let content = fs::read_to_string(dir.path().join("evals.toml")).expect("read evals.toml");
+        assert!(content.contains("[[evals.targets]]"));
+    }
 }

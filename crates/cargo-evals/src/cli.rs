@@ -5,15 +5,24 @@ use clap::Parser;
 use evals::{
     TargetFilter,
     runner::{
-        RunOptions, list_models_workspace, list_workspace, resolve_workspace_root, run_workspace,
+        RunOptions, init_workspace, list_models_workspace, list_workspace, resolve_workspace_root,
+        run_workspace,
     },
 };
 
 #[derive(Debug)]
 pub enum Cli {
+    Init(InitArgs),
     List(ListArgs),
     Models,
     Run(RunArgs),
+}
+
+#[derive(Debug, Parser, Clone, Default)]
+#[command(name = "cargo-evals-init")]
+pub struct InitArgs {
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -40,6 +49,11 @@ impl Cli {
         let command = args.get(1).and_then(|arg| arg.to_str()).map(str::to_string);
 
         match command.as_deref() {
+            Some("init") => {
+                let mut init_args = vec![args[0].clone()];
+                init_args.extend(args.into_iter().skip(2));
+                Self::Init(InitArgs::parse_from(init_args))
+            }
             Some("list") => {
                 let mut list_args = vec![args[0].clone()];
                 list_args.extend(args.into_iter().skip(2));
@@ -60,6 +74,7 @@ impl Cli {
         let workspace_root = resolve_workspace_root(&cwd)?;
 
         match self {
+            Cli::Init(args) => init_workspace(&workspace_root, args.force)?,
             Cli::List(args) => list_workspace(
                 &workspace_root,
                 RunOptions {
@@ -91,7 +106,7 @@ impl Cli {
 mod tests {
     use std::ffi::OsString;
 
-    use super::{Cli, ListArgs, RunArgs};
+    use super::{Cli, InitArgs, ListArgs, RunArgs};
 
     fn args(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
@@ -107,7 +122,7 @@ mod tests {
                 assert!(model.is_none());
                 assert!(query.is_none());
             }
-            Cli::List(_) | Cli::Models => panic!("expected run args"),
+            Cli::Init(_) | Cli::List(_) | Cli::Models => panic!("expected run args"),
         }
     }
 
@@ -119,7 +134,7 @@ mod tests {
             Cli::Run(RunArgs { query, .. }) => {
                 assert_eq!(query.as_deref(), Some("preserves"));
             }
-            Cli::List(_) | Cli::Models => panic!("expected run args"),
+            Cli::Init(_) | Cli::List(_) | Cli::Models => panic!("expected run args"),
         }
     }
 
@@ -138,7 +153,7 @@ mod tests {
                 assert_eq!(model.as_deref(), Some("ollama/llama3.2:1b"));
                 assert_eq!(query.as_deref(), Some("preserves"));
             }
-            Cli::List(_) | Cli::Models => panic!("expected run args"),
+            Cli::Init(_) | Cli::List(_) | Cli::Models => panic!("expected run args"),
         }
     }
 
@@ -148,7 +163,7 @@ mod tests {
 
         match cli {
             Cli::List(ListArgs { json }) => assert!(json),
-            Cli::Run(_) | Cli::Models => panic!("expected list args"),
+            Cli::Init(_) | Cli::Run(_) | Cli::Models => panic!("expected list args"),
         }
     }
 
@@ -156,7 +171,15 @@ mod tests {
     fn models_subcommand_is_recognized() {
         match Cli::parse_from(args(&["cargo-evals", "models"])) {
             Cli::Models => {}
-            Cli::List(_) | Cli::Run(_) => panic!("expected models command"),
+            Cli::Init(_) | Cli::List(_) | Cli::Run(_) => panic!("expected models command"),
+        }
+    }
+
+    #[test]
+    fn init_subcommand_parses_force_flag() {
+        match Cli::parse_from(args(&["cargo-evals", "init", "--force"])) {
+            Cli::Init(InitArgs { force }) => assert!(force),
+            Cli::List(_) | Cli::Models | Cli::Run(_) => panic!("expected init args"),
         }
     }
 }
