@@ -20,6 +20,9 @@ pub enum StorageEvent {
     ContextWindowMaterialized {
         chunks: Vec<ContextChunk>,
     },
+    RequestPrepared {
+        request: Value,
+    },
     ModelOutputItem {
         item: Value,
     },

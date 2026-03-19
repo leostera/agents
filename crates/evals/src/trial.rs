@@ -1,4 +1,6 @@
-use agents::agent::{Agent, AgentError, AgentEvent, AgentInput, ContextChunk, ToolExecutionResult};
+use agents::agent::{
+    Agent, AgentError, AgentEvent, AgentInput, ContextChunk, PreparedRequest, ToolExecutionResult,
+};
 use agents::llm::completion::{OutputContent, OutputItem, Role, UsageMetrics};
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -220,6 +222,9 @@ pub enum RecordedEvent {
     ContextWindow {
         chunks: Vec<ContextChunk>,
     },
+    RequestPrepared {
+        request: RecordedRequest,
+    },
     Thinking {
         content: String,
         usage_metrics: UsageMetrics,
@@ -299,6 +304,20 @@ pub enum RecordedMessageRole {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct RecordedRequest {
+    pub model: String,
+    pub input_items: usize,
+    pub temperature: String,
+    pub top_p: String,
+    pub top_k: String,
+    pub token_limit: String,
+    pub response_mode: String,
+    pub tool_choice: String,
+    pub has_tools: bool,
+    pub expects_typed_response: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RecordedToolCall {
     pub id: String,
     pub name: String,
@@ -335,7 +354,13 @@ where
         AgentEvent::ContextWindowMaterialized { window } => vec![RecordedEvent::ContextWindow {
             chunks: window.chunks.clone(),
         }],
-        AgentEvent::ModelOutputItem { item, usage_metrics } => match item {
+        AgentEvent::RequestPrepared { request } => vec![RecordedEvent::RequestPrepared {
+            request: recorded_request_from_prepared_request(request),
+        }],
+        AgentEvent::ModelOutputItem {
+            item,
+            usage_metrics,
+        } => match item {
             OutputItem::Message { role, content } => {
                 let text = content
                     .iter()
@@ -373,7 +398,10 @@ where
             }
             OutputItem::ToolCall { .. } => Vec::new(),
         },
-        AgentEvent::ToolCallRequested { call, usage_metrics } => vec![RecordedEvent::ToolCallRequested {
+        AgentEvent::ToolCallRequested {
+            call,
+            usage_metrics,
+        } => vec![RecordedEvent::ToolCallRequested {
             id: call.call_id.clone(),
             name: call.name.clone(),
             arguments: call.arguments.clone(),
@@ -394,7 +422,10 @@ where
                 result: result_value,
             }]
         }
-        AgentEvent::Completed { reply, usage_metrics } => vec![RecordedEvent::Completed {
+        AgentEvent::Completed {
+            reply,
+            usage_metrics,
+        } => vec![RecordedEvent::Completed {
             reply: serde_json::to_value(reply).expect("serialize completed reply"),
             usage_metrics: usage_metrics.clone(),
         }],
@@ -449,6 +480,7 @@ fn build_tool_trace(transcript: &[RecordedEvent]) -> Vec<RecordedToolCall> {
             | RecordedEvent::StepCompleted { .. }
             | RecordedEvent::Message { .. }
             | RecordedEvent::ContextWindow { .. }
+            | RecordedEvent::RequestPrepared { .. }
             | RecordedEvent::Thinking { .. }
             | RecordedEvent::Completed { .. }
             | RecordedEvent::Error { .. }
@@ -459,4 +491,30 @@ fn build_tool_trace(transcript: &[RecordedEvent]) -> Vec<RecordedToolCall> {
     }
 
     tool_trace
+}
+
+fn recorded_request_from_prepared_request(request: &PreparedRequest) -> RecordedRequest {
+    RecordedRequest {
+        model: match &request.model {
+            agents::llm::completion::ModelSelector::Any => "any".to_string(),
+            agents::llm::completion::ModelSelector::Provider(provider) => {
+                format!("provider:{}", provider.name())
+            }
+            agents::llm::completion::ModelSelector::Specific { provider, model } => {
+                provider.as_ref().map_or_else(
+                    || model.clone(),
+                    |provider| format!("{}:{}", provider.name(), model),
+                )
+            }
+        },
+        input_items: request.input_items,
+        temperature: format!("{:?}", request.temperature),
+        top_p: format!("{:?}", request.top_p),
+        top_k: format!("{:?}", request.top_k),
+        token_limit: format!("{:?}", request.token_limit),
+        response_mode: format!("{:?}", request.response_mode),
+        tool_choice: format!("{:?}", request.tool_choice),
+        has_tools: request.has_tools,
+        expects_typed_response: request.expects_typed_response,
+    }
 }

@@ -63,7 +63,7 @@ pub use suite::{Suite, SuiteKind, TargetFilter};
 pub use trajectory::{Step, Trajectory, TrajectoryBuilder};
 pub use trial::{
     AgentTrial, RecordedError, RecordedEvent, RecordedGradingScope, RecordedMessageRole,
-    RecordedToolCall,
+    RecordedRequest, RecordedToolCall,
 };
 
 /// Builds a user step inside [`trajectory!`].
@@ -154,10 +154,10 @@ pub mod prelude {
         EventSink, ExecutionTarget, Grade, GradeResult, Grader, GraderFailure, GradingConfig,
         JsonEventSink, JudgeAgent, JudgeInput, JudgeVerdict, OllamaProviderConfig, PlannedSuiteRun,
         ProgressEventSink, ProviderConfigs, RecordedError, RecordedEvent, RecordedGradingScope,
-        RecordedMessageRole, RecordedToolCall, RunConfig, RunEvent, RunnableSuite, SharedEventSink,
-        Step, Suite, SuiteDescriptor, SuiteKind, SuiteRunReport, TargetFilter, Trajectory,
-        TrajectoryBuilder, assistant, build, emit, global_sink, grade, judge, predicate,
-        set_global_sink, setup, trajectory, user,
+        RecordedMessageRole, RecordedRequest, RecordedToolCall, RunConfig, RunEvent, RunnableSuite,
+        SharedEventSink, Step, Suite, SuiteDescriptor, SuiteKind, SuiteRunReport, TargetFilter,
+        Trajectory, TrajectoryBuilder, assistant, build, emit, global_sink, grade, judge,
+        predicate, set_global_sink, setup, trajectory, user,
     };
     pub use agents::agent::Agent;
 }
@@ -1033,6 +1033,19 @@ mod tests {
                     .and_then(|chunk| chunk.get("content"))
                     .and_then(|value| value.as_str())
                     == Some("You are a test agent.")
+        }));
+        assert!(transcript.iter().any(|event| {
+            event.get("type").and_then(|value| value.as_str()) == Some("request")
+                && event
+                    .get("value")
+                    .and_then(|value| value.get("input_items"))
+                    .and_then(|value| value.as_u64())
+                    == Some(2)
+                && event
+                    .get("value")
+                    .and_then(|value| value.get("expects_typed_response"))
+                    .and_then(|value| value.as_bool())
+                    == Some(false)
         }));
     }
 

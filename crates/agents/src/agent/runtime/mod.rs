@@ -9,7 +9,7 @@ use crate::agent::error::{AgentError, AgentResult};
 
 pub use session::{
     AgentBuilder, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput, ExecutionProfile,
-    SessionAgent,
+    PreparedRequest, SessionAgent,
 };
 
 /// Typed interface for an agent.

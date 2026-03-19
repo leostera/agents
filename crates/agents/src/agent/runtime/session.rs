@@ -89,6 +89,8 @@ impl ExecutionProfile {
 pub enum AgentEvent<C, T, R> {
     /// The full context window materialized for an imminent model request.
     ContextWindowMaterialized { window: ContextWindow },
+    /// The provider-neutral request prepared for the next model call.
+    RequestPrepared { request: PreparedRequest },
     /// A model output item streamed from the underlying provider.
     ModelOutputItem {
         item: OutputItem<C, R>,
@@ -108,6 +110,21 @@ pub enum AgentEvent<C, T, R> {
     },
     /// Terminal cancellation of the turn.
     Cancelled,
+}
+
+/// Provider-neutral summary of one prepared completion request.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PreparedRequest {
+    pub model: ModelSelector,
+    pub input_items: usize,
+    pub temperature: Temperature,
+    pub top_p: TopP,
+    pub top_k: TopK,
+    pub token_limit: TokenLimit,
+    pub response_mode: ResponseMode,
+    pub tool_choice: ToolChoice,
+    pub has_tools: bool,
+    pub expects_typed_response: bool,
 }
 
 /// Sender half for a spawned agent.
@@ -517,15 +534,16 @@ where
                 }
                 TurnState::NeedLlm => {
                     let (window, request) = self.build_request(active_turn.profile.clone()).await?;
-                    active_turn.state = if should_emit_context_window(&window) {
-                        TurnState::EmitQueue {
-                            queue: VecDeque::from([AgentEvent::ContextWindowMaterialized {
-                                window,
-                            }]),
-                            next: Box::new(TurnState::DispatchRequest { request }),
-                        }
-                    } else {
-                        TurnState::DispatchRequest { request }
+                    let mut queue = VecDeque::new();
+                    if should_emit_context_window(&window) {
+                        queue.push_back(AgentEvent::ContextWindowMaterialized { window });
+                    }
+                    queue.push_back(AgentEvent::RequestPrepared {
+                        request: prepared_request_from_completion_request(&request),
+                    });
+                    active_turn.state = TurnState::EmitQueue {
+                        queue,
+                        next: Box::new(TurnState::DispatchRequest { request }),
                     };
                     self.active_turn = Some(active_turn);
                 }
@@ -967,6 +985,11 @@ where
                 chunks: window.chunks.clone(),
             })
         }
+        AgentEvent::RequestPrepared { request } => Ok(StorageEvent::RequestPrepared {
+            request: serde_json::to_value(request).map_err(|error| AgentError::Internal {
+                message: error.to_string(),
+            })?,
+        }),
         AgentEvent::ModelOutputItem { item, .. } => Ok(StorageEvent::ModelOutputItem {
             item: serde_json::to_value(item).map_err(|error| AgentError::Internal {
                 message: error.to_string(),
@@ -991,6 +1014,23 @@ where
             })?,
         }),
         AgentEvent::Cancelled => Ok(StorageEvent::Cancelled),
+    }
+}
+
+fn prepared_request_from_completion_request<C, R>(
+    request: &CompletionRequest<C, R>,
+) -> PreparedRequest {
+    PreparedRequest {
+        model: request.model.clone(),
+        input_items: request.input.len(),
+        temperature: request.temperature,
+        top_p: request.top_p,
+        top_k: request.top_k,
+        token_limit: request.token_limit,
+        response_mode: request.response_mode,
+        tool_choice: request.tool_choice.clone(),
+        has_tools: request.tools.is_some(),
+        expects_typed_response: request.response_format.is_some(),
     }
 }
 
@@ -1291,6 +1331,35 @@ mod tests {
         })
     }
 
+    async fn next_non_request<M, C, T, R>(
+        agent: &mut SessionAgent<M, C, T, R>,
+    ) -> AgentResult<Option<AgentEvent<C, T, R>>>
+    where
+        M: Clone + Serialize + DeserializeOwned + Into<InputItem> + Send + Sync + 'static,
+        C: TypedTool + Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+        T: Clone + Serialize + DeserializeOwned + Send + Sync + 'static,
+        R: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static,
+    {
+        loop {
+            match agent.next().await? {
+                Some(AgentEvent::RequestPrepared { .. }) => continue,
+                other => return Ok(other),
+            }
+        }
+    }
+
+    async fn recv_non_request<C, T, R>(
+        rx: &mut AgentRunOutput<C, T, R>,
+    ) -> Option<AgentResult<AgentEvent<C, T, R>>> {
+        while let Some(event) = rx.recv().await {
+            match event {
+                Ok(AgentEvent::RequestPrepared { .. }) => continue,
+                other => return Some(other),
+            }
+        }
+        None
+    }
+
     #[tokio::test]
     async fn builder_errors_without_llm_runner() {
         let result = Agent::raw_builder().build();
@@ -1315,6 +1384,13 @@ mod tests {
             .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
+        assert!(matches!(
+            agent.next().await.expect("request"),
+            Some(AgentEvent::RequestPrepared { request })
+                if request.input_items == 1
+                    && !request.has_tools
+                    && !request.expects_typed_response
+        ));
         assert!(matches!(
             agent.next().await.expect("next"),
             Some(AgentEvent::ModelOutputItem { .. })
@@ -1360,6 +1436,13 @@ mod tests {
                         if content == "You are a test agent."
                 )
         ));
+        assert!(matches!(
+            agent.next().await.expect("request"),
+            Some(AgentEvent::RequestPrepared { request })
+                if request.input_items == 2
+                    && !request.has_tools
+                    && !request.expects_typed_response
+        ));
         let _ = agent.next().await.expect("model output");
         let _ = agent.next().await.expect("completed");
 
@@ -1398,10 +1481,21 @@ mod tests {
             .await
             .expect("turn");
         let _ = agent.next().await.expect("context");
+        let _ = agent.next().await.expect("request");
         let _ = agent.next().await.expect("model output");
         let _ = agent.next().await.expect("completed");
 
         let records = storage.records();
+        assert!(records.iter().any(|record| matches!(
+            record,
+            StorageRecord::EventEmitted {
+                turn: 1,
+                event: StorageEvent::RequestPrepared { request }
+            } if request
+                .get("input_items")
+                .and_then(serde_json::Value::as_u64)
+                == Some(2)
+        )));
         assert!(records.iter().any(|record| matches!(
             record,
             StorageRecord::EventEmitted {
@@ -1435,17 +1529,17 @@ mod tests {
             .await
             .expect("turn");
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ModelOutputItem { .. })
         ));
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::Completed {
                 reply: EchoResponse { value },
                 ..
             }) if value == "typed-ok"
         ));
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
     }
 
     #[tokio::test]
@@ -1470,22 +1564,22 @@ mod tests {
             .expect("turn");
 
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ToolCallRequested { call, .. }) if call.call_id == "call_ping_1"
         ));
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ToolExecutionCompleted { result }) if result.call_id == "call_ping_1"
         ));
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ModelOutputItem { .. })
         ));
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::Completed { reply, .. }) if reply == "all done"
         ));
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
 
         let requests = provider.take_requests();
         assert_eq!(requests.len(), 2);
@@ -1527,23 +1621,23 @@ mod tests {
             .await
             .expect("turn");
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ToolCallRequested { .. })
         ));
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ToolExecutionCompleted { result })
                 if matches!(result.result, ToolExecutionResult::Error { .. })
         ));
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ModelOutputItem { .. })
         ));
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::Completed { reply, .. }) if reply == "tool error observed"
         ));
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
 
         let requests = provider.take_requests();
         assert!(matches!(
@@ -1573,10 +1667,10 @@ mod tests {
             .await
             .expect("turn");
 
-        let _ = agent.next().await.expect("tool call");
-        let _ = agent.next().await.expect("tool result");
-        let _ = agent.next().await.expect("model output");
-        let _ = agent.next().await.expect("completed");
+        let _ = next_non_request(&mut agent).await.expect("tool call");
+        let _ = next_non_request(&mut agent).await.expect("tool result");
+        let _ = next_non_request(&mut agent).await.expect("model output");
+        let _ = next_non_request(&mut agent).await.expect("completed");
 
         let requests = provider.take_requests();
         assert_eq!(requests.len(), 2);
@@ -1613,14 +1707,14 @@ mod tests {
         drop(tx);
 
         assert!(matches!(
-            rx.recv().await.expect("model item"),
+            recv_non_request(&mut rx).await.expect("model item"),
             Ok(AgentEvent::ModelOutputItem { .. })
         ));
         assert!(matches!(
-            rx.recv().await.expect("completed"),
+            recv_non_request(&mut rx).await.expect("completed"),
             Ok(AgentEvent::Completed { reply, .. }) if reply == "hello from run"
         ));
-        assert!(rx.recv().await.is_none());
+        assert!(recv_non_request(&mut rx).await.is_none());
     }
 
     #[tokio::test]
@@ -1646,22 +1740,22 @@ mod tests {
         drop(tx);
 
         assert!(matches!(
-            rx.recv().await.expect("tool call"),
+            recv_non_request(&mut rx).await.expect("tool call"),
             Ok(AgentEvent::ToolCallRequested { call, .. }) if call.call_id == "call_ping_1"
         ));
         assert!(matches!(
-            rx.recv().await.expect("tool result"),
+            recv_non_request(&mut rx).await.expect("tool result"),
             Ok(AgentEvent::ToolExecutionCompleted { result }) if result.call_id == "call_ping_1"
         ));
         assert!(matches!(
-            rx.recv().await.expect("model item"),
+            recv_non_request(&mut rx).await.expect("model item"),
             Ok(AgentEvent::ModelOutputItem { .. })
         ));
         assert!(matches!(
-            rx.recv().await.expect("completed"),
+            recv_non_request(&mut rx).await.expect("completed"),
             Ok(AgentEvent::Completed { reply, .. }) if reply == "done after tool"
         ));
-        assert!(rx.recv().await.is_none());
+        assert!(recv_non_request(&mut rx).await.is_none());
     }
 
     #[tokio::test]
@@ -1689,22 +1783,22 @@ mod tests {
         drop(tx);
 
         assert!(matches!(
-            rx.recv().await.expect("first model item"),
+            recv_non_request(&mut rx).await.expect("first model item"),
             Ok(AgentEvent::ModelOutputItem { .. })
         ));
         assert!(matches!(
-            rx.recv().await.expect("first completed"),
+            recv_non_request(&mut rx).await.expect("first completed"),
             Ok(AgentEvent::Completed { reply, .. }) if reply == "first"
         ));
         assert!(matches!(
-            rx.recv().await.expect("second model item"),
+            recv_non_request(&mut rx).await.expect("second model item"),
             Ok(AgentEvent::ModelOutputItem { .. })
         ));
         assert!(matches!(
-            rx.recv().await.expect("second completed"),
+            recv_non_request(&mut rx).await.expect("second completed"),
             Ok(AgentEvent::Completed { reply, .. }) if reply == "second"
         ));
-        assert!(rx.recv().await.is_none());
+        assert!(recv_non_request(&mut rx).await.is_none());
     }
 
     #[tokio::test]
@@ -1727,8 +1821,8 @@ mod tests {
             .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
-        let _ = agent.next().await.expect("model item");
-        let _ = agent.next().await.expect("completed");
+        let _ = next_non_request(&mut agent).await.expect("model item");
+        let _ = next_non_request(&mut agent).await.expect("completed");
 
         let records = storage.records();
         assert!(matches!(
@@ -1750,11 +1844,18 @@ mod tests {
             &records[2],
             StorageRecord::EventEmitted {
                 turn: 1,
-                event: StorageEvent::ModelOutputItem { .. }
+                event: StorageEvent::RequestPrepared { .. }
             }
         ));
         assert!(matches!(
             &records[3],
+            StorageRecord::EventEmitted {
+                turn: 1,
+                event: StorageEvent::ModelOutputItem { .. }
+            }
+        ));
+        assert!(matches!(
+            &records[4],
             StorageRecord::EventEmitted {
                 turn: 1,
                 event: StorageEvent::Completed { reply }
@@ -1788,7 +1889,7 @@ mod tests {
             .expect("second input");
         drop(tx);
 
-        while rx.recv().await.is_some() {}
+        while recv_non_request(&mut rx).await.is_some() {}
 
         let records = storage.records();
         assert!(
@@ -1831,9 +1932,9 @@ mod tests {
             .send(AgentInput::Message(InputItem::user_text("ping please")))
             .await
             .expect("turn");
-        let _ = agent.next().await.expect("tool call");
+        let _ = next_non_request(&mut agent).await.expect("tool call");
         agent.send(AgentInput::Cancel).await.expect("cancel");
-        let _ = agent.next().await.expect("cancelled");
+        let _ = next_non_request(&mut agent).await.expect("cancelled");
 
         let records = storage.records();
         assert!(records.iter().any(|record| matches!(
@@ -1871,11 +1972,11 @@ mod tests {
         drop(tx);
 
         assert!(matches!(
-            rx.recv().await.expect("error event"),
+            recv_non_request(&mut rx).await.expect("error event"),
             Err(AgentError::Llm(source))
                 if matches!(source, LlmError::Provider { status: 503, .. })
         ));
-        assert!(rx.recv().await.is_none());
+        assert!(recv_non_request(&mut rx).await.is_none());
     }
 
     #[tokio::test]
@@ -1912,17 +2013,17 @@ mod tests {
             .send(AgentInput::Message(InputItem::user_text("first")))
             .await
             .expect("first turn");
-        assert!(agent.next().await.expect("next").is_some());
-        assert!(agent.next().await.expect("next").is_some());
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("next").is_some());
+        assert!(next_non_request(&mut agent).await.expect("next").is_some());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
 
         agent
             .send(AgentInput::Message(InputItem::user_text("second")))
             .await
             .expect("second turn");
-        assert!(agent.next().await.expect("next").is_some());
-        assert!(agent.next().await.expect("next").is_some());
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("next").is_some());
+        assert!(next_non_request(&mut agent).await.expect("next").is_some());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
 
         let requests = provider.take_requests();
         assert_eq!(requests.len(), 2);
@@ -1958,17 +2059,17 @@ mod tests {
         assert_eq!(agent.queued_turn_count(), 1);
 
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ModelOutputItem { .. })
         ));
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::Completed { reply, .. }) if reply == "first"
         ));
-        match agent.next().await.expect("next") {
+        match next_non_request(&mut agent).await.expect("next") {
             Some(AgentEvent::ModelOutputItem { .. }) => {
                 assert!(matches!(
-                    agent.next().await.expect("next"),
+                    next_non_request(&mut agent).await.expect("next"),
                     Some(AgentEvent::Completed { reply, .. }) if reply == "second"
                 ));
             }
@@ -1977,7 +2078,7 @@ mod tests {
             }
             other => panic!("expected queued turn event, got {other:?}"),
         }
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
     }
 
     #[tokio::test]
@@ -2000,14 +2101,14 @@ mod tests {
             .expect("steer");
 
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ModelOutputItem { .. })
         ));
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::Completed { reply, .. }) if reply == "steered"
         ));
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
     }
 
     #[tokio::test]
@@ -2031,7 +2132,7 @@ mod tests {
             .expect("first");
 
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ToolCallRequested { .. })
         ));
 
@@ -2043,14 +2144,14 @@ mod tests {
             .expect("steer");
 
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ModelOutputItem { .. })
         ));
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::Completed { reply, .. }) if reply == "steered reply"
         ));
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
 
         let requests = provider.take_requests();
         assert_eq!(requests.len(), 2);
@@ -2090,16 +2191,16 @@ mod tests {
             .await
             .expect("turn");
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ToolCallRequested { .. })
         ));
 
         agent.send(AgentInput::Cancel).await.expect("cancel");
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::Cancelled)
         ));
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
 
         let transcript = agent.transcript().await.expect("transcript");
         assert!(transcript.iter().any(|item| {
@@ -2143,7 +2244,7 @@ mod tests {
             .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
-        let error = agent.next().await.expect_err("should fail");
+        let error = next_non_request(&mut agent).await.expect_err("should fail");
 
         assert!(matches!(error, AgentError::InvalidResponse { .. }));
     }
@@ -2174,9 +2275,9 @@ mod tests {
             .send_with_profile(AgentInput::Message(InputItem::user_text("hello")), profile)
             .await
             .expect("turn");
-        assert!(agent.next().await.expect("next").is_some());
-        assert!(agent.next().await.expect("next").is_some());
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("next").is_some());
+        assert!(next_non_request(&mut agent).await.expect("next").is_some());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
 
         let requests = provider.take_requests();
         assert_eq!(requests.len(), 1);
@@ -2201,9 +2302,9 @@ mod tests {
             .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
-        assert!(agent.next().await.expect("next").is_some());
-        assert!(agent.next().await.expect("next").is_some());
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("next").is_some());
+        assert!(next_non_request(&mut agent).await.expect("next").is_some());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
 
         let requests = provider.take_requests();
         assert!(requests[0].response_format.is_some());
@@ -2226,9 +2327,9 @@ mod tests {
             .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
-        assert!(agent.next().await.expect("next").is_some());
-        assert!(agent.next().await.expect("next").is_some());
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("next").is_some());
+        assert!(next_non_request(&mut agent).await.expect("next").is_some());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
 
         let requests = provider.take_requests();
         assert!(requests[0].response_format.is_none());
@@ -2254,14 +2355,14 @@ mod tests {
             .expect("turn");
 
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::ModelOutputItem { .. })
         ));
         assert!(matches!(
-            agent.next().await.expect("next"),
+            next_non_request(&mut agent).await.expect("next"),
             Some(AgentEvent::Completed { .. })
         ));
-        assert!(agent.next().await.expect("done").is_none());
+        assert!(next_non_request(&mut agent).await.expect("done").is_none());
     }
 
     #[tokio::test]
@@ -2281,7 +2382,7 @@ mod tests {
             .await
             .expect("turn");
 
-        let error = agent.next().await.expect_err("should fail");
+        let error = next_non_request(&mut agent).await.expect_err("should fail");
 
         match error {
             AgentError::Llm(inner) => {

@@ -15,6 +15,7 @@ fn event_kind<Tool, ToolResult, Output>(
 ) -> &'static str {
     match event {
         AgentEvent::ContextWindowMaterialized { .. } => "context_window_materialized",
+        AgentEvent::RequestPrepared { .. } => "request_prepared",
         AgentEvent::ModelOutputItem { .. } => "model_output_item",
         AgentEvent::ToolCallRequested { .. } => "tool_call_requested",
         AgentEvent::ToolExecutionCompleted { .. } => "tool_execution_completed",

@@ -329,6 +329,9 @@ enum PersistedTranscriptEvent {
     ContextWindow {
         value: Vec<ContextChunk>,
     },
+    Request {
+        value: crate::trial::RecordedRequest,
+    },
     System {
         value: String,
     },
@@ -420,6 +423,9 @@ fn persisted_transcript(events: Vec<RecordedEvent>) -> Vec<PersistedTranscriptEv
             }
             RecordedEvent::ContextWindow { chunks } => {
                 transcript.push(PersistedTranscriptEvent::ContextWindow { value: chunks })
+            }
+            RecordedEvent::RequestPrepared { request } => {
+                transcript.push(PersistedTranscriptEvent::Request { value: request })
             }
             RecordedEvent::Message { role, content } => match role {
                 RecordedMessageRole::System => {
@@ -801,6 +807,7 @@ pub(crate) fn usage_summary_from_transcript(events: &[RecordedEvent]) -> UsageSu
             | RecordedEvent::StepCompleted { .. }
             | RecordedEvent::Message { .. }
             | RecordedEvent::ContextWindow { .. }
+            | RecordedEvent::RequestPrepared { .. }
             | RecordedEvent::ToolExecutionCompleted { .. }
             | RecordedEvent::Error { .. }
             | RecordedEvent::GraderStarted { .. }
@@ -808,7 +815,9 @@ pub(crate) fn usage_summary_from_transcript(events: &[RecordedEvent]) -> UsageSu
             | RecordedEvent::GraderFailed { .. } => None,
         };
 
-        if let Some(metrics) = metrics && seen.insert(metrics.response_id) {
+        if let Some(metrics) = metrics
+            && seen.insert(metrics.response_id)
+        {
             summary.add_metrics(metrics);
         }
     }

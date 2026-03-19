@@ -77,7 +77,7 @@ pub use context::{
 pub use error::{AgentError, AgentResult};
 pub use runtime::{
     Agent, AgentBuilder, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput, ExecutionProfile,
-    SessionAgent,
+    PreparedRequest, SessionAgent,
 };
 pub use storage::{
     InMemoryStorageAdapter, NoopStorageAdapter, StorageAdapter, StorageEvent, StorageInput,
