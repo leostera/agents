@@ -1,4 +1,4 @@
-use agents::agent::{Agent, AgentError, AgentEvent, AgentInput, ToolExecutionResult};
+use agents::agent::{Agent, AgentError, AgentEvent, AgentInput, ContextChunk, ToolExecutionResult};
 use agents::llm::completion::{OutputContent, OutputItem, Role};
 use async_trait::async_trait;
 use schemars::JsonSchema;
@@ -217,6 +217,9 @@ pub enum RecordedEvent {
         role: RecordedMessageRole,
         content: String,
     },
+    ContextWindow {
+        chunks: Vec<ContextChunk>,
+    },
     Thinking {
         content: String,
     },
@@ -326,6 +329,9 @@ where
     Output: Clone + Serialize,
 {
     match event {
+        AgentEvent::ContextWindowMaterialized { window } => vec![RecordedEvent::ContextWindow {
+            chunks: window.chunks.clone(),
+        }],
         AgentEvent::ModelOutputItem { item } => match item {
             OutputItem::Message { role, content } => {
                 let text = content
@@ -435,6 +441,7 @@ fn build_tool_trace(transcript: &[RecordedEvent]) -> Vec<RecordedToolCall> {
             RecordedEvent::StepStarted { .. }
             | RecordedEvent::StepCompleted { .. }
             | RecordedEvent::Message { .. }
+            | RecordedEvent::ContextWindow { .. }
             | RecordedEvent::Thinking { .. }
             | RecordedEvent::Completed { .. }
             | RecordedEvent::Error { .. }

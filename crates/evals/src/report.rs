@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use agents::agent::Agent;
+use agents::agent::{Agent, ContextChunk};
 use chrono::SecondsFormat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -305,6 +305,9 @@ struct PersistedTrialGrading {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum PersistedTranscriptEvent {
+    ContextWindow {
+        value: Vec<ContextChunk>,
+    },
     System {
         value: String,
     },
@@ -392,6 +395,9 @@ fn persisted_transcript(events: Vec<RecordedEvent>) -> Vec<PersistedTranscriptEv
                     value: input,
                     step: Some(step_index),
                 });
+            }
+            RecordedEvent::ContextWindow { chunks } => {
+                transcript.push(PersistedTranscriptEvent::ContextWindow { value: chunks })
             }
             RecordedEvent::Message { role, content } => match role {
                 RecordedMessageRole::System => {

@@ -18,6 +18,9 @@ pub enum StorageInput {
 /// Event records captured by a storage adapter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StorageEvent {
+    ContextWindowMaterialized {
+        chunks: Vec<ContextChunk>,
+    },
     ModelOutputItem {
         item: Value,
     },

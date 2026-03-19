@@ -30,10 +30,12 @@ This file tracks the current evals/agent runtime roadmap and the follow-up items
 5. Expand `AgentEvent` into the full runtime event stream
    - The current event model is still too output-oriented.
    - We want a complete stream of agent/runtime events so transcript recording can rely on the agent event stream directly.
+   - [x] Pre-request system/context materialization is now emitted as an agent event.
 
 6. Capture system/context materialization in transcripts
    - Transcripts still do not show the real system/context window seen by the model.
    - This depends on the fuller `AgentEvent` work.
+   - [x] Persist `context_window` transcript rows when system context is materialized.
 
 ## Validation and Packaging
 

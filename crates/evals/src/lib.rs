@@ -169,7 +169,10 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-    use agents::agent::{AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
+    use agents::agent::{
+        AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput, ContextManager,
+        SessionAgent, StaticContextProvider,
+    };
     use agents::llm::LlmRunner;
     use agents::llm::capability::Capability;
     use agents::llm::completion::{
@@ -348,6 +351,64 @@ mod tests {
 
     fn judge_test_runner() -> Arc<LlmRunner> {
         Arc::new(LlmRunner::builder().add_provider(JudgeTestProvider).build())
+    }
+
+    struct SessionTestProvider;
+
+    #[async_trait]
+    impl LlmProvider for SessionTestProvider {
+        fn provider_type(&self) -> ProviderType {
+            ProviderType::OpenAI
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "session-test"
+        }
+
+        fn capabilities(&self) -> &[Capability] {
+            static CAPABILITIES: [Capability; 1] = [Capability::ChatCompletion];
+            &CAPABILITIES
+        }
+
+        async fn available_models(&self) -> LlmResult<Vec<Model>> {
+            Ok(vec![Model::new("session-test-model")])
+        }
+
+        async fn chat_raw(&self, _req: RawCompletionRequest) -> LlmResult<RawCompletionResponse> {
+            Ok(RawCompletionResponse {
+                provider: ProviderType::OpenAI,
+                model: "session-test-model".to_string(),
+                output: vec![RawOutputItem::Message {
+                    role: Role::Assistant,
+                    content: vec![RawOutputContent::Text {
+                        text: "hello".to_string(),
+                    }],
+                }],
+                usage: Usage {
+                    prompt_tokens: 8,
+                    completion_tokens: 2,
+                    total_tokens: 10,
+                },
+                finish_reason: FinishReason::Stop,
+            })
+        }
+
+        async fn transcribe(
+            &self,
+            _req: AudioTranscriptionRequest,
+        ) -> LlmResult<AudioTranscriptionResponse> {
+            Err(LlmError::InvalidRequest {
+                reason: "session test provider does not support transcription".to_string(),
+            })
+        }
+    }
+
+    fn session_test_runner() -> Arc<LlmRunner> {
+        Arc::new(
+            LlmRunner::builder()
+                .add_provider(SessionTestProvider)
+                .build(),
+        )
     }
 
     #[async_trait]
@@ -883,6 +944,82 @@ mod tests {
             event.get("type").and_then(|value| value.as_str()) == Some("grade")
                 && event.get("name").and_then(|value| value.as_str()) == Some("echoes-hello")
                 && event.get("score").and_then(|value| value.as_f64()) == Some(1.0)
+        }));
+    }
+
+    #[tokio::test]
+    async fn persisted_trials_include_materialized_context_windows() {
+        type BasicAgent = SessionAgent<String, (), (), String>;
+
+        let suite = Suite::new("context")
+            .agent(|_ctx| async move {
+                Ok::<BasicAgent, EvalError>(
+                    SessionAgent::builder()
+                        .with_llm_runner(session_test_runner())
+                        .with_context_manager(
+                            ContextManager::builder()
+                                .add_provider(StaticContextProvider::system_text(
+                                    "You are a test agent.",
+                                ))
+                                .build(),
+                        )
+                        .build()
+                        .map_err(|error| EvalError::message(error.to_string()))?,
+                )
+            })
+            .eval(
+                Eval::new("captures_context").run(
+                    Trajectory::<BasicAgent>::builder()
+                        .add_step(Step::user("hello".to_string()))
+                        .build()
+                        .expect("trajectory")
+                        .runner(),
+                ),
+            );
+
+        let report = suite
+            .run_with(RunConfig::single(ExecutionTarget::openai(
+                "context",
+                "session-test-model",
+            )))
+            .run()
+            .await
+            .expect("report");
+        let root = TempDir::new().expect("temp dir");
+        let index = report.write_to(root.path()).expect("artifacts to write");
+        let trial_path = root.path().join(
+            index
+                .files
+                .iter()
+                .find(|path| path.contains("trial-001__captures_context__"))
+                .expect("trial artifact path"),
+        );
+        let trial: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&trial_path).expect("trial json"))
+                .expect("parsed trial json");
+        let transcript = trial
+            .get("transcript")
+            .and_then(|value| value.as_array())
+            .expect("transcript array");
+
+        assert!(transcript.iter().any(|event| {
+            event.get("type").and_then(|value| value.as_str()) == Some("context_window")
+                && event
+                    .get("value")
+                    .and_then(|value| value.as_array())
+                    .and_then(|chunks| chunks.first())
+                    .and_then(|chunk| chunk.get("Message"))
+                    .and_then(|chunk| chunk.get("role"))
+                    .and_then(|value| value.as_str())
+                    == Some("System")
+                && event
+                    .get("value")
+                    .and_then(|value| value.as_array())
+                    .and_then(|chunks| chunks.first())
+                    .and_then(|chunk| chunk.get("Message"))
+                    .and_then(|chunk| chunk.get("content"))
+                    .and_then(|value| value.as_str())
+                    == Some("You are a test agent.")
         }));
     }
 

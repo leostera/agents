@@ -3,20 +3,21 @@ use std::sync::{Arc, Mutex};
 use crate::llm::LlmRunner;
 use crate::llm::completion::{InputContent, InputItem, Role};
 use async_trait::async_trait;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::agent::error::AgentResult;
 
 /// Strategy hint for how a context chunk should be retained.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ContextStrategy {
     Pinnable,
     Compactable,
 }
 
 /// Role attached to a context message chunk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ContextRole {
     System,
     User,
@@ -24,7 +25,7 @@ pub enum ContextRole {
 }
 
 /// One item in an agent context window.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum ContextChunk {
     Message {
         strategy: ContextStrategy,
@@ -135,7 +136,7 @@ impl ContextChunk {
 }
 
 /// Materialized context window ready to be lowered into model input items.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ContextWindow {
     pub chunks: Vec<ContextChunk>,
 }

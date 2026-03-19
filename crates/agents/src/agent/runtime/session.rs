@@ -18,7 +18,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::mpsc;
 
-use crate::agent::context::{ContextChunk, ContextManager, ContextStrategy, ContextWindow};
+use crate::agent::context::{
+    ContextChunk, ContextManager, ContextRole, ContextStrategy, ContextWindow,
+};
 use crate::agent::error::{AgentError, AgentResult};
 use crate::agent::storage::{
     NoopStorageAdapter, StorageAdapter, StorageEvent, StorageInput, StorageRecord,
@@ -85,6 +87,8 @@ impl ExecutionProfile {
 /// Events emitted while an agent turn is executing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentEvent<C, T, R> {
+    /// The full context window materialized for an imminent model request.
+    ContextWindowMaterialized { window: ContextWindow },
     /// A model output item streamed from the underlying provider.
     ModelOutputItem { item: OutputItem<C, R> },
     /// A typed tool call requested by the model.
@@ -295,6 +299,9 @@ struct QueuedTurn {
 enum TurnState<C, T, R> {
     CancelPending,
     NeedLlm,
+    DispatchRequest {
+        request: CompletionRequest<C, R>,
+    },
     ExecuteTool {
         current: ToolCallEnvelope<C>,
         remaining: VecDeque<ToolCallEnvelope<C>>,
@@ -348,7 +355,10 @@ impl<C, T, R> TurnState<C, T, R> {
                 }
                 next.collect_pending_tool_call_ids(call_ids, seen);
             }
-            TurnState::CancelPending | TurnState::NeedLlm | TurnState::Done => {}
+            TurnState::CancelPending
+            | TurnState::NeedLlm
+            | TurnState::DispatchRequest { .. }
+            | TurnState::Done => {}
         }
     }
 }
@@ -492,7 +502,20 @@ where
                     return Ok(Some(event));
                 }
                 TurnState::NeedLlm => {
-                    let request = self.build_request(active_turn.profile.clone()).await?;
+                    let (window, request) = self.build_request(active_turn.profile.clone()).await?;
+                    active_turn.state = if should_emit_context_window(&window) {
+                        TurnState::EmitQueue {
+                            queue: VecDeque::from([AgentEvent::ContextWindowMaterialized {
+                                window,
+                            }]),
+                            next: Box::new(TurnState::DispatchRequest { request }),
+                        }
+                    } else {
+                        TurnState::DispatchRequest { request }
+                    };
+                    self.active_turn = Some(active_turn);
+                }
+                TurnState::DispatchRequest { request } => {
                     let response = self.llm.chat::<C, R>(request).await?;
                     active_turn.state = self.turn_state_from_response(response).await?;
                     self.active_turn = Some(active_turn);
@@ -734,7 +757,7 @@ where
     async fn build_request(
         &self,
         profile: ExecutionProfile,
-    ) -> AgentResult<CompletionRequest<C, R>> {
+    ) -> AgentResult<(ContextWindow, CompletionRequest<C, R>)> {
         let window = self.context_manager.window().await?;
         let mut request = CompletionRequest::new(window.to_input_items()?, profile.model_selector)
             .with_token_limit(profile.token_limit)
@@ -761,7 +784,7 @@ where
             request = request.with_typed_response(TypedResponse::new("agent_response"));
         }
 
-        Ok(request)
+        Ok((window, request))
     }
 
     fn extract_reply(&self, response: &CompletionResponse<C, R>) -> AgentResult<R> {
@@ -898,6 +921,11 @@ where
     R: Serialize,
 {
     match event {
+        AgentEvent::ContextWindowMaterialized { window } => {
+            Ok(StorageEvent::ContextWindowMaterialized {
+                chunks: window.chunks.clone(),
+            })
+        }
         AgentEvent::ModelOutputItem { item } => Ok(StorageEvent::ModelOutputItem {
             item: serde_json::to_value(item).map_err(|error| AgentError::Internal {
                 message: error.to_string(),
@@ -930,6 +958,18 @@ where
     R: Serialize + 'static,
 {
     input_item_to_chunk(assistant_item_for_reply(reply)?, strategy)
+}
+
+fn should_emit_context_window(window: &ContextWindow) -> bool {
+    window.chunks.iter().any(|chunk| {
+        matches!(
+            chunk,
+            ContextChunk::Message {
+                role: ContextRole::System,
+                ..
+            }
+        )
+    })
 }
 
 #[cfg(test)]
@@ -1270,6 +1310,15 @@ mod tests {
             .send(AgentInput::Message(InputItem::user_text("hello")))
             .await
             .expect("turn");
+        assert!(matches!(
+            agent.next().await.expect("context window"),
+            Some(AgentEvent::ContextWindowMaterialized { window })
+                if matches!(
+                    window.chunks.first(),
+                    Some(ContextChunk::Message { role: ContextRole::System, content, .. })
+                        if content == "You are a test agent."
+                )
+        ));
         let _ = agent.next().await.expect("model output");
         let _ = agent.next().await.expect("completed");
 
@@ -1280,6 +1329,49 @@ mod tests {
             Some(RawInputItem::Message { role: Role::System, content })
                 if matches!(content.first(), Some(crate::llm::completion::RawInputContent::Text { text }) if text == "You are a test agent.")
         ));
+    }
+
+    #[tokio::test]
+    async fn storage_adapter_records_materialized_context_windows() {
+        let storage = InMemoryStorageAdapter::shared();
+        let mut agent = Agent::raw_builder()
+            .with_storage_adapter_arc(storage.clone())
+            .with_context_manager(
+                ContextManager::builder()
+                    .add_provider(StaticContextProvider::system_text("system prompt"))
+                    .build(),
+            )
+            .with_llm_runner(
+                LlmRunner::builder()
+                    .add_provider(FakeProvider::with_responses(vec![Ok(
+                        assistant_text_response("stored hello"),
+                    )]))
+                    .build()
+                    .into(),
+            )
+            .build()
+            .expect("agent");
+
+        agent
+            .send(AgentInput::Message(InputItem::user_text("hello")))
+            .await
+            .expect("turn");
+        let _ = agent.next().await.expect("context");
+        let _ = agent.next().await.expect("model output");
+        let _ = agent.next().await.expect("completed");
+
+        let records = storage.records();
+        assert!(records.iter().any(|record| matches!(
+            record,
+            StorageRecord::EventEmitted {
+                turn: 1,
+                event: StorageEvent::ContextWindowMaterialized { chunks }
+            } if matches!(
+                chunks.first(),
+                Some(ContextChunk::Message { role: ContextRole::System, content, .. })
+                    if content == "system prompt"
+            )
+        )));
     }
 
     #[tokio::test]
