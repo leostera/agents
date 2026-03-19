@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agents::agent::{Agent, ContextChunk};
+use agents::llm::completion::UsageMetrics;
 use chrono::SecondsFormat;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -51,6 +52,7 @@ pub struct SuiteSummary {
     pub pass_rate: f32,
     pub mean_score: f32,
     pub mean_duration: Duration,
+    pub usage: UsageSummary,
     pub evals: Vec<EvalAggregate>,
 }
 
@@ -63,6 +65,7 @@ pub struct EvalAggregate {
     pub pass_rate: f32,
     pub mean_score: f32,
     pub mean_duration: Duration,
+    pub usage: UsageSummary,
     pub grader_means: Vec<GraderAggregate>,
 }
 
@@ -72,6 +75,22 @@ pub struct GraderAggregate {
     pub name: String,
     pub mean_score: f32,
     pub pass_rate: f32,
+}
+
+/// Aggregated token usage across one or more completion responses.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct UsageSummary {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+}
+
+impl UsageSummary {
+    fn add_metrics(&mut self, metrics: &UsageMetrics) {
+        self.prompt_tokens += u64::from(metrics.usage.prompt_tokens);
+        self.completion_tokens += u64::from(metrics.usage.completion_tokens);
+        self.total_tokens += u64::from(metrics.usage.total_tokens);
+    }
 }
 
 /// One persisted trial artifact before transcript projection.
@@ -89,6 +108,7 @@ pub struct TrialRecord {
     pub duration: Duration,
     pub passed: bool,
     pub mean_score: f32,
+    pub usage: UsageSummary,
     pub trial: Option<serde_json::Value>,
     pub error: Option<RecordedError>,
     pub grades: BTreeMap<String, GradeResult>,
@@ -280,6 +300,7 @@ struct PersistedTrialRecord {
     pub target: PersistedTrialTarget,
     pub timing: PersistedTrialTiming,
     pub grading: PersistedTrialGrading,
+    pub usage: UsageSummary,
     pub transcript: Vec<PersistedTranscriptEvent>,
 }
 
@@ -379,6 +400,7 @@ impl PersistedTrialRecord {
                 mean_score: trial.mean_score,
                 error: trial.error.clone(),
             },
+            usage: trial.usage.clone(),
         })
     }
 }
@@ -417,13 +439,14 @@ fn persisted_transcript(events: Vec<RecordedEvent>) -> Vec<PersistedTranscriptEv
                     })
                 }
             },
-            RecordedEvent::Thinking { content } => {
+            RecordedEvent::Thinking { content, .. } => {
                 transcript.push(PersistedTranscriptEvent::Thinking { value: content })
             }
             RecordedEvent::ToolCallRequested {
                 id,
                 name,
                 arguments,
+                ..
             } => transcript.push(PersistedTranscriptEvent::ToolCall {
                 id,
                 name,
@@ -460,7 +483,7 @@ fn persisted_transcript(events: Vec<RecordedEvent>) -> Vec<PersistedTranscriptEv
                 error: Some(error),
                 step: grading_step(scope),
             }),
-            RecordedEvent::Completed { reply } => {
+            RecordedEvent::Completed { reply, .. } => {
                 transcript.push(PersistedTranscriptEvent::Assistant { value: reply })
             }
             RecordedEvent::Error { error } => {
@@ -674,6 +697,7 @@ where
     let passed_trials = trials.iter().filter(|trial| trial.passed).count();
     let mean_score = mean(trials.iter().map(|trial| trial.mean_score));
     let mean_duration = mean_duration(trials.iter().map(|trial| trial.duration));
+    let usage = sum_usage(trials.iter().map(|trial| &trial.usage));
 
     let evals = suite
         .evals()
@@ -692,6 +716,7 @@ where
         pass_rate: ratio(passed_trials, total_trials),
         mean_score,
         mean_duration,
+        usage,
         evals,
     }
 }
@@ -756,8 +781,49 @@ where
         pass_rate: ratio(passed_trials, eval_trials.len()),
         mean_score: mean(eval_trials.iter().map(|trial| trial.mean_score)),
         mean_duration: mean_duration(eval_trials.iter().map(|trial| trial.duration)),
+        usage: sum_usage(eval_trials.iter().map(|trial| &trial.usage)),
         grader_means,
     }
+}
+
+pub(crate) fn usage_summary_from_transcript(events: &[RecordedEvent]) -> UsageSummary {
+    use std::collections::BTreeSet;
+
+    let mut summary = UsageSummary::default();
+    let mut seen = BTreeSet::new();
+
+    for event in events {
+        let metrics = match event {
+            RecordedEvent::Thinking { usage_metrics, .. } => Some(usage_metrics),
+            RecordedEvent::ToolCallRequested { usage_metrics, .. } => Some(usage_metrics),
+            RecordedEvent::Completed { usage_metrics, .. } => Some(usage_metrics),
+            RecordedEvent::StepStarted { .. }
+            | RecordedEvent::StepCompleted { .. }
+            | RecordedEvent::Message { .. }
+            | RecordedEvent::ContextWindow { .. }
+            | RecordedEvent::ToolExecutionCompleted { .. }
+            | RecordedEvent::Error { .. }
+            | RecordedEvent::GraderStarted { .. }
+            | RecordedEvent::GraderCompleted { .. }
+            | RecordedEvent::GraderFailed { .. } => None,
+        };
+
+        if let Some(metrics) = metrics && seen.insert(metrics.response_id) {
+            summary.add_metrics(metrics);
+        }
+    }
+
+    summary
+}
+
+fn sum_usage<'a>(values: impl IntoIterator<Item = &'a UsageSummary>) -> UsageSummary {
+    let mut total = UsageSummary::default();
+    for value in values {
+        total.prompt_tokens += value.prompt_tokens;
+        total.completion_tokens += value.completion_tokens;
+        total.total_tokens += value.total_tokens;
+    }
+    total
 }
 
 fn mean(values: impl IntoIterator<Item = f32>) -> f32 {

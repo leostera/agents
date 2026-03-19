@@ -122,6 +122,7 @@ where
         match next_event(agent).await? {
             Some(AgentEvent::ModelOutputItem {
                 item: agents::completion::OutputItem::Message { content, .. },
+                ..
             }) if content.iter().all(|part| match part {
                 agents::completion::OutputContent::Text { text } => text.trim().is_empty(),
                 agents::completion::OutputContent::Structured { .. } => false,
@@ -151,7 +152,7 @@ async fn openai_agent_send_completes_text_turn_long() -> LlmResult<()> {
         Some(AgentEvent::ModelOutputItem { .. })
     ));
     match next_event(&mut agent).await? {
-        Some(AgentEvent::Completed { reply }) => {
+        Some(AgentEvent::Completed { reply, .. }) => {
             assert!(
                 !reply.trim().is_empty(),
                 "expected non-empty reply, got {reply:?}"
@@ -184,7 +185,7 @@ async fn openai_agent_run_streams_text_turn_long() -> LlmResult<()> {
         AgentEvent::ModelOutputItem { .. }
     ));
     match map_agent_error(rx.recv().await.expect("completed"))? {
-        AgentEvent::Completed { reply } => {
+        AgentEvent::Completed { reply, .. } => {
             assert!(
                 !reply.trim().is_empty(),
                 "expected non-empty reply, got {reply:?}"
@@ -217,7 +218,7 @@ async fn openai_agent_send_decodes_typed_response_long() -> LlmResult<()> {
         Some(AgentEvent::ModelOutputItem { .. })
     ));
     match next_event(&mut agent).await? {
-        Some(AgentEvent::Completed { reply }) => {
+        Some(AgentEvent::Completed { reply, .. }) => {
             assert!(
                 !reply.value.trim().is_empty(),
                 "expected non-empty reply, got {reply:?}"
@@ -267,7 +268,7 @@ async fn openai_agent_executes_ping_tool_and_finishes_long() -> LlmResult<()> {
         .expect("turn");
 
     let tool_call_id = match next_nonempty_event(&mut agent).await? {
-        Some(AgentEvent::ToolCallRequested { call }) => {
+        Some(AgentEvent::ToolCallRequested { call, .. }) => {
             let call_id = call.call_id;
             assert_eq!(
                 call.call,
@@ -278,7 +279,7 @@ async fn openai_agent_executes_ping_tool_and_finishes_long() -> LlmResult<()> {
             call_id
         }
         Some(AgentEvent::ModelOutputItem { .. }) => match next_nonempty_event(&mut agent).await? {
-            Some(AgentEvent::ToolCallRequested { call }) => {
+            Some(AgentEvent::ToolCallRequested { call, .. }) => {
                 let call_id = call.call_id;
                 assert_eq!(
                     call.call,
@@ -322,7 +323,7 @@ async fn openai_agent_executes_ping_tool_and_finishes_long() -> LlmResult<()> {
 
     match next_nonempty_event(&mut agent).await? {
         Some(AgentEvent::ModelOutputItem { .. }) => match next_event(&mut agent).await? {
-            Some(AgentEvent::Completed { reply }) => {
+            Some(AgentEvent::Completed { reply, .. }) => {
                 assert!(
                     reply.to_lowercase().contains("pong:hello-tool"),
                     "expected tool output, got {reply:?}"
@@ -330,7 +331,7 @@ async fn openai_agent_executes_ping_tool_and_finishes_long() -> LlmResult<()> {
             }
             other => panic!("expected completed event after model output, got {other:?}"),
         },
-        Some(AgentEvent::Completed { reply }) => {
+        Some(AgentEvent::Completed { reply, .. }) => {
             assert!(
                 reply.to_lowercase().contains("pong:hello-tool"),
                 "expected tool output, got {reply:?}"
@@ -382,7 +383,7 @@ async fn openai_agent_run_executes_ping_tool_and_finishes_long() -> LlmResult<()
 
     let first = map_agent_error(rx.recv().await.expect("first event"))?;
     let tool_call_id = match first {
-        AgentEvent::ToolCallRequested { call } => {
+        AgentEvent::ToolCallRequested { call, .. } => {
             assert_eq!(
                 call.call,
                 TestTools::Ping {
@@ -393,7 +394,7 @@ async fn openai_agent_run_executes_ping_tool_and_finishes_long() -> LlmResult<()
         }
         AgentEvent::ModelOutputItem { .. } => {
             match map_agent_error(rx.recv().await.expect("tool call"))? {
-                AgentEvent::ToolCallRequested { call } => {
+                AgentEvent::ToolCallRequested { call, .. } => {
                     assert_eq!(
                         call.call,
                         TestTools::Ping {
@@ -431,7 +432,7 @@ async fn openai_agent_run_executes_ping_tool_and_finishes_long() -> LlmResult<()
     let completed = loop {
         match map_agent_error(rx.recv().await.expect("follow-up event"))? {
             AgentEvent::ModelOutputItem { .. } => continue,
-            AgentEvent::Completed { reply } => break reply,
+            AgentEvent::Completed { reply, .. } => break reply,
             other => panic!("expected final reply after tool execution, got {other:?}"),
         }
     };
@@ -467,7 +468,7 @@ async fn openai_agent_run_queues_messages_in_order_long() -> LlmResult<()> {
     let first_reply = loop {
         match map_agent_error(rx.recv().await.expect("first turn event"))? {
             AgentEvent::ModelOutputItem { .. } => continue,
-            AgentEvent::Completed { reply } => break reply,
+            AgentEvent::Completed { reply, .. } => break reply,
             other => panic!("expected first completed event, got {other:?}"),
         }
     };
@@ -479,7 +480,7 @@ async fn openai_agent_run_queues_messages_in_order_long() -> LlmResult<()> {
     let second_reply = loop {
         match map_agent_error(rx.recv().await.expect("second turn event"))? {
             AgentEvent::ModelOutputItem { .. } => continue,
-            AgentEvent::Completed { reply } => break reply,
+            AgentEvent::Completed { reply, .. } => break reply,
             other => panic!("expected second completed event, got {other:?}"),
         }
     };
@@ -596,7 +597,7 @@ async fn openai_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<()>
     .expect("send");
 
     match map_agent_error(rx.recv().await.expect("first event"))? {
-        AgentEvent::ToolCallRequested { call } => {
+        AgentEvent::ToolCallRequested { call, .. } => {
             assert_eq!(
                 call.call,
                 TestTools::Ping {
@@ -606,7 +607,7 @@ async fn openai_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<()>
         }
         AgentEvent::ModelOutputItem { .. } => {
             match map_agent_error(rx.recv().await.expect("tool call"))? {
-                AgentEvent::ToolCallRequested { call } => {
+                AgentEvent::ToolCallRequested { call, .. } => {
                     assert_eq!(
                         call.call,
                         TestTools::Ping {
@@ -629,7 +630,7 @@ async fn openai_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<()>
     .expect("steer");
 
     let rerouted_call_id = match map_agent_error(rx.recv().await.expect("rerouted event"))? {
-        AgentEvent::ToolCallRequested { call } => {
+        AgentEvent::ToolCallRequested { call, .. } => {
             let call_id = call.call_id;
             assert_eq!(
                 call.call,
@@ -641,7 +642,7 @@ async fn openai_agent_run_steer_clears_pending_tool_plan_long() -> LlmResult<()>
         }
         AgentEvent::ModelOutputItem { .. } => {
             match map_agent_error(rx.recv().await.expect("rerouted tool call"))? {
-                AgentEvent::ToolCallRequested { call } => {
+                AgentEvent::ToolCallRequested { call, .. } => {
                     let call_id = call.call_id;
                     assert_eq!(
                         call.call,
@@ -728,7 +729,7 @@ async fn openai_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
         .expect("turn");
 
     match next_nonempty_event(&mut agent).await? {
-        Some(AgentEvent::ToolCallRequested { call }) => {
+        Some(AgentEvent::ToolCallRequested { call, .. }) => {
             assert_eq!(
                 call.call,
                 TestTools::Ping {
@@ -737,7 +738,7 @@ async fn openai_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
             );
         }
         Some(AgentEvent::ModelOutputItem { .. }) => match next_nonempty_event(&mut agent).await? {
-            Some(AgentEvent::ToolCallRequested { call }) => {
+            Some(AgentEvent::ToolCallRequested { call, .. }) => {
                 assert_eq!(
                     call.call,
                     TestTools::Ping {
@@ -758,7 +759,7 @@ async fn openai_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
         .expect("steer");
 
     let rerouted_call_id = match next_nonempty_event(&mut agent).await? {
-        Some(AgentEvent::ToolCallRequested { call }) => {
+        Some(AgentEvent::ToolCallRequested { call, .. }) => {
             let call_id = call.call_id;
             assert_eq!(
                 call.call,
@@ -769,7 +770,7 @@ async fn openai_agent_steer_clears_pending_tool_plan_long() -> LlmResult<()> {
             call_id
         }
         Some(AgentEvent::ModelOutputItem { .. }) => match next_nonempty_event(&mut agent).await? {
-            Some(AgentEvent::ToolCallRequested { call }) => {
+            Some(AgentEvent::ToolCallRequested { call, .. }) => {
                 let call_id = call.call_id;
                 assert_eq!(
                     call.call,

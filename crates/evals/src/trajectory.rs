@@ -242,7 +242,7 @@ where
                                     event_kind = event_kind(&event),
                                     "received trajectory event"
                                 );
-                                if let AgentEvent::Completed { reply } = &event {
+                                if let AgentEvent::Completed { reply, .. } = &event {
                                     final_reply = Some(reply.clone());
                                 }
                                 if matches!(event, AgentEvent::Completed { .. }) {

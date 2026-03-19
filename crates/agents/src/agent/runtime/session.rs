@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::llm::LlmRunner;
 use crate::llm::completion::{
     CompletionRequest, CompletionResponse, InputItem, ModelSelector, OutputContent, OutputItem,
-    ResponseMode, TokenLimit, TopK, TopP,
+    ResponseMode, TokenLimit, TopK, TopP, UsageMetrics,
 };
 use crate::llm::response::TypedResponse;
 use crate::llm::tools::{ToolCall, TypedTool, TypedToolSet};
@@ -90,13 +90,22 @@ pub enum AgentEvent<C, T, R> {
     /// The full context window materialized for an imminent model request.
     ContextWindowMaterialized { window: ContextWindow },
     /// A model output item streamed from the underlying provider.
-    ModelOutputItem { item: OutputItem<C, R> },
+    ModelOutputItem {
+        item: OutputItem<C, R>,
+        usage_metrics: UsageMetrics,
+    },
     /// A typed tool call requested by the model.
-    ToolCallRequested { call: ToolCallEnvelope<C> },
+    ToolCallRequested {
+        call: ToolCallEnvelope<C>,
+        usage_metrics: UsageMetrics,
+    },
     /// Completion of a tool execution.
     ToolExecutionCompleted { result: ToolResultEnvelope<T> },
     /// Terminal completion of the turn with the final structured reply.
-    Completed { reply: R },
+    Completed {
+        reply: R,
+        usage_metrics: UsageMetrics,
+    },
     /// Terminal cancellation of the turn.
     Cancelled,
 }
@@ -251,6 +260,7 @@ where
             storage_adapter: self.storage_adapter,
             tool_runner,
             next_turn: 1,
+            next_response: 1,
             active_turn: None,
             queued_turns: VecDeque::new(),
             _message: PhantomData,
@@ -278,6 +288,7 @@ where
     storage_adapter: Arc<dyn StorageAdapter>,
     tool_runner: Arc<dyn ToolRunner<C, T>>,
     next_turn: u64,
+    next_response: u64,
     active_turn: Option<ActiveTurn<C, T, R>>,
     queued_turns: VecDeque<QueuedTurn>,
     _message: PhantomData<M>,
@@ -305,6 +316,7 @@ enum TurnState<C, T, R> {
     ExecuteTool {
         current: ToolCallEnvelope<C>,
         remaining: VecDeque<ToolCallEnvelope<C>>,
+        usage_metrics: UsageMetrics,
     },
     EmitQueue {
         queue: VecDeque<AgentEvent<C, T, R>>,
@@ -335,7 +347,9 @@ impl<C, T, R> TurnState<C, T, R> {
         seen: &mut HashSet<String>,
     ) {
         match self {
-            TurnState::ExecuteTool { current, remaining } => {
+            TurnState::ExecuteTool {
+                current, remaining, ..
+            } => {
                 if seen.insert(current.call_id.clone()) {
                     call_ids.push(current.call_id.clone());
                 }
@@ -347,7 +361,7 @@ impl<C, T, R> TurnState<C, T, R> {
             }
             TurnState::EmitQueue { queue, next } => {
                 for event in queue {
-                    if let AgentEvent::ToolCallRequested { call } = event
+                    if let AgentEvent::ToolCallRequested { call, .. } = event
                         && seen.insert(call.call_id.clone())
                     {
                         call_ids.push(call.call_id.clone());
@@ -523,6 +537,7 @@ where
                 TurnState::ExecuteTool {
                     current,
                     mut remaining,
+                    usage_metrics,
                 } => {
                     let result = self.tool_runner.run(current).await?;
                     self.context_manager
@@ -533,10 +548,12 @@ where
                         TurnState::EmitQueue {
                             queue: VecDeque::from([AgentEvent::ToolCallRequested {
                                 call: next_call.clone(),
+                                usage_metrics: usage_metrics.clone(),
                             }]),
                             next: Box::new(TurnState::ExecuteTool {
                                 current: next_call,
                                 remaining,
+                                usage_metrics,
                             }),
                         }
                     } else {
@@ -658,12 +675,22 @@ where
         &mut self,
         response: CompletionResponse<C, R>,
     ) -> AgentResult<TurnState<C, T, R>> {
+        let usage_metrics = UsageMetrics {
+            response_id: self.reserve_response(),
+            provider: response.provider,
+            model: response.model.clone(),
+            finish_reason: response.finish_reason.clone(),
+            usage: response.usage.clone(),
+        };
         let non_tool_items = response
             .output
             .iter()
             .filter(|item| !matches!(item, OutputItem::ToolCall { .. }))
             .cloned()
-            .map(|item| AgentEvent::ModelOutputItem { item })
+            .map(|item| AgentEvent::ModelOutputItem {
+                item,
+                usage_metrics: usage_metrics.clone(),
+            })
             .collect::<Vec<_>>();
 
         let tool_calls = extract_tool_calls(&response)
@@ -686,6 +713,7 @@ where
             let mut queue = VecDeque::from(non_tool_items);
             queue.push_back(AgentEvent::ToolCallRequested {
                 call: current.clone(),
+                usage_metrics: usage_metrics.clone(),
             });
 
             let mut remaining = tool_calls;
@@ -693,7 +721,11 @@ where
 
             return Ok(TurnState::EmitQueue {
                 queue,
-                next: Box::new(TurnState::ExecuteTool { current, remaining }),
+                next: Box::new(TurnState::ExecuteTool {
+                    current,
+                    remaining,
+                    usage_metrics: usage_metrics.clone(),
+                }),
             });
         }
 
@@ -703,7 +735,10 @@ where
             .await?;
 
         let mut queue = VecDeque::from(non_tool_items);
-        queue.push_back(AgentEvent::Completed { reply });
+        queue.push_back(AgentEvent::Completed {
+            reply,
+            usage_metrics,
+        });
 
         Ok(TurnState::EmitQueue {
             queue,
@@ -752,6 +787,12 @@ where
         let turn = self.next_turn;
         self.next_turn += 1;
         turn
+    }
+
+    fn reserve_response(&mut self) -> u64 {
+        let response = self.next_response;
+        self.next_response += 1;
+        response
     }
 
     async fn build_request(
@@ -926,12 +967,12 @@ where
                 chunks: window.chunks.clone(),
             })
         }
-        AgentEvent::ModelOutputItem { item } => Ok(StorageEvent::ModelOutputItem {
+        AgentEvent::ModelOutputItem { item, .. } => Ok(StorageEvent::ModelOutputItem {
             item: serde_json::to_value(item).map_err(|error| AgentError::Internal {
                 message: error.to_string(),
             })?,
         }),
-        AgentEvent::ToolCallRequested { call } => Ok(StorageEvent::ToolCallRequested {
+        AgentEvent::ToolCallRequested { call, .. } => Ok(StorageEvent::ToolCallRequested {
             call_id: call.call_id.clone(),
             name: call.name.clone(),
             args: serde_json::to_value(&call.call).map_err(|error| AgentError::Internal {
@@ -944,7 +985,7 @@ where
                 message: error.to_string(),
             })?,
         }),
-        AgentEvent::Completed { reply } => Ok(StorageEvent::Completed {
+        AgentEvent::Completed { reply, .. } => Ok(StorageEvent::Completed {
             reply: serde_json::to_value(reply).map_err(|error| AgentError::Internal {
                 message: error.to_string(),
             })?,
@@ -1280,7 +1321,7 @@ mod tests {
         ));
         assert!(matches!(
             agent.next().await.expect("next"),
-            Some(AgentEvent::Completed { reply }) if reply == "hello back"
+            Some(AgentEvent::Completed { reply, .. }) if reply == "hello back"
         ));
         assert!(agent.next().await.expect("done").is_none());
         assert_eq!(agent.transcript().await.expect("transcript").len(), 2);
@@ -1399,7 +1440,10 @@ mod tests {
         ));
         assert!(matches!(
             agent.next().await.expect("next"),
-            Some(AgentEvent::Completed { reply: EchoResponse { value } }) if value == "typed-ok"
+            Some(AgentEvent::Completed {
+                reply: EchoResponse { value },
+                ..
+            }) if value == "typed-ok"
         ));
         assert!(agent.next().await.expect("done").is_none());
     }
@@ -1427,7 +1471,7 @@ mod tests {
 
         assert!(matches!(
             agent.next().await.expect("next"),
-            Some(AgentEvent::ToolCallRequested { call }) if call.call_id == "call_ping_1"
+            Some(AgentEvent::ToolCallRequested { call, .. }) if call.call_id == "call_ping_1"
         ));
         assert!(matches!(
             agent.next().await.expect("next"),
@@ -1439,7 +1483,7 @@ mod tests {
         ));
         assert!(matches!(
             agent.next().await.expect("next"),
-            Some(AgentEvent::Completed { reply }) if reply == "all done"
+            Some(AgentEvent::Completed { reply, .. }) if reply == "all done"
         ));
         assert!(agent.next().await.expect("done").is_none());
 
@@ -1497,7 +1541,7 @@ mod tests {
         ));
         assert!(matches!(
             agent.next().await.expect("next"),
-            Some(AgentEvent::Completed { reply }) if reply == "tool error observed"
+            Some(AgentEvent::Completed { reply, .. }) if reply == "tool error observed"
         ));
         assert!(agent.next().await.expect("done").is_none());
 
@@ -1574,7 +1618,7 @@ mod tests {
         ));
         assert!(matches!(
             rx.recv().await.expect("completed"),
-            Ok(AgentEvent::Completed { reply }) if reply == "hello from run"
+            Ok(AgentEvent::Completed { reply, .. }) if reply == "hello from run"
         ));
         assert!(rx.recv().await.is_none());
     }
@@ -1603,7 +1647,7 @@ mod tests {
 
         assert!(matches!(
             rx.recv().await.expect("tool call"),
-            Ok(AgentEvent::ToolCallRequested { call }) if call.call_id == "call_ping_1"
+            Ok(AgentEvent::ToolCallRequested { call, .. }) if call.call_id == "call_ping_1"
         ));
         assert!(matches!(
             rx.recv().await.expect("tool result"),
@@ -1615,7 +1659,7 @@ mod tests {
         ));
         assert!(matches!(
             rx.recv().await.expect("completed"),
-            Ok(AgentEvent::Completed { reply }) if reply == "done after tool"
+            Ok(AgentEvent::Completed { reply, .. }) if reply == "done after tool"
         ));
         assert!(rx.recv().await.is_none());
     }
@@ -1650,7 +1694,7 @@ mod tests {
         ));
         assert!(matches!(
             rx.recv().await.expect("first completed"),
-            Ok(AgentEvent::Completed { reply }) if reply == "first"
+            Ok(AgentEvent::Completed { reply, .. }) if reply == "first"
         ));
         assert!(matches!(
             rx.recv().await.expect("second model item"),
@@ -1658,7 +1702,7 @@ mod tests {
         ));
         assert!(matches!(
             rx.recv().await.expect("second completed"),
-            Ok(AgentEvent::Completed { reply }) if reply == "second"
+            Ok(AgentEvent::Completed { reply, .. }) if reply == "second"
         ));
         assert!(rx.recv().await.is_none());
     }
@@ -1919,16 +1963,16 @@ mod tests {
         ));
         assert!(matches!(
             agent.next().await.expect("next"),
-            Some(AgentEvent::Completed { reply }) if reply == "first"
+            Some(AgentEvent::Completed { reply, .. }) if reply == "first"
         ));
         match agent.next().await.expect("next") {
             Some(AgentEvent::ModelOutputItem { .. }) => {
                 assert!(matches!(
                     agent.next().await.expect("next"),
-                    Some(AgentEvent::Completed { reply }) if reply == "second"
+                    Some(AgentEvent::Completed { reply, .. }) if reply == "second"
                 ));
             }
-            Some(AgentEvent::Completed { reply }) => {
+            Some(AgentEvent::Completed { reply, .. }) => {
                 assert_eq!(reply, "second");
             }
             other => panic!("expected queued turn event, got {other:?}"),
@@ -1961,7 +2005,7 @@ mod tests {
         ));
         assert!(matches!(
             agent.next().await.expect("next"),
-            Some(AgentEvent::Completed { reply }) if reply == "steered"
+            Some(AgentEvent::Completed { reply, .. }) if reply == "steered"
         ));
         assert!(agent.next().await.expect("done").is_none());
     }
@@ -2004,7 +2048,7 @@ mod tests {
         ));
         assert!(matches!(
             agent.next().await.expect("next"),
-            Some(AgentEvent::Completed { reply }) if reply == "steered reply"
+            Some(AgentEvent::Completed { reply, .. }) if reply == "steered reply"
         ));
         assert!(agent.next().await.expect("done").is_none());
 

@@ -107,7 +107,7 @@ pub use session::{
 ///
 /// while let Some(event) = events.recv().await {
 ///     match event? {
-///         AgentEvent::Completed { reply } => {
+///         AgentEvent::Completed { reply, .. } => {
 ///             assert_eq!(reply, "hello");
 ///             break;
 ///         }
@@ -145,7 +145,7 @@ pub trait Agent: Send + 'static {
         self.send(AgentInput::Message(input)).await?;
         loop {
             match self.next().await? {
-                Some(AgentEvent::Completed { reply }) => return Ok(reply),
+                Some(AgentEvent::Completed { reply, .. }) => return Ok(reply),
                 Some(AgentEvent::Cancelled) => return Err(AgentError::Cancelled),
                 Some(_) => {}
                 None => {
@@ -162,7 +162,7 @@ pub trait Agent: Send + 'static {
         self.send(AgentInput::Steer(input)).await?;
         loop {
             match self.next().await? {
-                Some(AgentEvent::Completed { reply }) => return Ok(reply),
+                Some(AgentEvent::Completed { reply, .. }) => return Ok(reply),
                 Some(AgentEvent::Cancelled) => return Err(AgentError::Cancelled),
                 Some(_) => {}
                 None => {

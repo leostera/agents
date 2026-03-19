@@ -9,7 +9,7 @@ use uuid::Uuid;
 use super::*;
 use crate::events::emit;
 use crate::grade::is_passing_score;
-use crate::report::TrialRecord;
+use crate::report::{TrialRecord, usage_summary_from_transcript};
 use crate::trial::RecordedError;
 
 pub(super) struct TrialExecution<State, A>
@@ -53,6 +53,7 @@ where
                     duration: started_at_instant.elapsed(),
                     passed: false,
                     mean_score: 0.0,
+                    usage: crate::report::UsageSummary::default(),
                     trial: None,
                     error: Some(RecordedError::from_eval_error(&error)),
                     grades: BTreeMap::new(),
@@ -193,6 +194,7 @@ where
                 }
 
                 let finished_at_wall = now_since_epoch();
+                let usage = usage_summary_from_transcript(&trial.transcript);
 
                 let record = TrialRecord {
                     schema_version: SCHEMA_VERSION,
@@ -207,6 +209,7 @@ where
                     duration: started_at_instant.elapsed(),
                     passed,
                     mean_score,
+                    usage,
                     trial: Some(serde_json::to_value(&trial).expect("serialize trial")),
                     error,
                     grades,
@@ -269,6 +272,16 @@ where
                     duration: started_at_instant.elapsed(),
                     passed: false,
                     mean_score,
+                    usage: partial_trial
+                        .as_ref()
+                        .and_then(|trial| {
+                            serde_json::from_value::<crate::trial::AgentTrial<serde_json::Value>>(
+                                trial.clone(),
+                            )
+                            .ok()
+                        })
+                        .map(|trial| usage_summary_from_transcript(&trial.transcript))
+                        .unwrap_or_default(),
                     trial: partial_trial,
                     error: Some(RecordedError::from_eval_error(&error)),
                     grades,

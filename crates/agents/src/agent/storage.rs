@@ -6,7 +6,6 @@ use serde_json::Value;
 
 use crate::agent::context::ContextChunk;
 use crate::agent::error::AgentResult;
-
 /// Input records captured by a storage adapter.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StorageInput {

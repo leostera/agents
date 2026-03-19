@@ -1,4 +1,5 @@
 use derive_builder::Builder;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -7,7 +8,7 @@ use crate::llm::response::{RawResponseFormat, TypedResponse};
 use crate::llm::tools::{RawToolCall, RawToolDefinition, ToolCall, TypedToolSet};
 
 /// LLM provider family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum ProviderType {
     OpenAI,
     Anthropic,
@@ -32,7 +33,7 @@ impl ProviderType {
 }
 
 /// Strategy for selecting a provider or exact model name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ModelSelector {
     Any,
     Provider(ProviderType),
@@ -63,7 +64,7 @@ impl ModelSelector {
 }
 
 /// Message role used in completion input and output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     System,
@@ -182,7 +183,7 @@ impl From<&str> for InputContent {
 }
 
 /// Reason a provider ended generation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum FinishReason {
     Stop,
     Length,
@@ -649,10 +650,21 @@ impl RawCompletionEventStream {
 }
 
 /// Token accounting attached to a provider response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Usage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+}
+
+/// Provider, model, finish reason, and token usage for one completion response.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageMetrics {
+    pub response_id: u64,
+    pub provider: ProviderType,
+    pub model: String,
+    pub finish_reason: FinishReason,
+    pub usage: Usage,
 }

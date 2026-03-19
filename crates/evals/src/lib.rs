@@ -277,7 +277,20 @@ mod tests {
                     match input {
                         AgentInput::Message(text) | AgentInput::Steer(text) => {
                             let _ = event_tx
-                                .send(Ok(AgentEvent::Completed { reply: text }))
+                                .send(Ok(AgentEvent::Completed {
+                                    reply: text,
+                                    usage_metrics: agents::llm::completion::UsageMetrics {
+                                        response_id: 1,
+                                        provider: ProviderType::OpenAI,
+                                        model: "echo-test".to_string(),
+                                        finish_reason: FinishReason::Stop,
+                                        usage: Usage {
+                                            prompt_tokens: 0,
+                                            completion_tokens: 0,
+                                            total_tokens: 0,
+                                        },
+                                    },
+                                }))
                                 .await;
                         }
                         AgentInput::Cancel => {
@@ -1021,6 +1034,83 @@ mod tests {
                     .and_then(|value| value.as_str())
                     == Some("You are a test agent.")
         }));
+    }
+
+    #[tokio::test]
+    async fn usage_is_aggregated_once_per_provider_response() {
+        type BasicAgent = SessionAgent<String, (), (), String>;
+
+        let suite = Suite::new("usage")
+            .agent(|_ctx| async move {
+                Ok::<BasicAgent, EvalError>(
+                    SessionAgent::builder()
+                        .with_llm_runner(session_test_runner())
+                        .build()
+                        .map_err(|error| EvalError::message(error.to_string()))?,
+                )
+            })
+            .eval(
+                Eval::new("captures_usage").run(
+                    Trajectory::<BasicAgent>::builder()
+                        .add_step(Step::user("hello".to_string()))
+                        .build()
+                        .expect("trajectory")
+                        .runner(),
+                ),
+            );
+
+        let report = suite
+            .run_with(RunConfig::single(ExecutionTarget::openai(
+                "usage",
+                "session-test-model",
+            )))
+            .run()
+            .await
+            .expect("report");
+
+        assert_eq!(report.variants.len(), 1);
+        assert_eq!(report.variants[0].trials.len(), 1);
+        let trial = &report.variants[0].trials[0];
+        assert_eq!(trial.usage.prompt_tokens, 8);
+        assert_eq!(trial.usage.completion_tokens, 2);
+        assert_eq!(trial.usage.total_tokens, 10);
+        assert_eq!(report.variants[0].suite.usage, trial.usage);
+        assert_eq!(report.variants[0].suite.evals[0].usage, trial.usage);
+
+        let root = TempDir::new().expect("temp dir");
+        let index = report.write_to(root.path()).expect("artifacts to write");
+        let trial_path = root.path().join(
+            index
+                .files
+                .iter()
+                .find(|path| path.contains("trial-001__captures_usage__"))
+                .expect("trial artifact path"),
+        );
+        let trial_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&trial_path).expect("trial json"))
+                .expect("parsed trial json");
+
+        assert_eq!(
+            trial_json
+                .get("usage")
+                .and_then(|value| value.get("prompt_tokens"))
+                .and_then(|value| value.as_u64()),
+            Some(8)
+        );
+        assert_eq!(
+            trial_json
+                .get("usage")
+                .and_then(|value| value.get("completion_tokens"))
+                .and_then(|value| value.as_u64()),
+            Some(2)
+        );
+        assert_eq!(
+            trial_json
+                .get("usage")
+                .and_then(|value| value.get("total_tokens"))
+                .and_then(|value| value.as_u64()),
+            Some(10)
+        );
     }
 
     #[tokio::test]

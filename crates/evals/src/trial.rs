@@ -1,5 +1,5 @@
 use agents::agent::{Agent, AgentError, AgentEvent, AgentInput, ContextChunk, ToolExecutionResult};
-use agents::llm::completion::{OutputContent, OutputItem, Role};
+use agents::llm::completion::{OutputContent, OutputItem, Role, UsageMetrics};
 use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -222,11 +222,13 @@ pub enum RecordedEvent {
     },
     Thinking {
         content: String,
+        usage_metrics: UsageMetrics,
     },
     ToolCallRequested {
         id: String,
         name: String,
         arguments: Value,
+        usage_metrics: UsageMetrics,
     },
     ToolExecutionCompleted {
         id: String,
@@ -235,6 +237,7 @@ pub enum RecordedEvent {
     },
     Completed {
         reply: Value,
+        usage_metrics: UsageMetrics,
     },
     Error {
         error: RecordedError,
@@ -332,7 +335,7 @@ where
         AgentEvent::ContextWindowMaterialized { window } => vec![RecordedEvent::ContextWindow {
             chunks: window.chunks.clone(),
         }],
-        AgentEvent::ModelOutputItem { item } => match item {
+        AgentEvent::ModelOutputItem { item, usage_metrics } => match item {
             OutputItem::Message { role, content } => {
                 let text = content
                     .iter()
@@ -364,15 +367,17 @@ where
                 } else {
                     vec![RecordedEvent::Thinking {
                         content: text.trim().to_string(),
+                        usage_metrics: usage_metrics.clone(),
                     }]
                 }
             }
             OutputItem::ToolCall { .. } => Vec::new(),
         },
-        AgentEvent::ToolCallRequested { call } => vec![RecordedEvent::ToolCallRequested {
+        AgentEvent::ToolCallRequested { call, usage_metrics } => vec![RecordedEvent::ToolCallRequested {
             id: call.call_id.clone(),
             name: call.name.clone(),
             arguments: call.arguments.clone(),
+            usage_metrics: usage_metrics.clone(),
         }],
         AgentEvent::ToolExecutionCompleted { result } => {
             let result_value = match &result.result {
@@ -389,8 +394,9 @@ where
                 result: result_value,
             }]
         }
-        AgentEvent::Completed { reply } => vec![RecordedEvent::Completed {
+        AgentEvent::Completed { reply, usage_metrics } => vec![RecordedEvent::Completed {
             reply: serde_json::to_value(reply).expect("serialize completed reply"),
+            usage_metrics: usage_metrics.clone(),
         }],
         AgentEvent::Cancelled => Vec::new(),
     }
@@ -405,6 +411,7 @@ fn build_tool_trace(transcript: &[RecordedEvent]) -> Vec<RecordedToolCall> {
                 id,
                 name,
                 arguments,
+                ..
             } => {
                 tool_trace.push(RecordedToolCall {
                     id: id.clone(),
