@@ -35,3 +35,6 @@ This file tracks the current agent and eval roadmap.
 4. Explore running agents on Cloudflare Workers
    - Workers AI provider support is the easy part
    - the remaining question is how much of the `agents` runtime can run inside the Workers execution model
+   - runtime spike scaffolding now lives in:
+     - `examples/cloudflare-worker-agent`
+     - `docs/rfds/RFD0053-cloudflare-workers-runtime.md`

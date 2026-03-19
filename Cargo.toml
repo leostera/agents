@@ -7,7 +7,7 @@ members = [
   "crates/cargo-evals", 
   "crates/evals",
   "crates/evals-macros",
-  "crates/test-agents", 
+  "crates/test-agents", "examples/cloudflare-worker-agent", 
 ]
 resolver = "2"
 
