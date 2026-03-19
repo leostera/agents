@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agents"
-version = "0.0.1"
+version = "0.3.0"
 dependencies = [
  "agents-proc-macros",
  "agents-test",
@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "agents-proc-macros"
-version = "0.0.1"
+version = "0.3.0"
 dependencies = [
  "agents",
  "anyhow",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "agents-test"
-version = "0.0.1"
+version = "0.3.0"
 dependencies = [
  "agents",
  "dotenvy",
@@ -533,7 +533,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-evals"
-version = "0.0.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -674,7 +674,7 @@ dependencies = [
 
 [[package]]
 name = "codemode"
-version = "0.0.1"
+version = "0.3.0"
 dependencies = [
  "agents",
  "async-trait",
@@ -1309,7 +1309,7 @@ dependencies = [
 
 [[package]]
 name = "evals"
-version = "0.0.1"
+version = "0.3.0"
 dependencies = [
  "agents",
  "anyhow",
@@ -1339,7 +1339,7 @@ dependencies = [
 
 [[package]]
 name = "evals-macros"
-version = "0.0.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "evals",

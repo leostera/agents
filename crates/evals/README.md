@@ -15,12 +15,12 @@ It provides:
 
 ```toml
 [dependencies]
-agents = "0.0.1"
-evals = "0.0.1"
+agents = "0.0.2"
+evals = "0.0.2"
 anyhow = "1"
 
 [build-dependencies]
-evals = "0.0.1"
+evals = "0.0.2"
 anyhow = "1"
 ```
 

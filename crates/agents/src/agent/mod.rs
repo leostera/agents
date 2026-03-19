@@ -69,7 +69,7 @@ mod runtime;
 mod storage;
 mod tools;
 
-pub use agents_proc_macros::Agent;
+//pub use agents_proc_macros::Agent;
 pub use context::{
     ContextChunk, ContextManager, ContextManagerBuilder, ContextProvider, ContextRole,
     ContextStrategy, ContextWindow, StaticContextProvider,

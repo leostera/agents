@@ -47,22 +47,8 @@ impl BasicAgent {
 And run one turn:
 
 ```rust,no_run
-# use std::sync::Arc;
-# use agents::{Agent, LlmRunner, SessionAgent};
-# #[derive(Agent)]
-# struct BasicAgent(SessionAgent<String, (), (), String>);
-# impl BasicAgent {
-#     fn new(llm: Arc<LlmRunner>) -> anyhow::Result<Self> {
-#         let agent = SessionAgent::builder().with_llm_runner(llm).build()?;
-#         Ok(Self(agent))
-#     }
-# }
-# async fn demo(llm: Arc<LlmRunner>) -> anyhow::Result<()> {
 let mut agent = BasicAgent::new(llm)?;
 let reply = agent.call("hello world".to_string()).await?;
-# let _ = reply;
-# Ok(())
-# }
 ```
 
 When you want stricter contracts, switch to typed input and output:
@@ -171,24 +157,23 @@ cargo evals init
 Next we add to a build-step that makes the evals build with `cargo build`:
 
 ```rust
-// build.rs
+// file: build.rs
 fn main() -> anyhow::Result<()> {
     evals::build()?;
     Ok(())
 }
 ```
 
-And then we expose the generated eval registry from your crate root by adding this to `src/lib.rs`:
+And then we make our evals discoverable by adding them to your `src/lib.rs`:
 
 ```rust
+// file: src/lib.rs
 evals::setup!();
 ```
 
 Finally you configure at least one target in your new `evals.toml` file:
 
 ```toml
-[evals]
-
 [[evals.targets]]
 provider = "ollama"
 model = "llama3.2:3b"

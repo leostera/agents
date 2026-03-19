@@ -1,11 +1,14 @@
 [package]
 name = "evals-macros"
-version = "0.0.1"
+version = "0.3.0"
 edition = "2024"
+authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Proc macros for eval suites, eval definitions, and reusable graders"
+categories = ["development-tools::procedural-macro-helpers"]
+keywords = ["ai", "agents", "evals"]
 readme = "README.md"
 
 [lib]
@@ -19,7 +22,7 @@ syn.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
-evals = { path = "../evals", package = "evals" }
+evals.workspace = true
 insta.workspace = true
 prettyplease.workspace = true
 serde_json.workspace = true

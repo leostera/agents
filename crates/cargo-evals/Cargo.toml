@@ -1,15 +1,18 @@
 [package]
 name = "cargo-evals"
-version = "0.0.1"
+version = "0.3.0"
 edition = "2024"
+authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Cargo subcommand for listing and running typed agent eval suites"
+categories = ["command-line-utilities", "development-tools::testing"]
+keywords = ["ai", "agents", "evals"]
 readme = "README.md"
 
 [dependencies]
 anyhow.workspace = true
-evals = { path = "../evals", package = "evals", version = "=0.0.1" }
+evals.workspace = true
 clap.workspace = true
 tokio.workspace = true

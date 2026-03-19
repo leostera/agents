@@ -5,7 +5,7 @@ edition = "2024"
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Spike workspace member for exploring Cloudflare Workers deployment"
+description = "Example Cloudflare Workers deployment"
 readme = "README.md"
 publish = false
 
@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-agents = { path = "../../crates/agents", default-features = false, version = "0", package = "agents" }
+agents = { path = "../../crates/agents", package = "agents", version = "0", default-features = false }
 anyhow.workspace = true
 async-trait.workspace = true
 schemars.workspace = true
@@ -25,8 +25,8 @@ tracing.workspace = true
 worker = "0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-evals = { path = "../../crates/evals" }
+evals = { path = "../../crates/evals", package = "evals", version = "0" }
 
 [build-dependencies]
 anyhow.workspace = true
-evals = { path = "../../crates/evals" }
+evals = { path = "../../crates/evals", package = "evals", version = "0" }

@@ -13,11 +13,21 @@ members = [
 resolver = "2"
 
 [workspace.package]
+authors = ["Leo Ostera <leandro@ostera.io>"]
 license = "Apache-2.0"
 repository = "https://github.com/leostera/agents"
 homepage = "https://github.com/leostera/agents"
 
 [workspace.dependencies]
+# local crate config
+agents = { path = "./crates/agents", package = "agents", version = "0" }
+agents-proc-macros = { path = "./crates/agents-proc-macros", package = "agents-proc-macros", version = "0" }
+agents-test = { path = "./crates/agents-test", package = "agents-test", version = "0" }
+evals = { path = "./crates/evals", package = "evals", version = "0" }
+evals-macros = { path = "./crates/evals-macros", package = "evals-macros", version = "0" }
+codemode = { path = "./crates/codemode", package = "codemode", version = "0" }
+
+# actual deps
 anyhow = "1"
 async-graphql = { version = "7", features = ["chrono"] }
 async-trait = "0"
