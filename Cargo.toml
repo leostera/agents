@@ -7,8 +7,8 @@ members = [
   "crates/codemode",
   "crates/evals",
   "crates/evals-macros",
-  "crates/test-agents", 
   "examples/cloudflare-worker-agent", 
+  "examples/simple-agents",
 ]
 resolver = "2"
 

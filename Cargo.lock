@@ -3722,6 +3722,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
+name = "simple-agents"
+version = "0.0.1"
+dependencies = [
+ "agents",
+ "anyhow",
+ "async-trait",
+ "evals",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "siphasher"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4047,20 +4061,6 @@ dependencies = [
  "wezterm-dynamic",
  "wezterm-input-types",
  "winapi",
-]
-
-[[package]]
-name = "test-agents"
-version = "0.0.1"
-dependencies = [
- "agents",
- "anyhow",
- "async-trait",
- "evals",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]

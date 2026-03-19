@@ -1,5 +1,5 @@
 [package]
-name = "test-agents"
+name = "simple-agents"
 version = "0.0.1"
 edition = "2024"
 publish = false
@@ -12,12 +12,12 @@ readme = "README.md"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-agents = { path = "../agents" }
-evals = { path = "../evals", package = "evals" }
+agents = { path = "../../crates/agents", version = "0", package = "agents" }
+evals = { path = "../../crates/evals", version = "0", package = "evals" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
 [build-dependencies]
-evals = { path = "../evals", package = "evals" }
+evals = { path = "../../crates/evals", version = "0", package = "evals" }
