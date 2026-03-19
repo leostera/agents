@@ -8,4 +8,8 @@ homepage.workspace = true
 description = "Spike workspace member for exploring Cloudflare Workers deployment"
 readme = "README.md"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
+worker = "0.7.5"

@@ -421,13 +421,13 @@ fn preferred_judge_target(fallback: &ExecutionTarget) -> ExecutionTarget {
         return ExecutionTarget::new(label, provider, model);
     }
 
-    if optional_test_env("BORG_TEST_OPENAI_API_KEY").is_some() {
+    if optional_test_env("OPENAI_API_KEY").is_some() {
         return ExecutionTarget::openai("judge-gpt-5.3-codex", "gpt-5.3-codex");
     }
-    if optional_test_env("BORG_TEST_ANTHROPIC_API_KEY").is_some() {
+    if optional_test_env("ANTHROPIC_API_KEY").is_some() {
         return ExecutionTarget::anthropic("judge-claude-sonnet-4", "claude-sonnet-4-20250514");
     }
-    if optional_test_env("BORG_TEST_OPENROUTER_API_KEY").is_some() {
+    if optional_test_env("OPENROUTER_API_KEY").is_some() {
         return ExecutionTarget::openrouter("judge-kimi-k2.5", "moonshotai/kimi-k2.5");
     }
 

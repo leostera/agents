@@ -63,17 +63,14 @@ pub(super) fn llm_runner_for_target(
                 .build()
         }
         "openai" => {
-            let Some(api_key) = optional_env(&[
-                "BORG_LLM_OPENAI_API_KEY",
-                "OPENAI_API_KEY",
-                "BORG_TEST_OPENAI_API_KEY",
-            ])
-            .or_else(|| {
-                provider_configs
-                    .openai
-                    .as_ref()
-                    .and_then(|config| config.api_key.clone())
-            }) else {
+            let Some(api_key) = optional_env(&["BORG_LLM_OPENAI_API_KEY", "OPENAI_API_KEY"])
+                .or_else(|| {
+                    provider_configs
+                        .openai
+                        .as_ref()
+                        .and_then(|config| config.api_key.clone())
+                })
+            else {
                 return Ok(LlmRunner::builder().build());
             };
             let mut config = OpenAIConfig::new(api_key, target.model.clone())
@@ -102,17 +99,14 @@ pub(super) fn llm_runner_for_target(
                 .build()
         }
         "anthropic" => {
-            let Some(api_key) = optional_env(&[
-                "BORG_LLM_ANTHROPIC_API_KEY",
-                "ANTHROPIC_API_KEY",
-                "BORG_TEST_ANTHROPIC_API_KEY",
-            ])
-            .or_else(|| {
-                provider_configs
-                    .anthropic
-                    .as_ref()
-                    .and_then(|config| config.api_key.clone())
-            }) else {
+            let Some(api_key) = optional_env(&["BORG_LLM_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"])
+                .or_else(|| {
+                    provider_configs
+                        .anthropic
+                        .as_ref()
+                        .and_then(|config| config.api_key.clone())
+                })
+            else {
                 return Ok(LlmRunner::builder().build());
             };
             let mut config = AnthropicConfig::new(api_key, target.model.clone())
@@ -138,17 +132,16 @@ pub(super) fn llm_runner_for_target(
                 .build()
         }
         "openrouter" => {
-            let Some(api_key) = optional_env(&[
-                "BORG_LLM_OPENROUTER_API_KEY",
-                "OPENROUTER_API_KEY",
-                "BORG_TEST_OPENROUTER_API_KEY",
-            ])
-            .or_else(|| {
-                provider_configs
-                    .openrouter
-                    .as_ref()
-                    .and_then(|config| config.api_key.clone())
-            }) else {
+            let Some(api_key) =
+                optional_env(&["BORG_LLM_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"]).or_else(
+                    || {
+                        provider_configs
+                            .openrouter
+                            .as_ref()
+                            .and_then(|config| config.api_key.clone())
+                    },
+                )
+            else {
                 return Ok(LlmRunner::builder().build());
             };
             let mut config = OpenRouterConfig::new(api_key, target.model.clone())
@@ -179,16 +172,12 @@ pub(super) fn llm_runner_for_target(
             else {
                 return Ok(LlmRunner::builder().build());
             };
-            let Some(account_id) =
-                optional_env(&["BORG_LLM_WORKERS_AI_ACCOUNT_ID", "CLOUDFLARE_ACCOUNT_ID"]).or_else(
-                    || {
-                        provider_configs
-                            .workers_ai
-                            .as_ref()
-                            .and_then(|config| config.account_id.clone())
-                    },
-                )
-            else {
+            let Some(account_id) = optional_env(&["CLOUDFLARE_ACCOUNT_ID"]).or_else(|| {
+                provider_configs
+                    .workers_ai
+                    .as_ref()
+                    .and_then(|config| config.account_id.clone())
+            }) else {
                 return Ok(LlmRunner::builder().build());
             };
             let mut config = WorkersAIConfig::new(api_token, account_id, target.model.clone())

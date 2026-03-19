@@ -125,20 +125,20 @@ pub fn optional_test_env(name: &str) -> Option<String> {
 }
 
 pub fn openai_provider_for_model(model: &str) -> LlmResult<OpenAI> {
-    let api_key = required_test_env("BORG_TEST_OPENAI_API_KEY")?;
+    let api_key = required_test_env("OPENAI_API_KEY")?;
     let config = OpenAIConfig::new(api_key, model.to_string()).map_err(LlmError::OpenAIConfig)?;
     Ok(OpenAI::new(config))
 }
 
 pub fn anthropic_provider_for_model(model: &str) -> LlmResult<Anthropic> {
-    let api_key = required_test_env("BORG_TEST_ANTHROPIC_API_KEY")?;
+    let api_key = required_test_env("ANTHROPIC_API_KEY")?;
     let config =
         AnthropicConfig::new(api_key, model.to_string()).map_err(LlmError::AnthropicConfig)?;
     Ok(Anthropic::new(config))
 }
 
 pub fn openrouter_provider_for_model(model: &str) -> LlmResult<OpenRouter> {
-    let api_key = required_test_env("BORG_TEST_OPENROUTER_API_KEY")?;
+    let api_key = required_test_env("OPENROUTER_API_KEY")?;
     let config =
         OpenRouterConfig::new(api_key, model.to_string()).map_err(LlmError::OpenRouterConfig)?;
     Ok(OpenRouter::new(config))
@@ -163,29 +163,23 @@ pub fn runner_with_openrouter_model(model: &str) -> LlmResult<LlmRunner> {
 }
 
 pub fn workers_ai_provider_for_model(model: &str) -> LlmResult<WorkersAI> {
-    let api_token = optional_test_env("BORG_TEST_WORKERS_AI_API_TOKEN")
-        .or_else(|| optional_test_env("BORG_LLM_WORKERS_AI_API_TOKEN"))
+    let api_token = optional_test_env("BORG_LLM_WORKERS_AI_API_TOKEN")
         .or_else(|| optional_test_env("CLOUDFLARE_API_TOKEN"))
         .ok_or_else(|| {
             LlmError::Configuration(
-                "missing Workers AI API token (expected BORG_TEST_WORKERS_AI_API_TOKEN, BORG_LLM_WORKERS_AI_API_TOKEN, or CLOUDFLARE_API_TOKEN)".to_string(),
+                "missing Workers AI API token (expected BORG_LLM_WORKERS_AI_API_TOKEN or CLOUDFLARE_API_TOKEN)".to_string(),
             )
         })?;
-    let account_id = optional_test_env("BORG_TEST_WORKERS_AI_ACCOUNT_ID")
-        .or_else(|| optional_test_env("BORG_LLM_WORKERS_AI_ACCOUNT_ID"))
-        .or_else(|| optional_test_env("CLOUDFLARE_ACCOUNT_ID"))
-        .ok_or_else(|| {
-            LlmError::Configuration(
-                "missing Workers AI account id (expected BORG_TEST_WORKERS_AI_ACCOUNT_ID, BORG_LLM_WORKERS_AI_ACCOUNT_ID, or CLOUDFLARE_ACCOUNT_ID)".to_string(),
-            )
-        })?;
+    let account_id = optional_test_env("CLOUDFLARE_ACCOUNT_ID").ok_or_else(|| {
+        LlmError::Configuration(
+            "missing Workers AI account id (expected CLOUDFLARE_ACCOUNT_ID)".to_string(),
+        )
+    })?;
 
     let mut config = WorkersAIConfig::new(api_token, account_id, model.to_string())
         .map_err(LlmError::WorkersAIConfig)?;
 
-    if let Some(base_url) = optional_test_env("BORG_TEST_WORKERS_AI_BASE_URL")
-        .or_else(|| optional_test_env("BORG_LLM_WORKERS_AI_BASE_URL"))
-    {
+    if let Some(base_url) = optional_test_env("BORG_LLM_WORKERS_AI_BASE_URL") {
         config = config.with_base_url(base_url);
     }
 

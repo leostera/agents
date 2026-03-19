@@ -21,8 +21,7 @@ use serde::{Deserialize, Serialize};
 const OPENAI_TRANSCRIPTION_AUDIO: &[u8] = include_bytes!("fixtures/1-2-3-hello-world.ogg");
 
 fn openai_model() -> String {
-    optional_test_env("BORG_TEST_OPENAI_MODEL")
-        .expect("BORG_TEST_OPENAI_MODEL must be set for OpenAI e2e tests")
+    optional_test_env("OPENAI_MODEL").expect("OPENAI_MODEL must be set for OpenAI e2e tests")
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

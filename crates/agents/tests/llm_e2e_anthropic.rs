@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 fn anthropic_model() -> String {
-    optional_test_env("BORG_TEST_ANTHROPIC_MODEL")
-        .expect("BORG_TEST_ANTHROPIC_MODEL must be set for Anthropic e2e tests")
+    optional_test_env("ANTHROPIC_MODEL")
+        .expect("ANTHROPIC_MODEL must be set for Anthropic e2e tests")
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

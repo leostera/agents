@@ -8,7 +8,13 @@ It is intentionally separate from `agents` itself. `agents` currently assumes a 
 
 ## Current status
 
-This crate is only a placeholder and documentation target right now.
+This crate is now a real `workers-rs` Worker crate:
+
+- it uses the `worker` crate
+- it exports a Worker `fetch` handler
+- it compiles to `wasm32-unknown-unknown`
+
+It is still a runtime spike, not an `agents` integration.
 
 What we already support:
 
@@ -50,12 +56,16 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
 
 ## Next steps
 
-1. Add a real `workers-rs` dependency and `wrangler.toml` config.
-2. Prove a minimal request/response Worker build.
-3. Prove one call into Workers AI from inside the Worker.
-4. Decide whether the right long-term shape is:
+1. Prove one call into Workers AI from inside the Worker.
+2. Decide whether the right long-term shape is:
    - a wasm-safe subset of `agents`
    - or a dedicated Worker adapter crate that talks to `agents` concepts from the edge.
+
+## Local validation
+
+```bash
+cargo check --target wasm32-unknown-unknown -p cloudflare-worker-agent
+```
 
 ## References
 

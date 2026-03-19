@@ -18,8 +18,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 fn openrouter_model() -> String {
-    optional_test_env("BORG_TEST_OPENROUTER_MODEL")
-        .expect("BORG_TEST_OPENROUTER_MODEL must be set for OpenRouter e2e tests")
+    optional_test_env("OPENROUTER_MODEL")
+        .expect("OPENROUTER_MODEL must be set for OpenRouter e2e tests")
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

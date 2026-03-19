@@ -82,8 +82,8 @@ struct Pong {
 }
 
 fn anthropic_model() -> String {
-    optional_test_env("BORG_TEST_ANTHROPIC_MODEL")
-        .expect("BORG_TEST_ANTHROPIC_MODEL must be set for Anthropic agent e2e tests")
+    optional_test_env("ANTHROPIC_MODEL")
+        .expect("ANTHROPIC_MODEL must be set for Anthropic agent e2e tests")
 }
 
 fn map_agent_error<T>(result: AgentResult<T>) -> LlmResult<T> {

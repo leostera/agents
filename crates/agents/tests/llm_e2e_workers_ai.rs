@@ -13,13 +13,13 @@ use agents_test::{optional_test_env, runner_with_workers_ai_model, workers_ai_pr
 use common::{EchoResponse, TestTools, assert_completion_usage_reported};
 
 fn workers_ai_model() -> String {
-    optional_test_env("BORG_TEST_WORKERS_AI_MODEL")
+    optional_test_env("WORKERS_AI_MODEL")
         .or_else(|| optional_test_env("BORG_LLM_WORKERS_AI_MODEL"))
-        .expect("BORG_TEST_WORKERS_AI_MODEL must be set for Workers AI e2e tests")
+        .expect("WORKERS_AI_MODEL must be set for Workers AI e2e tests")
 }
 
 fn workers_ai_tool_model() -> Option<String> {
-    optional_test_env("BORG_TEST_WORKERS_AI_TOOL_MODEL")
+    optional_test_env("WORKERS_AI_TOOL_MODEL")
 }
 
 #[tokio::test]

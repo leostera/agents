@@ -82,8 +82,7 @@ struct Pong {
 }
 
 fn openai_model() -> String {
-    optional_test_env("BORG_TEST_OPENAI_MODEL")
-        .expect("BORG_TEST_OPENAI_MODEL must be set for OpenAI agent e2e tests")
+    optional_test_env("OPENAI_MODEL").expect("OPENAI_MODEL must be set for OpenAI agent e2e tests")
 }
 
 fn map_agent_error<T>(result: AgentResult<T>) -> LlmResult<T> {
