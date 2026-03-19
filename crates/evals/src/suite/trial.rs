@@ -6,6 +6,7 @@ use agents::agent::Agent;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use super::llm::llm_runner_for_target;
 use super::*;
 use crate::events::emit;
 use crate::grade::is_passing_score;

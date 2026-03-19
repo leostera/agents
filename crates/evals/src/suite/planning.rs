@@ -2,6 +2,31 @@ use std::collections::BTreeSet;
 
 use super::*;
 
+#[derive(Debug)]
+pub(crate) struct SuitePlan<State = (), A = NoAgent>
+where
+    A: Agent,
+{
+    pub(crate) suite: Suite<State, A>,
+    pub(crate) config: RunConfig,
+    pub(crate) artifact_root: Option<std::path::PathBuf>,
+}
+
+impl<State, A> SuitePlan<State, A>
+where
+    A: Agent,
+{
+    #[cfg(test)]
+    pub(crate) fn suite(&self) -> &Suite<State, A> {
+        &self.suite
+    }
+
+    #[cfg(test)]
+    pub(crate) fn config(&self) -> &RunConfig {
+        &self.config
+    }
+}
+
 impl<'a, State, A> SuiteRunner<'a, State, A>
 where
     State: Send + Sync + 'static,

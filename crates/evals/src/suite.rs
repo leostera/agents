@@ -1,3 +1,4 @@
+mod executor;
 mod llm;
 mod planning;
 mod target;
@@ -7,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use agents::agent::Agent;
-use async_trait::async_trait;
 use tracing::debug;
 
 use crate::RunEvent;
@@ -18,9 +18,8 @@ use crate::report::{
     EvalRunReport, RunManifest, SCHEMA_VERSION, SuiteRunReport, now_since_epoch, run_id,
 };
 
-use self::llm::llm_runner_for_target;
+use self::executor::{LocalExecutor, SuiteExecutor};
 use self::target::run_single_target;
-use self::trial::TrialExecution;
 
 /// High-level suite classification.
 #[derive(Clone, Copy, Debug, Default)]
@@ -103,43 +102,6 @@ impl TargetFilter {
         })
     }
 }
-
-#[derive(Debug)]
-pub(crate) struct SuitePlan<State = (), A = NoAgent>
-where
-    A: Agent,
-{
-    suite: Suite<State, A>,
-    config: RunConfig,
-    artifact_root: Option<PathBuf>,
-}
-
-impl<State, A> SuitePlan<State, A>
-where
-    A: Agent,
-{
-    #[cfg(test)]
-    pub(crate) fn suite(&self) -> &Suite<State, A> {
-        &self.suite
-    }
-
-    #[cfg(test)]
-    pub(crate) fn config(&self) -> &RunConfig {
-        &self.config
-    }
-}
-
-#[async_trait]
-trait SuiteExecutor<State, A>: Send + Sync
-where
-    State: Send + Sync + 'static,
-    A: Agent,
-{
-    async fn run(&self, plan: SuitePlan<State, A>) -> EvalResult<EvalRunReport>;
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct LocalExecutor;
 
 impl Suite<(), NoAgent> {
     pub fn new(id: impl Into<String>) -> Self {
