@@ -13,6 +13,7 @@ pub fn expand(attr: TokenStream, input: ItemFn) -> Result<TokenStream> {
 struct EvalArgs {
     agent: Path,
     tags: Vec<LitStr>,
+    timeout: Option<LitStr>,
 }
 
 impl Parse for EvalArgs {
@@ -20,27 +21,38 @@ impl Parse for EvalArgs {
         let exprs = input.parse_terminated(Expr::parse, Token![,])?;
         let mut agent = None;
         let mut tags = Vec::new();
+        let mut timeout = None;
 
         for expr in exprs {
             if let Expr::Assign(ExprAssign { left, right, .. }) = expr {
                 if matches!(*left, Expr::Path(ref path) if path.path.is_ident("agent")) {
-                    if let Expr::Path(path) = *right {
-                        agent = Some(path.path);
+                    if let Expr::Path(path) = &*right {
+                        agent = Some(path.path.clone());
                     }
                     continue;
                 }
                 if matches!(*left, Expr::Path(ref path) if path.path.is_ident("tags"))
-                    && let Expr::Array(ExprArray { elems, .. }) = *right
+                    && let Expr::Array(ExprArray { elems, .. }) = &*right
                 {
                     for elem in elems {
                         if let Expr::Lit(ExprLit {
                             lit: Lit::Str(value),
                             ..
-                        }) = elem
+                        }) = elem.clone()
                         {
                             tags.push(value);
                         }
                     }
+                    continue;
+                }
+                if matches!(*left, Expr::Path(ref path) if path.path.is_ident("timeout"))
+                    && let Expr::Lit(ExprLit {
+                        lit: Lit::Str(value),
+                        ..
+                    }) = &*right
+                {
+                    timeout = Some(value.clone());
+                    continue;
                 }
             }
         }
@@ -53,6 +65,7 @@ impl Parse for EvalArgs {
                 )
             })?,
             tags,
+            timeout,
         })
     }
 }
@@ -177,6 +190,23 @@ fn expand_eval(args: &EvalArgs, input: &ItemFn) -> Result<TokenStream> {
     } else {
         quote!(.tags([#(#tags),*]))
     };
+    let timeout_expr = if let Some(timeout) = &args.timeout {
+        let parsed = humantime::parse_duration(&timeout.value()).map_err(|error| {
+            syn::Error::new_spanned(
+                timeout,
+                format!("invalid #[eval(timeout = ...)] duration: {error}"),
+            )
+        })?;
+        let timeout_ms = u64::try_from(parsed.as_millis()).map_err(|_| {
+            syn::Error::new_spanned(
+                timeout,
+                "eval timeout is too large to fit in u64 milliseconds",
+            )
+        })?;
+        quote!(.timeout(::std::time::Duration::from_millis(#timeout_ms)))
+    } else {
+        quote!()
+    };
 
     Ok(quote! {
         #input
@@ -186,6 +216,7 @@ fn expand_eval(args: &EvalArgs, input: &ItemFn) -> Result<TokenStream> {
             Ok(
                 ::evals::Eval::new(#eval_id)
                     #tags_expr
+                    #timeout_expr
                     .run(|ctx, agent| async move {
                         let trajectory = #fn_ident(ctx.clone())
                             .await
@@ -209,7 +240,8 @@ mod tests {
     fn expands_eval_wrapper_snapshot() {
         let args: EvalArgs = syn::parse2(quote! {
             agent = EchoAgent,
-            tags = ["echo", "baseline"]
+            tags = ["echo", "baseline"],
+            timeout = "30s"
         })
         .expect("parse eval args");
         let input: ItemFn = parse_quote! {
@@ -238,6 +270,7 @@ mod tests {
             Ok(
                 ::evals::Eval::new("echoes_plain_text")
                     .tags(["echo", "baseline"])
+                    .timeout(::std::time::Duration::from_millis(30000u64))
                     .run(|ctx, agent| async move {
                         let trajectory = echoes_plain_text(ctx.clone())
                             .await
@@ -270,6 +303,30 @@ mod tests {
 
         assert!(pretty.contains("::evals::Eval::new(\"smoke_eval\")"));
         assert!(!pretty.contains(".tags(["));
+    }
+
+    #[test]
+    fn rejects_invalid_timeout_literal() {
+        let args: EvalArgs = syn::parse2(quote! {
+            agent = EchoAgent,
+            timeout = "nope"
+        })
+        .expect("parse eval args");
+        let input: ItemFn = parse_quote! {
+            async fn smoke_eval(
+                ctx: EvalContext<()>,
+            ) -> Result<Trajectory<EchoAgent, ()>> {
+                let _ = ctx;
+                todo!()
+            }
+        };
+
+        let error = expand_eval(&args, &input).expect_err("invalid timeout should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid #[eval(timeout = ...)] duration")
+        );
     }
 
     #[test]

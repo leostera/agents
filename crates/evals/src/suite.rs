@@ -525,11 +525,12 @@ where
 
     for eval in suite.evals() {
         let trial_count = eval.configured_trials().unwrap_or(default_trials);
+        let trial_timeout = eval.configured_timeout().or(timeout);
         info!(
-            suite_id = %suite.id(),
-            target_label = %target.label,
-            eval_id = %eval.id(),
-            trials = trial_count,
+                suite_id = %suite.id(),
+                target_label = %target.label,
+                eval_id = %eval.id(),
+                trials = trial_count,
             "starting eval"
         );
         emit(RunEvent::EvalStarted {
@@ -559,7 +560,7 @@ where
                     eval,
                     agent_factory,
                     trial_index,
-                    timeout,
+                    timeout: trial_timeout,
                 }
                 .run()
                 .await

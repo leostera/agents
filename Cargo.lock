@@ -1323,6 +1323,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "evals",
+ "humantime",
  "insta",
  "prettyplease",
  "proc-macro2",

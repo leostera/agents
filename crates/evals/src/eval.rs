@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use agents::agent::{Agent, AgentError, AgentEvent, AgentInput, AgentRunInput, AgentRunOutput};
 use agents::llm::LlmRunner;
@@ -126,6 +127,7 @@ where
     id: String,
     tags: Vec<String>,
     trials: Option<usize>,
+    timeout: Option<Duration>,
     run: Option<EvalRunner<State, Agent>>,
     grading: GradingConfig<State, Agent::Output>,
 }
@@ -139,6 +141,7 @@ where
             id: self.id.clone(),
             tags: self.tags.clone(),
             trials: self.trials,
+            timeout: self.timeout,
             run: self.run.clone(),
             grading: self.grading.clone(),
         }
@@ -154,6 +157,7 @@ where
             .field("id", &self.id)
             .field("tags", &self.tags)
             .field("trials", &self.trials)
+            .field("timeout", &self.timeout)
             .field("grading", &self.grading)
             .finish()
     }
@@ -168,6 +172,7 @@ where
             id: id.into(),
             tags: Vec::new(),
             trials: None,
+            timeout: None,
             run: None,
             grading: GradingConfig::new(),
         }
@@ -186,6 +191,11 @@ where
     /// Returns the explicitly configured trial count, if any.
     pub fn configured_trials(&self) -> Option<usize> {
         self.trials
+    }
+
+    /// Returns the explicitly configured timeout for this eval, if any.
+    pub fn configured_timeout(&self) -> Option<Duration> {
+        self.timeout
     }
 
     /// Adds a single tag.
@@ -207,6 +217,12 @@ where
     /// Overrides the number of trials for this eval.
     pub fn trials(mut self, trials: usize) -> Self {
         self.trials = Some(trials);
+        self
+    }
+
+    /// Overrides the timeout for this eval.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
         self
     }
 

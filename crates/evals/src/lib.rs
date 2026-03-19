@@ -1315,4 +1315,33 @@ mod tests {
                 if *duration_ms == 20
         ));
     }
+
+    #[tokio::test]
+    async fn eval_specific_timeout_overrides_run_timeout() {
+        let suite = suite_with_dummy_agent("calendar").eval(
+            Eval::new("slow")
+                .timeout(Duration::from_millis(20))
+                .run(|_, _agent| async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    Ok(AgentTrial::new("ok".to_string()))
+                }),
+        );
+
+        let report = suite
+            .run_with(
+                RunConfig::single(ExecutionTarget::openai("gpt", "gpt-5.3-codex"))
+                    .with_timeout(Duration::from_millis(200)),
+            )
+            .run()
+            .await
+            .expect("timed run to complete with a failed trial");
+
+        let trial = &report.variants[0].trials[0];
+        assert!(!trial.passed);
+        assert!(matches!(
+            trial.error.as_ref(),
+            Some(RecordedError::EvalError(EvalError::TrialTimedOut { duration_ms }))
+                if *duration_ms == 20
+        ));
+    }
 }
