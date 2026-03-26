@@ -77,10 +77,12 @@ async fn smoke(_ctx: EvalContext<()>) -> Result<Trajectory<BasicAgent, ()>> {
 
 ## Timeouts
 
-Use a run-wide timeout in `evals.toml`:
+Trials default to a one-minute timeout. Override the run-wide timeout in
+`evals.toml`:
 
 ```toml
-timeout = "30s"
+[evals]
+timeout = "60s"
 ```
 
 Or override per eval:

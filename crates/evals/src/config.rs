@@ -3,6 +3,8 @@ use std::time::Duration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_TRIAL_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Provider-specific overrides loaded from `evals.toml` or built in code.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderConfigs {
@@ -136,7 +138,7 @@ impl RunConfig {
         Self {
             targets,
             trials: 1,
-            timeout: None,
+            timeout: Some(DEFAULT_TRIAL_TIMEOUT),
             provider: ProviderConfigs::default(),
         }
     }

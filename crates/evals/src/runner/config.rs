@@ -7,7 +7,7 @@ use crate::{
     OllamaProviderConfig as PublicOllamaProviderConfig,
     OpenAIProviderConfig as PublicOpenAIProviderConfig,
     OpenRouterProviderConfig as PublicOpenRouterProviderConfig, ProviderConfigs, RunConfig,
-    WorkersAIProviderConfig as PublicWorkersAIProviderConfig,
+    WorkersAIProviderConfig as PublicWorkersAIProviderConfig, config::DEFAULT_TRIAL_TIMEOUT,
 };
 use agents::llm::completion::ProviderType;
 use anyhow::{Context, Result, bail};
@@ -294,7 +294,7 @@ fn resolve_timeout(
             }
             Ok(Some(Duration::from_secs(timeout_secs)))
         }
-        (None, None) => Ok(None),
+        (None, None) => Ok(Some(DEFAULT_TRIAL_TIMEOUT)),
         (Some(_), Some(_)) => unreachable!("handled above"),
     }
 }
@@ -331,6 +331,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::EvalsFile;
+    use crate::config::DEFAULT_TRIAL_TIMEOUT;
 
     #[test]
     fn loads_provider_ollama_url_from_evals_toml() {
@@ -399,6 +400,23 @@ targets = [{ provider = "ollama", model = "llama3.2:1b" }]
         let file = EvalsFile::load(dir.path()).expect("load evals.toml");
 
         assert_eq!(file.evals.resolved_timeout, Some(Duration::from_secs(90)));
+    }
+
+    #[test]
+    fn defaults_timeout_when_evals_toml_omits_it() {
+        let dir = TempDir::new().expect("tempdir");
+        fs::write(
+            dir.path().join("evals.toml"),
+            r#"
+[evals]
+targets = [{ provider = "ollama", model = "llama3.2:1b" }]
+"#,
+        )
+        .expect("write evals.toml");
+
+        let file = EvalsFile::load(dir.path()).expect("load evals.toml");
+
+        assert_eq!(file.evals.resolved_timeout, Some(DEFAULT_TRIAL_TIMEOUT));
     }
 
     #[test]

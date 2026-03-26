@@ -31,7 +31,7 @@ pub struct WorkspaceRunConfig {
 
 const EVALS_TOML_TEMPLATE: &str = r#"[evals]
 trials = 10
-timeout = "30s"
+timeout = "60s"
 output_dir = ".evals"
 
 [[evals.targets]]
